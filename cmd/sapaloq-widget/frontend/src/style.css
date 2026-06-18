@@ -1,0 +1,439 @@
+:root {
+  --orb-size: 48px;
+  --accent: oklch(62% 0.19 250);
+  --accent-hot: oklch(70% 0.2 235);
+  --accent-deep: oklch(48% 0.16 255);
+  --glow: oklch(62% 0.19 250 / 0.5);
+  --popup-radius: 18px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent !important;
+  background-color: transparent !important;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ── Dock: FAB bottom-left, popup grows upward ── */
+
+.dock {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-start;
+  padding: 8px;
+  background: transparent;
+}
+
+.fab-row {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* ── Popup (hidden when collapsed — window is tiny) ── */
+
+.popup {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 10px;
+  border-radius: var(--popup-radius);
+  background: oklch(96% 0.01 250);
+  box-shadow:
+    0 24px 60px oklch(0% 0 0 / 0.38),
+    0 4px 16px oklch(0% 0 0 / 0.18);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(12px) scale(0.96);
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+body.expanded .popup {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 0;
+  background: linear-gradient(135deg, oklch(58% 0.2 250), oklch(52% 0.18 265));
+  color: white;
+}
+
+.popup-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.popup-logo {
+  font-size: 1.1rem;
+}
+
+.popup-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: oklch(100% 0 0 / 0.15);
+  color: white;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.popup-close:hover {
+  background: oklch(100% 0 0 / 0.28);
+}
+
+.popup-hero {
+  padding: 8px 16px 18px;
+  background: linear-gradient(135deg, oklch(58% 0.2 250), oklch(52% 0.18 265));
+  color: white;
+}
+
+.popup-hero h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.popup-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  background: oklch(94% 0.015 250);
+}
+
+.card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  border-radius: 14px;
+  background: white;
+  border: 1px solid oklch(88% 0.02 250);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card:hover {
+  border-color: oklch(62% 0.19 250 / 0.45);
+  box-shadow: 0 4px 14px oklch(62% 0.19 250 / 0.12);
+}
+
+.card-icon {
+  font-size: 1rem;
+  line-height: 1.4;
+}
+
+.icon-svg {
+  display: inline-block;
+  vertical-align: -0.12em;
+  width: 1.15em;
+  height: 1.15em;
+}
+
+.popup-hero .icon-svg {
+  color: white;
+}
+
+.card-icon--svg {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.card-icon--svg .icon-svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: oklch(58% 0.2 250);
+}
+
+.card strong {
+  display: block;
+  font-size: 0.88rem;
+  color: oklch(22% 0.03 260);
+}
+
+.card p {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  color: oklch(48% 0.03 260);
+}
+
+.card--status .card-icon {
+  color: oklch(62% 0.19 145);
+}
+
+.ipc-line {
+  margin: 8px 2px 0;
+  font-size: 0.68rem;
+  color: oklch(42% 0.03 260);
+}
+
+.ipc-line--muted {
+  color: oklch(58% 0.02 260);
+  word-break: break-all;
+}
+
+.popup-compose {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  background: white;
+  border-top: 1px solid oklch(90% 0.02 250);
+}
+
+.popup-compose input {
+  flex: 1;
+  border: 1px solid oklch(86% 0.02 250);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.popup-compose input:focus {
+  border-color: oklch(58% 0.2 250);
+}
+
+.send-btn {
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, oklch(58% 0.2 250), oklch(52% 0.18 265));
+  color: white;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+/* ── FAB orb (squircle) ── */
+
+.orb {
+  position: relative;
+  width: var(--orb-size);
+  height: var(--orb-size);
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+.orb-body,
+.orb-ring,
+.orb-halo,
+.orb-specular {
+  position: absolute;
+  inset: 0;
+  border-radius: 38% / 42%;
+}
+
+.orb-halo {
+  inset: -12%;
+  background: radial-gradient(ellipse 80% 70% at 50% 55%, var(--glow), transparent 68%);
+  filter: blur(5px);
+  animation: halo-breathe 4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.orb-ring {
+  inset: -4%;
+  background: conic-gradient(from 210deg, transparent, var(--accent-hot), var(--accent), transparent);
+  opacity: 0.5;
+  animation: ring-spin 8s linear infinite;
+  mask: radial-gradient(transparent 58%, #000 60%, #000 68%, transparent 70%);
+  -webkit-mask: radial-gradient(transparent 58%, #000 60%, #000 68%, transparent 70%);
+  pointer-events: none;
+}
+
+.orb-body {
+  background:
+    radial-gradient(ellipse 90% 70% at 30% 18%, oklch(100% 0 0 / 0.18), transparent 50%),
+    linear-gradient(155deg, oklch(58% 0.2 250), oklch(48% 0.17 265));
+  box-shadow:
+    0 8px 22px oklch(0% 0 0 / 0.35),
+    0 2px 6px oklch(58% 0.2 250 / 0.35);
+  overflow: hidden;
+}
+
+body:not(.expanded) .orb-body {
+  animation: orb-float 5s ease-in-out infinite;
+}
+
+.orb-specular {
+  inset: 8% 18% auto 18%;
+  height: 30%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, oklch(100% 0 0 / 0.28), transparent);
+  pointer-events: none;
+}
+
+.orb-chevron {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.2rem;
+  color: white;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+body.expanded .orb-chevron {
+  opacity: 1;
+}
+
+body.expanded .mascot {
+  opacity: 0;
+}
+
+.mascot {
+  position: absolute;
+  inset: 20% 24% 24% 24%;
+  transition: opacity 0.2s ease;
+}
+
+.mascot-helmet {
+  position: absolute;
+  inset: 0;
+  border-radius: 45% 45% 38% 38%;
+  background: linear-gradient(160deg, oklch(68% 0.1 230), oklch(52% 0.08 255));
+}
+
+.mascot-visor {
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  top: 30%;
+  height: 36%;
+  border-radius: 40%;
+  background: linear-gradient(180deg, oklch(88% 0.12 205), oklch(62% 0.14 230));
+}
+
+.mascot-eye {
+  position: absolute;
+  top: 40%;
+  width: 16%;
+  height: 18%;
+  border-radius: 50%;
+  background: oklch(20% 0.02 250);
+  animation: blink 5.5s ease-in-out infinite;
+}
+
+.mascot-eye--l { left: 24%; }
+.mascot-eye--r { right: 24%; }
+
+.mascot-antenna {
+  display: none;
+}
+
+/* ── Ring states ── */
+
+.orb[data-state='thinking'] .orb-ring {
+  opacity: 0.9;
+  animation: ring-spin 1.4s linear infinite;
+}
+
+.orb[data-state='delegating'] .orb-ring {
+  animation: ring-spin 0.9s linear infinite;
+}
+
+.orb[data-state='needs-input'] .orb-halo {
+  background: radial-gradient(ellipse 80% 70% at 50% 55%, oklch(78% 0.16 75 / 0.5), transparent 68%);
+}
+
+/* collapsed: hide popup content from layout */
+body:not(.expanded) .popup {
+  display: none;
+}
+
+body.expanded .popup {
+  display: flex;
+}
+
+body:not(.expanded) .dock {
+  padding: 0;
+  width: 48px;
+  height: 48px;
+  overflow: visible;
+  justify-content: flex-end;
+  align-items: flex-start;
+}
+
+body:not(.expanded) .fab-row {
+  width: 48px;
+  height: 48px;
+}
+
+body:not(.expanded) .orb-body,
+body:not(.expanded) .orb-ring,
+body:not(.expanded) .orb-halo,
+body:not(.expanded) .orb-specular {
+  border-radius: 50%;
+}
+
+body:not(.expanded) .orb-halo {
+  inset: -8%;
+}
+
+@keyframes orb-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes halo-breathe {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@keyframes ring-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes blink {
+  0%, 44%, 48%, 100% { transform: scaleY(1); }
+  46% { transform: scaleY(0.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb-halo,
+  .orb-ring,
+  .orb-body,
+  .mascot-eye,
+  .mascot-antenna::after {
+    animation: none !important;
+  }
+  .popup {
+    transition: none;
+  }
+}

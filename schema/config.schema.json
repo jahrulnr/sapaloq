@@ -1,0 +1,841 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sapaloq.local/config.schema.json",
+  "title": "SapaLOQConfig",
+  "description": "Agent-editable config. No settings UI — orchestrator or /settings sub-agent mutates this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "default": "1.0.0"
+    },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "updatedBy": {
+      "type": "string",
+      "description": "agent id that last wrote config (e.g. orchestrator, sub-agent:settings)"
+    },
+
+    "runtime": {
+      "type": "object",
+      "description": "Single-binary Go — no external broker/cache deps",
+      "properties": {
+        "singleBinary": {
+          "type": "boolean",
+          "const": true,
+          "description": "sapaloq-core only; informational lock"
+        },
+        "binaryName": { "type": "string", "default": "sapaloq-core" },
+        "dataDir": { "type": "string", "default": "~/.config/sapaloq" }
+      }
+    },
+
+    "driver": {
+      "type": "object",
+      "description": "Modular OS/DE driver selection + os.json cache — see DRIVER.md",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["auto", "manual"],
+          "default": "auto"
+        },
+        "override": {
+          "type": ["string", "null"],
+          "enum": ["gnome", "kde", "freedesktop", "windows", "headless", null],
+          "default": null,
+          "description": "Force driver when mode=manual or auto picks wrong"
+        },
+        "osJsonPath": {
+          "type": "string",
+          "default": "~/.config/sapaloq/os.json"
+        },
+        "backupDir": {
+          "type": "string",
+          "default": "~/.config/sapaloq/cache"
+        },
+        "rescanOnFingerprintMismatch": { "type": "boolean", "default": true },
+        "backupOnRescan": { "type": "boolean", "default": true },
+        "detectOrder": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["gnome", "kde", "freedesktop", "windows", "headless"]
+        },
+        "capabilitiesRequired": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "notify",
+              "notify.watch",
+              "screenshot",
+              "window.list",
+              "window.focus",
+              "clipboard",
+              "dnd",
+              "tray"
+            ]
+          },
+          "default": ["notify", "notify.watch"]
+        }
+      }
+    },
+
+    "llmBridge": {
+      "type": "object",
+      "description": "LLM brain bridge driver — see BRIDGE.md. Separate from platform driver (os.json).",
+      "additionalProperties": false,
+      "properties": {
+        "driver": {
+          "type": "string",
+          "enum": [
+            "cursor-bridge",
+            "openai-compat",
+            "claude-compat",
+            "local-llama",
+            "custom"
+          ],
+          "default": "local-llama",
+          "description": "Active LLM bridge driver. cursor-bridge = Cursor API contract with tool poisoning handling."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Base URL for remote API (ignored for local-llama)"
+        },
+        "model": { "type": "string" },
+        "parsers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tools": {
+              "type": "string",
+              "enum": ["auto", "openai", "claude", "kimi", "cursor"],
+              "default": "auto"
+            },
+            "thinking": {
+              "type": "string",
+              "enum": ["auto", "openai", "claude", "kimi", "cursor"],
+              "default": "auto"
+            }
+          }
+        },
+        "credentialsEnv": {
+          "type": "string",
+          "description": "Env var name for API token — never store secret in config.json"
+        },
+        "coercion": {
+          "type": "object",
+          "description": "Fake-tool sanitizer for cursor-like backends — see cursor-bridge schema",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "schemaPath": {
+              "type": "string",
+              "default": "~/.config/sapaloq/bridge/cursor-bridge.schema.json"
+            }
+          }
+        },
+        "fallback": {
+          "type": "object",
+          "properties": {
+            "driver": {
+              "type": "string",
+              "enum": ["local-llama", "openai-compat", "claude-compat"]
+            },
+            "on": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["auth_error", "offline", "rate_limit", "timeout"]
+              }
+            }
+          }
+        },
+        "communityBridge": {
+          "type": "object",
+          "description": "Optional third-party bridge binary path — not 9router; user/community supplied",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "command": { "type": "string" },
+            "protocol": {
+              "type": "string",
+              "enum": ["openai-compat", "claude-compat", "cursor-like", "custom"]
+            }
+          }
+        }
+      }
+    },
+
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "read": {
+          "type": "boolean",
+          "description": "Read aloud / TTS incoming notification summaries",
+          "default": false
+        },
+        "showPreview": { "type": "boolean", "default": true },
+        "dndRespect": { "type": "boolean", "default": true },
+        "rateLimitPerMinute": { "type": "integer", "minimum": 0, "default": 6 }
+      }
+    },
+
+    "widget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ringAnimations": { "type": "boolean", "default": true },
+        "soundEffects": { "type": "boolean", "default": false },
+        "mirrorSubAgentActivity": { "type": "boolean", "default": true },
+        "chatHistoryMaxLines": { "type": "integer", "minimum": 50, "default": 500 }
+      },
+      "description": "Visual-only prefs. Position/theme stay in widget/position.json — not agent-edited unless asked."
+    },
+
+    "orchestrator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxConcurrentSubAgents": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
+        "defaultMode": {
+          "type": "string",
+          "enum": ["personal", "hobby", "work", "auto"],
+          "default": "auto"
+        },
+        "antiContextPoisoning": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "requireExplicitTaskSwitch": { "type": "boolean", "default": true },
+            "blockNewTaskUntilParkOrDone": { "type": "boolean", "default": true },
+            "parkInactiveAfterMinutes": { "type": "integer", "minimum": 1, "default": 30 }
+          }
+        },
+        "autoSpawn": {
+          "type": "object",
+          "properties": {
+            "memoryJanitor": { "type": "boolean", "default": true },
+            "contextScaler": { "type": "boolean", "default": true },
+            "boundaryGuard": { "type": "boolean", "default": true }
+          }
+        },
+        "progressStreaming": {
+          "type": "object",
+          "description": "Orchestrator watches sub-agent progress without blocking",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "mirrorToWidget": { "type": "boolean", "default": true },
+            "tailEventsOnAsk": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100,
+              "default": 10,
+              "description": "How many recent progress events orchestrator may read when user asks status"
+            },
+            "includeThinkingInMirror": { "type": "boolean", "default": true },
+            "includeTodosInMirror": { "type": "boolean", "default": true }
+          }
+        },
+        "completion": {
+          "type": "object",
+          "description": "How orchestrator learns sub-agent finished",
+          "properties": {
+            "trigger": {
+              "type": "string",
+              "enum": ["event", "heartbeat", "both"],
+              "default": "both",
+              "description": "event=bus/inotify primary; heartbeat=stale fallback"
+            },
+            "heartbeatIntervalSec": {
+              "type": "integer",
+              "minimum": 5,
+              "default": 60,
+              "description": "Watchdog when wakeViaBus; not primary event path"
+            },
+            "staleAfterSec": { "type": "integer", "minimum": 30, "default": 120 },
+            "requireTerminalEvent": { "type": "boolean", "default": true },
+            "notifyUserOnDone": { "type": "boolean", "default": false }
+          }
+        },
+        "clarification": {
+          "type": "object",
+          "description": "Sub-agent unclear decision → orchestrator Q&A → optional user forward",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "autoAnswerMinConfidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.75,
+              "description": "Orchestrator answers without user when confidence at or above this"
+            },
+            "orchestratorMaxAutoAnswers": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 2,
+              "description": "After N auto-answers per task, force forward to user"
+            },
+            "forwardToUserByDefault": {
+              "type": "boolean",
+              "default": false,
+              "description": "If true, always ask user unless policy autoAnswerOnlyForNonBlocking"
+            },
+            "userTimeoutSec": { "type": "integer", "minimum": 30, "default": 300 },
+            "defaultOnTimeout": {
+              "type": "string",
+              "enum": ["park", "fail", "orchestrator_best_guess"],
+              "default": "park"
+            },
+            "notifyUserOnForward": { "type": "boolean", "default": true },
+            "widgetQuickReplyOptions": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show option buttons when sub-agent provides options[]"
+            }
+          }
+        },
+        "spawnRouting": {
+          "type": "object",
+          "description": "Ask orchestrator scores Plan vs direct Agent spawn — see ORCHESTRATOR.md#execution-modes-ask--plan--agent",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "planScoreThreshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.55,
+              "description": "At or above: prefer spawn planner before agent"
+            },
+            "directAgentScoreThreshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.7,
+              "description": "At or above with plan below threshold: spawn task-runner directly"
+            },
+            "autoApprovePlan": {
+              "type": "boolean",
+              "default": false,
+              "description": "Skip user plan review before agent spawn"
+            },
+            "agentToolPolicy": {
+              "type": "string",
+              "enum": ["full"],
+              "default": "full",
+              "description": "task-runner default — non-restricted; Ask+Plan already scoped the task"
+            },
+            "fastPathExemptRoles": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["scribe", "settings"],
+              "description": "Roles that may bypass maxConcurrentSubAgents when fast"
+            }
+          }
+        },
+        "subAgentControl": {
+          "type": "object",
+          "description": "Orchestrator lifecycle control for sub-agents bound to tasks",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "ackTimeoutSec": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 10,
+              "description": "Sub-agent must ack pause/stop within this window"
+            },
+            "stopGraceSec": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 30,
+              "description": "Cooperative stop grace before force kill on delete"
+            },
+            "maxScheduledPerTask": { "type": "integer", "minimum": 0, "default": 5 },
+            "maxDelaySec": {
+              "type": "integer",
+              "minimum": 60,
+              "default": 604800,
+              "description": "Max delay_start horizon (default 7 days)"
+            },
+            "progressRetention": {
+              "type": "string",
+              "enum": ["archive", "keep", "delete"],
+              "default": "archive",
+              "description": "On delete: move progress jsonl to archive/ or delete"
+            },
+            "allowNaturalLanguageControl": { "type": "boolean", "default": true }
+          }
+        }
+      }
+    },
+
+    "context": {
+      "type": "object",
+      "description": "Efficient context ingress, dynamic prompt, anti-deep-check",
+      "properties": {
+        "maxPromptTokens": { "type": "integer", "minimum": 500, "maximum": 32000, "default": 4000 },
+        "prefetchConfidenceThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.7,
+          "description": "At or above: skip filesystem exploration"
+        },
+        "antiDeepCheck": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "maxExploreFiles": { "type": "integer", "minimum": 0, "default": 3 },
+            "maxExploreToolCalls": { "type": "integer", "minimum": 0, "default": 2 },
+            "exploreBudgetSec": { "type": "integer", "minimum": 5, "default": 30 },
+            "reloadFromIndexOnCompaction": { "type": "boolean", "default": true }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "useIntentRouter": { "type": "boolean", "default": true },
+            "heuristicBeforeLlm": { "type": "boolean", "default": true },
+            "maxPrefetchFacts": { "type": "integer", "minimum": 1, "default": 12 }
+          }
+        },
+        "dynamicPrompt": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "slicesPath": { "type": "string", "default": "~/.config/sapaloq/prompt/slices" },
+            "corePath": { "type": "string", "default": "~/.config/sapaloq/prompt/core.md" }
+          }
+        }
+      }
+    },
+
+    "memory": {
+      "type": "object",
+      "description": "SQLite + in-memory hot cache — no Redis",
+      "properties": {
+        "index": {
+          "type": "object",
+          "properties": {
+            "dbPath": { "type": "string", "default": "~/.config/sapaloq/memory/companion.db" },
+            "filesMirrorPath": {
+              "type": "string",
+              "default": "~/.config/sapaloq/memory/files",
+              "description": "Optional markdown mirror for human/agent append"
+            },
+            "ftsEnabled": { "type": "boolean", "default": true },
+            "syncOnBoot": { "type": "boolean", "default": true },
+            "inotifySync": { "type": "boolean", "default": true }
+          }
+        },
+        "hotCache": {
+          "type": "object",
+          "description": "In-process LRU inside sapaloq-core; optional SQLite mirror table",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "ttlSec": { "type": "integer", "minimum": 60, "default": 300 },
+            "maxEntries": { "type": "integer", "minimum": 100, "default": 2048 },
+            "persistToSqlite": {
+              "type": "boolean",
+              "default": false,
+              "description": "Mirror hot_cache table in companion.db for restart warm-up"
+            }
+          }
+        }
+      }
+    },
+
+    "nodes": {
+      "type": "object",
+      "description": "Sub-agent node registry — SQLite table + comm spec files",
+      "properties": {
+        "commSpecDirectory": {
+          "type": "string",
+          "default": "~/.config/sapaloq/nodes",
+          "description": "SKILL-like how-to communicate per node (comm_spec_path)"
+        },
+        "defaultLocalNode": { "type": "string", "default": "local-default" },
+        "requireTlsRemote": { "type": "boolean", "default": true },
+        "allowRemoteRoles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["scribe", "research", "task-runner"]
+        },
+        "healthCheckIntervalSec": { "type": "integer", "minimum": 0, "default": 60 },
+        "fallbackToLocalOnRemoteFail": { "type": "boolean", "default": true },
+        "allowSharedMemoryRemote": {
+          "type": "boolean",
+          "default": false,
+          "description": "NOT recommended. Outer-machine nodes must use context packet only."
+        }
+      }
+    },
+
+    "skills": {
+      "type": "object",
+      "description": "SapaLOQ-local skills registry (indexed, not full dump)",
+      "properties": {
+        "directory": { "type": "string", "default": "~/.config/sapaloq/skills" },
+        "maxLoadPerTurn": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+        "indexOnBoot": { "type": "boolean", "default": true },
+        "allowAgentCreate": { "type": "boolean", "default": true }
+      }
+    },
+
+    "learning": {
+      "type": "object",
+      "description": "Auto-learning: promote facts, tune prefetch, obsolete stale",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "queuePath": {
+          "type": "string",
+          "default": "~/.config/sapaloq/memory/learning-queue.jsonl"
+        },
+        "autoTunePrefetchRules": { "type": "boolean", "default": true },
+        "minSamplesForRuleTune": { "type": "integer", "minimum": 1, "default": 3 },
+        "compactFileLineThreshold": { "type": "integer", "minimum": 100, "default": 300 },
+        "buildOnSuccess": {
+          "type": "boolean",
+          "default": true,
+          "description": "learning-agent runs after successful tasks"
+        },
+        "minRewardToBuild": {
+          "type": "number",
+          "default": 0.5,
+          "description": "Skip post-task skill build below this reward (routine tasks)"
+        },
+        "maxOverlayLines": {
+          "type": "integer",
+          "minimum": 20,
+          "default": 80,
+          "description": "Compact roles.d overlay into skill when exceeded"
+        },
+        "research": {
+          "type": "object",
+          "description": "Async web research for best practices — not every turn",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "maxSourcesPerTask": { "type": "integer", "minimum": 1, "maximum": 10, "default": 3 },
+            "cacheTtlHours": { "type": "integer", "minimum": 1, "default": 168 },
+            "requireSourceUrl": { "type": "boolean", "default": true },
+            "spawnOnNovelIntent": { "type": "boolean", "default": true },
+            "spawnOnRepeatedFailure": { "type": "integer", "minimum": 2, "default": 2 },
+            "rateLimitPerHour": { "type": "integer", "minimum": 1, "default": 10 },
+            "timeoutSec": { "type": "integer", "minimum": 30, "default": 120, "description": "Max wall time per research sub-agent run" }
+          }
+        },
+        "telemetry": {
+          "type": "object",
+          "properties": {
+            "logPrefetch": { "type": "boolean", "default": true },
+            "logDeepCheckOverrides": { "type": "boolean", "default": true }
+          }
+        }
+      }
+    },
+
+    "prompts": {
+      "type": "object",
+      "description": "Role templates and post-task overlay paths for system-prompt assembly",
+      "properties": {
+        "rolesPath": { "type": "string", "default": "~/.config/sapaloq/prompt/roles" },
+        "rolesOverlayPath": {
+          "type": "string",
+          "default": "~/.config/sapaloq/prompt/roles.d",
+          "description": "Auto-generated overlays from learning-agent"
+        },
+        "assembleOnSpawn": { "type": "boolean", "default": true },
+        "maxRolePromptTokens": { "type": "integer", "minimum": 500, "default": 2500 },
+        "includeOverlayByDefault": { "type": "boolean", "default": true }
+      }
+    },
+
+    "feedback": {
+      "type": "object",
+      "description": "Reward/penalty signals + positive/negative behavioral slices (RL-inspired, not weight training)",
+      "properties": {
+        "explicitSignalsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Widget thumbs up/down and verbal corrections"
+        },
+        "implicitSignalsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Telemetry rewards from prefetch_log and task outcomes"
+        },
+        "maxPositiveSlicesPerTurn": { "type": "integer", "minimum": 0, "maximum": 3, "default": 1 },
+        "maxNegativeSlicesPerTurn": { "type": "integer", "minimum": 0, "maximum": 3, "default": 1 },
+        "positiveSlicesPath": { "type": "string", "default": "~/.config/sapaloq/prompt/positive" },
+        "negativeSlicesPath": { "type": "string", "default": "~/.config/sapaloq/prompt/negative" },
+        "banditTunePrefetch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Contextual bandit on prefetch_rules.success_rate — lightweight RL"
+        },
+        "penaltyRequiresStructuredExtract": {
+          "type": "boolean",
+          "default": true,
+          "description": "memory-janitor must extract do_not_repeat, not store raw rant"
+        },
+        "reaskPenaltyWeight": { "type": "number", "default": -0.5 },
+        "thumbsDownWeight": { "type": "number", "default": -1 },
+        "thumbsUpWeight": { "type": "number", "default": 1 }
+      }
+    },
+
+    "events": {
+      "type": "object",
+      "description": "GNOME + custom event watchers → unified event bus",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "globalRateLimitPerMinute": { "type": "integer", "minimum": 0, "default": 30 },
+        "busPath": {
+          "type": "string",
+          "default": "~/.config/sapaloq/memory/events.jsonl"
+        },
+        "bus": {
+          "type": "object",
+          "description": "In-process event bus (internal/bus) — same sapaloq-core binary",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "wakeViaBus": {
+              "type": "boolean",
+              "default": true,
+              "description": "Route watchers for wake; heartbeat is watchdog only"
+            },
+            "socketPath": {
+              "type": "string",
+              "default": "~/.config/sapaloq/run/sapaloq.sock"
+            },
+            "watcherBufferSize": {
+              "type": "integer",
+              "minimum": 8,
+              "default": 64
+            },
+            "topicPrefix": { "type": "string", "default": "sapaloq.v1" },
+            "dedupeEvents": { "type": "boolean", "default": true },
+            "replayOnBoot": { "type": "boolean", "default": true }
+          }
+        },
+        "watchers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "enabled": { "type": "boolean", "default": true },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "gnome.notification",
+                  "platform.notification",
+                  "gnome.focus",
+                  "platform.focus",
+                  "custom.reminder",
+                  "custom.email",
+                  "custom.webhook",
+                  "custom.file",
+                  "internal.subagent"
+                ]
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["personal", "hobby", "work", "any"],
+                "default": "any"
+              },
+              "schedule": {
+                "type": "string",
+                "description": "Cron expression for custom.reminder"
+              },
+              "filters": {
+                "type": "object",
+                "properties": {
+                  "apps": { "type": "array", "items": { "type": "string" } },
+                  "ignoreSilent": { "type": "boolean", "default": true },
+                  "keywords": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              "rateLimitPerMinute": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Per-watcher cap; 0 = use global only"
+              },
+              "payload": {
+                "type": "object",
+                "description": "Static payload for custom sources"
+              },
+              "action": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["orchestrator", "notify_user", "spawn_subagent", "log_only"]
+                  },
+                  "spawnSubAgent": { "type": "string", "description": "Role id from subAgents.roles" },
+                  "template": { "type": "string", "description": "Prompt template with {{placeholders}}" },
+                  "priority": { "type": "string", "enum": ["low", "normal", "high"] }
+                },
+                "required": ["type"]
+              }
+            },
+            "required": ["id", "source", "action"]
+          }
+        }
+      }
+    },
+
+    "modes": {
+      "type": "object",
+      "description": "Boundary definitions: personal / hobby / work",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "label": { "type": "string" },
+          "storageRoot": { "type": "string", "description": "Absolute path root for this mode" },
+          "allowedApps": { "type": "array", "items": { "type": "string" } },
+          "memoryNamespace": { "type": "string" },
+          "allowCrossModeRead": { "type": "boolean", "default": false }
+        },
+        "required": ["label", "storageRoot", "memoryNamespace"]
+      },
+      "default": {
+        "personal": {
+          "label": "Personal",
+          "storageRoot": "~/Documents/sapaloq/personal",
+          "memoryNamespace": "personal",
+          "allowCrossModeRead": false
+        },
+        "hobby": {
+          "label": "Hobby",
+          "storageRoot": "~/Documents/sapaloq/hobby",
+          "memoryNamespace": "hobby",
+          "allowCrossModeRead": false
+        },
+        "work": {
+          "label": "Work",
+          "storageRoot": "~/Documents/sapaloq/work",
+          "memoryNamespace": "work",
+          "allowCrossModeRead": false
+        }
+      }
+    },
+
+    "storage": {
+      "type": "object",
+      "description": "Indexed paths & intent → file mapping for sub-agent delegation",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "path": { "type": "string" },
+              "mode": { "type": "string", "enum": ["personal", "hobby", "work", "any"] },
+              "kind": {
+                "type": "string",
+                "enum": ["notes", "journal", "inbox", "archive", "project", "custom"]
+              },
+              "description": { "type": "string" }
+            },
+            "required": ["id", "path", "kind"]
+          }
+        },
+        "intents": {
+          "type": "object",
+          "description": "Natural-language intent keys → path id",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
+    "apps": {
+      "type": "object",
+      "description": "Indexed applications for focus/automation",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "desktopId": { "type": "string", "description": ".desktop name or wm class" },
+              "mode": { "type": "string", "enum": ["personal", "hobby", "work", "any"] },
+              "launchCommand": { "type": "string" }
+            },
+            "required": ["id", "name"]
+          }
+        }
+      }
+    },
+
+    "subAgents": {
+      "type": "object",
+      "description": "Role templates for spawned sub-agents",
+      "properties": {
+        "roles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "description": { "type": "string" },
+              "allowedTools": { "type": "array", "items": { "type": "string" } },
+              "maxTurns": { "type": "integer" },
+              "canEditConfig": { "type": "boolean", "default": false },
+              "toolPolicy": {
+                "type": "string",
+                "enum": ["read_only", "full", "companion"],
+                "description": "planner=read_only; task-runner=full; orchestrator=companion"
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "commands": {
+      "type": "object",
+      "description": "Slash commands handled by orchestrator",
+      "properties": {
+        "settings": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "spawnDedicatedSubAgent": { "type": "boolean", "default": true },
+            "allowedPaths": {
+              "type": "array",
+              "description": "JSON pointer prefixes sub-agent may write",
+              "items": { "type": "string" },
+              "default": [
+                "/notifications",
+                "/widget",
+                "/orchestrator/autoSpawn",
+                "/orchestrator/progressStreaming",
+                "/orchestrator/completion",
+                "/orchestrator/clarification",
+                "/orchestrator/spawnRouting",
+                "/orchestrator/subAgentControl",
+                "/context",
+                "/memory",
+                "/skills",
+                "/prompts",
+                "/learning",
+                "/feedback",
+                "/events",
+                "/events/bus",
+                "/nodes",
+                "/driver",
+                "/runtime",
+                "/storage",
+                "/apps"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": ["schemaVersion", "notifications", "modes", "storage"]
+}

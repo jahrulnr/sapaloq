@@ -1,0 +1,29 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/vendor/
+
+# Wails widget
+cmd/sapaloq-widget/build/bin/
+cmd/sapaloq-widget/frontend/node_modules/
+cmd/sapaloq-widget/frontend/dist/
+
+# Local runtime / sockets
+*.sock
+companion.db
+*.db-journal
+
+# Archives & spikes (do not commit)
+*.zip
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
