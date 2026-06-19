@@ -145,14 +145,18 @@ Args format:
 
 **Auto/default:** `toolCallsCount: 0` di protobuf + Kimi inline di text = **normal**, bukan parse failure.
 
-### 3. Tool catalog "leak" (poisoning — bukan callable tool)
+### 3. Tool names in thinking (informational — not vaulted)
 
-Model sometimes dumps tool schemas / native names in **thinking** (pre-tag), especially when `tools[]` not declared to api2:
+Model often mentions native tool names (`grep`, `read_file`, …) in **thinking** (pre-tag). That is **normal** — SapaLOQ streams thinking as-is and does **not** filter prose.
 
-- `thinkingOnlyHeuristic`: `thinkingLen > 0 && contentLen === 0`
-- Leak scan harus `combineAssistantText(content, thinking)` — **content-only audit miss**
+Structured tool calls are separate:
 
-`cursor-bridge` `analyzeLeak` + `leakMarkers` / `nativeTools` — bukan executable tool calls.
+- Protobuf `TOOL_CALL` frames
+- Kimi inline markers after response segment
+
+Calls outside `llmBridge.declaredTools` → **`vault/tool-calls.jsonl`** for review (alias fixes, surface expansion). See [BRIDGE.md](./BRIDGE.md#vault-undeclared-tool-calls).
+
+Schema `leakMarkers` in cursor-bridge monorepo remain reference material for upstream audits — **SapaLOQ runtime does not use them as filters**.
 
 ---
 
@@ -206,7 +210,7 @@ Schema: `cursor-bridge.schema.json` → `clients.cursorAgent.tools` + `bundledMc
 1. Preserve **dual channel** (`thinking` vs `content`) sampai parser layer
 2. Stream pre-tag ke widget ring (optional `--show-thinking` parity)
 3. Parse Kimi inline dari **gabungan** thinking+content setelah segment split
-4. Leak-detect on `content + thinking`, bukan content saja
+4. Vault structured calls outside `declaredTools`; do **not** filter thinking prose for tool names
 
 9router boleh tetap referensi untuk **Kimi arg normalization** (`normalizeCursorToolCallArguments`) — bukan thinking lifecycle.
 
@@ -259,7 +263,8 @@ flowchart TD
 |----|--------|
 | `auto-thinking-only` | `content=""`, `thinking>0`, no false empty completion |
 | `auto-kimi-inline` | `toolCallsCount=0` + inline markers → parsed tools |
-| `thinking-leak-pre-tag` | Native tool names in pre-tag → leak detected, not executed |
+| `thinking-leak-pre-tag` | Native tool names in pre-tag thinking stream unchanged (no collapse) |
+| `vault-undeclared` | Structured call outside `declaredTools` → JSONL row, stream continues |
 | `proto-tool-call` | Frame TOOL_CALL → structured tool without Kimi parse |
 | `post-tag-visible` | Text after `</think>` → user content |
 | `no-9router-collapse` | Pre-tag preserved in thinking channel until explicit strip |
@@ -273,7 +278,7 @@ Vectors live: `cursor-bridge/schema/test-vectors/` + probe reports in monorepo.
 | Idea | Why |
 |------|-----|
 | Derive thinking behavior from 9router | Skips channel — documented above |
-| Treat `content` only for tool leak audit | Leaks live in thinking |
+| Treat `content` only for tool leak audit | Structured calls + vault; thinking prose is fine |
 | Assume Auto emits OpenAI `tool_calls[]` | Kimi inline is normal |
 | Store pre-tag thinking in companion memory | Privacy + poisoning — ring/stream only unless user opts in |
 

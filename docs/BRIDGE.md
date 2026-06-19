@@ -36,20 +36,55 @@ Platform driver = desktop automation. LLM bridge driver = **companion brain** + 
 
 ## cursor-bridge sebagai driver resmi
 
-**cursor-bridge** bukan dependency runtime ke repo `jahrulnr/cursor-bridge` atau 9router — SapaLOQ **mengadopsi kontrak** (schema, coercion, leak markers) sebagai driver built-in.
+**cursor-bridge** bukan dependency runtime ke repo `jahrulnr/cursor-bridge` atau 9router — SapaLOQ **mengadopsi kontrak** (schema, aliases, coercion) sebagai driver built-in.
 
 | | SapaLOQ | cursor-bridge monorepo | 9router |
 |--|---------|------------------------|---------|
 | Role | Runtime driver di `sapaloq-core` | Source of truth schema + test vectors | Legacy proxy pattern (referensi transport) |
 | Dependency | Embed/sync schema at build | Dev reference | **Tidak** third-party dep |
-| Tool poisoning | Parser + sanitizer layer | `leakMarkers`, nativeTools | Partial (transport only) |
+| Unknown tool calls | **Vault** JSONL review log | Schema aliases + test vectors | Partial (transport only) |
+| Thinking text | Stream as-is; no leak filter | `leakMarkers` in schema (reference only) | Collapses pre-tag thinking |
 
 Reference artifacts (dev / regen):
 
-- `cursor-bridge.schema.json` — aliases, leak markers, coercion maps
+- `cursor-bridge.schema.json` — aliases, nativeTools, kimiTokens, coercion maps
 - `cursor-agent-toolcall-spec.json` — 49 ToolCall variants (mirror UI only)
 
-Orchestrator & sub-agents call unified interface `bridge.Completion()` — driver handles wire format.
+Orchestrator & sub-agents call unified interface `bridge.Complete()` — driver handles wire format.
+
+---
+
+## Vault (undeclared tool calls)
+
+When Cursor or another provider emits a **structured tool call** (protobuf `TOOL_CALL` or Kimi inline) that is not on the companion **declared surface**, SapaLOQ appends a JSONL row — **no blocking**, stream continues.
+
+**Path:** `~/.config/sapaloq/vault/tool-calls.jsonl`
+
+**CLI:**
+
+```bash
+sapaloq-core vault list --limit 20
+sapaloq-core vault stats
+```
+
+| `reason` | Meaning |
+|----------|---------|
+| `undeclared` | Resolved name known upstream but not in `llmBridge.declaredTools` |
+| `unknown_upstream` | Name not in schema `nativeTools` + aliases (truly foreign) |
+
+**Not vaulted:** tool names mentioned in thinking or chat text — aliases already group upstream names internally; filtering prose is unnecessary.
+
+**Workflow:** run companion → review vault → add alias or extend `declaredTools` → regen schema from [cursor-bridge](https://github.com/jahrulnr/cursor-bridge) if needed.
+
+```json
+{
+  "llmBridge": {
+    "declaredTools": ["read_file", "grep", "glob_file_search"]
+  }
+}
+```
+
+Empty `declaredTools` → vault only `unknown_upstream` calls.
 
 ---
 
@@ -77,9 +112,9 @@ Next development **may** ship first-party bridges dengan pola mirip 9router (Ope
 | **Cursor API** | **Yes** | Fake names (`dir_list`, `file_write`, …) → need coercion |
 | **Kimi** (via Cursor path) | **Yes** | Inline tokens + different inline format |
 | Gemini (some paths) | **Possible** | Treat as cursor-like until probed |
-| Copilot VSCode / similar IDE agents | **Possible** | May leak non-native tool names — use cursor-like sanitizer |
+| Copilot VSCode / similar IDE agents | **Possible** | Vault unknown calls; coerce via cursor-like aliases |
 
-**boundary-guard** + **context-scaler** tetap jalan di atas parsed tool calls — poisoning = wire-format problem, bukan orchestrator problem.
+**boundary-guard** + **context-scaler** tetap jalan di atas parsed tool calls — wire-format aliasing + vault review, bukan prose filtering di thinking channel.
 
 ---
 
@@ -205,6 +240,7 @@ func init() { bridge.Register(&CursorBridgeFactory{}) }
       "thinking": "cursor"
     },
     "credentialsEnv": "SAPALOQ_CURSOR_TOKEN",
+    "declaredTools": ["read_file", "grep", "glob_file_search"],
     "coercion": {
       "enabled": true,
       "schemaPath": "~/.config/sapaloq/bridge/cursor-bridge.schema.json"
@@ -220,13 +256,109 @@ func init() { bridge.Register(&CursorBridgeFactory{}) }
 | Key | Purpose |
 |-----|---------|
 | `driver` | Active LLM bridge driver ID |
+| `declaredTools` | Companion tool surface; calls outside → vault log |
 | `parsers.tools` / `parsers.thinking` | Override auto parser |
-| `coercion.enabled` | Fake-tool sanitizer (cursor-like drivers) |
+| `coercion.enabled` | Alias fake tool names to canonical (cursor-like drivers) |
 | `fallback` | Offline / auth fail → local brain |
 
-Credentials **never** in config.json — env or secret file path only.
+Credentials **never** in config.json — env, `.env`, or IDE `state.vscdb` only.
+
+### Credentials
+
+Autoload priority (ported from `@cursor-bridge/credential-loader`):
+
+1. `SAPALOQ_CURSOR_TOKEN` or `CURSOR_ACCESS_TOKEN` + optional `CURSOR_MACHINE_ID` in process env
+2. `.env` in cwd, then `~/.config/sapaloq/.env`
+3. `~/.config/Cursor/User/globalStorage/state.vscdb` (`cursorAuth/accessToken`, `storage.serviceMachineId`)
+
+Override vscdb path: `CURSOR_STATE_VSCDB`. Ghost mode default on unless `CURSOR_GHOST_MODE=false`.
+
+`sapaloq-core doctor` prints credential source. Mock stream when autoload finds no token.
 
 Agent may `/settings set llmBridge.driver openai-compat` — no settings UI.
+
+### Wire driver selection
+
+The cursor bridge ships **two HTTP/2 wire drivers**. Both produce the same request
+shape (headers + Connect+proto body); they differ in transport. Pick via
+`SAPALOQ_WIRE_DRIVER`:
+
+| Driver | Implementation | Status |
+|--------|----------------|--------|
+| `raw` (default) | `wire.StreamChatRaw` — raw frames via `http2.Framer`, mirrors cursor-proto-lab Node client | Experimental; some api2 responses require further frame-format alignment (current symptom: `FRAME_SIZE_ERROR` goaway or no response). |
+| `http2` | `wire.StreamChat` — Go `net/http` + `http2.Transport` | Stable; surfaces `unauthenticated` cleanly when token rejected, but api2 currently rejects with the same error against valid vscdb tokens. |
+
+Live E2E (`make e2e-live`) accepts either path as long as the bridge emits
+`EventError` instead of a silent `[done]`.
+
+### Agent API path (vision + composer models)
+
+The Agent API (`agent.v1.AgentService/Run` on
+`agentn.global.api5.cursor.sh`) is the endpoint `cursor-agent` uses for chat,
+composer, and vision requests. It accepts a different protobuf envelope than
+the legacy `StreamUnifiedChatWithTools` path, and is the only cursor API that
+supports inline image input.
+
+SapaLOQ automatically routes a request through the Agent API path when:
+
+1. **`SAPALOQ_AGENT_PATH=1`** — explicit operator override (used by tests).
+2. **Vision content** — any message contains `data:image/...` (inline base64)
+   or an `http(s)://....png|jpg|jpeg|gif|webp` URL.
+
+The encoder/decoder live in `internal/bridges/cursor/wire/proto_agent.go`
+(field numbers pinned from cursor-agent's `agent.proto` descriptor bundle
+2026.06.02-8c11d9f; cross-checked against the Node reference at
+`9router/open-sse/utils/cursorAgentProtobuf.js`). The HTTP/2 driver is the
+same raw-framer transport used for the chat path, with a separate request
+encoder and response decoder:
+
+| Driver (Agent API) | Implementation | Default |
+|--------------------|----------------|---------|
+| `raw` | `wire.StreamAgentRawWithRaw` — raw frames; mirrors `cursorAgent.js` byte-for-byte | Production |
+| `http2` | `wire.StreamAgentHTTP2` — stdlib `http.Client` + `http2.Transport` | Set via `SAPALOQ_AGENT_WIRE_DRIVER=http2` (used by unit tests against httptest mocks) |
+
+Override the host with `CURSOR_AGENT_HOST` and the path with `CURSOR_AGENT_PATH`
+(defaults: `agentn.global.api5.cursor.sh` + `/agent.v1.AgentService/Run`). Use
+`SAPALOQ_WIRE_INSECURE_TLS=1` to skip certificate verification when targeting
+self-signed test servers.
+
+Live E2E: `make e2e-live SAPALOQ_AGENT_PATH=1` exercises the Agent API path
+end-to-end against `api5.cursor.sh`. Currently surfaces `rst_stream code=1`
+from the real server — same byte-level frame alignment work as the chat
+path; vision encoder/decoder contract is independently verified by the
+unit tests.
+
+#### Privacy vs non-privacy Agent host
+
+Cursor maintains two Agent API hosts: the **non-privacy** host
+(`agentn.global.api5.cursor.sh`) is the default and accepts usage
+telemetry; the **privacy** host (`agent.global.api5.cursor.sh`) is
+selected when the user has ghostMode enabled in their Cursor config
+(`CURSOR_GHOST_MODE` is not equal to `false`).
+
+`wire.AgentHost(creds.GhostMode)` returns the correct hostname and
+`streamLiveAgent` consults it before dialing. Operators can still force
+either with `CURSOR_AGENT_HOST=...`. This mirrors
+`9router/src/lib/oauth/constants/oauth.js` which defines both
+`agentEndpoint` and `agentNonPrivacyEndpoint` and picks between them by
+the user's privacy setting.
+
+### Other cursor endpoints
+
+| RPC | Path | Status | Notes |
+|-----|------|--------|-------|
+| Chat | `aiserver.v1.ChatService/StreamUnifiedChatWithTools` | Encoder stable; live returns `unauthenticated` | Same `unauthenticated` issue as the chat HTTP/2 transport — byte-level frame alignment still pending against `api2.cursor.sh`. |
+| Agent (privacy) | `agent.v1.AgentService/Run` (host `agent.global.api5.cursor.sh`) | Routed via `wire.AgentHost(true)` | No telemetry sent to cursor. |
+| Agent (non-privacy) | `agent.v1.AgentService/Run` (host `agentn.global.api5.cursor.sh`) | Routed via `wire.AgentHost(false)` (default) | Default host. |
+| Default model nudge | `aiserver.v1.AiService/GetDefaultModelNudgeData` (host `api2.cursor.sh`) | Stub via `wire.BuildNudgeRequestBody` | 5-byte Connect-RPC unary envelope (1-byte flag + 4-byte length=0). Server picks the default model id; not currently decoded — bridge falls back to the explicit model id supplied by the caller. |
+
+There is no separate "plan" RPC in cursor's API. Plan mode is an
+in-band behaviour triggered by the model id or the `requested_model`
+parameters (e.g. `[{id:"fast", value:"true"}]`); see
+`9router/open-sse/utils/cursorAgentProtobuf.js` →
+`resolveRequestedModel`. SapaLOQ already passes through the model id
+and parameters untouched, so plan-style routing works once the Agent
+API frame alignment is resolved.
 
 ---
 

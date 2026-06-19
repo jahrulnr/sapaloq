@@ -127,6 +127,50 @@ Hard limits without full fix: [LIMITATIONS.md](./LIMITATIONS.md).
 
 ---
 
+## `sapaloq-core` CLI
+
+Headless entrypoint — orchestrator, IPC socket, cursor-bridge brain, vault review.
+
+```bash
+sapaloq-core help
+sapaloq-core --debug run
+sapaloq-core --verbose chat "halo"
+sapaloq-core doctor
+```
+
+Debug output goes to **stderr**; chat events stay on stdout. Env: `SAPALOQ_DEBUG=1`, `SAPALOQ_VERBOSE=1`.
+
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `SAPALOQ_CONFIG` | `~/.config/sapaloq/config.json` | Live config |
+| `SAPALOQ_CURSOR_TOKEN` | — | Cursor bearer token (sapaloq name) |
+| `CURSOR_ACCESS_TOKEN` | — | Same token (cursor-bridge convention) |
+| `CURSOR_MACHINE_ID` | — | Machine id for checksum headers |
+| `CURSOR_STATE_VSCDB` | auto | Override IDE `state.vscdb` path |
+
+Without explicit env vars, `sapaloq-core` autoloads from `.env` then Cursor IDE `state.vscdb` — same priority as [cursor-bridge credential-loader](https://github.com/jahrulnr/cursor-bridge/tree/master/packages/credential-loader).
+
+`chat` output prefixes: `[thinking]`, `[response]`, `[tool]`, `[error]`, `[done]`.
+
+---
+
+## Vault paths
+
+| Path | Writer | Purpose |
+|------|--------|---------|
+| `vault/tool-calls.jsonl` | cursor-bridge (and future drivers) | Undeclared/unknown structured tool calls for alias/surface review |
+
+Review via CLI:
+
+```bash
+sapaloq-core vault stats
+sapaloq-core vault list --limit 50 --json
+```
+
+Vault **does not** filter thinking/chat text — only structured tool calls outside `llmBridge.declaredTools`. See [BRIDGE.md](./BRIDGE.md#vault-undeclared-tool-calls).
+
+---
+
 ## `sapaloq-core doctor` (no-UI recovery)
 
 Minimum CLI for config/infra validation when widget unavailable:
@@ -139,11 +183,20 @@ sapaloq-core doctor --json       # machine-readable exit payload
 
 | Check | Pass criteria |
 |-------|---------------|
-| `config.json` | Validates against `config.schema.json` |
-| `os.json` | Present + adapter caps load |
-| `companion.db` | Open, migrations current, FTS triggers exist |
-| `nodes` | `local-default` row; remote rows `share_memory=0` |
+| `config.json` | Loads; commands registry valid |
+| Runtime dirs | `run/`, `memory/`, `vault/` writable |
 | Socket | `sapaloq.sock` path writable |
-| LLM bridge | `llmBridge.driver` registered; probe optional `--skip-llm` |
+| LLM bridge | Cursor credentials via autoload (`process.env` → `.env` → `state.vscdb`) |
 
-Exit `0` = OK; `1` = fixable warnings; `2` = blocking errors. Full UX spec deferred to M3 — enough for M1 bootstrap gate.
+Planned (M1+): schema validate, `os.json`, `companion.db` migrations, `local-default` node row.
+
+```bash
+sapaloq-core doctor              # current checks
+```
+
+Legacy spec (not all implemented yet):
+
+```bash
+sapaloq-core doctor --fix        # safe auto-fixes only (mkdir, default node row)
+sapaloq-core doctor --json       # machine-readable exit payload
+```

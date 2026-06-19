@@ -103,6 +103,11 @@
           "description": "Base URL for remote API (ignored for local-llama)"
         },
         "model": { "type": "string" },
+        "declaredTools": {
+          "type": "array",
+          "description": "Tool names SapaLOQ companion exposes. Calls outside this surface are appended to vault/tool-calls.jsonl for review.",
+          "items": { "type": "string" }
+        },
         "parsers": {
           "type": "object",
           "additionalProperties": false,
@@ -798,7 +803,30 @@
     "commands": {
       "type": "object",
       "description": "Slash commands handled by orchestrator",
+      "additionalProperties": false,
       "properties": {
+        "triggerChars": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["/"]
+        },
+        "registry": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "prefix": { "type": "string" },
+              "pattern": { "type": "string" },
+              "label": { "type": "string" },
+              "description": { "type": "string" },
+              "category": { "type": "string" },
+              "enabled": { "type": "boolean", "default": true }
+            },
+            "required": ["id", "prefix", "pattern"]
+          }
+        },
         "settings": {
           "type": "object",
           "properties": {

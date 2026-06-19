@@ -40,16 +40,11 @@ Orchestrator: "Notifikasi read-aloud sudah off."
 
 ### Slash commands (orchestrator routes)
 
+MVP command surface hanya `/settings ...`. Semua intent lain tetap natural-language chat dan dirutekan ke cursor-bridge/orchestrator tanpa user-facing slash command tambahan.
+
 | Command | Sub-agent | Mutasi config |
 |---------|-----------|---------------|
 | `/settings ...` | `settings` | paths in `commands.settings.allowedPaths` |
-| `/mode work` | orchestrator | runtime mode only (optional persist) |
-| `/catat ...` | `scribe` | file via `storage.intents`, bukan config |
-| `/tasks` | orchestrator | read task stack, no config |
-| `/task pause …` | orchestrator | pause sub-agent on task |
-| `/task resume …` | orchestrator | resume paused sub-agent |
-| `/task stop …` | orchestrator | cooperative cancel sub-agent |
-| `/task delete …` | orchestrator | detach + cleanup sub-agent from task |
 
 ### File
 

@@ -481,10 +481,8 @@ Planner **never** spawns agent — orchestrator only.
 | Command | Handler | Effect |
 |---------|---------|--------|
 | `/settings ...` | sub-agent `settings` | Patch allowed config paths |
-| `/mode work` | orchestrator | Runtime mode |
-| `/catat ...` | sub-agent `scribe` | Append via storage.intents |
-| `/tasks` | orchestrator | Read task stack |
-| `/task pause/resume/stop/delete …` | orchestrator | Sub-agent control |
+
+MVP exposes no other user-facing slash command. Mode, task control, scribe/note-taking, and ngobrol flows remain natural-language orchestration until a later product decision enables them in `commands.registry`.
 
 ---
 
@@ -1756,7 +1754,7 @@ Full detail: [LIMITATIONS.md](./LIMITATIONS.md).
 | **M1** | companion.db migrations; boot indexer; local-default node; doctor CLI | DB+indexes <3s; FTS hit on seed data; `catat`→path without LLM; migration idempotent |
 | **M2** | Task stack; anti-poisoning; progress jsonl; spawn routing stub; control + clarification | Block 2nd task without park; snapshot <100ms; lifecycle commands work; spawnPath logged |
 | **M3** | internal/bus + WAL + sapaloq.sock; GNOME notify watch; reminder scheduler | Bus wake <5ms; jsonl replay on boot; test toast→event; rate limit non-blocking |
-| **M4** | scribe spawn; storage mapping; boundary-guard; `/catat`, `/settings` | Append correct notes; cross-mode blocked; settings patch + reject bad paths |
+| **M4** | scribe spawn; storage mapping; boundary-guard; natural-language notes; `/settings` | Append correct notes; cross-mode blocked; settings patch + reject bad paths |
 | **M5** | Wails FAB+popup HUD; ring states; chat IPC; progress mirror | M5a ✅ spike: transparent window, input shape, IPC ping; M5b wire real socket |
 | **M6** | Full ingress pipeline; prompt assembler; janitor + learning hook | confidence≥0.7 skips explore; compaction reloads index; max 2 skills/spawn |
 | **M7** | desktop_* tools; handoff packet; capability gating | notify/screenshot work; handoff consumeOnce; no cursor-agent in main loop |
