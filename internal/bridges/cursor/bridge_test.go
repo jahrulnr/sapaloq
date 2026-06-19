@@ -11,9 +11,21 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
+// defaultTestEntry returns the cursor entry from DefaultConfig + the
+// runtime config. Tests that need a custom entry build their own.
+func defaultTestEntry() (config.LLMBridge, config.RuntimeConfig) {
+	cfg := config.DefaultConfig()
+	entry, err := cfg.LLMBridge.ActiveProvider()
+	if err != nil {
+		panic(err)
+	}
+	return entry, cfg.Runtime
+}
+
 func TestBridgeStreamsThinkingResponseAndTool(t *testing.T) {
 	forceMockCredentials(t)
-	b, err := New(config.DefaultConfig())
+	entry, runtime := defaultTestEntry()
+	b, err := New(entry, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,11 +50,10 @@ func TestBridgeStreamsThinkingResponseAndTool(t *testing.T) {
 func TestVaultLogsUndeclaredTool(t *testing.T) {
 	forceMockCredentials(t)
 	dir := t.TempDir()
-	cfg := config.DefaultConfig()
-	cfg.Runtime.DataDir = dir
-	cfg.LLMBridge.DeclaredTools = []string{"read_file"}
+	entry, _ := defaultTestEntry()
+	entry.DeclaredTools = []string{"read_file"}
 
-	b, err := New(cfg)
+	b, err := New(entry, config.RuntimeConfig{DataDir: dir, BinaryName: "sapaloq-core"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,14 +79,13 @@ func TestVaultLogsUndeclaredTool(t *testing.T) {
 
 func TestVaultLogsUnknownUpstreamTool(t *testing.T) {
 	dir := t.TempDir()
-	cfg := config.DefaultConfig()
-	cfg.Runtime.DataDir = dir
+	entry, _ := defaultTestEntry()
 
-	b, err := New(cfg)
+	b, err := New(entry, config.RuntimeConfig{DataDir: dir, BinaryName: "sapaloq-core"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reason := VaultReason(b.schema, cfg.LLMBridge.DeclaredTools, "totally_fake_tool", parse.ToolCall{Name: "totally_fake_tool"})
+	reason := VaultReason(b.schema, entry.DeclaredTools, "totally_fake_tool", parse.ToolCall{Name: "totally_fake_tool"})
 	if reason != "unknown_upstream" {
 		t.Fatalf("reason = %q", reason)
 	}

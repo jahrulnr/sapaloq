@@ -60,7 +60,7 @@ Widget agent = **orchestrator saja** — assign task → sub-agent dengan **cont
 | **orchestrator** | Route intent, **spawn path score** (Plan vs Agent), control sub-agents; **Ask mode** |
 | **settings** | Edit `config.json` dari `/settings ...` |
 | **scribe** | Tulis ke `storage.paths` by mode/intent ("catat ini") |
-| **planner** | **Plan mode** — read-only; `plan.json` sebelum eksekusi |
+| **planner** | **Plan mode** — read-only; Markdown `plan.md` sebelum eksekusi |
 | **task-runner** | **Agent mode** — **full access**; eksekusi task yang sudah dirancang Ask/Plan |
 | **context-scaler** | Minimal context per task — **anti poisoning** |
 | **boundary-guard** | personal / hobby / work boundary |

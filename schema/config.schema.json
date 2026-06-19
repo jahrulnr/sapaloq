@@ -5,6 +5,57 @@
   "description": "Agent-editable config. No settings UI — orchestrator or /settings sub-agent mutates this file.",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "llmBridgeEntry": {
+      "type": "object",
+      "description": "One provider entry in the llmBridge.providers array. Self-contained: which driver, endpoint, model, credentials, and (for provider-bridge) which wire format + auth scheme + API version.",
+      "additionalProperties": false,
+      "required": ["key", "driver", "endpoint", "model", "credentialsEnv"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Unique identifier within the providers array. Referenced by llmBridge.providerKey. Required."
+        },
+        "driver": {
+          "type": "string",
+          "enum": ["cursor-bridge", "provider-bridge", "local-llama"],
+          "description": "Which bridge implementation to use. cursor-bridge = Cursor RE proxy; provider-bridge = direct OpenAI/Claude/Kimi API."
+        },
+        "endpoint": { "type": "string" },
+        "model": { "type": "string" },
+        "credentialsEnv": {
+          "type": "string",
+          "description": "Env var name for API token — never store secret in config.json"
+        },
+        "declaredTools": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "parser": {
+          "type": "string",
+          "enum": ["openai", "claude", "anthropic", "kimi", "moonshot"],
+          "description": "Wire format (provider-bridge only). Auto-detected from model and endpoint when omitted."
+        },
+        "authScheme": {
+          "type": "string",
+          "enum": ["bearer", "x-api-key", "anthropic"],
+          "description": "Credential header layout. bearer for OpenAI/Kimi, x-api-key for Anthropic. Auto-derived from parser when omitted."
+        },
+        "apiVersion": {
+          "type": "string",
+          "description": "anthropic-version header for the claude parser. Defaults to 2023-06-01 when empty."
+        },
+        "reasoningEffort": { "type": "string" },
+        "maxTokens": { "type": "integer", "minimum": 0 },
+        "contextWindow": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1000000,
+          "description": "Maximum input tokens per turn. Defaults to 1,000,000."
+        }
+      }
+    }
+  },
   "properties": {
     "schemaVersion": {
       "type": "string",
@@ -83,50 +134,18 @@
 
     "llmBridge": {
       "type": "object",
-      "description": "LLM brain bridge driver — see BRIDGE.md. Separate from platform driver (os.json).",
+      "description": "LLM brain bridge registry — see BRIDGE.md and PROVIDER-BRIDGE.md. Separate from platform driver (os.json).",
       "additionalProperties": false,
+      "required": ["providerKey", "providers"],
       "properties": {
-        "driver": {
+        "providerKey": {
           "type": "string",
-          "enum": [
-            "cursor-bridge",
-            "openai-compat",
-            "claude-compat",
-            "local-llama",
-            "custom"
-          ],
-          "default": "local-llama",
-          "description": "Active LLM bridge driver. cursor-bridge = Cursor API contract with tool poisoning handling."
+          "description": "Key of the active entry in providers. Must match one of the entry keys. Required."
         },
-        "endpoint": {
-          "type": "string",
-          "description": "Base URL for remote API (ignored for local-llama)"
-        },
-        "model": { "type": "string" },
-        "declaredTools": {
+        "providers": {
           "type": "array",
-          "description": "Tool names SapaLOQ companion exposes. Calls outside this surface are appended to vault/tool-calls.jsonl for review.",
-          "items": { "type": "string" }
-        },
-        "parsers": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "tools": {
-              "type": "string",
-              "enum": ["auto", "openai", "claude", "kimi", "cursor"],
-              "default": "auto"
-            },
-            "thinking": {
-              "type": "string",
-              "enum": ["auto", "openai", "claude", "kimi", "cursor"],
-              "default": "auto"
-            }
-          }
-        },
-        "credentialsEnv": {
-          "type": "string",
-          "description": "Env var name for API token — never store secret in config.json"
+          "description": "Registry of available provider entries. Each entry is a self-contained bridge configuration. Required, must contain at least one entry.",
+          "items": { "$ref": "#/$defs/llmBridgeEntry" }
         },
         "coercion": {
           "type": "object",
@@ -144,7 +163,7 @@
           "properties": {
             "driver": {
               "type": "string",
-              "enum": ["local-llama", "openai-compat", "claude-compat"]
+              "enum": ["local-llama", "provider-bridge"]
             },
             "on": {
               "type": "array",

@@ -15,19 +15,25 @@ import (
 type Orchestrator struct {
 	cfgPath  string
 	cfg      config.Config
+	entry    config.LLMBridge
 	bridge   bridge.Bridge
 	bus      *bus.Bus
 	progress ProgressWriter
 }
 
-func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) *Orchestrator {
+func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) (*Orchestrator, error) {
+	entry, err := cfg.LLMBridge.ActiveProvider()
+	if err != nil {
+		return nil, err
+	}
 	return &Orchestrator{
 		cfgPath:  cfgPath,
 		cfg:      cfg,
+		entry:    entry,
 		bridge:   b,
 		bus:      eventBus,
 		progress: ProgressWriter{Dir: config.RuntimeDirs(cfg).ProgressDir},
-	}
+	}, nil
 }
 
 func (o *Orchestrator) Bus() *bus.Bus { return o.bus }
@@ -49,7 +55,7 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return
 		}
-		stream, err := o.bridge.Complete(ctx, bridge.Request{SessionID: sessionID, Messages: []bridge.Message{{Role: "user", Content: message}}, Model: o.cfg.LLMBridge.Model})
+		stream, err := o.bridge.Complete(ctx, bridge.Request{SessionID: sessionID, Messages: []bridge.Message{{Role: "user", Content: message}}, Model: o.entry.Model})
 		if err != nil {
 			debug.Debugf("orchestrator: bridge error session=%s err=%v", sessionID, err)
 			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})

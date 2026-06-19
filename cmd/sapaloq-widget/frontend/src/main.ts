@@ -1,18 +1,18 @@
 import './style.css';
-import { PingCore, SendMessage, SlashSuggest, SocketPath } from '../wailsjs/go/main/App';
+import { PingCore, SendMessage, SlashSuggest } from '../wailsjs/go/main/App';
 import { initWindowLayout, isExpanded, setExpanded, toggleExpanded } from './window-layout';
 
-const iconWave = `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11V6a2 2 0 0 1 4 0v1"/><path d="M11 10V5a2 2 0 0 1 4 0v2"/><path d="M15 9V7a2 2 0 0 1 4 0v8a4 4 0 0 1-4 4H9a5 5 0 0 1-5-5v-3a2 2 0 0 1 4 0"/></svg>`;
-const iconChat = `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-1.9 5.4 8.5 8.5 0 0 1-6.6 3.1 8.4 8.4 0 0 1-4.2-1.1L3 21v-4.6a8.4 8.4 0 0 1-1.2-4.3 8.5 8.5 0 0 1 3.1-6.6A8.4 8.4 0 0 1 11.5 3 8.5 8.5 0 0 1 21 11.5z"/></svg>`;
-
-const SLASH_BOUNDARY = /(^\/|\s\/|\n\/)/;
-
 type RingState = 'idle' | 'thinking' | 'delegating' | 'needs-input';
+type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 type CommandEntry = { id: string; prefix: string; label: string; description: string; enabled: boolean };
-type StreamEvent = { kind: string; delta?: string; tool_call?: { name: string } };
+type StreamEvent = { kind: string; delta?: string; error?: string; tool_call?: { name: string } };
 
 const states: RingState[] = ['idle', 'thinking', 'delegating', 'needs-input'];
 let stateIndex = 0;
+let lastLatencyMs = -1;
+let connection: ConnectionState = 'connecting';
+let pingTimer: ReturnType<typeof setInterval> | null = null;
+let submitting = false;
 
 function activeSlashAtChat(value: string, caret: number): { query: string; slashIndex: number } | null {
   const before = value.slice(0, caret);
@@ -28,8 +28,22 @@ function activeSlashAtChat(value: string, caret: number): { query: string; slash
 function setRingState(next: RingState) {
   const orb = document.getElementById('orb');
   if (orb) orb.dataset.state = next;
-  const badge = document.getElementById('status-badge');
-  if (badge) badge.textContent = next;
+}
+
+function setConnection(state: ConnectionState) {
+  connection = state;
+  const dot = document.getElementById('conn-dot');
+  if (dot) dot.dataset.state = state;
+}
+
+function renderRingBadge() {
+  const badge = document.getElementById('ring-badge');
+  if (!badge) return;
+  if (lastLatencyMs < 0) {
+    badge.textContent = '';
+    return;
+  }
+  badge.textContent = `${lastLatencyMs}ms`;
 }
 
 function cycleRingState() {
@@ -45,38 +59,108 @@ function appendMessage(className: string, text: string) {
   item.textContent = text;
   list.appendChild(item);
   list.scrollTop = list.scrollHeight;
+  return item;
+}
+
+function errorText(err: unknown) {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'string') return err;
+  return 'unknown error';
+}
+
+// Streaming coalescer: accumulates delta chunks into one bubble so
+// word-by-word streams (e.g. blackbox MiniMax-M3) render as natural typing
+// instead of spawning a new DOM node per token.
+type StreamTarget = { el: HTMLElement; buffer: string; scheduled: boolean };
+
+function makeStreamTarget(className: string): StreamTarget {
+  const list = document.getElementById('message-list');
+  const el = document.createElement('div');
+  el.className = `message ${className}`;
+  if (list) list.appendChild(el);
+  list && (list.scrollTop = list.scrollHeight);
+  return { el, buffer: '', scheduled: false };
+}
+
+function flushStream(target: StreamTarget) {
+  target.scheduled = false;
+  if (!target.buffer) return;
+  target.el.textContent += target.buffer;
+  target.buffer = '';
+  const list = document.getElementById('message-list');
+  if (list) list.scrollTop = list.scrollHeight;
+}
+
+function pushStream(target: StreamTarget, chunk: string, flushBoundary = false) {
+  if (!chunk) return;
+  target.buffer += chunk;
+  // Flush immediately on whitespace boundary (natural word boundary) so
+  // each visible token corresponds to one render.
+  if (flushBoundary || /\s/.test(chunk)) {
+    flushStream(target);
+    return;
+  }
+  if (!target.scheduled) {
+    target.scheduled = true;
+    requestAnimationFrame(() => flushStream(target));
+  }
 }
 
 function renderEvents(events: StreamEvent[]) {
+  let thinking: StreamTarget | null = null;
+  let assistant: StreamTarget | null = null;
   for (const event of events) {
     if (event.kind === 'thinking_delta') {
       setRingState('thinking');
-      appendMessage('message--thinking', event.delta || 'thinking…');
+      if (!thinking) thinking = makeStreamTarget('message--thinking');
+      pushStream(thinking, event.delta || '', true);
     } else if (event.kind === 'tool_call') {
       setRingState('delegating');
+      // Flush any pending stream before tool call so it shows up cleanly.
+      if (thinking) { flushStream(thinking); thinking = null; }
+      if (assistant) { flushStream(assistant); assistant = null; }
       appendMessage('message--tool', `tool: ${event.tool_call?.name || 'unknown'}`);
     } else if (event.kind === 'response_delta') {
-      appendMessage('message--assistant', event.delta || '');
+      if (!assistant) assistant = makeStreamTarget('message--assistant');
+      pushStream(assistant, event.delta || '');
+    } else if (event.kind === 'error') {
+      if (thinking) { flushStream(thinking); thinking = null; }
+      if (assistant) { flushStream(assistant); assistant = null; }
+      appendMessage('message--error', event.error || 'chat failed');
+      setRingState('idle');
     } else if (event.kind === 'done') {
+      if (thinking) { flushStream(thinking); thinking = null; }
+      if (assistant) { flushStream(assistant); assistant = null; }
       setRingState('idle');
     }
   }
+  // Drain any remaining buffered text.
+  if (thinking) flushStream(thinking);
+  if (assistant) flushStream(assistant);
 }
 
 async function runPing() {
-  const status = document.getElementById('ipc-status');
-  if (!status) return;
-  status.textContent = '…';
   try {
     const res = await PingCore();
-    status.textContent = `core ${res.round_trip_ms}ms`;
+    lastLatencyMs = res.round_trip_ms;
+    setConnection('connected');
     if (res.ring_state) setRingState(res.ring_state as RingState);
+    renderRingBadge();
   } catch {
-    status.textContent = 'offline';
+    lastLatencyMs = -1;
+    setConnection(connection === 'connected' ? 'reconnecting' : 'disconnected');
+    renderRingBadge();
   }
 }
 
+function startPingLoop() {
+  if (pingTimer) return;
+  void runPing();
+  pingTimer = setInterval(() => void runPing(), 4000);
+}
+
 async function submitMessage() {
+  if (submitting) return;
   const input = document.getElementById('compose-input') as HTMLInputElement | null;
   if (!input || !input.value.trim()) return;
   const text = input.value.trim();
@@ -84,12 +168,21 @@ async function submitMessage() {
   hideSlashSuggest();
   appendMessage('message--user', text);
   setRingState('thinking');
+  submitting = true;
+  input.disabled = true;
   try {
     const res = await SendMessage(text);
     renderEvents((res.events || []) as StreamEvent[]);
-  } catch {
-    appendMessage('message--error', 'core offline');
+    void runPing();
+  } catch (err) {
+    const message = errorText(err);
+    appendMessage('message--error', message.includes('dial ') ? 'core offline' : message);
+    setConnection(message.includes('dial ') ? 'disconnected' : 'connected');
     setRingState('idle');
+  } finally {
+    submitting = false;
+    input.disabled = false;
+    input.focus();
   }
 }
 
@@ -127,38 +220,42 @@ async function refreshSlashSuggest() {
   }
 }
 
+const SLASH_BOUNDARY = /(^\/|\s\/|\n\/)/;
+
 document.querySelector('#app')!.innerHTML = `
   <div class="dock">
     <section class="popup" id="popup" aria-hidden="true" style="--wails-draggable: no-drag">
       <header class="popup-header">
-        <div class="popup-brand"><span class="popup-logo">⬡</span><span class="popup-name">SapaLOQ</span></div>
-        <button type="button" class="popup-close" id="btn-close" aria-label="Tutup">✕</button>
+        <div class="popup-brand">
+          <span class="brand-mark" aria-hidden="true"><span class="brand-mark-core"></span></span>
+          <span class="brand-copy"><span class="popup-name">SapaLOQ</span><span class="popup-tagline">local orbit queue</span></span>
+        </div>
+        <div class="popup-header-right">
+          <span class="conn-pill"><span class="conn-dot" id="conn-dot" data-state="connecting" aria-label="status koneksi" title="menghubungkan…"></span><span>core</span></span>
+          <button type="button" class="popup-close" id="btn-close" aria-label="Tutup">×</button>
+        </div>
       </header>
-      <div class="popup-hero"><h1>Hai ${iconWave}<br>Ada yang bisa kubantu?</h1></div>
       <div class="popup-body">
-        <article class="card card--status"><span class="card-icon">●</span><div><strong>Status</strong><p id="status-badge">idle</p></div></article>
-        <article class="card card--chat"><span class="card-icon card-icon--svg">${iconChat}</span><div><strong>Kirim pesan</strong><p>Ngobrol biasa, atau pakai /settings</p></div></article>
+        <div class="empty-state" aria-hidden="true">
+          <span class="empty-kicker">ready</span>
+          <strong>Ask, route, delegate.</strong>
+          <span>Gunakan <code>/</code> untuk command cepat.</span>
+        </div>
         <div class="message-list" id="message-list"></div>
-        <p class="ipc-line" id="ipc-status">menghubungkan…</p>
-        <p class="ipc-line ipc-line--muted" id="socket-path"></p>
       </div>
       <footer class="popup-compose">
         <div class="compose-wrap">
           <div class="slash-popover" id="slash-popover"></div>
-          <input id="compose-input" type="text" placeholder="Ketik pesan…" autocomplete="off" />
+          <input id="compose-input" type="text" placeholder="Tulis instruksi atau /command…" autocomplete="off" />
         </div>
-        <button type="button" class="send-btn" id="send-btn" aria-label="Kirim">↑</button>
+        <button type="button" class="send-btn" id="send-btn" aria-label="Kirim"><span>↗</span></button>
       </footer>
     </section>
-    <div class="fab-row"><button type="button" class="orb" id="orb" data-state="idle" aria-label="Buka SapaLOQ" style="--wails-draggable: drag"><span class="orb-halo" aria-hidden="true"></span><span class="orb-ring" aria-hidden="true"></span><span class="orb-body" aria-hidden="true"><span class="mascot" aria-hidden="true"><span class="mascot-helmet"></span><span class="mascot-visor"><span class="mascot-eye mascot-eye--l"></span><span class="mascot-eye mascot-eye--r"></span></span><span class="mascot-antenna"></span></span></span><span class="orb-specular" aria-hidden="true"></span><span class="orb-chevron" aria-hidden="true">⌄</span></button></div>
+    <div class="fab-row"><button type="button" class="orb" id="orb" data-state="idle" aria-label="Buka SapaLOQ" style="--wails-draggable: drag"><span class="orb-aura" aria-hidden="true"></span><span class="orb-ring" aria-hidden="true"></span><span class="orb-body" aria-hidden="true"><span class="orb-grid" aria-hidden="true"></span><span class="sapa-glyph" aria-hidden="true"><span class="glyph-node glyph-node--a"></span><span class="glyph-node glyph-node--b"></span><span class="glyph-node glyph-node--c"></span><span class="glyph-path glyph-path--a"></span><span class="glyph-path glyph-path--b"></span></span><span class="orb-specular" aria-hidden="true"></span><span class="ring-badge" id="ring-badge" aria-hidden="true"></span><span class="orb-chevron" aria-hidden="true">⌄</span></span></button></div>
   </div>
 `;
 
 void initWindowLayout();
-SocketPath().then((path) => {
-  const el = document.getElementById('socket-path');
-  if (el) el.textContent = path;
-});
 
 let clickTimer: ReturnType<typeof setTimeout> | null = null;
 document.getElementById('orb')?.addEventListener('click', (e) => {
@@ -192,4 +289,4 @@ document.getElementById('compose-input')?.addEventListener('keydown', (event) =>
   }
 });
 
-void runPing();
+startPingLoop();

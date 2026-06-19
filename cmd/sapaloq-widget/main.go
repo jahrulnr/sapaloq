@@ -20,12 +20,12 @@ func main() {
 
 	err := wails.Run(&options.App{
 		Title:             "sapaloq-widget",
-		Width:             48,
-		Height:            48,
-		MinWidth:          48,
-		MinHeight:         48,
-		MaxWidth:          400,
-		MaxHeight:         560,
+		Width:             76,
+		Height:            76,
+		MinWidth:          76,
+		MinHeight:         76,
+		MaxWidth:          420,
+		MaxHeight:         580,
 		DisableResize:     true,
 		Frameless:         true,
 		AlwaysOnTop:       true,
@@ -37,6 +37,7 @@ func main() {
 		},
 		OnStartup: app.startup,
 		OnDomReady: func(ctx context.Context) {
+			// Defer input-shape until window is realized & has correct size
 			scheduleInputShape(true)
 		},
 		Bind: []interface{}{

@@ -21,15 +21,44 @@
   },
 
   "llmBridge": {
-    "driver": "cursor-bridge",
-    "endpoint": "https://api2.cursor.sh",
-    "model": "default",
-    "parsers": {
-      "tools": "auto",
-      "thinking": "auto"
-    },
-    "credentialsEnv": "SAPALOQ_CURSOR_TOKEN",
-    "declaredTools": [],
+    "providerKey": "blackbox",
+    "providers": [
+      {
+        "key": "cursor",
+        "driver": "cursor-bridge",
+        "endpoint": "https://api2.cursor.sh",
+        "model": "default",
+        "credentialsEnv": "SAPALOQ_CURSOR_TOKEN",
+        "declaredTools": []
+      },
+      {
+        "key": "openai",
+        "driver": "provider-bridge",
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+        "model": "gpt-4o-mini",
+        "credentialsEnv": "OPENAI_API_KEY",
+        "parser": "openai",
+        "authScheme": "bearer",
+        "contextWindow": 1000000
+      },
+      {
+        "key": "tokenrouter",
+        "driver": "provider-bridge",
+        "endpoint": "https://api.tokenrouter.com/v1/chat/completions",
+        "model": "MiniMax-M3",
+        "credentialsEnv": "TOKENROUTER_API_KEY",
+        "parser": "openai"
+      },
+      {
+        "key": "blackbox",
+        "driver": "provider-bridge",
+        "endpoint": "https://api.blackbox.ai/chat/completions",
+        "model": "blackboxai/minimax/minimax-free",
+        "credentialsEnv": "BLACKBOX_API_KEY",
+        "parser": "openai",
+        "contextWindow": 131072
+      }
+    ],
     "coercion": {
       "enabled": true,
       "schemaPath": "~/.config/sapaloq/bridge/cursor-bridge.schema.json"
@@ -394,8 +423,8 @@
         "canEditConfig": false
       },
       "planner": {
-        "description": "Plan mode — read-only; produces plan.json before agent execution",
-        "allowedTools": ["read_memory", "read_index", "read_file", "list_dir", "grep", "codebase_search", "desktop_*", "emit_progress", "write_plan", "ask_orchestrator"],
+        "description": "Plan mode — read-only; produces Markdown plan.md before agent execution",
+        "allowedTools": ["read_memory", "read_index", "read_file", "list_dir", "grep", "codebase_search", "desktop_*", "emit_progress", "write_plan_markdown", "ask_orchestrator"],
         "maxTurns": 12,
         "canEditConfig": false,
         "toolPolicy": "read_only"

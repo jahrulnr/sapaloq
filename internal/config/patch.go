@@ -122,7 +122,6 @@ func ReloadFromRaw(path string) (Config, error) {
 	}
 	cfg.Runtime.DataDir = ExpandPath(defaultIfEmpty(cfg.Runtime.DataDir, defaultDataDir))
 	cfg.Events.Bus.SocketPath = ExpandPath(defaultIfEmpty(cfg.Events.Bus.SocketPath, "~/.config/sapaloq/run/sapaloq.sock"))
-	cfg.LLMBridge.CredentialsEnv = defaultIfEmpty(cfg.LLMBridge.CredentialsEnv, "SAPALOQ_CURSOR_TOKEN")
 	cfg.Commands = cfg.Commands.WithDefaults()
 	return cfg, nil
 }

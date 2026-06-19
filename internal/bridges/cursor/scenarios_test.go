@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
-	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/wire"
+	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/parse"
 	"github.com/jahrulnr/sapaloq/internal/parse/tools/kimi"
 	"github.com/jahrulnr/sapaloq/internal/vault"
@@ -85,7 +85,8 @@ func TestBridgeScenarios(t *testing.T) {
 			id: "mock-no-credentials",
 			setup: func(t *testing.T) (*Bridge, string) {
 				forceMockCredentials(t)
-				b, err := New(config.DefaultConfig())
+				entry, runtime := defaultTestEntry()
+				b, err := New(entry, runtime)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -103,7 +104,8 @@ func TestBridgeScenarios(t *testing.T) {
 			id: "mock-tool-coerce",
 			setup: func(t *testing.T) (*Bridge, string) {
 				forceMockCredentials(t)
-				b, err := New(config.DefaultConfig())
+				entry, runtime := defaultTestEntry()
+				b, err := New(entry, runtime)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -124,10 +126,9 @@ func TestBridgeScenarios(t *testing.T) {
 			setup: func(t *testing.T) (*Bridge, string) {
 				forceMockCredentials(t)
 				dir := t.TempDir()
-				cfg := config.DefaultConfig()
-				cfg.Runtime.DataDir = dir
-				cfg.LLMBridge.DeclaredTools = []string{"read_file"}
-				b, err := New(cfg)
+				entry, _ := defaultTestEntry()
+				entry.DeclaredTools = []string{"read_file"}
+				b, err := New(entry, config.RuntimeConfig{DataDir: dir, BinaryName: "sapaloq-core"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -183,9 +184,9 @@ func TestBridgeScenarios(t *testing.T) {
 				t.Setenv("CURSOR_STATE_VSCDB", filepath.Join(t.TempDir(), "missing.vscdb"))
 				t.Setenv("SAPALOQ_WIRE_INSECURE_TLS", "1")
 
-				cfg := config.DefaultConfig()
-				cfg.LLMBridge.Endpoint = server.URL
-				b, err := New(cfg)
+				entry, _ := defaultTestEntry()
+				entry.Endpoint = server.URL
+				b, err := New(entry, config.RuntimeConfig{DataDir: "", BinaryName: "sapaloq-core"})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
-	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/wire"
 	"golang.org/x/net/http2"
 )
@@ -45,8 +44,8 @@ func TestAgentPathMockUnauthenticated(t *testing.T) {
 	t.Setenv("CURSOR_AGENT_HOST", strings.TrimPrefix(server.URL, "https://"))
 	t.Setenv("CURSOR_AGENT_PATH", wire.AgentAgentPath)
 
-	cfg := config.DefaultConfig()
-	b, err := New(cfg)
+	entry, runtime := defaultTestEntry()
+	b, err := New(entry, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,8 +138,8 @@ func TestAgentVisionAutoRouteInBridge(t *testing.T) {
 	t.Setenv("CURSOR_AGENT_HOST", strings.TrimPrefix(server.URL, "https://"))
 	t.Setenv("CURSOR_AGENT_PATH", wire.AgentAgentPath)
 
-	cfg := config.DefaultConfig()
-	b, err := New(cfg)
+	entry, runtime := defaultTestEntry()
+	b, err := New(entry, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}

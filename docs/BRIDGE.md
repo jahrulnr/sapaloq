@@ -90,13 +90,14 @@ Empty `declaredTools` → vault only `unknown_upstream` calls.
 
 ## Roadmap compat (built-in, bukan fork 9router)
 
-Next development **may** ship first-party bridges dengan pola mirip 9router (OpenAI `/v1/chat/completions`, Claude Messages API) — **tanpa** require user install 9router.
+`provider-bridge` is the multi-model built-in. It speaks OpenAI Chat Completions (covers OpenAI, OpenRouter, TokenRouter, LM Studio, vLLM, etc.), Anthropic Messages, and Kimi (Moonshot). See [PROVIDER-BRIDGE.md](./PROVIDER-BRIDGE.md) for the full config reference and recipes.
 
 | Driver ID | Wire | Tool poisoning | Default parsers |
 |-----------|------|----------------|-----------------|
 | `cursor-bridge` | Cursor `api2.cursor.sh` / agent proto | **High** — fake tool names | `tools:cursor`, `thinking:cursor` |
-| `openai-compat` | OpenAI-compatible HTTP | **Low** — usually clean | `tools:openai`, `thinking:openai` |
-| `claude-compat` | Anthropic Messages API | **Low–medium** | `tools:claude`, `thinking:claude` |
+| `provider-bridge` (openai) | OpenAI `/v1/chat/completions` | **Low** — usually clean | `tools:openai`, `thinking:openai` |
+| `provider-bridge` (claude) | Anthropic `/v1/messages` | **Low** | `tools:claude`, `thinking:claude` |
+| `provider-bridge` (kimi) | OpenAI-compatible + `thinking` flag | **Low** | `tools:openai`, `thinking:openai` |
 | `local-llama` | llama.cpp / sidecar | N/A (local schema) | configurable |
 
 **Community bridges:** compile-time registry (sama seperti platform drivers). Contrib driver baru untuk IDE/CLI dengan behavior mirip Cursor (Gemini plugin, Copilot VSCode, custom MCP gateway) tanpa merge ke core kecuali maintained.

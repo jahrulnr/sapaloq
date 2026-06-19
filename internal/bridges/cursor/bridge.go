@@ -10,34 +10,41 @@ import (
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
-	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/credentials"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/wire"
+	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/debug"
 	"github.com/jahrulnr/sapaloq/internal/parse"
+	thinkingcursor "github.com/jahrulnr/sapaloq/internal/parse/thinking/cursor"
 	toolcursor "github.com/jahrulnr/sapaloq/internal/parse/tools/cursor"
 	"github.com/jahrulnr/sapaloq/internal/parse/tools/kimi"
-	thinkingcursor "github.com/jahrulnr/sapaloq/internal/parse/thinking/cursor"
 	"github.com/jahrulnr/sapaloq/internal/vault"
 )
 
 type Bridge struct {
-	cfg    config.Config
-	schema Schema
-	vault  *vault.Writer
+	entry   config.LLMBridge
+	runtime config.RuntimeConfig
+	schema  Schema
+	vault   *vault.Writer
 }
 
-func New(cfg config.Config) (*Bridge, error) {
+// New returns a fresh Bridge. The entry supplies the bridge configuration
+// (endpoint, model, credentials env, declared tools). The runtime config
+// supplies the vault directory.
+func New(entry config.LLMBridge, runtime config.RuntimeConfig) (*Bridge, error) {
 	schema, err := LoadSchema()
 	if err != nil {
 		return nil, err
 	}
-	dirs := config.RuntimeDirs(cfg)
+	dirs := config.RuntimeDirs(config.Config{
+		Runtime: runtime,
+		Events:  config.EventsConfig{Bus: config.BusConfig{SocketPath: ""}},
+	})
 	v, err := vault.New(filepath.Join(dirs.VaultDir, "tool-calls.jsonl"))
 	if err != nil {
 		return nil, err
 	}
-	return &Bridge{cfg: cfg, schema: schema, vault: v}, nil
+	return &Bridge{entry: entry, runtime: runtime, schema: schema, vault: v}, nil
 }
 
 func (b *Bridge) ID() string { return "cursor-bridge" }
@@ -64,7 +71,7 @@ func (b *Bridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridg
 }
 
 func (b *Bridge) loadCreds() (credentials.Credentials, error) {
-	return credentials.Load(credentials.Options{TokenEnv: b.cfg.LLMBridge.CredentialsEnv})
+	return credentials.Load(credentials.Options{TokenEnv: b.entry.CredentialsEnv})
 }
 
 func (b *Bridge) hasToken() bool {
@@ -108,10 +115,10 @@ func (b *Bridge) streamLive(ctx context.Context, req bridge.Request, out chan<- 
 		streamFn = wire.StreamChat
 	}
 	err = streamFn(ctx, wire.StreamOptions{
-		Endpoint:    b.cfg.LLMBridge.Endpoint,
+		Endpoint:    b.entry.Endpoint,
 		Token:       creds.AccessToken,
 		MachineID:   creds.MachineID,
-		Model:       defaultIfEmpty(req.Model, b.cfg.LLMBridge.Model),
+		Model:       defaultIfEmpty(req.Model, b.entry.Model),
 		Messages:    messages,
 		GhostMode:   creds.GhostMode,
 		InsecureTLS: os.Getenv("SAPALOQ_WIRE_INSECURE_TLS") == "1",
@@ -186,7 +193,7 @@ func (b *Bridge) streamMock(ctx context.Context, req bridge.Request, out chan<- 
 func (b *Bridge) emitToolCall(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, call parse.ToolCall) {
 	rawName := call.Name
 	coerced := CoerceToolCall(b.schema, call)
-	if reason := VaultReason(b.schema, b.cfg.LLMBridge.DeclaredTools, rawName, coerced); reason != "" {
+	if reason := VaultReason(b.schema, b.entry.DeclaredTools, rawName, coerced); reason != "" {
 		debug.Debugf("cursor-bridge: vault %s raw=%s resolved=%s", reason, rawName, coerced.Name)
 		_ = b.vault.Append(vault.Entry{
 			SessionID:    sessionID,

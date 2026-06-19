@@ -102,9 +102,15 @@ func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
 		return nil, fmt.Errorf("dial %s: %w", socketPath, err)
 	}
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+
+	deadline := 3 * time.Second
+	if req.Op == "chat_send" {
+		deadline = 5 * time.Minute
+	}
+	if err := conn.SetDeadline(time.Now().Add(deadline)); err != nil {
 		return nil, fmt.Errorf("set deadline: %w", err)
 	}
+
 	b, _ := json.Marshal(req)
 	if _, err := conn.Write(append(b, '\n')); err != nil {
 		return nil, fmt.Errorf("write: %w", err)

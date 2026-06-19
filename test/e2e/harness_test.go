@@ -66,10 +66,14 @@ func startCore(t *testing.T, opts coreStartOptions) *coreHarness {
 	}
 
 	reg := bridge.NewRegistry()
-	if err := cursor.Register(reg, cfg); err != nil {
+	entry, err := cfg.LLMBridge.ActiveProvider()
+	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := reg.Get(cfg.LLMBridge.Driver)
+	if err := cursor.Register(reg, entry, cfg.Runtime); err != nil {
+		t.Fatal(err)
+	}
+	b, err := reg.Get(entry.Driver)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +81,10 @@ func startCore(t *testing.T, opts coreStartOptions) *coreHarness {
 		t.Fatal("expected live API bridge, got mock fallback (check credentials)")
 	}
 
-	orch := orchestrator.New(cfg, cfgPath, b, bus.New())
+	orch, err := orchestrator.New(cfg, cfgPath, b, bus.New())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

@@ -66,7 +66,7 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 
 	body := wire.BuildAgentRequestBody(wire.AgentRunOptions{
 		UserText:       flattenMessages(req.Messages),
-		ModelID:        defaultIfEmpty(req.Model, b.cfg.LLMBridge.Model),
+		ModelID:        defaultIfEmpty(req.Model, b.entry.Model),
 		ConversationID: req.SessionID,
 		Images:         encodeImages(req.Images),
 	})

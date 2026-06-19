@@ -10,6 +10,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor"
+	"github.com/jahrulnr/sapaloq/internal/bridges/provider"
 	"github.com/jahrulnr/sapaloq/internal/bus"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/core/orchestrator"
@@ -68,11 +69,12 @@ func main() {
 		if err != nil {
 			exitf("orchestrator: %v", err)
 		}
+		entry, _ := cfg.LLMBridge.ActiveProvider()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		fmt.Printf("sapaloq-core listening on %s%s\n", dirs.SocketPath, envDebugHint())
 		if debug.Enabled() {
-			debug.Debugf("sapaloq-core: ipc server starting driver=%s", cfg.LLMBridge.Driver)
+			debug.Debugf("sapaloq-core: ipc server starting driver=%s", entry.Driver)
 		}
 		if err := ipc.NewServer(cfg, orch).ListenAndServe(ctx, dirs.SocketPath); err != nil {
 			exitf("ipc: %v", err)
@@ -83,16 +85,27 @@ func main() {
 }
 
 func newOrchestrator(cfg config.Config, cfgPath string) (*orchestrator.Orchestrator, error) {
-	reg := bridge.NewRegistry()
-	if err := cursor.Register(reg, cfg); err != nil {
-		return nil, err
+	entry, err := cfg.LLMBridge.ActiveProvider()
+	if err != nil {
+		return nil, fmt.Errorf("orchestrator: %w", err)
 	}
-	b, err := reg.Get(cfg.LLMBridge.Driver)
+	reg := bridge.NewRegistry()
+	if entry.Driver == "cursor-bridge" {
+		if err := cursor.Register(reg, entry, cfg.Runtime); err != nil {
+			return nil, err
+		}
+	}
+	if entry.Driver == "provider-bridge" {
+		if err := provider.Register(reg, entry); err != nil {
+			return nil, err
+		}
+	}
+	b, err := reg.Get(entry.Driver)
 	if err != nil {
 		return nil, err
 	}
 	debug.Debugf("orchestrator: bridge=%s live_api=%v", b.ID(), b.Caps().LiveAPI)
-	return orchestrator.New(cfg, cfgPath, b, bus.New()), nil
+	return orchestrator.New(cfg, cfgPath, b, bus.New())
 }
 
 func exitf(format string, args ...any) {

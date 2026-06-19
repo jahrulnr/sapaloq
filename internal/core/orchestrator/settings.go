@@ -96,9 +96,10 @@ func settingsHelpEvent(sessionID string) bridge.StreamEvent {
 func settingsShowEvent(sessionID string, cfg config.Config) bridge.StreamEvent {
 	ev := bridge.NewEvent(bridge.EventResponseDelta)
 	ev.SessionID = sessionID
+	entry, _ := cfg.LLMBridge.ActiveProvider()
 	ev.Delta = fmt.Sprintf("driver=%s model=%s socket=%s updatedAt=%s",
-		cfg.LLMBridge.Driver,
-		cfg.LLMBridge.Model,
+		entry.Driver,
+		entry.Model,
 		cfg.Events.Bus.SocketPath,
 		time.Now().UTC().Format(time.RFC3339),
 	)

@@ -14,15 +14,11 @@ Portable desktop companion — isolated from `cursor-agent`. **Go modular driver
 # Build & test
 make test
 
-# Terminal 1 — orchestrator + IPC
-make core                         # autoload token from Cursor IDE state.vscdb or .env
-
-# Terminal 2 — widget (Ubuntu 24.04)
+# One terminal — orchestrator + widget dev; Ctrl+C stops both
 sudo apt install libwebkit2gtk-4.1-dev build-essential
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 make widget-install
-make widget-build
-./cmd/sapaloq-widget/build/bin/sapaloq-widget
+make run                          # autoload token from Cursor IDE state.vscdb or .env
 ```
 
 One-shot chat from CLI:

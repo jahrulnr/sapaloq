@@ -128,6 +128,58 @@ Per-role limits (defaults): `task-runner: 2`, `planner: 1`, `research: 1`, other
 > Analog Cursor IDE: **Ask**, **Plan**, **Agent** — di SapaLOQ diimplementasikan sebagai **orchestrator + sub-agent roles**, bukan clone wire `UNIFIED_MODE` api2.
 > Cursor CLI: Ask = no edits/commands; Plan = read-only planning before implementation; Agent = full tool access.
 
+### Non-Cursor canonical tool surface
+
+Provider-bridge backends (OpenAI/Claude/Kimi/OpenRouter/TokenRouter/etc.) do not get Cursor's native IDE tool set. SapaLOQ exposes **role-scoped canonical tools** instead. Tool availability is resolved by role/mode before each LLM request; never expose Agent tools to Ask.
+
+| SapaLOQ mode | Role | Declared tools profile | Policy |
+|--------------|------|------------------------|--------|
+| **Ask** | `orchestrator` | `sapaloq_spawn_*`, task status, brief memory/context, clarification, light `desktop_*` | Delegate and observe; no file mutation, no shell |
+| **Plan** | `planner` | read-only workspace/search/errors + `sapaloq_write_plan_markdown` | Markdown assessment only; no execution side effects |
+| **Agent** | `task-runner` | workspace write tools, terminal/build/test, progress/complete, clarification | Execute approved/direct task under boundary guard |
+
+Recommended MVP profile names:
+
+```text
+ask:
+  sapaloq_spawn_plan
+  sapaloq_spawn_agent
+  sapaloq_get_task_status
+  sapaloq_read_memory_brief
+  sapaloq_prefetch_context
+  sapaloq_clarify_user
+  desktop_notify
+  desktop_screenshot
+  desktop_list_windows
+  desktop_focus_window
+
+plan:
+  sapaloq_read_context_packet
+  sapaloq_read_memory_brief
+  workspace_search
+  workspace_read_file
+  workspace_list_errors
+  sapaloq_write_plan_markdown
+  sapaloq_request_clarification
+
+agent:
+  sapaloq_read_context_packet
+  sapaloq_read_plan_markdown
+  sapaloq_update_task_progress
+  sapaloq_complete_task
+  sapaloq_fail_task
+  workspace_search
+  workspace_read_file
+  workspace_edit_file
+  workspace_create_file
+  terminal_run
+  tests_run
+  build_run
+  sapaloq_request_clarification
+```
+
+Provider `declaredTools` should be generated from this role profile. Static per-provider `declaredTools` remains a compatibility fallback only.
+
 ### Mapping SapaLOQ
 
 | Cursor mode | SapaLOQ | Tool policy | Job |
@@ -186,26 +238,45 @@ Output intent-router (per task):
 |-------------|----------|
 | `none` | Orchestrator jawab / scribe / desktop only |
 | `direct_agent` | Spawn `task-runner` dengan context packet dari Ask |
-| `plan_then_agent` | Spawn `planner` → plan artifact → spawn `task-runner` dengan `planId` + steps |
+| `plan_then_agent` | Spawn `planner` → Markdown plan artifact → spawn `task-runner` dengan `planPath` + checklist |
 
 Config: `orchestrator.spawnRouting` (see `config.schema.json`).
 
 ### Plan artifact → Agent packet
 
-Planner menulis ke `memory/tasks/<taskId>/plan.json` (or scribe path by policy):
+Planner menulis Markdown artifact ke `memory/tasks/<taskId>/plan.md` (or scribe path by policy). Ini sengaja mengikuti Cursor/Copilot Plan mode: plan adalah dokumen Markdown yang bisa dibaca user, direview, dan dicentang saat Agent eksekusi.
 
-```json
-{
-  "planId": "plan-001",
-  "taskId": "task-001",
-  "summary": "Refactor config schema validation",
-  "steps": [
-    { "id": "1", "action": "read", "target": "config.schema.json" },
-    { "id": "2", "action": "edit", "target": "config.schema.json", "note": "add spawnRouting" }
-  ],
-  "constraints": ["mode=work", "no touch ~/.cursor"],
-  "acceptance": ["config validates", "example bootstraps"]
-}
+```markdown
+---
+planId: plan-001
+taskId: task-001
+mode: work
+status: draft
+createdBy: planner
+---
+
+# Plan: Refactor config schema validation
+
+## Goal
+Refactor config schema validation without touching Cursor worker memory.
+
+## Constraints
+- mode=work
+- no touch `~/.cursor`
+- preserve existing config bootstrap behavior
+
+## Steps
+- [ ] Read `config.schema.json` and current config loader.
+- [ ] Add `spawnRouting` validation fields.
+- [ ] Update `config.example.json`.
+- [ ] Run config/load tests.
+
+## Risks
+- Schema drift between docs and bootstrap config.
+
+## Acceptance
+- [ ] Config validates.
+- [ ] Example config bootstraps.
 ```
 
 `task-runner` spawn payload:
@@ -218,7 +289,7 @@ Planner menulis ke `memory/tasks/<taskId>/plan.json` (or scribe path by policy):
   "contextPacket": {
     "taskId": "task-001",
     "planId": "plan-001",
-    "steps": "...",
+    "planPath": "~/.config/sapaloq/memory/tasks/task-001/plan.md",
     "userSnippet": "..."
   }
 }
@@ -244,7 +315,7 @@ Planner **never** spawns agent — orchestrator only.
 | **orchestrator** | every user turn | **Ask mode** — route, spawn score, delegate, watch progress |
 | **settings** | `/settings ...` | Patch `config.json` |
 | **scribe** | "catat ini", notes | Append to `storage.paths` by mode/intent |
-| **planner** | spawnPath `plan_then_agent` | **Plan mode** — read-only; produce `plan.json` artifact |
+| **planner** | spawnPath `plan_then_agent` | **Plan mode** — read-only; produce Markdown `plan.md` artifact |
 | **task-runner** | spawnPath `direct_agent` or post-plan | **Agent mode** — **full tool access**; execute designed task |
 | **intent-router** | every user prompt | Classify intent; **spawn path scores**; prefetch from SQLite |
 | **context-scaler** | every delegation | Build minimal context packet; enforce anti-deep-check |

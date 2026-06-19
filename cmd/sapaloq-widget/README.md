@@ -9,11 +9,10 @@ M5a spike validated: frameless transparency, GTK input shape (click-through), IP
 From repo root:
 
 ```bash
-make mock          # terminal 1
-make widget-dev    # terminal 2 (Ubuntu: webkit2_41 tag)
+make run           # starts core + widget dev; Ctrl+C stops both
 ```
 
-Or from this directory:
+Widget-only dev from this directory:
 
 ```bash
 wails dev -tags webkit2_41

@@ -322,11 +322,11 @@ sequenceDiagram
   alt plan_then_agent
     O->>CS: assemble planner systemPrompt
     O->>P: spawn read-only
-    P->>P: explore, draft plan.json
+    P->>P: explore, draft plan.md
     P->>BUS: subagent.completed
     O->>U: plan summary — confirm?
     U->>O: approve
-    O->>CS: agent context packet + planId
+    O->>CS: agent context packet + planPath
     O->>A: spawn toolPolicy full
   else direct_agent
     O->>CS: context packet from Ask
@@ -355,7 +355,7 @@ Analog Cursor IDE: **Ask**, **Plan**, **Agent** — di SapaLOQ = orchestrator + 
 | Cursor mode | SapaLOQ role | Tool policy | Job |
 |-------------|--------------|-------------|-----|
 | **Ask** | **Orchestrator** (widget) | Companion only: `spawn`, `desktop_*`, read progress/memory, clarify | Route, score spawn path, delegate |
-| **Plan** | Sub-agent **`planner`** | **Read-only** — explore, draft plan, no mutating side effects | Produce `plan.json` artifact |
+| **Plan** | Sub-agent **`planner`** | **Read-only** — explore, draft plan, no mutating side effects | Produce Markdown `plan.md` artifact |
 | **Agent** | Sub-agent **`task-runner`** | **Full access (default)** | Execute plan or explicit user steps |
 
 **Prinsip:** Ask + Plan sudah merancang pekerjaan → Agent **tidak perlu restriction tambahan** beyond global boundary (mode) dan `maxTurns`. Restriction di front-load ke orchestrator + planner.
@@ -424,7 +424,7 @@ Intent-router output example:
 |-------------|----------|
 | `none` | Orchestrator jawab / scribe / desktop only |
 | `direct_agent` | Spawn `task-runner` dengan context packet dari Ask |
-| `plan_then_agent` | Spawn `planner` → plan artifact → spawn agent dengan `planId` |
+| `plan_then_agent` | Spawn `planner` → Markdown plan artifact → spawn agent dengan `planPath` |
 
 Config thresholds:
 
@@ -433,20 +433,39 @@ Config thresholds:
 
 ### Plan artifact
 
-Planner writes `memory/tasks/<taskId>/plan.json`:
+Planner writes `memory/tasks/<taskId>/plan.md`. This follows Cursor/Copilot Plan mode: the plan is a user-readable Markdown artifact, not an opaque JSON blob.
 
-```json
-{
-  "planId": "plan-001",
-  "taskId": "task-001",
-  "summary": "Refactor config schema validation",
-  "steps": [
-    { "id": "1", "action": "read", "target": "config.schema.json" },
-    { "id": "2", "action": "edit", "target": "config.schema.json", "note": "add spawnRouting" }
-  ],
-  "constraints": ["mode=work", "no touch ~/.cursor"],
-  "acceptance": ["config validates", "example bootstraps"]
-}
+```markdown
+---
+planId: plan-001
+taskId: task-001
+mode: work
+status: draft
+createdBy: planner
+---
+
+# Plan: Refactor config schema validation
+
+## Goal
+Refactor config schema validation without touching Cursor worker memory.
+
+## Constraints
+- mode=work
+- no touch `~/.cursor`
+- preserve existing config bootstrap behavior
+
+## Steps
+- [ ] Read `config.schema.json` and current config loader.
+- [ ] Add `spawnRouting` validation fields.
+- [ ] Update `config.example.json`.
+- [ ] Run config/load tests.
+
+## Risks
+- Schema drift between docs and bootstrap config.
+
+## Acceptance
+- [ ] Config validates.
+- [ ] Example config bootstraps.
 ```
 
 ### Plan review gate
@@ -468,7 +487,7 @@ Planner **never** spawns agent — orchestrator only.
   "contextPacket": {
     "taskId": "task-001",
     "planId": "plan-001",
-    "steps": "...",
+    "planPath": "~/.config/sapaloq/memory/tasks/task-001/plan.md",
     "userSnippet": "..."
   },
   "systemPrompt": "<assembled from roles/task-runner.md + overlays>",
@@ -495,7 +514,7 @@ MVP exposes no other user-facing slash command. Mode, task control, scribe/note-
 | **orchestrator** | Every user turn | `companion` | **Ask mode** — route, spawn score, delegate, watch |
 | **settings** | `/settings ...` | Config R/W only | Patch `config.json` |
 | **scribe** | "catat ini", notes | Append tools | Write `storage.paths` by mode/intent |
-| **planner** | `spawnPath: plan_then_agent` | **`read_only`** | Draft `plan.json` — no mutating exec |
+| **planner** | `spawnPath: plan_then_agent` | **`read_only`** | Draft Markdown `plan.md` — no mutating exec |
 | **task-runner** | Post-plan or `direct_agent` | **`full`** | Execute designed task |
 | **intent-router** | Every prompt (pre-hook) | Heuristic / tiny LLM | Classify intent, prefetch, spawn scores |
 | **context-scaler** | Every delegation | — | Minimal context packet; anti-deep-check |
@@ -1614,7 +1633,7 @@ Complete target tree under `~/.config/sapaloq/`:
 ├── prompt/{core.md, roles/*, roles.d/, modes/, positive/, negative/, slices/}
 ├── skills/*.md
 ├── memory/{companion.db, files/{namespace}/, learning-queue.jsonl,
-│          tasks/{stack.json,taskId/plan.json}, context-packets/,
+│          tasks/{stack.md,taskId/plan.md}, context-packets/,
 │          progress/{subAgentId}.jsonl, control/, events.jsonl, archive/}
 ├── rules/{companion.md, automation.md}
 ├── mcp/servers.json          # Desktop MCP — NOT Cursor MCP
@@ -1659,7 +1678,7 @@ Path: `~/.config/sapaloq/bridge/handoff/<uuid>.json`
   "attachments": [],
   "planRef": {
     "planId": "plan-001",
-    "summaryPath": "~/.config/sapaloq/memory/tasks/task-001/plan.json"
+    "summaryPath": "~/.config/sapaloq/memory/tasks/task-001/plan.md"
   },
   "mode": "work",
   "source": "sapaloq",

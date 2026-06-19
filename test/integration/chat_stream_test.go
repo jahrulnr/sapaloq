@@ -22,18 +22,33 @@ func forceMockCredentials(t *testing.T) {
 	t.Setenv("CURSOR_MACHINE_ID", "")
 }
 
+// activeEntry resolves the active provider entry + runtime config from
+// the loaded Config. Used by tests that need to call bridge constructors.
+func activeEntry(t *testing.T, cfg config.Config) (config.LLMBridge, config.RuntimeConfig) {
+	t.Helper()
+	entry, err := cfg.LLMBridge.ActiveProvider()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entry, cfg.Runtime
+}
+
 func TestChatStreamMockBridge(t *testing.T) {
 	forceMockCredentials(t)
 	cfg := config.DefaultConfig()
 	reg := bridge.NewRegistry()
-	if err := cursor.Register(reg, cfg); err != nil {
+	entry, runtime := activeEntry(t, cfg)
+	if err := cursor.Register(reg, entry, runtime); err != nil {
 		t.Fatal(err)
 	}
-	b, err := reg.Get(cfg.LLMBridge.Driver)
+	b, err := reg.Get(entry.Driver)
 	if err != nil {
 		t.Fatal(err)
 	}
-	orch := orchestrator.New(cfg, "", b, bus.New())
+	orch, err := orchestrator.New(cfg, "", b, bus.New())
+	if err != nil {
+		t.Fatal(err)
+	}
 	stream, err := orch.SendChat(context.Background(), "test", "hello mock")
 	if err != nil {
 		t.Fatal(err)
@@ -65,14 +80,18 @@ func TestSettingsPatchWritesConfig(t *testing.T) {
 	}
 
 	reg := bridge.NewRegistry()
-	if err := cursor.Register(reg, cfg); err != nil {
+	entry, runtime := activeEntry(t, cfg)
+	if err := cursor.Register(reg, entry, runtime); err != nil {
 		t.Fatal(err)
 	}
-	b, err := reg.Get(cfg.LLMBridge.Driver)
+	b, err := reg.Get(entry.Driver)
 	if err != nil {
 		t.Fatal(err)
 	}
-	orch := orchestrator.New(cfg, cfgPath, b, bus.New())
+	orch, err := orchestrator.New(cfg, cfgPath, b, bus.New())
+	if err != nil {
+		t.Fatal(err)
+	}
 	stream, err := orch.SendChat(context.Background(), "test", `/settings patch {"notifications":{"read":true}}`)
 	if err != nil {
 		t.Fatal(err)
