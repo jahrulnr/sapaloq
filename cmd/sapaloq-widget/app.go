@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"os"
+
+	"github.com/jahrulnr/sapaloq/internal/config"
 )
 
 // App exposes Go methods to the Wails frontend.
@@ -22,9 +24,17 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
-// PingCore round-trips a ping to the mock sapaloq-core unix socket.
+// PingCore round-trips a ping to sapaloq-core unix socket.
 func (a *App) PingCore() (pingResult, error) {
 	return pingCore(a.socketPath)
+}
+
+func (a *App) SendMessage(text string) (chatResult, error) {
+	return sendChat(a.socketPath, text)
+}
+
+func (a *App) SlashSuggest(query string) ([]config.CommandEntry, error) {
+	return slashSuggest(a.socketPath, query)
 }
 
 // SocketPath returns the path used for IPC (for UI display).

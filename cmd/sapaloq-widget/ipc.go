@@ -8,19 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/ipc"
 )
 
-type ipcRequest struct {
-	Op string `json:"op"`
-}
+type ipcRequest = ipc.Request
 
-type ipcResponse struct {
-	OK        bool   `json:"ok"`
-	Op        string `json:"op"`
-	Message   string `json:"message,omitempty"`
-	RingState string `json:"ring_state,omitempty"`
-	ServerMs  int64  `json:"server_ms"`
-}
+type ipcResponse = ipc.Response
 
 type pingResult struct {
 	OK          bool   `json:"ok"`
@@ -35,36 +31,57 @@ func defaultSocketPath() string {
 	if p := os.Getenv("SAPALOQ_SOCKET"); p != "" {
 		return p
 	}
-	return filepath.Join(os.TempDir(), "sapaloq-spike.sock")
+	return filepath.Join(os.Getenv("HOME"), ".config", "sapaloq", "run", "sapaloq.sock")
+}
+
+type chatResult struct {
+	OK        bool                 `json:"ok"`
+	SessionID string               `json:"session_id,omitempty"`
+	Events    []bridge.StreamEvent `json:"events"`
+}
+
+func sendChat(socketPath, message string) (chatResult, error) {
+	var result chatResult
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_send", Message: message})
+	if err != nil {
+		return result, err
+	}
+	for _, res := range responses {
+		if !res.OK {
+			return result, fmt.Errorf("core error: %s", res.Message)
+		}
+		if res.SessionID != "" {
+			result.SessionID = res.SessionID
+		}
+		if res.Event != nil {
+			result.Events = append(result.Events, *res.Event)
+		}
+	}
+	result.OK = true
+	return result, nil
+}
+
+func slashSuggest(socketPath, query string) ([]config.CommandEntry, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "slash_suggest", Query: query})
+	if err != nil {
+		return nil, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		return nil, fmt.Errorf("core error")
+	}
+	return responses[0].Suggestions, nil
 }
 
 func pingCore(socketPath string) (pingResult, error) {
 	start := time.Now()
-	conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "ping"})
 	if err != nil {
-		return pingResult{}, fmt.Errorf("dial %s: %w", socketPath, err)
+		return pingResult{}, err
 	}
-	defer conn.Close()
-
-	deadline := time.Now().Add(2 * time.Second)
-	if err := conn.SetDeadline(deadline); err != nil {
-		return pingResult{}, fmt.Errorf("set deadline: %w", err)
-	}
-
-	req, _ := json.Marshal(ipcRequest{Op: "ping"})
-	if _, err := conn.Write(append(req, '\n')); err != nil {
-		return pingResult{}, fmt.Errorf("write: %w", err)
-	}
-
-	sc := bufio.NewScanner(conn)
-	if !sc.Scan() {
+	if len(responses) == 0 {
 		return pingResult{}, fmt.Errorf("no response")
 	}
-
-	var res ipcResponse
-	if err := json.Unmarshal(sc.Bytes(), &res); err != nil {
-		return pingResult{}, fmt.Errorf("decode: %w", err)
-	}
+	res := responses[0]
 	if !res.OK {
 		return pingResult{}, fmt.Errorf("core error: %s", res.Message)
 	}
@@ -77,4 +94,35 @@ func pingCore(socketPath string) (pingResult, error) {
 		RoundTripMs: time.Since(start).Milliseconds(),
 		SocketPath:  socketPath,
 	}, nil
+}
+
+func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
+	conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+	if err != nil {
+		return nil, fmt.Errorf("dial %s: %w", socketPath, err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		return nil, fmt.Errorf("set deadline: %w", err)
+	}
+	b, _ := json.Marshal(req)
+	if _, err := conn.Write(append(b, '\n')); err != nil {
+		return nil, fmt.Errorf("write: %w", err)
+	}
+	sc := bufio.NewScanner(conn)
+	var responses []ipcResponse
+	for sc.Scan() {
+		var res ipcResponse
+		if err := json.Unmarshal(sc.Bytes(), &res); err != nil {
+			return nil, fmt.Errorf("decode: %w", err)
+		}
+		responses = append(responses, res)
+		if req.Op != "chat_send" || res.Op == "event" && res.Event != nil && res.Event.Kind == bridge.EventDone {
+			break
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return responses, nil
 }

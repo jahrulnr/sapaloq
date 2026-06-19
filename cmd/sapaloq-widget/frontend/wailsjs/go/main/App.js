@@ -6,6 +6,14 @@ export function PingCore() {
   return window['go']['main']['App']['PingCore']();
 }
 
+export function SendMessage(arg1) {
+  return window['go']['main']['App']['SendMessage'](arg1);
+}
+
+export function SlashSuggest(arg1) {
+  return window['go']['main']['App']['SlashSuggest'](arg1);
+}
+
 export function SocketPath() {
   return window['go']['main']['App']['SocketPath']();
 }

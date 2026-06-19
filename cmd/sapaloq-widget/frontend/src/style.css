@@ -201,6 +201,44 @@ body.expanded .popup {
   word-break: break-all;
 }
 
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  margin: 8px 0;
+}
+
+.message {
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  background: white;
+  color: oklch(24% 0.03 260);
+  border: 1px solid oklch(88% 0.02 250);
+}
+
+.message--user {
+  align-self: flex-end;
+  background: oklch(58% 0.2 250);
+  color: white;
+}
+
+.message--thinking {
+  color: oklch(46% 0.06 260);
+  background: oklch(94% 0.03 255);
+}
+
+.message--tool {
+  background: oklch(94% 0.04 150);
+}
+
+.message--error {
+  background: oklch(94% 0.05 25);
+}
+
 .popup-compose {
   display: flex;
   gap: 8px;
@@ -209,7 +247,38 @@ body.expanded .popup {
   border-top: 1px solid oklch(90% 0.02 250);
 }
 
+.compose-wrap {
+  position: relative;
+  flex: 1;
+}
+
+.slash-popover {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slash-item {
+  border: 1px solid oklch(86% 0.02 250);
+  border-radius: 12px;
+  padding: 8px 10px;
+  text-align: left;
+  background: white;
+  box-shadow: 0 8px 20px oklch(0% 0 0 / 0.12);
+}
+
+.slash-item span {
+  display: block;
+  font-size: 0.72rem;
+  color: oklch(50% 0.03 260);
+}
+
 .popup-compose input {
+  width: 100%;
   flex: 1;
   border: 1px solid oklch(86% 0.02 250);
   border-radius: 12px;
