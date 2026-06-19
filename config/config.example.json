@@ -29,6 +29,7 @@
       "thinking": "auto"
     },
     "credentialsEnv": "SAPALOQ_CURSOR_TOKEN",
+    "declaredTools": [],
     "coercion": {
       "enabled": true,
       "schemaPath": "~/.config/sapaloq/bridge/cursor-bridge.schema.json"
@@ -40,6 +41,21 @@
     "communityBridge": {
       "enabled": false
     }
+  },
+
+  "commands": {
+    "triggerChars": ["/"],
+    "registry": [
+      {
+        "id": "settings",
+        "prefix": "/settings",
+        "pattern": "/settings(?:\\s+|$)",
+        "label": "Settings",
+        "description": "Patch config.json",
+        "category": "commands",
+        "enabled": true
+      }
+    ]
   },
 
   "notifications": {
