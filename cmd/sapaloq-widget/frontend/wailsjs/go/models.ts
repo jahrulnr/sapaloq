@@ -77,20 +77,62 @@ export namespace config {
 
 export namespace main {
 	
-	export class chatResult {
-	    ok: boolean;
-	    session_id?: string;
-	    events: bridge.StreamEvent[];
+	export class chatUsage {
+	    session_id: string;
+	    used_tokens: number;
+	    context_window: number;
+	    percent: number;
+	    provider: string;
+	    model: string;
+	    compacted_turns: number;
+	    active_turns: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new chatResult(source);
+	        return new chatUsage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source["session_id"];
+	        this.used_tokens = source["used_tokens"];
+	        this.context_window = source["context_window"];
+	        this.percent = source["percent"];
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.compacted_turns = source["compacted_turns"];
+	        this.active_turns = source["active_turns"];
+	    }
+	}
+	export class chatTurn {
+	    role: string;
+	    content: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new chatTurn(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.role = source["role"];
+	        this.content = source["content"];
+	    }
+	}
+	export class chatHistoryResult {
+	    ok: boolean;
+	    session_id: string;
+	    turns: chatTurn[];
+	    usage?: chatUsage;
+	
+	    static createFrom(source: any = {}) {
+	        return new chatHistoryResult(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ok = source["ok"];
 	        this.session_id = source["session_id"];
-	        this.events = this.convertValues(source["events"], bridge.StreamEvent);
+	        this.turns = this.convertValues(source["turns"], chatTurn);
+	        this.usage = this.convertValues(source["usage"], chatUsage);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -111,6 +153,44 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class chatResult {
+	    ok: boolean;
+	    session_id?: string;
+	    events: bridge.StreamEvent[];
+	    usage?: chatUsage;
+	
+	    static createFrom(source: any = {}) {
+	        return new chatResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.session_id = source["session_id"];
+	        this.events = this.convertValues(source["events"], bridge.StreamEvent);
+	        this.usage = this.convertValues(source["usage"], chatUsage);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
 	export class pingResult {
 	    ok: boolean;
 	    message: string;

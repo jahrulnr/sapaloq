@@ -109,6 +109,24 @@ Beberapa app: silent notif, empty body, privacy redaction. SapaLOQ **tidak bisa*
 
 Always-on-top HUD behavior beda per compositor: **GNOME Wayland** tidak punya layer-shell — pakai GJS shim atau manual toggle; **KDE/Sway** pakai gtk-layer-shell. Multi-monitor & fractional scaling tetap variance. **Click-through** di area transparan: GTK `input_shape` (M5a validated), bukan otomatis di semua toolkit.
 
+### Draggable widget panel positioning on multi-monitor (Hard limit · GNOME/Linux)
+
+Orb kecil yang bisa di-drag lalu berubah menjadi panel besar membutuhkan kombinasi native window **resize + reposition** saat expand/close. Pada GNOME/Linux multi-monitor, hasilnya tidak reliable antar user karena:
+
+- urutan monitor, origin coordinate, dan scaling bisa berbeda (termasuk negative/offset origin);
+- window manager/compositor bisa clamp posisi window saat resize;
+- GTK/Wails geometry callback bisa transient/asynchronous setelah drag atau resize;
+- behavior beda antara X11, Wayland, fractional scaling, dan setup 1/2/3+ monitor.
+
+SapaLOQ **tidak bisa guarantee** panel selalu expand/close tepat dari posisi orb pada semua layout monitor. Mitigasi partial:
+
+- default placement ke satu posisi stabil (mis. kiri bawah monitor aktif);
+- hindari resize/reposition native window saat toggle;
+- fixed outer transparent window + precise `input_shape` mask supaya area transparan click-through;
+- user manual reposition setelah drift.
+
+Semua mitigasi punya tradeoff UX. Ini bukan bug core/orchestrator; ini batas platform desktop/windowing.
+
 ### Portal permission prompts (Hard limit)
 
 Screenshot, clipboard first-use → user must approve. Automation **tidak fully silent** on modern Wayland.

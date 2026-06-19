@@ -66,6 +66,10 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			write(conn, Response{OK: true, Op: "ping", Message: "pong", RingState: string(orchestrator.RingIdle), ServerMs: time.Since(start).Milliseconds()})
 		case "slash_suggest":
 			write(conn, Response{OK: true, Op: req.Op, Suggestions: s.cfg.Commands.Suggest(req.Query), ServerMs: time.Since(start).Milliseconds()})
+		case "session_active", "chat_history":
+			s.handleHistory(ctx, conn, req, start)
+		case "context_usage":
+			s.handleUsage(ctx, conn, req, start)
 		case "chat_send":
 			s.handleChat(ctx, conn, req, start)
 		case "watch":
@@ -77,19 +81,52 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 }
 
 func (s *Server) handleChat(ctx context.Context, conn net.Conn, req Request, start time.Time) {
-	write(conn, Response{OK: true, Op: "chat_send", Message: "accepted", SessionID: req.SessionID, RingState: string(orchestrator.RingThinking), ServerMs: time.Since(start).Milliseconds()})
 	stream, err := s.orch.SendChat(ctx, req.SessionID, req.Message)
 	if err != nil {
 		write(conn, Response{OK: false, Op: "event", Message: err.Error()})
 		return
 	}
+	write(conn, Response{OK: true, Op: "chat_send", Message: "accepted", SessionID: req.SessionID, RingState: string(orchestrator.RingThinking), ServerMs: time.Since(start).Milliseconds()})
+	var sessionID string
 	for ev := range stream {
+		if ev.SessionID != "" {
+			sessionID = ev.SessionID
+		}
 		ring := orchestrator.RingStateFor(ev.Kind)
-		write(conn, Response{OK: true, Op: "event", Event: &ev, RingState: string(ring)})
+		usage, _ := s.orch.ContextUsage(ctx, sessionID)
+		write(conn, Response{OK: true, Op: "event", SessionID: sessionID, Event: &ev, RingState: string(ring), Usage: &usage})
 		if ring != orchestrator.RingIdle {
-			write(conn, Response{OK: true, Op: "ring_state", RingState: string(ring)})
+			write(conn, Response{OK: true, Op: "ring_state", SessionID: sessionID, RingState: string(ring)})
 		}
 	}
+}
+
+func (s *Server) handleHistory(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	sessionID := req.SessionID
+	if sessionID == "" {
+		var err error
+		sessionID, err = s.orch.ActiveSession(ctx)
+		if err != nil {
+			write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+			return
+		}
+	}
+	turns, err := s.orch.ActiveTurns(ctx, sessionID)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	usage, _ := s.orch.ContextUsage(ctx, sessionID)
+	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Turns: turns, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleUsage(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	usage, err := s.orch.ContextUsage(ctx, req.SessionID)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	write(conn, Response{OK: true, Op: req.Op, SessionID: usage.SessionID, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
 }
 
 func (s *Server) handleWatch(ctx context.Context, conn net.Conn) {

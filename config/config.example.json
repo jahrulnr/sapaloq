@@ -21,7 +21,7 @@
   },
 
   "llmBridge": {
-    "providerKey": "blackbox",
+    "providerKey": "tokenrouter",
     "providers": [
       {
         "key": "cursor",
@@ -81,6 +81,24 @@
         "pattern": "/settings(?:\\s+|$)",
         "label": "Settings",
         "description": "Patch config.json",
+        "category": "commands",
+        "enabled": true
+      },
+      {
+        "id": "compaction",
+        "prefix": "/compaction",
+        "pattern": "/compaction(?:\\s+|$)",
+        "label": "Compaction",
+        "description": "Compact active chat context",
+        "category": "commands",
+        "enabled": true
+      },
+      {
+        "id": "reset",
+        "prefix": "/reset",
+        "pattern": "/reset(?:\\s+|$)",
+        "label": "Reset",
+        "description": "Start a fresh active chat session",
         "category": "commands",
         "enabled": true
       }

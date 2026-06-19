@@ -29,8 +29,16 @@ func (a *App) PingCore() (pingResult, error) {
 	return pingCore(a.socketPath)
 }
 
-func (a *App) SendMessage(text string) (chatResult, error) {
-	return sendChat(a.socketPath, text)
+func (a *App) SendMessage(sessionID string, text string) (chatResult, error) {
+	return sendChat(a.socketPath, sessionID, text)
+}
+
+func (a *App) ChatHistory() (chatHistoryResult, error) {
+	return chatHistory(a.socketPath)
+}
+
+func (a *App) ContextUsage() (*chatUsage, error) {
+	return contextUsage(a.socketPath)
 }
 
 func (a *App) SlashSuggest(query string) ([]config.CommandEntry, error) {

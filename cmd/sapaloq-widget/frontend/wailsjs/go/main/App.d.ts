@@ -3,9 +3,13 @@
 import {main} from '../models';
 import {config} from '../models';
 
+export function ChatHistory():Promise<main.chatHistoryResult>;
+
+export function ContextUsage():Promise<main.chatUsage>;
+
 export function PingCore():Promise<main.pingResult>;
 
-export function SendMessage(arg1:string):Promise<main.chatResult>;
+export function SendMessage(arg1:string,arg2:string):Promise<main.chatResult>;
 
 export function SlashSuggest(arg1:string):Promise<Array<config.CommandEntry>>;
 

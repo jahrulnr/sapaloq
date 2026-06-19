@@ -12,6 +12,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/ipc"
+	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
 type ipcRequest = ipc.Request
@@ -38,11 +39,35 @@ type chatResult struct {
 	OK        bool                 `json:"ok"`
 	SessionID string               `json:"session_id,omitempty"`
 	Events    []bridge.StreamEvent `json:"events"`
+	Usage     *chatUsage           `json:"usage,omitempty"`
 }
 
-func sendChat(socketPath, message string) (chatResult, error) {
+type chatTurn struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatUsage struct {
+	SessionID      string `json:"session_id"`
+	UsedTokens     int    `json:"used_tokens"`
+	ContextWindow  int    `json:"context_window"`
+	Percent        int    `json:"percent"`
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	CompactedTurns int    `json:"compacted_turns"`
+	ActiveTurns    int    `json:"active_turns"`
+}
+
+type chatHistoryResult struct {
+	OK        bool       `json:"ok"`
+	SessionID string     `json:"session_id"`
+	Turns     []chatTurn `json:"turns"`
+	Usage     *chatUsage `json:"usage,omitempty"`
+}
+
+func sendChat(socketPath, sessionID, message string) (chatResult, error) {
 	var result chatResult
-	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_send", Message: message})
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_send", SessionID: sessionID, Message: message})
 	if err != nil {
 		return result, err
 	}
@@ -53,12 +78,64 @@ func sendChat(socketPath, message string) (chatResult, error) {
 		if res.SessionID != "" {
 			result.SessionID = res.SessionID
 		}
+		if res.Usage != nil {
+			result.Usage = mapUsage(res.Usage)
+		}
 		if res.Event != nil {
 			result.Events = append(result.Events, *res.Event)
 		}
 	}
 	result.OK = true
 	return result, nil
+}
+
+func chatHistory(socketPath string) (chatHistoryResult, error) {
+	var result chatHistoryResult
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_history"})
+	if err != nil {
+		return result, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		return result, fmt.Errorf("core error")
+	}
+	res := responses[0]
+	result.OK = true
+	result.SessionID = res.SessionID
+	result.Usage = mapUsage(res.Usage)
+	for _, turn := range res.Turns {
+		if turn.Role == "system" {
+			continue
+		}
+		result.Turns = append(result.Turns, chatTurn{Role: turn.Role, Content: turn.Content})
+	}
+	return result, nil
+}
+
+func contextUsage(socketPath string) (*chatUsage, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "context_usage"})
+	if err != nil {
+		return nil, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		return nil, fmt.Errorf("core error")
+	}
+	return mapUsage(responses[0].Usage), nil
+}
+
+func mapUsage(usage *chatstore.Usage) *chatUsage {
+	if usage == nil {
+		return nil
+	}
+	return &chatUsage{
+		SessionID:      usage.SessionID,
+		UsedTokens:     usage.UsedTokens,
+		ContextWindow:  usage.ContextWindow,
+		Percent:        usage.Percent,
+		Provider:       usage.Provider,
+		Model:          usage.Model,
+		CompactedTurns: usage.CompactedTurns,
+		ActiveTurns:    usage.ActiveTurns,
+	}
 }
 
 func slashSuggest(socketPath, query string) ([]config.CommandEntry, error) {
