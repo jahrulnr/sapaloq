@@ -19,6 +19,10 @@ type ipcRequest = ipc.Request
 
 type ipcResponse = ipc.Response
 
+// maxFrameBytes caps a single newline-delimited IPC frame, matching the core
+// server limit. It must exceed the 8 MB attachment cap after base64 inflation.
+const maxFrameBytes = 16 * 1024 * 1024
+
 type pingResult struct {
 	OK          bool   `json:"ok"`
 	Message     string `json:"message"`
@@ -265,6 +269,9 @@ func roundTripWithEvent(socketPath string, req ipcRequest, onResponse func(ipcRe
 		return nil, fmt.Errorf("write: %w", err)
 	}
 	sc := bufio.NewScanner(conn)
+	// Responses can echo large attachment payloads (e.g. chat_history turns with
+	// inlined images/files), which exceed bufio.Scanner's default 64KB line cap.
+	sc.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
 	var responses []ipcResponse
 	for sc.Scan() {
 		var res ipcResponse

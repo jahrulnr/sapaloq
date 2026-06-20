@@ -350,10 +350,30 @@ async function deleteMessageBranch(turnID: number) {
   }
 }
 
+// removeRepliesAfterTurn clears stale assistant/thinking/tool/error bubbles that
+// belong to the retried user turn (and everything after it) so the regenerated
+// response can stream into the same group instead of stacking on top of the old
+// reply. Returns the group id of the retried user message so streamed events
+// render in the correct place.
+function removeRepliesAfterTurn(turnID: number): number {
+  const user = document.querySelector<HTMLElement>(`.message--user[data-turn-id="${turnID}"]`);
+  if (!user) return currentUserGroup;
+  const group = Number(user.dataset.group || currentUserGroup);
+  document.querySelectorAll<HTMLElement>('#message-list > .message').forEach((item) => {
+    const itemGroup = Number(item.dataset.group || 0);
+    if (itemGroup < group) return;
+    if (item === user) return;
+    if (itemGroup === group && item.classList.contains('message--user')) return;
+    item.remove();
+  });
+  return group;
+}
+
 async function retryMessage(turnID: number) {
   const input = getComposeInput();
   if (!turnID || submitting || !input) return;
   closeMessageMenu();
+  currentUserGroup = removeRepliesAfterTurn(turnID);
   setRingState('thinking');
   appendProgressBubble('waiting');
   const thinkingTimer = window.setTimeout(() => appendProgressBubble('thinking'), 450);
@@ -363,9 +383,8 @@ async function retryMessage(turnID: number) {
   try {
     const res = await RetryChatTurn(currentSessionID, turnID);
     currentSessionID = res.session_id || currentSessionID;
-    await restoreChatHistory();
-    const error = ((res.events || []) as StreamEvent[]).find((event) => event.kind === 'error');
-    if (error) appendMessage('message--error', error.error || 'chat failed', currentUserGroup, turnID);
+    renderEvents((res.events || []) as StreamEvent[]);
+    await bindLatestGroupTurnID();
     renderUsage(res.usage as ChatUsage | undefined);
   } catch (err) {
     appendMessage('message--error', errorText(err), currentUserGroup, turnID);

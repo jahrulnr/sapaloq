@@ -33,8 +33,13 @@ func main() {
 		HideWindowOnClose: false,
 		BackgroundColour:  &options.RGBA{R: 0, G: 0, B: 0, A: 0},
 		DragAndDrop: &options.DragAndDrop{
-			EnableFileDrop:     true,
-			DisableWebViewDrop: true,
+			EnableFileDrop: true,
+			// On WebKitGTK the native file-drop signals (drag-data-received /
+			// drag-drop) only fire while the webview keeps its built-in GTK drag
+			// destination. Wails' DisableWebViewDrop calls gtk_drag_dest_unset()
+			// and never re-registers one, which silently kills OnFileDrop. Keep
+			// the webview drop enabled so native desktop drops are delivered.
+			DisableWebViewDrop: false,
 			CSSDropProperty:    "--wails-drop-target",
 			CSSDropValue:       "drop",
 		},

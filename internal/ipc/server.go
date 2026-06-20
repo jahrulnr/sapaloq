@@ -14,6 +14,11 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/core/orchestrator"
 )
 
+// maxFrameBytes caps a single newline-delimited IPC frame. It must comfortably
+// exceed the widget's 8 MB attachment limit after base64 inflation (~11 MB)
+// plus JSON overhead.
+const maxFrameBytes = 16 * 1024 * 1024
+
 type Server struct {
 	cfg  config.Config
 	orch *orchestrator.Orchestrator
@@ -55,6 +60,10 @@ func (s *Server) ListenAndServe(ctx context.Context, socketPath string) error {
 func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	sc := bufio.NewScanner(conn)
+	// Requests can carry inlined attachments (base64 images / file text), which
+	// easily exceed bufio.Scanner's default 64KB line cap and would otherwise
+	// abort the read mid-message (manifesting as a "broken pipe" on the client).
+	sc.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
 	for sc.Scan() {
 		start := time.Now()
 		var req Request
