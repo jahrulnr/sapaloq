@@ -188,7 +188,7 @@ func runSSE(ctx context.Context, opts WireOptions, body []byte, onLine func([]by
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("provider-bridge: upstream status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("provider-bridge: upstream status %d: %s", resp.StatusCode, upstreamErrorBody(raw))
 	}
 	reader := newSSEReader(resp.Body)
 	for {
@@ -245,6 +245,26 @@ func defaultIfEmpty(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func upstreamErrorBody(raw []byte) string {
+	body := strings.TrimSpace(string(raw))
+	if body == "" {
+		return "empty response body"
+	}
+	if looksLikeHTML(body) {
+		return "HTML error page from upstream"
+	}
+	const maxBodyLen = 1200
+	if len(body) > maxBodyLen {
+		return body[:maxBodyLen] + "…"
+	}
+	return body
+}
+
+func looksLikeHTML(body string) bool {
+	lower := strings.ToLower(strings.TrimSpace(body))
+	return strings.HasPrefix(lower, "<!doctype html") || strings.HasPrefix(lower, "<html")
 }
 
 // sseReader streams one line at a time from an HTTP response body. It is a

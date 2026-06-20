@@ -54,6 +54,15 @@ func DefaultCommands() CommandsConfig {
 				Category:    "commands",
 				Enabled:     true,
 			},
+			{
+				ID:          "model",
+				Prefix:      "/model",
+				Pattern:     `/model(?:\s+|$)`,
+				Label:       "Model",
+				Description: "Switch active provider: /model <key>",
+				Category:    "commands",
+				Enabled:     true,
+			},
 		},
 	}
 }
@@ -94,9 +103,31 @@ func (c CommandsConfig) Validate() error {
 }
 
 func (c CommandsConfig) Suggest(query string) []CommandEntry {
+	return c.SuggestWithProviders(query, nil)
+}
+
+func (c CommandsConfig) SuggestWithProviders(query string, providers []LLMBridge) []CommandEntry {
 	c = c.WithDefaults()
 	needle := "/" + strings.TrimPrefix(query, "/")
-	out := make([]CommandEntry, 0, len(c.Registry))
+	out := make([]CommandEntry, 0, len(c.Registry)+len(providers))
+	if strings.HasPrefix(needle, "/model ") {
+		providerNeedle := strings.TrimSpace(strings.TrimPrefix(needle, "/model"))
+		for _, provider := range providers {
+			if provider.Key == "" || !strings.HasPrefix(provider.Key, providerNeedle) {
+				continue
+			}
+			out = append(out, CommandEntry{
+				ID:          "model",
+				Prefix:      "/model " + provider.Key,
+				Pattern:     `/model(?:\s+|$)`,
+				Label:       "Model: " + provider.Key,
+				Description: provider.Driver + " · " + provider.Model,
+				Category:    "models",
+				Enabled:     true,
+			})
+		}
+		return out
+	}
 	for _, entry := range c.Registry {
 		if !entry.Enabled {
 			continue

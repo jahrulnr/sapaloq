@@ -10,8 +10,20 @@ export function ContextUsage() {
   return window['go']['main']['App']['ContextUsage']();
 }
 
+export function DeleteChatTurn(arg1, arg2) {
+  return window['go']['main']['App']['DeleteChatTurn'](arg1, arg2);
+}
+
 export function PingCore() {
   return window['go']['main']['App']['PingCore']();
+}
+
+export function ReadDroppedFile(arg1) {
+  return window['go']['main']['App']['ReadDroppedFile'](arg1);
+}
+
+export function RetryChatTurn(arg1, arg2) {
+  return window['go']['main']['App']['RetryChatTurn'](arg1, arg2);
 }
 
 export function SendMessage(arg1, arg2) {

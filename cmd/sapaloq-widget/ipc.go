@@ -43,6 +43,8 @@ type chatResult struct {
 }
 
 type chatTurn struct {
+	ID      int64  `json:"id"`
+	Seq     int    `json:"seq"`
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
@@ -106,8 +108,47 @@ func chatHistory(socketPath string) (chatHistoryResult, error) {
 		if turn.Role == "system" {
 			continue
 		}
-		result.Turns = append(result.Turns, chatTurn{Role: turn.Role, Content: turn.Content})
+		result.Turns = append(result.Turns, chatTurn{ID: turn.ID, Seq: turn.Seq, Role: turn.Role, Content: turn.Content})
 	}
+	return result, nil
+}
+
+func deleteChatTurn(socketPath, sessionID string, turnID int64) error {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_delete", SessionID: sessionID, TurnID: turnID})
+	if err != nil {
+		return err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
+func retryChatTurn(socketPath, sessionID string, turnID int64) (chatResult, error) {
+	var result chatResult
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_retry", SessionID: sessionID, TurnID: turnID})
+	if err != nil {
+		return result, err
+	}
+	for _, res := range responses {
+		if !res.OK {
+			return result, fmt.Errorf("core error: %s", res.Message)
+		}
+		if res.SessionID != "" {
+			result.SessionID = res.SessionID
+		}
+		if res.Usage != nil {
+			result.Usage = mapUsage(res.Usage)
+		}
+		if res.Event != nil {
+			result.Events = append(result.Events, *res.Event)
+		}
+	}
+	result.OK = true
 	return result, nil
 }
 

@@ -85,9 +85,13 @@ Same rule for **outer-machine nodes**: no live memory bus — context packet at 
 
 Companion ingat desktop/personal; worker ingat repo/coding. **Tidak sync** — user bisa lihat jawaban bertentangan antar produk.
 
-### No settings UI (By design · Hard limit recovery)
+### No full settings UI (By design · mitigated)
 
-Config hanya via agent chat. LLM down + config corrupt = **user stuck** kecuali manual edit file / CLI doctor. Doctor mitigates **partial**; tidak mengganti UI untuk non-technical user.
+Config utama user ada di `~/.config/sapaloq/config.json` (atau path dari `SAPALOQ_CONFIG`). User boleh edit langsung file itu tanpa lewat UI; `config/config.example.json` hanya template repo dan disalin otomatis saat first boot jika `config.json` belum ada. Jangan taruh token/kredensial nyata di `config.example.json` karena file itu aman untuk GitHub.
+
+Perubahan `config.json` di-reload otomatis berdasarkan `mtime` (polling ringan, mirip env watcher Laravel). Untuk switch cepat dari chat, gunakan `/model <provider-key>`; autocomplete mengambil key dari `llmBridge.providers`.
+
+LLM down + config corrupt masih perlu manual edit/CLI doctor. Doctor mitigates **partial**; tidak mengganti UI untuk non-technical user.
 
 ---
 

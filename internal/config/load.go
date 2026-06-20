@@ -176,7 +176,10 @@ func DefaultConfig() Config {
 func Load(path string) (Config, error) {
 	cfg := DefaultConfig()
 	if path == "" {
-		path = filepath.Join("config", "config.example.json")
+		path = ConfigPath(os.Getenv("SAPALOQ_CONFIG"), cfg)
+	}
+	if err := ensureConfigFile(path); err != nil {
+		return Config{}, err
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -198,6 +201,45 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func ensureConfigFile(path string) error {
+	if path == "" {
+		return nil
+	}
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	b, err := os.ReadFile(exampleConfigPath())
+	if err != nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
+}
+
+func exampleConfigPath() string {
+	candidates := []string{
+		filepath.Join("config", "config.example.json"),
+		filepath.Join("sapaloq", "config", "config.example.json"),
+	}
+	if exe, err := os.Executable(); err == nil {
+		base := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(base, "config", "config.example.json"),
+			filepath.Join(base, "..", "config", "config.example.json"),
+		)
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return filepath.Join("config", "config.example.json")
 }
 
 func Doctor(cfg Config) (string, error) {

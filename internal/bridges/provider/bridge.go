@@ -90,6 +90,10 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 	contextWindow := DetectContextWindow(b.entry)
 	// Apply the context window to the messages we forward to the model.
 	messages := FitMessagesToContext(req.Messages, contextWindow)
+	declaredTools := req.DeclaredTools
+	if len(declaredTools) == 0 {
+		declaredTools = b.entry.DeclaredTools
+	}
 	return WireOptions{
 		Parser:          parser,
 		Auth:            auth,
@@ -101,7 +105,7 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 		Images:          req.Images,
 		ReasoningEffort: reasoning,
 		MaxTokens:       maxTokens,
-		DeclaredTools:   b.entry.DeclaredTools,
+		DeclaredTools:   declaredTools,
 		SessionID:       req.SessionID,
 		ContextWindow:   contextWindow,
 	}

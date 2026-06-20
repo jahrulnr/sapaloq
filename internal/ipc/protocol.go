@@ -10,6 +10,7 @@ type Request struct {
 	Op        string `json:"op"`
 	Message   string `json:"message,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	TurnID    int64  `json:"turn_id,omitempty"`
 	Query     string `json:"query,omitempty"`
 }
 

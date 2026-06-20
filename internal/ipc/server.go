@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/core/orchestrator"
 )
@@ -65,11 +66,15 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		case "ping":
 			write(conn, Response{OK: true, Op: "ping", Message: "pong", RingState: string(orchestrator.RingIdle), ServerMs: time.Since(start).Milliseconds()})
 		case "slash_suggest":
-			write(conn, Response{OK: true, Op: req.Op, Suggestions: s.cfg.Commands.Suggest(req.Query), ServerMs: time.Since(start).Milliseconds()})
+			write(conn, Response{OK: true, Op: req.Op, Suggestions: s.orch.SlashSuggest(req.Query), ServerMs: time.Since(start).Milliseconds()})
 		case "session_active", "chat_history":
 			s.handleHistory(ctx, conn, req, start)
 		case "context_usage":
 			s.handleUsage(ctx, conn, req, start)
+		case "chat_delete":
+			s.handleDelete(ctx, conn, req, start)
+		case "chat_retry":
+			s.handleRetry(ctx, conn, req, start)
 		case "chat_send":
 			s.handleChat(ctx, conn, req, start)
 		case "watch":
@@ -80,6 +85,28 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 }
 
+func (s *Server) handleDelete(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	if req.TurnID <= 0 {
+		write(conn, Response{OK: false, Op: req.Op, Message: "turn_id is required", ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	if err := s.orch.DeleteTurn(ctx, req.SessionID, req.TurnID); err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	write(conn, Response{OK: true, Op: req.Op, SessionID: req.SessionID, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleRetry(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	stream, err := s.orch.RetryChat(ctx, req.SessionID, req.TurnID)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	write(conn, Response{OK: true, Op: req.Op, SessionID: req.SessionID, RingState: string(orchestrator.RingThinking), ServerMs: time.Since(start).Milliseconds()})
+	s.writeStream(ctx, conn, req.SessionID, stream)
+}
+
 func (s *Server) handleChat(ctx context.Context, conn net.Conn, req Request, start time.Time) {
 	stream, err := s.orch.SendChat(ctx, req.SessionID, req.Message)
 	if err != nil {
@@ -87,7 +114,11 @@ func (s *Server) handleChat(ctx context.Context, conn net.Conn, req Request, sta
 		return
 	}
 	write(conn, Response{OK: true, Op: "chat_send", Message: "accepted", SessionID: req.SessionID, RingState: string(orchestrator.RingThinking), ServerMs: time.Since(start).Milliseconds()})
-	var sessionID string
+	s.writeStream(ctx, conn, req.SessionID, stream)
+}
+
+func (s *Server) writeStream(ctx context.Context, conn net.Conn, requestedSessionID string, stream <-chan bridge.StreamEvent) {
+	sessionID := requestedSessionID
 	for ev := range stream {
 		if ev.SessionID != "" {
 			sessionID = ev.SessionID

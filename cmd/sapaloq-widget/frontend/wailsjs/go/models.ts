@@ -104,6 +104,8 @@ export namespace main {
 	    }
 	}
 	export class chatTurn {
+	    id: number;
+	    seq: number;
 	    role: string;
 	    content: string;
 	
@@ -113,6 +115,8 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.seq = source["seq"];
 	        this.role = source["role"];
 	        this.content = source["content"];
 	    }
@@ -191,6 +195,28 @@ export namespace main {
 	}
 	
 	
+	export class droppedFile {
+	    name: string;
+	    mime: string;
+	    size: number;
+	    data_uri?: string;
+	    text?: string;
+	    is_image: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new droppedFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.mime = source["mime"];
+	        this.size = source["size"];
+	        this.data_uri = source["data_uri"];
+	        this.text = source["text"];
+	        this.is_image = source["is_image"];
+	    }
+	}
 	export class pingResult {
 	    ok: boolean;
 	    message: string;

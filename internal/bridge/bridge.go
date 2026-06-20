@@ -24,9 +24,10 @@ type Image struct {
 }
 
 type Request struct {
-	SessionID string    `json:"session_id,omitempty"`
-	Messages  []Message `json:"messages"`
-	Model     string    `json:"model,omitempty"`
+	SessionID     string    `json:"session_id,omitempty"`
+	Messages      []Message `json:"messages"`
+	Model         string    `json:"model,omitempty"`
+	DeclaredTools []string  `json:"declared_tools,omitempty"`
 	// Images carries inline image attachments for vision-capable bridges.
 	// Empty for text-only requests.
 	Images []Image `json:"images,omitempty"`

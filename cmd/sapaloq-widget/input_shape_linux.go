@@ -91,6 +91,6 @@ func scheduleInputShape(collapsed bool) {
 	if collapsed {
 		C.sapaloq_schedule_shape(76, 76, 1)
 	} else {
-		C.sapaloq_schedule_shape(376, 536, 0)
+		C.sapaloq_schedule_shape(2000, 2000, 0)
 	}
 }

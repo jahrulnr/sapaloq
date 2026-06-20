@@ -65,12 +65,14 @@ func main() {
 		if err := config.EnsureRuntimeDirs(dirs); err != nil {
 			exitf("runtime dirs: %v", err)
 		}
+		orchestrator.SetBridgeFactory(newBridge)
 		orch, err := newOrchestrator(cfg, cfgPath)
 		if err != nil {
 			exitf("orchestrator: %v", err)
 		}
 		entry, _ := cfg.LLMBridge.ActiveProvider()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		orch.StartConfigWatcher(ctx)
 		defer stop()
 		fmt.Printf("sapaloq-core listening on %s%s\n", dirs.SocketPath, envDebugHint())
 		if debug.Enabled() {
@@ -85,6 +87,15 @@ func main() {
 }
 
 func newOrchestrator(cfg config.Config, cfgPath string) (*orchestrator.Orchestrator, error) {
+	b, err := newBridge(cfg)
+	if err != nil {
+		return nil, err
+	}
+	debug.Debugf("orchestrator: bridge=%s live_api=%v", b.ID(), b.Caps().LiveAPI)
+	return orchestrator.New(cfg, cfgPath, b, bus.New())
+}
+
+func newBridge(cfg config.Config) (bridge.Bridge, error) {
 	entry, err := cfg.LLMBridge.ActiveProvider()
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator: %w", err)
@@ -100,12 +111,7 @@ func newOrchestrator(cfg config.Config, cfgPath string) (*orchestrator.Orchestra
 			return nil, err
 		}
 	}
-	b, err := reg.Get(entry.Driver)
-	if err != nil {
-		return nil, err
-	}
-	debug.Debugf("orchestrator: bridge=%s live_api=%v", b.ID(), b.Caps().LiveAPI)
-	return orchestrator.New(cfg, cfgPath, b, bus.New())
+	return reg.Get(entry.Driver)
 }
 
 func exitf(format string, args ...any) {

@@ -161,8 +161,13 @@ func (s *Store) Reset(ctx context.Context, provider, model string) (string, erro
 }
 
 func (s *Store) AppendTurn(ctx context.Context, sessionID, role, content string, tokenEstimate int) error {
+	_, err := s.AppendTurnID(ctx, sessionID, role, content, tokenEstimate)
+	return err
+}
+
+func (s *Store) AppendTurnID(ctx context.Context, sessionID, role, content string, tokenEstimate int) (int64, error) {
 	if strings.TrimSpace(content) == "" {
-		return nil
+		return 0, nil
 	}
 	if sessionID == "" {
 		sessionID = defaultSessionID
@@ -170,12 +175,77 @@ func (s *Store) AppendTurn(ctx context.Context, sessionID, role, content string,
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 	var seq int
 	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_turns WHERE session_id=?`, sessionID).Scan(&seq)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO chat_turns(session_id, seq, role, content, token_estimate, included_in_context, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`, sessionID, seq, role, content, tokenEstimate, now); err != nil {
+	res, err := tx.ExecContext(ctx, `INSERT INTO chat_turns(session_id, seq, role, content, token_estimate, included_in_context, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`, sessionID, seq, role, content, tokenEstimate, now)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET updated_at=? WHERE id=?`, now, sessionID); err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
+
+func (s *Store) Turn(ctx context.Context, sessionID string, turnID int64) (Turn, error) {
+	var t Turn
+	var included int
+	var compacted sql.NullString
+	var created string
+	err := s.db.QueryRowContext(ctx, `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, created_at
+		FROM chat_turns WHERE session_id=? AND id=?`, sessionID, turnID).
+		Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &created)
+	if err != nil {
+		return Turn{}, err
+	}
+	t.IncludedInContext = included == 1
+	if compacted.Valid && compacted.String != "" {
+		if parsed, parseErr := time.Parse(time.RFC3339Nano, compacted.String); parseErr == nil {
+			t.CompactedAt = &parsed
+		}
+	}
+	if parsed, parseErr := time.Parse(time.RFC3339Nano, created); parseErr == nil {
+		t.CreatedAt = parsed
+	}
+	return t, nil
+}
+
+// DeleteFromTurn deletes the selected turn and every later turn in its linear
+// branch. Earlier conversation remains intact.
+func (s *Store) DeleteFromTurn(ctx context.Context, sessionID string, turnID int64) error {
+	return s.deleteRelativeToTurn(ctx, sessionID, turnID, true)
+}
+
+// DeleteAfterTurn keeps the selected turn and removes only its descendants.
+// Retry uses this so the original user message is regenerated in place.
+func (s *Store) DeleteAfterTurn(ctx context.Context, sessionID string, turnID int64) error {
+	return s.deleteRelativeToTurn(ctx, sessionID, turnID, false)
+}
+
+func (s *Store) deleteRelativeToTurn(ctx context.Context, sessionID string, turnID int64, inclusive bool) error {
+	turn, err := s.Turn(ctx, sessionID, turnID)
+	if err != nil {
+		return err
+	}
+	op := ">"
+	if inclusive {
+		op = ">="
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	query := `DELETE FROM chat_turns WHERE session_id=? AND seq ` + op + ` ?`
+	if _, err := tx.ExecContext(ctx, query, sessionID, turn.Seq); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET updated_at=? WHERE id=?`, now, sessionID); err != nil {

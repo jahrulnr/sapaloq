@@ -1,12 +1,13 @@
 import './style.css';
-import { ChatHistory, ContextUsage, PingCore, SendMessage, SlashSuggest } from '../wailsjs/go/main/App';
-import { initWindowLayout, isExpanded, setExpanded, toggleExpanded } from './window-layout';
+import { ChatHistory, ContextUsage, DeleteChatTurn, PingCore, ReadDroppedFile, RetryChatTurn, SendMessage, SlashSuggest } from '../wailsjs/go/main/App';
+import { OnFileDrop } from '../wailsjs/runtime/runtime';
+import { cyclePanelSize, initWindowLayout, isExpanded, setExpanded, toggleExpanded } from './window-layout';
 
 type RingState = 'idle' | 'thinking' | 'delegating' | 'needs-input';
 type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 type CommandEntry = { id: string; prefix: string; label: string; description: string; enabled: boolean };
 type StreamEvent = { kind: string; delta?: string; error?: string; tool_call?: { name: string } };
-type ChatTurn = { role: string; content: string };
+type ChatTurn = { id: number; seq: number; role: string; content: string };
 type ChatUsage = { session_id: string; used_tokens: number; context_window: number; percent: number; provider: string; model: string };
 type PendingAttachment = { name: string; type: string; size: number; dataURI?: string; text?: string };
 
@@ -18,6 +19,10 @@ let pingTimer: ReturnType<typeof setInterval> | null = null;
 let submitting = false;
 let currentSessionID = '';
 let pendingAttachments: PendingAttachment[] = [];
+let messageSeq = 0;
+let currentUserGroup = 0;
+let lastSubmittedText = '';
+let activeMessageMenu: HTMLElement | null = null;
 
 function activeSlashAtChat(value: string, caret: number): { query: string; slashIndex: number } | null {
   const before = value.slice(0, caret);
@@ -70,13 +75,18 @@ function cycleRingState() {
   setRingState(states[stateIndex]);
 }
 
+function sanitizeDisplayText(text: string) {
+  return text.replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '').replace(/\s+$/g, '');
+}
+
 function parseInlineMarkdown(text: string): DocumentFragment {
   const fragment = document.createDocumentFragment();
+  const safeText = sanitizeDisplayText(text);
   const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\((https?:\/\/[^\s)]+)\))/g;
   let cursor = 0;
-  for (const match of text.matchAll(pattern)) {
+  for (const match of safeText.matchAll(pattern)) {
     const index = match.index || 0;
-    if (index > cursor) fragment.append(document.createTextNode(text.slice(cursor, index)));
+    if (index > cursor) fragment.append(document.createTextNode(safeText.slice(cursor, index)));
     const token = match[0];
     if (token.startsWith('`')) {
       const code = document.createElement('code');
@@ -102,7 +112,7 @@ function parseInlineMarkdown(text: string): DocumentFragment {
     }
     cursor = index + token.length;
   }
-  if (cursor < text.length) fragment.append(document.createTextNode(text.slice(cursor)));
+  if (cursor < safeText.length) fragment.append(document.createTextNode(safeText.slice(cursor)));
   return fragment;
 }
 
@@ -132,12 +142,18 @@ function renderMarkdown(text: string): DocumentFragment {
   return fragment;
 }
 
-function appendMessage(className: string, text: string) {
+function appendMessage(className: string, text: string, groupID = currentUserGroup, turnID = 0) {
   const list = document.getElementById('message-list');
   if (!list || !text) return;
   const item = document.createElement('div');
   item.className = `message ${className}`;
+  item.dataset.seq = `${++messageSeq}`;
+  item.dataset.group = `${groupID}`;
+  if (turnID > 0) item.dataset.turnId = `${turnID}`;
+  item.dataset.rawText = text;
   item.append(renderMarkdown(text));
+  if (className.includes('message--user')) wireUserMessage(item, text);
+  if (className.includes('message--error')) wireErrorMessage(item);
   list.appendChild(item);
   list.scrollTop = list.scrollHeight;
   return item;
@@ -146,13 +162,147 @@ function appendMessage(className: string, text: string) {
 function clearMessages() {
   const list = document.getElementById('message-list');
   if (list) list.innerHTML = '';
+  activeMessageMenu = null;
+  messageSeq = 0;
+  currentUserGroup = 0;
+}
+
+function getComposeInput() {
+  return document.getElementById('compose-input') as HTMLTextAreaElement | null;
+}
+
+async function copyText(text: string) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const input = getComposeInput();
+    if (!input) return;
+    const previous = input.value;
+    input.value = text;
+    input.select();
+    document.execCommand('copy');
+    input.value = previous;
+  }
+}
+
+function editText(text: string) {
+  const input = getComposeInput();
+  if (!input) return;
+  input.value = text;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  void refreshSlashSuggest();
+}
+
+function closeMessageMenu() {
+  activeMessageMenu?.remove();
+  activeMessageMenu = null;
+}
+
+async function deleteMessageBranch(turnID: number) {
+  if (!turnID || submitting) return;
+  closeMessageMenu();
+  try {
+    await DeleteChatTurn(currentSessionID, turnID);
+    await restoreChatHistory();
+  } catch (err) {
+    appendMessage('message--error', errorText(err), currentUserGroup, turnID);
+  }
+}
+
+async function retryMessage(turnID: number) {
+  const input = getComposeInput();
+  if (!turnID || submitting || !input) return;
+  closeMessageMenu();
+  setRingState('thinking');
+  submitting = true;
+  input.disabled = true;
+  try {
+    const res = await RetryChatTurn(currentSessionID, turnID);
+    currentSessionID = res.session_id || currentSessionID;
+    await restoreChatHistory();
+    const error = ((res.events || []) as StreamEvent[]).find((event) => event.kind === 'error');
+    if (error) appendMessage('message--error', error.error || 'chat failed', currentUserGroup, turnID);
+    renderUsage(res.usage as ChatUsage | undefined);
+  } catch (err) {
+    appendMessage('message--error', errorText(err), currentUserGroup, turnID);
+  } finally {
+    submitting = false;
+    input.disabled = false;
+    input.focus();
+    setRingState('idle');
+  }
+}
+
+function showUserMessageMenu(item: HTMLElement) {
+  const text = item.dataset.rawText || item.textContent || '';
+  const turnID = Number(item.dataset.turnId || 0);
+  closeMessageMenu();
+  const menu = document.createElement('div');
+  menu.className = 'message-menu';
+  menu.innerHTML = `
+    <button type="button" data-action="copy">Copy</button>
+    <button type="button" data-action="edit">Edit</button>
+    <button type="button" data-action="retry">Retry</button>
+    <button type="button" data-action="delete">Delete</button>
+  `;
+  menu.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const action = button.dataset.action;
+      if (action === 'copy') void copyText(text);
+      if (action === 'edit') editText(text);
+      if (action === 'retry') void retryMessage(turnID);
+      if (action === 'delete') void deleteMessageBranch(turnID);
+      if (action !== 'delete') closeMessageMenu();
+    });
+  });
+  item.append(menu);
+  activeMessageMenu = menu;
+}
+
+function wireUserMessage(item: HTMLElement, _text: string) {
+  item.tabIndex = 0;
+  item.addEventListener('click', (event) => {
+    if (window.getSelection()?.toString()) return;
+    event.stopPropagation();
+    showUserMessageMenu(item);
+  });
+  item.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      showUserMessageMenu(item);
+    }
+  });
+}
+
+function wireErrorMessage(item: HTMLElement) {
+  const actions = document.createElement('div');
+  actions.className = 'message-inline-actions';
+  actions.innerHTML = `<button type="button" title="Retry">↻</button><button type="button" title="Edit">Edit</button>`;
+  const [retry, edit] = Array.from(actions.querySelectorAll<HTMLButtonElement>('button'));
+  retry?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const turnID = Number(item.dataset.turnId || 0);
+    if (turnID) void retryMessage(turnID);
+  });
+  edit?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const groupID = item.dataset.group || '';
+    const user = document.querySelector<HTMLElement>(`.message--user[data-group="${groupID}"]`);
+    editText(user?.dataset.rawText || lastSubmittedText);
+  });
+  item.append(actions);
 }
 
 function renderTurn(turn: ChatTurn) {
   if (!turn.content) return;
-  if (turn.role === 'user') appendMessage('message--user', turn.content);
-  else if (turn.role === 'error') appendMessage('message--error', turn.content);
-  else appendMessage('message--assistant', turn.content);
+  if (turn.role === 'user') {
+    currentUserGroup++;
+    appendMessage('message--user', turn.content, currentUserGroup, turn.id);
+  } else if (turn.role === 'error') appendMessage('message--error', turn.content, currentUserGroup, turn.id);
+  else appendMessage('message--assistant', turn.content, currentUserGroup, turn.id);
 }
 
 async function restoreChatHistory() {
@@ -167,6 +317,21 @@ async function restoreChatHistory() {
   }
 }
 
+async function bindLatestGroupTurnID() {
+  try {
+    const history = await ChatHistory();
+    const turns = (history.turns || []) as ChatTurn[];
+    const user = [...turns].reverse().find((turn) => turn.role === 'user');
+    if (!user) return 0;
+    document.querySelectorAll<HTMLElement>(`.message[data-group="${currentUserGroup}"]`).forEach((item) => {
+      item.dataset.turnId = `${user.id}`;
+    });
+    return user.id;
+  } catch {
+    return 0;
+  }
+}
+
 function errorText(err: unknown) {
   if (err instanceof Error && err.message) return err.message;
   if (typeof err === 'string') return err;
@@ -176,38 +341,54 @@ function errorText(err: unknown) {
 // Streaming coalescer: accumulates delta chunks into one bubble so
 // word-by-word streams (e.g. blackbox MiniMax-M3) render as natural typing
 // instead of spawning a new DOM node per token.
-type StreamTarget = { el: HTMLElement; buffer: string; scheduled: boolean };
+type StreamTarget = { el: HTMLElement; text: string; queue: string; typing: boolean };
 
 function makeStreamTarget(className: string): StreamTarget {
   const list = document.getElementById('message-list');
   const el = document.createElement('div');
-  el.className = `message ${className}`;
+  el.className = `message ${className} message--streaming`;
+  el.dataset.seq = `${++messageSeq}`;
+  el.dataset.group = `${currentUserGroup}`;
   if (list) list.appendChild(el);
   list && (list.scrollTop = list.scrollHeight);
-  return { el, buffer: '', scheduled: false };
+  return { el, text: '', queue: '', typing: false };
 }
 
-function flushStream(target: StreamTarget) {
-  target.scheduled = false;
-  if (!target.buffer) return;
-  target.el.textContent += target.buffer;
-  target.buffer = '';
+function paintStream(target: StreamTarget) {
+  target.el.replaceChildren(renderMarkdown(target.text));
   const list = document.getElementById('message-list');
   if (list) list.scrollTop = list.scrollHeight;
 }
 
-function pushStream(target: StreamTarget, chunk: string, flushBoundary = false) {
-  if (!chunk) return;
-  target.buffer += chunk;
-  // Flush immediately on whitespace boundary (natural word boundary) so
-  // each visible token corresponds to one render.
-  if (flushBoundary || /\s/.test(chunk)) {
-    flushStream(target);
+function typeNext(target: StreamTarget) {
+  if (!target.queue) {
+    target.typing = false;
     return;
   }
-  if (!target.scheduled) {
-    target.scheduled = true;
-    requestAnimationFrame(() => flushStream(target));
+  const step = Math.max(1, Math.min(3, Math.ceil(target.queue.length / 90)));
+  target.text += target.queue.slice(0, step);
+  target.queue = target.queue.slice(step);
+  paintStream(target);
+  window.setTimeout(() => typeNext(target), target.queue.length > 240 ? 8 : 18);
+}
+
+function flushStream(target: StreamTarget) {
+  if (target.queue) {
+    target.text += target.queue;
+    target.queue = '';
+    paintStream(target);
+  }
+  target.el.dataset.rawText = target.text;
+  target.typing = false;
+  target.el.classList.remove('message--streaming');
+}
+
+function pushStream(target: StreamTarget, chunk: string) {
+  if (!chunk) return;
+  target.queue += chunk;
+  if (!target.typing) {
+    target.typing = true;
+    typeNext(target);
   }
 }
 
@@ -218,7 +399,7 @@ function renderEvents(events: StreamEvent[]) {
     if (event.kind === 'thinking_delta') {
       setRingState('thinking');
       if (!thinking) thinking = makeStreamTarget('message--thinking');
-      pushStream(thinking, event.delta || '', true);
+      pushStream(thinking, event.delta || '');
     } else if (event.kind === 'tool_call') {
       setRingState('delegating');
       // Flush any pending stream before tool call so it shows up cleanly.
@@ -282,16 +463,40 @@ function fileToText(file: File) {
   });
 }
 
+function formatBytes(bytes: number) {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function attachmentKind(attachment: PendingAttachment) {
+  if (attachment.type.startsWith('image/')) return 'IMG';
+  return 'FILE';
+}
+
 function renderAttachments() {
   const tray = document.getElementById('attachment-tray');
+  const input = document.getElementById('compose-input') as HTMLTextAreaElement | null;
+  const wrap = document.getElementById('compose-wrap');
   if (!tray) return;
   tray.innerHTML = '';
+  tray.dataset.count = `${pendingAttachments.length}`;
+  if (pendingAttachments.length) {
+    input?.classList.add('has-attachments');
+    wrap?.classList.add('has-attachments');
+  } else {
+    input?.classList.remove('has-attachments');
+    wrap?.classList.remove('has-attachments');
+  }
   pendingAttachments.forEach((attachment, index) => {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'attachment-chip';
     chip.title = 'Klik untuk hapus attachment';
-    chip.textContent = `${attachment.type.startsWith('image/') ? 'image' : 'file'} · ${attachment.name}`;
+    chip.innerHTML = `<span class="attachment-kind">${attachmentKind(attachment)}</span><span class="attachment-name"></span><span class="attachment-size">${formatBytes(attachment.size)}</span><span class="attachment-remove">×</span>`;
+    const name = chip.querySelector('.attachment-name');
+    if (name) name.textContent = attachment.name;
     chip.addEventListener('click', () => {
       pendingAttachments.splice(index, 1);
       renderAttachments();
@@ -310,28 +515,124 @@ function buildAttachmentPrompt() {
 async function addFiles(files: FileList | File[]) {
   const incoming = Array.from(files).filter(Boolean);
   if (!incoming.length) return;
-  for (const file of incoming) {
-    if (file.type.startsWith('image/')) {
-      pendingAttachments.push({ name: file.name || 'pasted-image', type: file.type, size: file.size, dataURI: await fileToDataURI(file) });
-    } else {
-      pendingAttachments.push({ name: file.name || 'pasted-file', type: file.type || 'text/plain', size: file.size, text: await fileToText(file) });
+  const tray = document.getElementById('attachment-tray');
+  const wrap = document.getElementById('compose-wrap');
+  tray?.classList.add('is-loading');
+  wrap?.classList.add('has-attachments');
+  try {
+    for (const file of incoming) {
+      if (file.type.startsWith('image/')) {
+        pendingAttachments.push({ name: file.name || 'pasted-image', type: file.type, size: file.size, dataURI: await fileToDataURI(file) });
+      } else {
+        pendingAttachments.push({ name: file.name || 'pasted-file', type: file.type || 'text/plain', size: file.size, text: await fileToText(file) });
+      }
     }
+  } finally {
+    tray?.classList.remove('is-loading');
+    renderAttachments();
+    document.getElementById('compose-input')?.focus();
   }
-  renderAttachments();
 }
 
-async function submitMessage() {
-  if (submitting) return;
-  const input = document.getElementById('compose-input') as HTMLTextAreaElement | null;
-  const attachmentPrompt = buildAttachmentPrompt();
-  if (!input || (!input.value.trim() && !attachmentPrompt)) return;
-  const text = `${input.value.trim()}${attachmentPrompt}`.trim();
-  const visibleText = input.value.trim() || pendingAttachments.map((file) => file.name).join(', ');
-  input.value = '';
-  pendingAttachments = [];
-  renderAttachments();
+async function addClipboardItems(clipboard: DataTransfer | null) {
+  if (!clipboard) return false;
+  const files = collectTransferFiles(clipboard);
+  if (!files.length) return false;
+  await addFiles(files);
+  return true;
+}
+
+// Ingest native (Wails OnFileDrop) file paths. WebKitGTK cannot hand File
+// objects to the webview for out-of-browser drops, so the drag is handled in
+// GTK and we get paths back. The webview cannot read file:// URLs itself, so
+// each path is read Go-side via ReadDroppedFile and turned into the same
+// PendingAttachment shape as paste/browser drops.
+async function addDroppedPaths(paths: string[]) {
+  const incoming = paths.map((p) => p.trim()).filter(Boolean);
+  if (!incoming.length) return;
+  const tray = document.getElementById('attachment-tray');
+  const wrap = document.getElementById('compose-wrap');
+  tray?.classList.add('is-loading');
+  wrap?.classList.add('has-attachments');
+  try {
+    for (const path of incoming) {
+      try {
+        const file = await ReadDroppedFile(path);
+        if (!file) continue;
+        pendingAttachments.push({
+          name: file.name,
+          type: file.mime || (file.is_image ? 'image/*' : 'text/plain'),
+          size: file.size,
+          dataURI: file.data_uri || undefined,
+          text: file.text || undefined,
+        });
+      } catch (err) {
+        appendMessage('message--error', `gagal membaca ${path.split('/').pop()}: ${String(err)}`);
+      }
+    }
+  } finally {
+    tray?.classList.remove('is-loading');
+    renderAttachments();
+    document.getElementById('compose-input')?.focus();
+  }
+}
+
+function dataURIToFile(dataURI: string, fallbackName = 'dropped-image'): File | null {
+  const match = /^data:([^;,]+)?(;base64)?,(.*)$/.exec(dataURI.trim());
+  if (!match) return null;
+  const mime = match[1] || 'application/octet-stream';
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3];
+  let bytes: Uint8Array;
+  try {
+    const bin = isBase64 ? atob(payload) : decodeURIComponent(payload);
+    bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  } catch {
+    return null;
+  }
+  const ext = (mime.split('/')[1] || 'bin').split(';')[0];
+  return new File([bytes], `${fallbackName}.${ext}`, { type: mime });
+}
+
+// Collect File objects from a drop DataTransfer. Some sources (file managers on
+// WebKitGTK, in-window image drags) populate `items` but leave `files` empty, so
+// we must read both. getAsFile() only works while the drop event is live, hence
+// this stays synchronous. As a last resort, rendered-image drags expose only a
+// URL string — convert data:image/... URIs to a File.
+function collectTransferFiles(transfer: DataTransfer | null): File[] {
+  if (!transfer) return [];
+  const files: File[] = [];
+  const seen = new Set<string>();
+  const push = (file: File | null | undefined) => {
+    if (!file) return;
+    const key = `${file.name}|${file.size}|${file.type}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    files.push(file);
+  };
+  for (const file of Array.from(transfer.files || [])) push(file);
+  for (const item of Array.from(transfer.items || [])) {
+    if (item.kind === 'file') push(item.getAsFile());
+  }
+  if (!files.length) {
+    const uriList = transfer.getData('text/uri-list') || transfer.getData('text/plain') || '';
+    for (const line of uriList.split(/\r?\n/)) {
+      const uri = line.trim();
+      if (uri.startsWith('data:image/')) push(dataURIToFile(uri));
+    }
+  }
+  return files;
+}
+
+async function sendText(text: string, visibleText = text) {
+  const input = getComposeInput();
+  if (submitting || !input || !text.trim()) return;
+  closeMessageMenu();
   hideSlashSuggest();
-  appendMessage('message--user', visibleText);
+  lastSubmittedText = text;
+  currentUserGroup++;
+  appendMessage('message--user', visibleText.trim(), currentUserGroup);
   setRingState('thinking');
   submitting = true;
   input.disabled = true;
@@ -339,6 +640,7 @@ async function submitMessage() {
     const res = await SendMessage(currentSessionID, text);
     currentSessionID = res.session_id || currentSessionID;
     renderEvents((res.events || []) as StreamEvent[]);
+    await bindLatestGroupTurnID();
     renderUsage(res.usage as ChatUsage | undefined);
     if (text.trim() === '/reset') {
       await restoreChatHistory();
@@ -346,7 +648,7 @@ async function submitMessage() {
     void runPing();
   } catch (err) {
     const message = errorText(err);
-    appendMessage('message--error', message.includes('dial ') ? 'core offline' : message);
+    appendMessage('message--error', message.includes('dial ') ? 'core offline' : message, currentUserGroup);
     setConnection(message.includes('dial ') ? 'disconnected' : 'connected');
     setRingState('idle');
   } finally {
@@ -354,6 +656,18 @@ async function submitMessage() {
     input.disabled = false;
     input.focus();
   }
+}
+
+async function submitMessage() {
+  const input = getComposeInput();
+  const attachmentPrompt = buildAttachmentPrompt();
+  if (!input || (!input.value.trim() && !attachmentPrompt)) return;
+  const text = `${input.value.trim()}${attachmentPrompt}`.trim();
+  const visibleText = input.value.trim() || pendingAttachments.map((file) => file.name).join(', ');
+  input.value = '';
+  pendingAttachments = [];
+  renderAttachments();
+  await sendText(text, visibleText);
 }
 
 function hideSlashSuggest() {
@@ -398,11 +712,12 @@ document.querySelector('#app')!.innerHTML = `
       <header class="popup-header">
         <div class="popup-brand">
           <span class="brand-mark" aria-hidden="true"><span class="brand-mark-core"></span></span>
-          <span class="brand-copy"><span class="popup-name">SapaLOQ</span><span class="popup-tagline">local orbit queue</span></span>
+          <span class="brand-copy"><span class="popup-name">SapaLOQ</span></span>
         </div>
         <div class="popup-header-right">
           <span class="context-usage" id="context-usage" data-level="normal" title="context usage">0/0</span>
           <span class="conn-pill"><span class="conn-dot" id="conn-dot" data-state="connecting" aria-label="status koneksi" title="menghubungkan…"></span><span>core</span></span>
+          <button type="button" class="popup-resize" id="btn-resize" aria-label="Ubah ukuran chat" title="Ubah ukuran chat">□</button>
           <button type="button" class="popup-close" id="btn-close" aria-label="Tutup">×</button>
         </div>
       </header>
@@ -415,11 +730,13 @@ document.querySelector('#app')!.innerHTML = `
         <div class="message-list" id="message-list"></div>
       </div>
       <footer class="popup-compose">
-        <div class="compose-wrap">
+        <div class="compose-wrap" id="compose-wrap">
           <div class="slash-popover" id="slash-popover"></div>
           <div class="attachment-tray" id="attachment-tray" aria-live="polite"></div>
-          <textarea id="compose-input" placeholder="Tulis instruksi, paste gambar, atau drag file…" autocomplete="off" rows="1"></textarea>
+          <textarea id="compose-input" placeholder="Ask anything" autocomplete="off" rows="1"></textarea>
+          <input type="file" id="attach-input" class="attach-input" multiple aria-hidden="true" tabindex="-1">
         </div>
+        <button type="button" class="attach-btn" id="attach-btn" aria-label="Attach file" title="Attach file"><span>＋</span></button>
         <button type="button" class="send-btn" id="send-btn" aria-label="Kirim"><span>↗</span></button>
       </footer>
     </section>
@@ -443,6 +760,7 @@ document.getElementById('orb')?.addEventListener('click', (e) => {
   }, 200);
 });
 document.getElementById('btn-close')?.addEventListener('click', () => void setExpanded(false));
+document.getElementById('btn-resize')?.addEventListener('click', () => void cyclePanelSize());
 document.getElementById('orb')?.addEventListener('dblclick', (e) => {
   e.preventDefault();
   if (clickTimer) {
@@ -452,6 +770,15 @@ document.getElementById('orb')?.addEventListener('dblclick', (e) => {
   if (!isExpanded()) cycleRingState();
 });
 document.getElementById('send-btn')?.addEventListener('click', () => void submitMessage());
+document.getElementById('attach-btn')?.addEventListener('click', () => {
+  const input = document.getElementById('attach-input') as HTMLInputElement | null;
+  input?.click();
+});
+document.getElementById('attach-input')?.addEventListener('change', (event) => {
+  const input = event.currentTarget as HTMLInputElement;
+  if (input.files?.length) void addFiles(input.files);
+  input.value = '';
+});
 document.getElementById('compose-input')?.addEventListener('input', () => void refreshSlashSuggest());
 document.getElementById('compose-input')?.addEventListener('keyup', () => void refreshSlashSuggest());
 document.getElementById('compose-input')?.addEventListener('keydown', (event) => {
@@ -463,19 +790,101 @@ document.getElementById('compose-input')?.addEventListener('keydown', (event) =>
 });
 document.getElementById('compose-input')?.addEventListener('paste', (event) => {
   const clipboard = (event as ClipboardEvent).clipboardData;
-  if (clipboard?.files?.length) void addFiles(clipboard.files);
+  if ((clipboard?.files?.length || clipboard?.items?.length) && Array.from(clipboard.items || []).some((item) => item.kind === 'file')) {
+    event.preventDefault();
+  }
+  void addClipboardItems(clipboard);
+});
+document.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest('.message-menu') && !target?.closest('.message--user')) closeMessageMenu();
+});
+
+document.addEventListener('paste', (event) => {
+  if (document.activeElement?.id === 'compose-input') return;
+  const clipboard = (event as ClipboardEvent).clipboardData;
+  if (Array.from(clipboard?.items || []).some((item) => item.kind === 'file')) event.preventDefault();
+  void addClipboardItems(clipboard).then((handled) => {
+    if (handled) {
+      void setExpanded(true);
+      document.getElementById('compose-input')?.focus();
+    }
+  });
 });
 const popup = document.getElementById('popup');
+
+// Highlight helpers shared by native (OnFileDrop) and HTML drag paths.
+let dragDepth = 0;
+function showDragOverlay() {
+  dragDepth++;
+  popup?.classList.add('is-dragging-file');
+}
+function hideDragOverlay(force = false) {
+  if (force) dragDepth = 0;
+  else dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) popup?.classList.remove('is-dragging-file');
+}
+
+// Native file drop (Wails). On WebKitGTK the webview drag events are disabled
+// (DisableWebViewDrop:true in main.go), so the only way to receive drops from
+// the file manager / desktop is this GTK-level callback, which hands us file
+// *paths*. CSS property --wails-drop-target:"drop" marks #popup as a valid
+// drop target so the native overlay also lights up the right element.
+if (popup) popup.style.setProperty('--wails-drop-target', 'drop');
+try {
+  OnFileDrop((_x, _y, paths) => {
+    if (paths?.length) {
+      hideDragOverlay(true);
+      if (!isExpanded()) void setExpanded(true);
+      void addDroppedPaths(paths);
+      document.getElementById('compose-input')?.focus();
+    }
+  }, true);
+} catch {
+  // OnFileDrop only exists inside a Wails runtime; ignore in plain browser.
+}
+
+// HTML drag fallback for environments where the webview *does* deliver File
+// objects (Chromium, browser preview, in-webview image drags). WebKitGTK with
+// DisableWebViewDrop:true will never reach these, so there is no conflict.
+popup?.addEventListener('dragenter', (event) => {
+  event.preventDefault();
+  showDragOverlay();
+});
 popup?.addEventListener('dragover', (event) => {
   event.preventDefault();
-  popup.classList.add('is-dragging-file');
+  if (!popup.classList.contains('is-dragging-file')) showDragOverlay();
 });
-popup?.addEventListener('dragleave', () => popup.classList.remove('is-dragging-file'));
+popup?.addEventListener('dragleave', (event) => {
+  // Only count leaves that actually exit the popup rect, not child crossings.
+  const r = popup.getBoundingClientRect();
+  if (event.clientX <= r.left || event.clientX >= r.right || event.clientY <= r.top || event.clientY >= r.bottom) {
+    hideDragOverlay();
+  }
+});
 popup?.addEventListener('drop', (event) => {
   event.preventDefault();
-  popup.classList.remove('is-dragging-file');
-  const files = (event as DragEvent).dataTransfer?.files;
-  if (files?.length) void addFiles(files);
+  hideDragOverlay(true);
+  const transfer = (event as DragEvent).dataTransfer;
+  const files = collectTransferFiles(transfer);
+  if (files.length) void addFiles(files);
+});
+// Document-level fallback so the overlay still shows when the popup is
+// collapsed (pointer-events:none on #popup blocks its own dragover).
+document.addEventListener('dragover', (event) => {
+  if (popup?.classList.contains('is-dragging-file')) return;
+  if (document.getElementById('popup')) {
+    event.preventDefault();
+    showDragOverlay();
+  }
+});
+document.addEventListener('drop', (event) => {
+  if (!popup?.classList.contains('is-dragging-file')) return;
+  event.preventDefault();
+  hideDragOverlay(true);
+  const transfer = (event as DragEvent).dataTransfer;
+  const files = collectTransferFiles(transfer);
+  if (files.length) void addFiles(files);
 });
 
 void restoreChatHistory();

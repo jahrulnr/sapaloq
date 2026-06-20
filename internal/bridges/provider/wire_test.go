@@ -177,6 +177,16 @@ func TestStreamKimiEndToEnd(t *testing.T) {
 }
 
 // TestStreamClaudeEndToEnd validates the Anthropic wire dispatch.
+func TestUpstreamErrorBodyHidesHTML(t *testing.T) {
+	got := upstreamErrorBody([]byte("<!DOCTYPE html>\n<html><head><title>Login</title></head><body>nope</body></html>"))
+	if strings.Contains(got, "<html") || strings.Contains(got, "DOCTYPE") {
+		t.Fatalf("raw HTML leaked: %q", got)
+	}
+	if !strings.Contains(got, "HTML error page") {
+		t.Fatalf("unexpected sanitized body: %q", got)
+	}
+}
+
 func TestStreamClaudeEndToEnd(t *testing.T) {
 	var capturedAuth string
 	var capturedVersion string

@@ -7,12 +7,19 @@ import {
 import { SyncInputShape } from '../wailsjs/go/main/App';
 
 export const COLLAPSED = { w: 76, h: 76 };
-export const EXPANDED = { w: 376, h: 536 };
+export const PANEL_SIZES = [
+  { w: 376, h: 536 },
+  { w: 520, h: 680 },
+  { w: 720, h: 820 },
+];
+export const EXPANDED = PANEL_SIZES[0];
 const MARGIN = 20;
 const PANEL_TRANSITION_MS = 230;
 
 let expanded = false;
 let layoutReady = false;
+let transitionBusy = false;
+let panelSizeIndex = 0;
 
 function nextFrame() {
   return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -24,6 +31,10 @@ function delay(ms: number) {
 
 export function isExpanded() {
   return expanded;
+}
+
+export function currentPanelSize() {
+  return PANEL_SIZES[panelSizeIndex];
 }
 
 export async function placeBottomLeft(size = COLLAPSED) {
@@ -42,34 +53,52 @@ export async function placeBottomLeft(size = COLLAPSED) {
 }
 
 export async function setExpanded(next: boolean) {
-  if (next === expanded) return;
+  if (next === expanded || transitionBusy) return;
+  transitionBusy = true;
 
   const pos = await WindowGetPosition();
-  const deltaH = EXPANDED.h - COLLAPSED.h;
+  const expandedSize = currentPanelSize();
+  const deltaH = expandedSize.h - COLLAPSED.h;
   const popup = document.getElementById('popup');
 
-  if (next) {
-    WindowSetSize(EXPANDED.w, EXPANDED.h);
-    WindowSetPosition(pos.x, pos.y - deltaH);
-    expanded = true;
-    document.body.classList.add('opening');
-    document.body.classList.add('expanded');
-    await nextFrame();
-    document.body.classList.remove('opening');
-    popup?.setAttribute('aria-hidden', 'false');
-    SyncInputShape(false);
-    return;
-  }
+  try {
+    if (next) {
+      WindowSetSize(expandedSize.w, expandedSize.h);
+      WindowSetPosition(pos.x, pos.y - deltaH);
+      expanded = true;
+      document.body.classList.remove('closing');
+      document.body.classList.add('opening');
+      document.body.classList.add('expanded');
+      await nextFrame();
+      document.body.classList.remove('opening');
+      popup?.setAttribute('aria-hidden', 'false');
+      SyncInputShape(false);
+      return;
+    }
 
-  expanded = false;
-  document.body.classList.add('closing');
-  document.body.classList.remove('expanded');
-  popup?.setAttribute('aria-hidden', 'true');
-  SyncInputShape(true);
-  await delay(PANEL_TRANSITION_MS);
-  WindowSetSize(COLLAPSED.w, COLLAPSED.h);
-  WindowSetPosition(pos.x, pos.y + deltaH);
-  document.body.classList.remove('closing');
+    expanded = false;
+    document.body.classList.remove('opening');
+    document.body.classList.add('closing');
+    document.body.classList.remove('expanded');
+    popup?.setAttribute('aria-hidden', 'true');
+    SyncInputShape(true);
+    await delay(PANEL_TRANSITION_MS);
+    WindowSetSize(COLLAPSED.w, COLLAPSED.h);
+    WindowSetPosition(pos.x, pos.y + deltaH);
+  } finally {
+    document.body.classList.remove('closing');
+    transitionBusy = false;
+  }
+}
+
+export async function cyclePanelSize() {
+  if (!expanded || transitionBusy) return;
+  const oldSize = currentPanelSize();
+  panelSizeIndex = (panelSizeIndex + 1) % PANEL_SIZES.length;
+  const nextSize = currentPanelSize();
+  const pos = await WindowGetPosition();
+  WindowSetSize(nextSize.w, nextSize.h);
+  WindowSetPosition(pos.x, pos.y - (nextSize.h - oldSize.h));
 }
 
 export async function toggleExpanded() {
