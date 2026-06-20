@@ -40,7 +40,9 @@ func (a *App) PingCore() (pingResult, error) {
 
 func (a *App) SendMessage(sessionID string, text string) (chatResult, error) {
 	return sendChatWithStatus(a.socketPath, sessionID, text, func(event bridge.StreamEvent) {
-		runtime.EventsEmit(a.ctx, "sapaloq:status", event)
+		// Forward every stream event to the webview as it arrives so deltas
+		// render live instead of bursting when the call resolves.
+		runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
 	})
 }
 
@@ -54,7 +56,7 @@ func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 
 func (a *App) RetryChatTurn(sessionID string, turnID int64) (chatResult, error) {
 	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, func(event bridge.StreamEvent) {
-		runtime.EventsEmit(a.ctx, "sapaloq:status", event)
+		runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
 	})
 }
 

@@ -75,11 +75,11 @@ func sendChat(socketPath, sessionID, message string) (chatResult, error) {
 	return sendChatWithStatus(socketPath, sessionID, message, nil)
 }
 
-func sendChatWithStatus(socketPath, sessionID, message string, onStatus func(bridge.StreamEvent)) (chatResult, error) {
+func sendChatWithStatus(socketPath, sessionID, message string, onEvent func(bridge.StreamEvent)) (chatResult, error) {
 	var result chatResult
 	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_send", SessionID: sessionID, Message: message}, func(res ipcResponse) {
-		if onStatus != nil && res.Event != nil && res.Event.Kind == bridge.EventStatus {
-			onStatus(*res.Event)
+		if onEvent != nil && res.Event != nil {
+			onEvent(*res.Event)
 		}
 	})
 	if err != nil {
@@ -144,11 +144,11 @@ func retryChatTurn(socketPath, sessionID string, turnID int64) (chatResult, erro
 	return retryChatTurnWithStatus(socketPath, sessionID, turnID, nil)
 }
 
-func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, onStatus func(bridge.StreamEvent)) (chatResult, error) {
+func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, onEvent func(bridge.StreamEvent)) (chatResult, error) {
 	var result chatResult
 	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_retry", SessionID: sessionID, TurnID: turnID}, func(res ipcResponse) {
-		if onStatus != nil && res.Event != nil && res.Event.Kind == bridge.EventStatus {
-			onStatus(*res.Event)
+		if onEvent != nil && res.Event != nil {
+			onEvent(*res.Event)
 		}
 	})
 	if err != nil {

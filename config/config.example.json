@@ -47,7 +47,8 @@
         "endpoint": "https://api.tokenrouter.com/v1/chat/completions",
         "model": "MiniMax-M3",
         "credentialsEnv": "TOKENROUTER_API_KEY",
-        "parser": "openai"
+        "parser": "openai",
+        "reasoningEffort": "medium"
       },
       {
         "key": "blackbox",

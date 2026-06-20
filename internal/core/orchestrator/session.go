@@ -73,6 +73,8 @@ func (o *Orchestrator) handleSlash(ctx context.Context, out chan<- bridge.Stream
 		o.emit(ctx, out, responseEvent(newID, "Session reset. Starting a fresh active chat."))
 	case "model":
 		o.handleModel(ctx, out, sessionID, message)
+	case "thinking":
+		o.handleThinking(ctx, out, sessionID, message)
 	default:
 		o.emit(ctx, out, settingsEvent(sessionID, id))
 	}

@@ -136,8 +136,15 @@ func (s *Server) writeStream(ctx context.Context, conn net.Conn, requestedSessio
 			sessionID = ev.SessionID
 		}
 		ring := orchestrator.RingStateFor(ev.Kind)
-		usage, _ := s.orch.ContextUsage(ctx, sessionID)
-		write(conn, Response{OK: true, Op: "event", SessionID: sessionID, Event: &ev, RingState: string(ring), Usage: &usage})
+		resp := Response{OK: true, Op: "event", SessionID: sessionID, Event: &ev, RingState: string(ring)}
+		// Usage requires a SQLite query; only attach it on terminal events so
+		// per-delta streaming stays fast (querying every token stalls the
+		// stream and makes it arrive in bursts).
+		if ev.Kind == bridge.EventDone || ev.Kind == bridge.EventError {
+			usage, _ := s.orch.ContextUsage(ctx, sessionID)
+			resp.Usage = &usage
+		}
+		write(conn, resp)
 		if ring != orchestrator.RingIdle {
 			write(conn, Response{OK: true, Op: "ring_state", SessionID: sessionID, RingState: string(ring)})
 		}

@@ -74,7 +74,13 @@ func (o *Orchestrator) applyConfig(next config.Config) error {
 }
 
 func providerChanged(next, current config.LLMBridge) bool {
-	return next.Key != current.Key || next.Driver != current.Driver || next.Model != current.Model || next.Endpoint != current.Endpoint
+	return next.Key != current.Key ||
+		next.Driver != current.Driver ||
+		next.Model != current.Model ||
+		next.Endpoint != current.Endpoint ||
+		next.ReasoningEffort != current.ReasoningEffort ||
+		next.Parser != current.Parser ||
+		next.MaxTokens != current.MaxTokens
 }
 
 func (o *Orchestrator) reloadConfigIfChanged(ctx context.Context) {
@@ -175,6 +181,96 @@ func (o *Orchestrator) handleModel(ctx context.Context, out chan<- bridge.Stream
 	}
 	entry := o.snapshot().entry
 	return o.emit(ctx, out, responseEvent(sessionID, fmt.Sprintf("Model switched to %s (%s · %s).", entry.Key, entry.Driver, entry.Model)))
+}
+
+// handleThinking sets the reasoning-effort level on the active provider entry
+// inside llmBridge.providers and persists it to config.json. With no argument
+// it reports the current level. Accepted levels: low, medium, high, off.
+func (o *Orchestrator) handleThinking(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, message string) bool {
+	parts := strings.Fields(message)
+	if len(parts) < 2 {
+		entry := o.snapshot().entry
+		current := strings.TrimSpace(entry.ReasoningEffort)
+		if current == "" {
+			current = "default (provider decides)"
+		}
+		return o.emit(ctx, out, responseEvent(sessionID, fmt.Sprintf("Thinking level: %s. Usage: /thinking <%s>.", current, strings.Join(config.ThinkingLevels, "|"))))
+	}
+
+	level := strings.ToLower(parts[1])
+	switch level {
+	case "off", "none", "disabled":
+		level = ""
+	case "low", "medium", "high":
+		// valid
+	default:
+		return o.emit(ctx, out, responseEvent(sessionID, fmt.Sprintf("Unknown thinking level %q. Use one of: %s.", parts[1], strings.Join(config.ThinkingLevels, ", "))))
+	}
+
+	raw, err := config.LoadRaw(o.cfgPath)
+	if err != nil {
+		return o.emit(ctx, out, errorEvent(sessionID, err))
+	}
+	llm, _ := raw["llmBridge"].(map[string]any)
+	if llm == nil {
+		return o.emit(ctx, out, errorEvent(sessionID, fmt.Errorf("llmBridge config missing")))
+	}
+	providerKey, _ := llm["providerKey"].(string)
+	providers, _ := llm["providers"].([]any)
+	if len(providers) == 0 {
+		return o.emit(ctx, out, errorEvent(sessionID, fmt.Errorf("no providers configured")))
+	}
+	applied := false
+	for _, p := range providers {
+		entry, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		key, _ := entry["key"].(string)
+		// Match the active provider; if no providerKey is set, fall back to the
+		// single/first entry.
+		if (providerKey != "" && key == providerKey) || (providerKey == "" && !applied) {
+			if level == "" {
+				delete(entry, "reasoningEffort")
+			} else {
+				entry["reasoningEffort"] = level
+			}
+			applied = true
+			if providerKey != "" {
+				break
+			}
+		}
+	}
+	if !applied {
+		return o.emit(ctx, out, errorEvent(sessionID, fmt.Errorf("active provider %q not found", providerKey)))
+	}
+
+	if err := config.SaveRaw(o.cfgPath, raw, "slash:thinking"); err != nil {
+		return o.emit(ctx, out, errorEvent(sessionID, err))
+	}
+	next, err := config.Load(o.cfgPath)
+	if err != nil {
+		return o.emit(ctx, out, errorEvent(sessionID, err))
+	}
+	if err := o.applyConfig(next); err != nil {
+		return o.emit(ctx, out, errorEvent(sessionID, err))
+	}
+	if info, _ := os.Stat(o.cfgPath); info != nil {
+		o.mu.Lock()
+		o.cfgModTime = info.ModTime()
+		o.mu.Unlock()
+	}
+
+	entry := o.snapshot().entry
+	shown := level
+	if shown == "" {
+		shown = "default (provider decides)"
+	}
+	msg := fmt.Sprintf("Thinking level set to %s for %s.", shown, entry.Key)
+	if entry.Driver != "provider-bridge" && level != "" {
+		msg += " Note: reasoning effort currently applies only to provider-bridge models; the active driver is " + entry.Driver + "."
+	}
+	return o.emit(ctx, out, responseEvent(sessionID, msg))
 }
 
 func errorEvent(sessionID string, err error) bridge.StreamEvent {

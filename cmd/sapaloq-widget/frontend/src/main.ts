@@ -58,6 +58,10 @@ function renderRingBadge() {
 }
 
 function formatTokens(value: number) {
+  if (value >= 1000000) {
+    const millions = value / 1000000;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+  }
   if (value >= 1000) return `${Math.round(value / 1000)}k`;
   return `${value}`;
 }
@@ -126,29 +130,105 @@ function parseInlineMarkdown(text: string): DocumentFragment {
   return fragment;
 }
 
+function appendCodeBlock(fragment: DocumentFragment, lang: string, code: string) {
+  const pre = document.createElement('pre');
+  pre.className = 'code-block';
+  const codeEl = document.createElement('code');
+  if (lang) codeEl.dataset.lang = lang;
+  codeEl.textContent = code.replace(/\n$/, '');
+  pre.append(codeEl);
+  fragment.append(pre);
+}
+
+function appendBlock(fragment: DocumentFragment, block: string) {
+  const lines = block.split('\n');
+
+  // Heading: #, ##, ... ######
+  const heading = /^(#{1,6})\s+(.*)$/.exec(lines[0]);
+  if (lines.length === 1 && heading) {
+    const level = Math.min(6, heading[1].length);
+    const h = document.createElement(`h${level}`);
+    h.className = 'md-heading';
+    h.append(parseInlineMarkdown(heading[2]));
+    fragment.append(h);
+    return;
+  }
+
+  // Horizontal rule
+  if (lines.length === 1 && /^(\s*[-*_]){3,}\s*$/.test(lines[0])) {
+    fragment.append(document.createElement('hr'));
+    return;
+  }
+
+  // Blockquote: every line starts with >
+  if (lines.every((line) => /^\s*>\s?/.test(line))) {
+    const quote = document.createElement('blockquote');
+    quote.className = 'md-quote';
+    lines.forEach((line, i) => {
+      if (i > 0) quote.append(document.createElement('br'));
+      quote.append(parseInlineMarkdown(line.replace(/^\s*>\s?/, '')));
+    });
+    fragment.append(quote);
+    return;
+  }
+
+  // Unordered / ordered list
+  const isUl = lines.every((line) => /^\s*[-*]\s+/.test(line));
+  const isOl = lines.every((line) => /^\s*\d+[.)]\s+/.test(line));
+  if (isUl || isOl) {
+    const list = document.createElement(isOl ? 'ol' : 'ul');
+    lines.forEach((line) => {
+      const li = document.createElement('li');
+      li.append(parseInlineMarkdown(line.replace(isOl ? /^\s*\d+[.)]\s+/ : /^\s*[-*]\s+/, '')));
+      list.append(li);
+    });
+    fragment.append(list);
+    return;
+  }
+
+  // Paragraph
+  const paragraph = document.createElement('p');
+  lines.forEach((line, lineIndex) => {
+    if (lineIndex > 0) paragraph.append(document.createElement('br'));
+    paragraph.append(parseInlineMarkdown(line));
+  });
+  fragment.append(paragraph);
+}
+
 function renderMarkdown(text: string): DocumentFragment {
   const fragment = document.createDocumentFragment();
-  const blocks = text.split(/\n{2,}/);
-  blocks.forEach((block) => {
-    const lines = block.split('\n');
-    const isList = lines.every((line) => /^\s*[-*]\s+/.test(line));
-    if (isList) {
-      const ul = document.createElement('ul');
-      lines.forEach((line) => {
-        const li = document.createElement('li');
-        li.append(parseInlineMarkdown(line.replace(/^\s*[-*]\s+/, '')));
-        ul.append(li);
-      });
-      fragment.append(ul);
-      return;
-    }
-    const paragraph = document.createElement('p');
-    lines.forEach((line, lineIndex) => {
-      if (lineIndex > 0) paragraph.append(document.createElement('br'));
-      paragraph.append(parseInlineMarkdown(line));
+  const lines = text.split('\n');
+  let buffer: string[] = [];
+
+  const flushBuffer = () => {
+    if (!buffer.length) return;
+    const chunk = buffer.join('\n');
+    buffer = [];
+    // Split the non-code chunk into blocks on blank-line boundaries.
+    chunk.split(/\n{2,}/).forEach((block) => {
+      if (block.trim() === '') return;
+      appendBlock(fragment, block);
     });
-    fragment.append(paragraph);
-  });
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const fence = /^\s*```(.*)$/.exec(lines[i]);
+    if (fence) {
+      flushBuffer();
+      const lang = fence[1].trim();
+      const code: string[] = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
+        code.push(lines[i]);
+        i++;
+      }
+      // i now points at the closing fence (or end of input).
+      appendCodeBlock(fragment, lang, code.join('\n'));
+      continue;
+    }
+    buffer.push(lines[i]);
+  }
+  flushBuffer();
   return fragment;
 }
 
@@ -380,13 +460,15 @@ async function retryMessage(turnID: number) {
   submitting = true;
   setSubmittingUI(true);
   input.disabled = true;
+  beginLiveStream();
   try {
     const res = await RetryChatTurn(currentSessionID, turnID);
     currentSessionID = res.session_id || currentSessionID;
-    renderEvents((res.events || []) as StreamEvent[]);
+    finalizeLiveStream(res);
     await bindLatestGroupTurnID();
     renderUsage(res.usage as ChatUsage | undefined);
   } catch (err) {
+    endLiveStream();
     appendMessage('message--error', errorText(err), currentUserGroup, turnID);
   } finally {
     window.clearTimeout(thinkingTimer);
@@ -506,7 +588,7 @@ function errorText(err: unknown) {
 // Streaming coalescer: accumulates delta chunks into one bubble so
 // word-by-word streams (e.g. blackbox MiniMax-M3) render as natural typing
 // instead of spawning a new DOM node per token.
-type StreamTarget = { el: HTMLElement; text: string; queue: string; typing: boolean };
+type StreamTarget = { el: HTMLElement; body?: HTMLElement; text: string; queue: string; typing: boolean };
 
 function makeStreamTarget(className: string): StreamTarget {
   const list = document.getElementById('message-list');
@@ -519,8 +601,41 @@ function makeStreamTarget(className: string): StreamTarget {
   return { el, text: '', queue: '', typing: false };
 }
 
+// makeThinkingTarget builds a collapsible reasoning bubble: a clickable header
+// (with a chevron) plus a body the deltas stream into. The bubble is never
+// hidden — only toggled — so finished reasoning stays available for review.
+function makeThinkingTarget(): StreamTarget {
+  const list = document.getElementById('message-list');
+  const el = document.createElement('div');
+  el.className = 'message message--thinking message--streaming is-expanded';
+  el.dataset.seq = `${++messageSeq}`;
+  el.dataset.group = `${currentUserGroup}`;
+
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.className = 'thinking-toggle';
+  header.innerHTML = `<span class="status-pulse" aria-hidden="true"><i></i><i></i><i></i></span><span class="thinking-label">thinking</span><span class="thinking-chevron" aria-hidden="true">⌄</span>`;
+
+  const body = document.createElement('div');
+  body.className = 'thinking-body';
+
+  header.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const expanded = el.classList.toggle('is-expanded');
+    el.classList.toggle('is-collapsed', !expanded);
+    header.setAttribute('aria-expanded', String(expanded));
+  });
+  header.setAttribute('aria-expanded', 'true');
+
+  el.append(header, body);
+  if (list) list.appendChild(el);
+  list && (list.scrollTop = list.scrollHeight);
+  return { el, body, text: '', queue: '', typing: false };
+}
+
 function paintStream(target: StreamTarget) {
-  target.el.replaceChildren(renderMarkdown(target.text));
+  const sink = target.body || target.el;
+  sink.replaceChildren(renderMarkdown(target.text));
   const list = document.getElementById('message-list');
   if (list) list.scrollTop = list.scrollHeight;
 }
@@ -546,6 +661,13 @@ function flushStream(target: StreamTarget) {
   target.el.dataset.rawText = target.text;
   target.typing = false;
   target.el.classList.remove('message--streaming');
+  // Reasoning bubbles auto-collapse once complete so the answer that follows is
+  // front-and-centre, but the toggle keeps them re-expandable.
+  if (target.body && target.el.classList.contains('message--thinking')) {
+    target.el.classList.remove('is-expanded');
+    target.el.classList.add('is-collapsed');
+    target.el.querySelector('.thinking-toggle')?.setAttribute('aria-expanded', 'false');
+  }
 }
 
 function pushStream(target: StreamTarget, chunk: string) {
@@ -557,45 +679,98 @@ function pushStream(target: StreamTarget, chunk: string) {
   }
 }
 
-function renderEvents(events: StreamEvent[]) {
-  let thinking: StreamTarget | null = null;
-  let assistant: StreamTarget | null = null;
-  for (const event of events) {
-    if (event.kind === 'thinking_delta') {
-      setRingState('thinking');
-      if (!thinking) thinking = makeStreamTarget('message--thinking');
-      pushStream(thinking, event.delta || '');
-    } else if (event.kind === 'tool_call') {
-      setRingState('delegating');
-      // Flush any pending stream before tool call so it shows up cleanly.
-      if (thinking) { flushStream(thinking); thinking = null; }
-      if (assistant) { flushStream(assistant); assistant = null; }
-      appendMessage('message--tool', `tool: ${event.tool_call?.name || 'unknown'}`);
-    } else if (event.kind === 'response_delta') {
-      clearProgressBubble();
-      if (!assistant) assistant = makeStreamTarget('message--assistant');
-      pushStream(assistant, event.delta || '');
-    } else if (event.kind === 'status') {
-      const status = event.status;
-      if (status === 'waiting' || status === 'thinking' || status === 'working' || status === 'compacting' || status === 'stopping') {
-        appendProgressBubble(status);
-      }
-    } else if (event.kind === 'error') {
-      clearProgressBubble();
-      if (thinking) { flushStream(thinking); thinking = null; }
-      if (assistant) { flushStream(assistant); assistant = null; }
-      appendMessage('message--error', event.error || 'chat failed');
-      setRingState('idle');
-    } else if (event.kind === 'done') {
-      clearProgressBubble();
-      if (thinking) { flushStream(thinking); thinking = null; }
-      if (assistant) { flushStream(assistant); assistant = null; }
-      setRingState('idle');
+// StreamRenderer holds the thinking/assistant bubbles for one turn so events
+// (whether arriving live one-by-one or replayed as a batch) accumulate into the
+// same DOM nodes instead of spawning a node per token.
+type StreamRenderer = { thinking: StreamTarget | null; assistant: StreamTarget | null };
+
+function newStreamRenderer(): StreamRenderer {
+  return { thinking: null, assistant: null };
+}
+
+function feedStreamEvent(r: StreamRenderer, event: StreamEvent) {
+  if (event.kind === 'thinking_delta') {
+    setRingState('thinking');
+    if (!r.thinking) r.thinking = makeThinkingTarget();
+    pushStream(r.thinking, event.delta || '');
+  } else if (event.kind === 'tool_call') {
+    setRingState('delegating');
+    if (r.thinking) { flushStream(r.thinking); r.thinking = null; }
+    if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
+    appendMessage('message--tool', `tool: ${event.tool_call?.name || 'unknown'}`);
+  } else if (event.kind === 'response_delta') {
+    clearProgressBubble();
+    if (!r.assistant) r.assistant = makeStreamTarget('message--assistant');
+    pushStream(r.assistant, event.delta || '');
+  } else if (event.kind === 'status') {
+    const status = event.status;
+    if (status === 'waiting' || status === 'thinking' || status === 'working' || status === 'compacting' || status === 'stopping') {
+      appendProgressBubble(status);
     }
+  } else if (event.kind === 'error') {
+    clearProgressBubble();
+    if (r.thinking) { flushStream(r.thinking); r.thinking = null; }
+    if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
+    appendMessage('message--error', event.error || 'chat failed');
+    setRingState('idle');
+  } else if (event.kind === 'done') {
+    finishStreamRenderer(r);
+    setRingState('idle');
   }
-  // Drain any remaining buffered text.
-  if (thinking) flushStream(thinking);
-  if (assistant) flushStream(assistant);
+}
+
+function finishStreamRenderer(r: StreamRenderer) {
+  clearProgressBubble();
+  if (r.thinking) { flushStream(r.thinking); r.thinking = null; }
+  if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
+}
+
+// Live renderer for the in-flight turn, fed by the sapaloq:stream Wails event.
+// When non-null, the batch result returned by SendMessage/RetryChatTurn is
+// ignored (already rendered live); it's used only as a fallback otherwise.
+let liveRenderer: StreamRenderer | null = null;
+let liveEventsSeen = false;
+
+function feedLiveEvent(event: StreamEvent) {
+  if (!liveRenderer) liveRenderer = newStreamRenderer();
+  liveEventsSeen = true;
+  feedStreamEvent(liveRenderer, event);
+}
+
+// beginLiveStream arms the live renderer for a new turn. Call before invoking
+// SendMessage/RetryChatTurn.
+function beginLiveStream() {
+  liveRenderer = newStreamRenderer();
+  liveEventsSeen = false;
+}
+
+// finalizeLiveStream wraps up after the bound call resolves: if live events
+// were delivered (Wails runtime), just flush any open bubbles; otherwise replay
+// the batch result as a fallback (plain browser / no live transport).
+function finalizeLiveStream(res: { events?: StreamEvent[] } | null | undefined) {
+  if (liveEventsSeen) {
+    if (liveRenderer) finishStreamRenderer(liveRenderer);
+  } else {
+    renderEvents((res?.events || []) as StreamEvent[]);
+  }
+  liveRenderer = null;
+  liveEventsSeen = false;
+}
+
+// endLiveStream tears down the renderer on error/abort.
+function endLiveStream() {
+  if (liveRenderer) finishStreamRenderer(liveRenderer);
+  liveRenderer = null;
+  liveEventsSeen = false;
+}
+
+// renderEvents replays a batch of events into a fresh renderer. Used as the
+// fallback path (e.g. plain browser without the Wails runtime) when no live
+// events were delivered.
+function renderEvents(events: StreamEvent[]) {
+  const r = newStreamRenderer();
+  for (const event of events) feedStreamEvent(r, event);
+  finishStreamRenderer(r);
 }
 
 async function runPing() {
@@ -814,10 +989,11 @@ async function sendText(text: string, visibleText = text, attachments: PendingAt
   submitting = true;
   setSubmittingUI(true);
   input.disabled = true;
+  beginLiveStream();
   try {
     const res = await SendMessage(currentSessionID, text);
     currentSessionID = res.session_id || currentSessionID;
-    renderEvents((res.events || []) as StreamEvent[]);
+    finalizeLiveStream(res);
     await bindLatestGroupTurnID();
     renderUsage(res.usage as ChatUsage | undefined);
     if (text.trim() === '/reset') {
@@ -825,6 +1001,7 @@ async function sendText(text: string, visibleText = text, attachments: PendingAt
     }
     void runPing();
   } catch (err) {
+    endLiveStream();
     const message = errorText(err);
     appendMessage('message--error', message.includes('dial ') ? 'core offline' : message, currentUserGroup);
     setConnection(message.includes('dial ') ? 'disconnected' : 'connected');
@@ -1016,11 +1193,11 @@ function hideDragOverlay(force = false) {
 // *paths*. Listen on the whole native window: target-scoped drops become
 // unreliable after the GTK input shape switches between orb and panel.
 try {
-  EventsOn('sapaloq:status', (event: StreamEvent) => {
-    const status = event?.status;
-    if (status === 'waiting' || status === 'thinking' || status === 'working' || status === 'compacting' || status === 'stopping') {
-      appendProgressBubble(status);
-    }
+  // Live stream: every chat event (thinking/response/tool/status/done) arrives
+  // here as it is produced by the core, so deltas render incrementally instead
+  // of bursting when SendMessage/RetryChatTurn resolves.
+  EventsOn('sapaloq:stream', (event: StreamEvent) => {
+    if (submitting) feedLiveEvent(event);
   });
   OnFileDrop((_x, _y, paths) => {
     if (paths?.length) {
