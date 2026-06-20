@@ -32,17 +32,14 @@ run:
 		trap - INT TERM EXIT; \
 		echo ""; \
 		echo "Shutting down SapaLOQ..."; \
-		# 1) TERM the leading process groups (negative PID = pgrp).
 		for pgid in "$$widget_pgid" "$$core_pgid"; do \
 			if [[ -n "$$pgid" && "$$pgid" != "0" ]]; then \
 				kill -TERM -- "-$$pgid" 2>/dev/null || true; \
 			fi; \
 		done; \
-		# 2) TERM direct children of the wrapper shells (catches go run + wails dev).
 		for pid in "$$widget_pid" "$$core_pid"; do \
 			[[ -n "$$pid" ]] && pkill -TERM -P "$$pid" 2>/dev/null || true; \
 		done; \
-		# 3) Wait up to ~3s for graceful exit.
 		for _ in 1 2 3 4 5 6 7 8 9 10; do \
 			alive=0; \
 			for pgid in "$$widget_pgid" "$$core_pgid"; do \
@@ -52,16 +49,12 @@ run:
 			[[ $$alive -eq 0 ]] && break; \
 			sleep 0.3; \
 		done; \
-		# 4) KILL any stragglers in the groups.
 		for pgid in "$$widget_pgid" "$$core_pgid"; do \
 			if [[ -n "$$pgid" && "$$pgid" != "0" ]] && \
 				 ps -o pid= -p "$$pgid" >/dev/null 2>&1; then \
 				kill -KILL -- "-$$pgid" 2>/dev/null || true; \
 			fi; \
 		done; \
-		# 5) Safety net: match by command pattern. NOTE: `go run ./cmd/...` runs
-		#    the binary as a child with a short command name, so we match both
-		#    the go-run wrapper AND the compiled exe path.
 		pkill -KILL -f 'go run ./cmd/sapaloq-core'   2>/dev/null || true; \
 		pkill -KILL -f 'go run ./cmd/sapaloq-widget' 2>/dev/null || true; \
 		pkill -KILL -f 'cmd/sapaloq-core'             2>/dev/null || true; \
@@ -69,7 +62,6 @@ run:
 		pkill -KILL -f 'wails dev'                    2>/dev/null || true; \
 		pkill -KILL -f 'node .*/vite'                 2>/dev/null || true; \
 		pkill -KILL -f 'esbuild --service'            2>/dev/null || true; \
-		# 6) Reap the wrapper shells so the Make recipe exits cleanly.
 		for p in "$$widget_pid" "$$core_pid"; do \
 			if [[ -n "$$p" ]]; then wait "$$p" 2>/dev/null || true; fi; \
 		done; \
