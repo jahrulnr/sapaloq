@@ -172,6 +172,21 @@ func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, onEvent
 	return result, nil
 }
 
+func submitFeedback(socketPath, sessionID string, turnID int64, signal, correction string) error {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "submit_feedback", SessionID: sessionID, TurnID: turnID, Signal: signal, Correction: correction})
+	if err != nil {
+		return err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
 func stopChat(socketPath, sessionID string) error {
 	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_stop", SessionID: sessionID, Scope: "generation"})
 	if err != nil {

@@ -85,6 +85,10 @@ type toolArgs struct {
 	Reason         string   `json:"reason"`
 	Question       string   `json:"question"`
 	Options        []string `json:"options"`
+	StorageID      string   `json:"storage_id"` // scribe_write_note: explicit storage path id
+	Intent         string   `json:"intent"`     // scribe_write_note: intent phrase → path
+	Mode           string   `json:"mode"`       // scribe_write_note: personal|work|hobby
+	Kind           string   `json:"kind"`       // scribe_write_note: notes|inbox|journal…
 }
 
 func parseToolArgs(raw json.RawMessage) toolArgs {

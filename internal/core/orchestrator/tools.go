@@ -27,10 +27,23 @@ var readOnlyAssessmentTools = []string{
 var askTools = append([]string{
 	"sapaloq_spawn_plan",
 	"sapaloq_spawn_agent",
+	"sapaloq_spawn_scribe",
 	"sapaloq_get_task_status",
 	"sapaloq_wait",
+	"sapaloq_answer_clarification",
 	"sapaloq_stop",
 }, readOnlyAssessmentTools...)
+
+// scribeTools: a named sub-agent that captures notes into the user's storage by
+// boundary. It is read-only on the project (assessment tools) and may only
+// persist via scribe_write_note (NOT general workspace writes).
+var scribeTools = append(append([]string{}, readOnlyAssessmentTools...),
+	"scribe_write_note",
+	"sapaloq_update_task_progress",
+	"sapaloq_complete_task",
+	"sapaloq_fail_task",
+	"sapaloq_request_clarification",
+)
 
 // planTools: read-only planner. Assessment + write/read its own plan markdown
 // (read enables iterating/refining the plan before finishing).
@@ -54,16 +67,62 @@ var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"sapaloq_request_clarification",
 )
 
-// toolsForRole returns the declared-tool list for a sub-agent role.
-func toolsForRole(role string) []string {
+// staticToolsForRole returns the built-in declared-tool profile for a role.
+func staticToolsForRole(role string) []string {
 	switch role {
 	case "planner":
 		return planTools
 	case "task-runner":
 		return agentTools
+	case "scribe":
+		return scribeTools
 	default:
 		return askTools
 	}
+}
+
+// toolsForRole returns the declared-tool list a sub-agent role may be OFFERED.
+// When the role declares allowedTools in config, the offered set is the config
+// allowlist intersected with the known tool registry (so the model is only told
+// about tools it can actually call AND that exist). When unconfigured, the
+// static per-role profile is used (backward-compatible).
+func (o *Orchestrator) toolsForRole(role string) []string {
+	static := staticToolsForRole(role)
+	roles := o.cfg.SubAgents.Roles
+	if roles == nil {
+		return static
+	}
+	r, ok := roles[role]
+	if !ok || len(r.AllowedTools) == 0 {
+		return static
+	}
+	// Intersect the config allowlist with all known tools (union of every
+	// static profile) so only real, registered tools are offered.
+	known := knownToolSet()
+	var out []string
+	for name := range known {
+		if matchToolAllowlist(r.AllowedTools, name) {
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		// Config named only unknown/abstract tools; fall back so the agent
+		// isn't left toolless.
+		return static
+	}
+	return out
+}
+
+// knownToolSet is the union of every static role profile — the set of tool
+// names the orchestrator actually implements.
+func knownToolSet() map[string]struct{} {
+	set := map[string]struct{}{}
+	for _, profile := range [][]string{askTools, planTools, agentTools, scribeTools} {
+		for _, name := range profile {
+			set[name] = struct{}{}
+		}
+	}
+	return set
 }
 
 // init registers concrete JSON parameter schemas so the upstream model knows
@@ -214,5 +273,34 @@ func init() {
 			"options":{"type":"array","items":{"type":"string"},"description":"Optional answer options."}
 		},
 		"required":["question"]
+	}`)
+
+	reg("sapaloq_answer_clarification", `{
+		"type":"object",
+		"properties":{
+			"task_id":{"type":"string","description":"Task awaiting clarification. Omit to target the latest awaiting task in this session."},
+			"answer":{"type":"string","description":"The user's answer to the sub-agent's clarification question. The task resumes with this answer."}
+		},
+		"required":["answer"]
+	}`)
+
+	reg("sapaloq_spawn_scribe", `{
+		"type":"object",
+		"properties":{
+			"task":{"type":"string","description":"What to capture, e.g. 'note that the deploy runs on Fridays'."}
+		},
+		"required":["task"]
+	}`)
+
+	reg("scribe_write_note", `{
+		"type":"object",
+		"properties":{
+			"note":{"type":"string","description":"The note text to append (timestamped)."},
+			"storage_id":{"type":"string","description":"Explicit storage path id from storage.paths (highest priority)."},
+			"intent":{"type":"string","description":"Intent phrase mapped via storage.intents (e.g. 'catat', 'work note')."},
+			"mode":{"type":"string","description":"Boundary mode: personal | work | hobby."},
+			"kind":{"type":"string","description":"Optional kind within a mode (e.g. notes, inbox, journal)."}
+		},
+		"required":["note"]
 	}`)
 }

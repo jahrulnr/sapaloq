@@ -44,6 +44,9 @@ type Usage struct {
 // Store owns companion.db chat/session persistence. JSONL progress remains audit-only.
 type Store struct {
 	db *sql.DB
+	// ftsEnabled reports whether the SQLite build supports FTS5. When false,
+	// facts search degrades to a LIKE scan instead of a facts_fts MATCH.
+	ftsEnabled bool
 }
 
 func Open(memoryDir string) (*Store, error) {
@@ -122,13 +125,78 @@ func (s *Store) migrate(ctx context.Context) error {
 			compacted_turns INTEGER NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
+		// facts is the durable "memory facts" store (canonical schema:
+		// migrations/001_initial.sql). It backs do_not_repeat feedback,
+		// preferences, skill triggers, and notes. Always created.
+		`CREATE TABLE IF NOT EXISTS facts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			kind TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		// feedback_events records explicit 👍/👎 reward signals from the user;
+		// a 👎 with a correction also writes a do_not_repeat fact (see
+		// feedback.go). turn_id is nullable for session-level feedback.
+		`CREATE TABLE IF NOT EXISTS feedback_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			turn_id INTEGER,
+			signal TEXT NOT NULL,
+			reward REAL NOT NULL,
+			correction TEXT,
+			created_at TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
+
+	// FTS5 is optional with the modernc.org/sqlite build. Probe for it; if
+	// available, create facts_fts + sync triggers (mirroring
+	// migrations/001_initial.sql) so SearchFacts can MATCH. Otherwise leave
+	// ftsEnabled false and degrade to a LIKE scan — never hard-fail Open.
+	s.ftsEnabled = s.probeFTS5(ctx)
+	if s.ftsEnabled {
+		ftsStmts := []string{
+			`CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(content, content='facts', content_rowid='id')`,
+			`CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+				INSERT INTO facts_fts(rowid, content) VALUES (new.id, new.content);
+			END`,
+			`CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+				INSERT INTO facts_fts(facts_fts, rowid, content) VALUES('delete', old.id, old.content);
+			END`,
+			`CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+				INSERT INTO facts_fts(facts_fts, rowid, content) VALUES('delete', old.id, old.content);
+				INSERT INTO facts_fts(rowid, content) VALUES (new.id, new.content);
+			END`,
+		}
+		for _, stmt := range ftsStmts {
+			if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+				// FTS5 probe passed but creation failed: degrade gracefully
+				// rather than failing Open.
+				s.ftsEnabled = false
+				break
+			}
+		}
+	}
 	return nil
+}
+
+// probeFTS5 reports whether the underlying SQLite build supports FTS5. It
+// creates a throwaway virtual table inside a transaction and rolls back so no
+// schema side effects leak.
+func (s *Store) probeFTS5(ctx context.Context) bool {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `CREATE VIRTUAL TABLE _fts_probe USING fts5(x)`); err != nil {
+		return false
+	}
+	return true
 }
 
 func (s *Store) ActiveSession(ctx context.Context, provider, model string) (string, error) {

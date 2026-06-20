@@ -27,9 +27,41 @@ type taskRecord struct {
 	PlanTaskID string `json:"plan_task_id,omitempty"`
 	// Question holds the pending clarification text when Status is
 	// awaiting_clarification.
-	Question  string    `json:"question,omitempty"`
+	Question string `json:"question,omitempty"`
+	// Transcript is a minimal message log (role+content) of the sub-agent's
+	// conversation so far. It lets a task paused on awaiting_clarification be
+	// resumed by reconstruction (the in-memory messages slice is lost when the
+	// goroutine returns). Bounded by maxTurns; each entry is content-capped.
+	Transcript []taskTurn `json:"transcript,omitempty"`
+	// Answer is the user's clarification answer, set transiently on resume and
+	// consumed by buildSubAgentMessages as the resume nudge.
+	Answer    string    `json:"answer,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// taskTurn is one persisted sub-agent turn used to resume a paused task. Only
+// role+content (no images) are stored to keep status.json small.
+type taskTurn struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// maxTranscriptTurnBytes caps the content stored per transcript turn so a
+// paused task's status.json stays bounded.
+const maxTranscriptTurnBytes = 8 * 1024
+
+// appendTranscript records a role/content turn on the record, truncating the
+// content to maxTranscriptTurnBytes. Empty content is skipped.
+func (r *taskRecord) appendTranscript(role, content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+	if len(content) > maxTranscriptTurnBytes {
+		content = content[:maxTranscriptTurnBytes] + "…[truncated]"
+	}
+	r.Transcript = append(r.Transcript, taskTurn{Role: role, Content: content})
 }
 
 type askToolResult struct {
@@ -45,6 +77,7 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		Seconds int    `json:"seconds"`
 		Reason  string `json:"reason"`
 		Scope   string `json:"scope"`
+		Answer  string `json:"answer"`
 	}
 	_ = json.Unmarshal(call.Arguments, &args)
 	o.auditTool(sessionID, "ask", call)
@@ -78,6 +111,16 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			msg += fmt.Sprintf(" Using plan from `%s`.", planTaskID)
 		}
 		return askToolResult{text: msg, handled: true}
+	case "sapaloq_spawn_scribe":
+		task := strings.TrimSpace(args.Task)
+		if task == "" {
+			task = fallbackTask
+		}
+		id, err := o.spawnBackground(snap, sessionID, "scribe", task, "")
+		if err != nil {
+			return askToolResult{text: "Failed to start scribe: " + err.Error(), handled: true}
+		}
+		return askToolResult{text: fmt.Sprintf("Scribe started in background (`%s`).", id), handled: true}
 	case "sapaloq_get_task_status":
 		taskID := strings.TrimSpace(args.TaskID)
 		if taskID == "" {
@@ -127,6 +170,34 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			response += "\n\nError: " + record.Error
 		}
 		return askToolResult{text: response, handled: true}
+	case "sapaloq_answer_clarification":
+		answer := strings.TrimSpace(args.Answer)
+		if answer == "" {
+			return askToolResult{text: "Error: answer is required.", handled: true}
+		}
+		taskID := strings.TrimSpace(args.TaskID)
+		if taskID == "" {
+			taskID = o.latestAwaitingTaskID(sessionID)
+		}
+		if taskID == "" {
+			return askToolResult{text: "No task is awaiting clarification.", handled: true}
+		}
+		record, err := o.readTask(taskID)
+		if err != nil {
+			return askToolResult{text: "Task unavailable: " + err.Error(), handled: true}
+		}
+		if record.Status != "awaiting_clarification" {
+			return askToolResult{text: fmt.Sprintf("Task `%s` is %s, not awaiting clarification; cannot answer.", record.ID, record.Status), handled: true}
+		}
+		record.Answer = answer
+		record.Question = ""
+		record.Status = "in_progress"
+		record.UpdatedAt = time.Now().UTC()
+		if err := o.writeTask(record); err != nil {
+			return askToolResult{text: "Failed to persist answer: " + err.Error(), handled: true}
+		}
+		o.resumeBackground(snap, sessionID, record)
+		return askToolResult{text: fmt.Sprintf("Answer delivered; task `%s` resumed in the background.", record.ID), handled: true}
 	case "sapaloq_stop":
 		reason := strings.TrimSpace(args.Reason)
 		if reason == "" {
@@ -227,6 +298,57 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 	o.taskMu.Unlock()
 	go o.runBackgroundTask(ctx, cancel, snap, sessionID, record)
 	return id, nil
+}
+
+// resumeBackground re-enters the background loop for an already-persisted task
+// (e.g. one paused on awaiting_clarification and now answered). It mirrors the
+// goroutine plumbing of spawnBackground but reuses the existing record (with
+// its transcript + answer) rather than creating a new one.
+func (o *Orchestrator) resumeBackground(snap providerSnapshot, sessionID string, record taskRecord) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	o.taskMu.Lock()
+	if o.taskCancels == nil {
+		o.taskCancels = make(map[string]context.CancelFunc)
+	}
+	if o.sessionTasks == nil {
+		o.sessionTasks = make(map[string]map[string]struct{})
+	}
+	o.taskCancels[record.ID] = cancel
+	if o.sessionTasks[sessionID] == nil {
+		o.sessionTasks[sessionID] = make(map[string]struct{})
+	}
+	o.sessionTasks[sessionID][record.ID] = struct{}{}
+	o.taskMu.Unlock()
+	go o.runBackgroundTask(ctx, cancel, snap, sessionID, record)
+}
+
+// latestAwaitingTaskID returns the most recently updated task in this session
+// that is currently awaiting clarification, so the user can answer without
+// naming a task id.
+func (o *Orchestrator) latestAwaitingTaskID(sessionID string) string {
+	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	if err != nil {
+		return ""
+	}
+	var bestID string
+	var bestTime time.Time
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		rec, readErr := o.readTask(entry.Name())
+		if readErr != nil || rec.Status != "awaiting_clarification" {
+			continue
+		}
+		if sessionID != "" && rec.SessionID != sessionID {
+			continue
+		}
+		if rec.UpdatedAt.After(bestTime) {
+			bestTime = rec.UpdatedAt
+			bestID = rec.ID
+		}
+	}
+	return bestID
 }
 
 func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.CancelFunc, snap providerSnapshot, sessionID string, record taskRecord) {

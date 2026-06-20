@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/credentials"
 )
@@ -17,6 +18,87 @@ type Config struct {
 	Events        EventsConfig       `json:"events"`
 	Orchestrator  OrchestratorConfig `json:"orchestrator"`
 	SubAgents     SubAgentsConfig    `json:"subAgents,omitempty"`
+	Feedback      FeedbackConfig     `json:"feedback,omitempty"`
+	Storage       StorageConfig      `json:"storage,omitempty"`
+}
+
+// StorageConfig maps note "intents" and boundary paths the scribe sub-agent may
+// write to. Writes are restricted to these declared paths (boundary-enforced).
+type StorageConfig struct {
+	Paths   []StoragePath     `json:"paths,omitempty"`
+	Intents map[string]string `json:"intents,omitempty"`
+}
+
+// StoragePath is one named, mode-scoped destination file (e.g. personal notes).
+type StoragePath struct {
+	ID          string `json:"id"`
+	Path        string `json:"path"`
+	Mode        string `json:"mode,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// Resolve picks a storage path by intent phrase, explicit id, or mode/kind.
+// Preference order: explicit id → intent phrase → mode (+optional kind) → "".
+func (s StorageConfig) Resolve(id, intent, mode, kind string) (StoragePath, bool) {
+	if id != "" {
+		if p, ok := s.byID(id); ok {
+			return p, true
+		}
+	}
+	if intent != "" {
+		if mapped, ok := s.Intents[strings.ToLower(strings.TrimSpace(intent))]; ok {
+			if p, ok := s.byID(mapped); ok {
+				return p, true
+			}
+		}
+	}
+	if mode != "" {
+		for _, p := range s.Paths {
+			if !strings.EqualFold(p.Mode, mode) {
+				continue
+			}
+			if kind == "" || strings.EqualFold(p.Kind, kind) {
+				return p, true
+			}
+		}
+	}
+	return StoragePath{}, false
+}
+
+func (s StorageConfig) byID(id string) (StoragePath, bool) {
+	for _, p := range s.Paths {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return StoragePath{}, false
+}
+
+// FeedbackConfig controls the explicit 👍/👎 reward loop and how much negative
+// guidance (do_not_repeat) is injected into the Ask prompt each turn.
+type FeedbackConfig struct {
+	// ExplicitSignalsEnabled toggles the whole feedback feature. Defaults to
+	// true (zero value would disable it, so consumers treat the unset config
+	// via FeedbackWithDefaults).
+	ExplicitSignalsEnabled bool `json:"explicitSignalsEnabled"`
+	// MaxNegativeSlicesPerTurn bounds how many do_not_repeat facts are injected
+	// into the Ask system prompt per turn. Defaults to 1.
+	MaxNegativeSlicesPerTurn int `json:"maxNegativeSlicesPerTurn"`
+}
+
+// FeedbackWithDefaults fills sane defaults: feedback enabled, 1 negative slice.
+// Because the JSON zero value of a bool is false, callers should treat an
+// entirely-absent feedback block as "enabled" — handled here by only enabling
+// defaults when the struct looks unset.
+func (f FeedbackConfig) WithDefaults() FeedbackConfig {
+	if f.MaxNegativeSlicesPerTurn <= 0 {
+		f.MaxNegativeSlicesPerTurn = 1
+	}
+	if f.MaxNegativeSlicesPerTurn > 10 {
+		f.MaxNegativeSlicesPerTurn = 10
+	}
+	return f
 }
 
 // SubAgentsConfig models the per-role sub-agent settings from config.json.
@@ -165,7 +247,10 @@ type EventsConfig struct {
 }
 
 type BusConfig struct {
-	SocketPath string `json:"socketPath"`
+	SocketPath        string `json:"socketPath"`
+	WALPath           string `json:"walPath,omitempty"`
+	WatcherBufferSize int    `json:"watcherBufferSize,omitempty"`
+	ReplayOnBoot      bool   `json:"replayOnBoot,omitempty"`
 }
 
 type OrchestratorConfig struct {

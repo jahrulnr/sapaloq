@@ -414,7 +414,7 @@
     "roles": {
       "orchestrator": {
         "description": "Ask mode — widget coordinator; spawn routing; light read-only assessment; never blocks on long IO",
-        "allowedTools": ["sapaloq_spawn_plan", "sapaloq_spawn_agent", "sapaloq_get_task_status", "sapaloq_wait", "sapaloq_stop", "workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch"],
+        "allowedTools": ["sapaloq_spawn_plan", "sapaloq_spawn_agent", "sapaloq_spawn_scribe", "sapaloq_get_task_status", "sapaloq_wait", "sapaloq_answer_clarification", "sapaloq_stop", "workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch"],
         "maxTurns": 3,
         "canEditConfig": false,
         "toolPolicy": "companion"
@@ -427,7 +427,7 @@
       },
       "scribe": {
         "description": "Writes notes to storage.paths by boundary",
-        "allowedTools": ["read_config", "read_memory", "write_file", "append_file", "emit_progress", "ask_orchestrator"],
+        "allowedTools": ["workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "scribe_write_note", "sapaloq_update_task_progress", "sapaloq_complete_task", "sapaloq_fail_task", "sapaloq_request_clarification"],
         "maxTurns": 8,
         "canEditConfig": false
       },

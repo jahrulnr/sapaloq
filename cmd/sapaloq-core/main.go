@@ -92,7 +92,32 @@ func newOrchestrator(cfg config.Config, cfgPath string) (*orchestrator.Orchestra
 		return nil, err
 	}
 	debug.Debugf("orchestrator: bridge=%s live_api=%v", b.ID(), b.Caps().LiveAPI)
-	return orchestrator.New(cfg, cfgPath, b, bus.New())
+
+	eventBus := newEventBus(cfg)
+	return orchestrator.New(cfg, cfgPath, b, eventBus)
+}
+
+// newEventBus constructs the event bus, enabling the JSON-lines WAL when
+// config.events.bus.walPath is set. When replayOnBoot is also enabled it logs
+// how many durable events are recoverable (watchers attaching after boot can
+// call Bus.Replay to rehydrate). Falls back to an in-memory bus on any WAL
+// setup error so the core never fails to start over event durability.
+func newEventBus(cfg config.Config) *bus.Bus {
+	walPath := config.ExpandPath(cfg.Events.Bus.WALPath)
+	if walPath == "" {
+		return bus.New()
+	}
+	b, err := bus.NewWithWAL(walPath)
+	if err != nil {
+		debug.Debugf("event-bus: WAL disabled (%v); using in-memory bus", err)
+		return bus.New()
+	}
+	if cfg.Events.Bus.ReplayOnBoot {
+		var recovered int
+		_ = b.Replay(0, func(bus.Event) { recovered++ })
+		debug.Debugf("event-bus: WAL=%s replayable_events=%d", walPath, recovered)
+	}
+	return b
 }
 
 func newBridge(cfg config.Config) (bridge.Bridge, error) {

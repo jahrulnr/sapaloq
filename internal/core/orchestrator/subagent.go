@@ -25,10 +25,16 @@ const subAgentMaxTurns = 24
 // record is mutated in place (Status/Result/Error/Question); the caller
 // persists the final state.
 func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapshot, sessionID string, record *taskRecord) {
-	tools := toolsForRole(record.Role)
+	tools := o.toolsForRole(record.Role)
 	messages := o.buildSubAgentMessages(record)
 	subSession := sessionID + ":" + record.ID
 	maxTurns := o.roleMaxTurns(record.Role)
+
+	// The persisted transcript + answer have been folded into `messages` by
+	// buildSubAgentMessages. Clear the consumed Answer so it isn't replayed
+	// again on a subsequent pause; KEEP the existing Transcript so this run
+	// appends to it (preserving full context across multiple clarifications).
+	record.Answer = ""
 
 	var finalResult strings.Builder
 
@@ -94,9 +100,15 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 			return
 		}
 		if record.Status == "awaiting_clarification" {
-			// Pause the loop; orchestrator/user will resume by clearing the
-			// question and re-spawning or answering (MVP: stop here, surface Q).
+			// Pause the loop and persist the transcript so the task can be
+			// resumed (sapaloq_answer_clarification) with its accumulated
+			// context rather than re-spawned from scratch.
+			record.appendTranscript("assistant", turnText.String())
+			if len(toolResults) > 0 {
+				record.appendTranscript("user", "[Tool results]\n"+strings.Join(toolResults, "\n\n"))
+			}
 			record.Result = strings.TrimSpace(finalResult.String())
+			_ = o.writeTask(*record)
 			return
 		}
 		if len(toolResults) == 0 {
@@ -115,10 +127,14 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 			return
 		}
 
-		// Feed tool results back and continue.
+		// Feed tool results back and continue. Also record the turn in the
+		// resumable transcript so a later clarification pause keeps full context.
+		toolResultsMsg := "[Tool results]\n" + strings.Join(toolResults, "\n\n")
+		record.appendTranscript("assistant", turnText.String())
+		record.appendTranscript("user", toolResultsMsg)
 		messages = append(messages,
 			bridge.Message{Role: "assistant", Content: turnText.String()},
-			bridge.Message{Role: "user", Content: "[Tool results]\n" + strings.Join(toolResults, "\n\n") + "\nContinue the task using these results. When finished, call sapaloq_complete_task (agent) or output the final plan (planner)."},
+			bridge.Message{Role: "user", Content: toolResultsMsg + "\nContinue the task using these results. When finished, call sapaloq_complete_task (agent) or output the final plan (planner)."},
 		)
 		images = nil
 	}
@@ -150,6 +166,52 @@ func (o *Orchestrator) roleMaxTurns(role string) int {
 	return turns
 }
 
+// roleAllows reports whether a sub-agent role may invoke a given tool. When the
+// role declares an explicit allowedTools list in config, that list is the
+// authority (supporting exact names and `*`-suffix wildcards like `desktop_*`).
+// When the role is NOT configured (or has an empty allowlist), we fall back to
+// the original hard-coded policy: task-runner may use any tool; every other
+// role is read-only (mutating tools — write/create/edit/delete/terminal — are
+// denied). This preserves backward-compatible, default-deny-for-mutation
+// behavior while letting config grant capabilities to named roles.
+func (o *Orchestrator) roleAllows(role, tool string) bool {
+	if roles := o.cfg.SubAgents.Roles; roles != nil {
+		if r, ok := roles[role]; ok && len(r.AllowedTools) > 0 {
+			return matchToolAllowlist(r.AllowedTools, tool)
+		}
+	}
+	// Fallback policy (unconfigured role): task-runner full, others read-only.
+	if role == "task-runner" {
+		return true
+	}
+	return !isMutatingTool(tool)
+}
+
+// matchToolAllowlist matches a tool name against an allowlist supporting exact
+// entries and `*`-suffix wildcards (e.g. "desktop_*").
+func matchToolAllowlist(allow []string, tool string) bool {
+	for _, a := range allow {
+		if a == tool || a == "*" {
+			return true
+		}
+		if strings.HasSuffix(a, "*") && strings.HasPrefix(tool, strings.TrimSuffix(a, "*")) {
+			return true
+		}
+	}
+	return false
+}
+
+// isMutatingTool flags tools that modify the filesystem or run commands. These
+// are denied to read-only roles under the fallback policy.
+func isMutatingTool(tool string) bool {
+	switch tool {
+	case "workspace_write_file", "workspace_create_file", "workspace_edit_file",
+		"workspace_delete_file", "terminal_run":
+		return true
+	}
+	return false
+}
+
 // buildSubAgentMessages assembles the system + user context for a sub-agent,
 // including the user's original intent and (for agents) the handed-off plan
 // with its acceptance criteria.
@@ -168,6 +230,11 @@ func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Messag
 		system.WriteString("Report progress with sapaloq_update_task_progress. ")
 		system.WriteString("When the work meets every acceptance criterion, call sapaloq_complete_task with a summary. If you cannot finish, call sapaloq_fail_task with the reason. ")
 		system.WriteString("If a decision is genuinely ambiguous, call sapaloq_request_clarification instead of guessing.")
+	case "scribe":
+		system.WriteString("You are SapaLOQ's scribe. Your only job is to capture the user's note into their personal storage. ")
+		system.WriteString("Call scribe_write_note with the note text and a destination: storage_id, an intent phrase, or a mode (personal|work|hobby). ")
+		system.WriteString("You may assess context read-only (workspace_read_file/search/list/glob) but you must NOT write project files or run commands — scribe_write_note is your only write. ")
+		system.WriteString("When the note is saved, call sapaloq_complete_task with a one-line confirmation. If the destination is ambiguous, call sapaloq_request_clarification.")
 	default:
 		system.WriteString("You are a background SapaLOQ task agent. Use your tools, then return a concise final result.")
 	}
@@ -185,6 +252,25 @@ func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Messag
 	}
 
 	messages = append(messages, bridge.Message{Role: "user", Content: record.Task})
+
+	// Resume path: if the task has a persisted transcript (it was paused on a
+	// clarification), replay it so the sub-agent continues with its prior
+	// context. When an Answer is present, append it as the resume nudge.
+	if len(record.Transcript) > 0 {
+		for _, turn := range record.Transcript {
+			role := turn.Role
+			if role != "assistant" && role != "user" && role != "system" {
+				role = "user"
+			}
+			messages = append(messages, bridge.Message{Role: role, Content: turn.Content})
+		}
+	}
+	if strings.TrimSpace(record.Answer) != "" {
+		messages = append(messages, bridge.Message{
+			Role:    "user",
+			Content: "Answer to your clarification question: " + strings.TrimSpace(record.Answer) + "\nContinue the task using this answer.",
+		})
+	}
 	return messages
 }
 
@@ -213,32 +299,24 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		return subToolResult{text: text}
 	}
 	args := parseToolArgs(call.Arguments)
+	// Generic, config-driven tool gate. Mutating/role-restricted tools are
+	// denied unless the role's allowedTools (or fallback policy) grants them.
+	if !o.roleAllows(record.Role, call.Name) {
+		return subToolResult{text: fmt.Sprintf("Error: %s is not allowed for role %s.", call.Name, record.Role)}
+	}
 	switch call.Name {
 	case "workspace_write_file":
-		if record.Role != "task-runner" {
-			return subToolResult{text: "Error: write is not allowed in this mode."}
-		}
 		return subToolResult{text: toolWriteFile(args, false)}
 	case "workspace_create_file":
-		if record.Role != "task-runner" {
-			return subToolResult{text: "Error: create is not allowed in this mode."}
-		}
 		return subToolResult{text: toolWriteFile(args, true)}
 	case "workspace_edit_file":
-		if record.Role != "task-runner" {
-			return subToolResult{text: "Error: edit is not allowed in this mode."}
-		}
 		return subToolResult{text: toolEditFile(args)}
 	case "workspace_delete_file":
-		if record.Role != "task-runner" {
-			return subToolResult{text: "Error: delete is not allowed in this mode."}
-		}
 		return subToolResult{text: toolDeleteFile(args)}
 	case "terminal_run":
-		if record.Role != "task-runner" {
-			return subToolResult{text: "Error: terminal is not allowed in this mode."}
-		}
 		return subToolResult{text: toolTerminalRun(ctx, args)}
+	case "scribe_write_note":
+		return subToolResult{text: o.toolScribeWriteNote(args)}
 	case "sapaloq_write_plan_markdown":
 		md := strings.TrimSpace(args.Markdown)
 		if md == "" {

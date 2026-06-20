@@ -89,6 +89,8 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			write(conn, Response{OK: true, Op: req.Op, Message: message, SessionID: req.SessionID, ServerMs: time.Since(start).Milliseconds()})
 		case "chat_send":
 			s.handleChat(ctx, conn, req, start)
+		case "submit_feedback":
+			s.handleFeedback(ctx, conn, req, start)
 		case "watch":
 			s.handleWatch(ctx, conn)
 		default:
@@ -103,6 +105,14 @@ func (s *Server) handleDelete(ctx context.Context, conn net.Conn, req Request, s
 		return
 	}
 	if err := s.orch.DeleteTurn(ctx, req.SessionID, req.TurnID); err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	write(conn, Response{OK: true, Op: req.Op, SessionID: req.SessionID, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleFeedback(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	if err := s.orch.SubmitFeedback(ctx, req.SessionID, req.TurnID, req.Signal, req.Correction); err != nil {
 		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
 		return
 	}

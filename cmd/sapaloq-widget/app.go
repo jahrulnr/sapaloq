@@ -64,6 +64,13 @@ func (a *App) StopChat(sessionID string) error {
 	return stopChat(a.socketPath, sessionID)
 }
 
+// SubmitFeedback records an explicit 👍/👎 reward for an assistant turn. signal
+// is "up" or "down"; correction is an optional note (used on 👎) that becomes
+// negative guidance for future turns.
+func (a *App) SubmitFeedback(sessionID string, turnID int64, signal string, correction string) error {
+	return submitFeedback(a.socketPath, sessionID, turnID, signal, correction)
+}
+
 func (a *App) ContextUsage() (*chatUsage, error) {
 	return contextUsage(a.socketPath)
 }

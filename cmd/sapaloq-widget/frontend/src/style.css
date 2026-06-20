@@ -380,6 +380,71 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   font-weight: 820;
 }
 .message-inline-actions button:hover { background: oklch(67% 0.21 28 / 0.18); }
+.message-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  opacity: 0.35;
+  transition: opacity 0.18s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.message--assistant:hover .message-feedback,
+.message-feedback[data-sent] { opacity: 1; }
+.message-feedback .feedback-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: oklch(100% 0 0 / 0.05);
+  font-size: 0.78rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.message-feedback .feedback-btn:hover { background: oklch(73% 0.16 186 / 0.14); }
+.message-feedback .feedback-btn.is-active {
+  border-color: oklch(73% 0.16 186 / 0.6);
+  background: oklch(73% 0.16 186 / 0.2);
+}
+.feedback-correction {
+  flex: 1 1 100%;
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+.feedback-correction textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px 8px;
+  color: var(--ink);
+  background: oklch(14% 0.035 255 / 0.7);
+  font: inherit;
+  font-size: 0.72rem;
+}
+.feedback-correction textarea:focus {
+  outline: 2px solid oklch(73% 0.16 186 / 0.55);
+  outline-offset: 1px;
+}
+.feedback-correction-actions { display: flex; gap: 6px; }
+.feedback-correction-actions button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: var(--ink);
+  background: oklch(100% 0 0 / 0.05);
+  font-size: 0.66rem;
+  font-weight: 820;
+  cursor: pointer;
+}
+.feedback-correction-actions button[data-action='send']:hover {
+  background: oklch(73% 0.16 186 / 0.18);
+  color: var(--accent);
+}
+.feedback-correction-actions button[data-action='cancel']:hover {
+  background: oklch(67% 0.21 28 / 0.14);
+}
 .message--streaming::after {
   content: "";
   display: inline-block;

@@ -1,7 +1,7 @@
 import './style.css';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { ChatHistory, ContextUsage, DeleteChatTurn, OpenAttachment, PingCore, ReadDroppedFile, RetryChatTurn, SendMessage, SlashSuggest, StopChat } from '../wailsjs/go/main/App';
+import { ChatHistory, ContextUsage, DeleteChatTurn, OpenAttachment, PingCore, ReadDroppedFile, RetryChatTurn, SendMessage, SlashSuggest, StopChat, SubmitFeedback } from '../wailsjs/go/main/App';
 import { EventsOn, OnFileDrop } from '../wailsjs/runtime/runtime';
 import { cyclePanelSize, initWindowLayout, isExpanded, setExpanded, toggleExpanded } from './window-layout';
 
@@ -141,6 +141,7 @@ function appendMessage(className: string, text: string, groupID = currentUserGro
   if (attachments.length) item.append(renderMessageAttachments(attachments));
   if (className.includes('message--user')) wireUserMessage(item, text);
   if (className.includes('message--error')) wireErrorMessage(item);
+  if (className.includes('message--assistant')) wireAssistantFeedback(item);
   list.appendChild(item);
   list.scrollTop = list.scrollHeight;
   return item;
@@ -471,6 +472,98 @@ function wireErrorMessage(item: HTMLElement) {
   item.append(actions);
 }
 
+// resolveAssistantTurnID returns the turn id to attribute feedback to. Assistant
+// bubbles carry their own turn id once history is bound; while streaming the id
+// may not be set yet, in which case we fall back to the latest user turn group.
+function resolveAssistantTurnID(item: HTMLElement): number {
+  const own = Number(item.dataset.turnId || 0);
+  if (own > 0) return own;
+  const groupID = item.dataset.group || '';
+  const user = document.querySelector<HTMLElement>(`.message--user[data-group="${groupID}"]`);
+  return Number(user?.dataset.turnId || 0);
+}
+
+// wireAssistantFeedback attaches 👍/👎 controls to an assistant bubble. 👎 opens
+// an inline (optional) correction box; the correction is stored as negative
+// guidance the core injects into future prompts.
+function wireAssistantFeedback(item: HTMLElement) {
+  const bar = document.createElement('div');
+  bar.className = 'message-feedback';
+  bar.innerHTML = `
+    <button type="button" class="feedback-btn" data-signal="up" title="Good response" aria-label="Good response">👍</button>
+    <button type="button" class="feedback-btn" data-signal="down" title="Bad response" aria-label="Bad response">👎</button>
+  `;
+  const up = bar.querySelector<HTMLButtonElement>('[data-signal="up"]');
+  const down = bar.querySelector<HTMLButtonElement>('[data-signal="down"]');
+
+  const markSent = (signal: 'up' | 'down') => {
+    bar.dataset.sent = signal;
+    up?.classList.toggle('is-active', signal === 'up');
+    down?.classList.toggle('is-active', signal === 'down');
+  };
+
+  up?.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    const turnID = resolveAssistantTurnID(item);
+    try {
+      await SubmitFeedback(currentSessionID, turnID, 'up', '');
+      markSent('up');
+    } catch {
+      // Feedback is best-effort; ignore transient core errors.
+    }
+  });
+
+  down?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openCorrectionBox(item, bar, markSent);
+  });
+
+  item.append(bar);
+}
+
+// openCorrectionBox renders an inline textarea so the user can (optionally)
+// explain what was wrong before submitting a 👎. Submitting with empty text
+// still records the negative signal.
+function openCorrectionBox(
+  item: HTMLElement,
+  bar: HTMLElement,
+  markSent: (signal: 'up' | 'down') => void,
+) {
+  if (bar.querySelector('.feedback-correction')) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'feedback-correction';
+  wrap.innerHTML = `
+    <textarea rows="2" placeholder="What should it avoid next time? (optional)"></textarea>
+    <div class="feedback-correction-actions">
+      <button type="button" data-action="send">Submit</button>
+      <button type="button" data-action="cancel">Cancel</button>
+    </div>
+  `;
+  const textarea = wrap.querySelector<HTMLTextAreaElement>('textarea');
+  const send = wrap.querySelector<HTMLButtonElement>('[data-action="send"]');
+  const cancel = wrap.querySelector<HTMLButtonElement>('[data-action="cancel"]');
+
+  cancel?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    wrap.remove();
+  });
+  send?.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    const correction = (textarea?.value || '').trim();
+    const turnID = resolveAssistantTurnID(item);
+    try {
+      await SubmitFeedback(currentSessionID, turnID, 'down', correction);
+      markSent('down');
+    } catch {
+      // best-effort
+    }
+    wrap.remove();
+  });
+
+  bar.append(wrap);
+  textarea?.focus();
+}
+
 function renderTurn(turn: ChatTurn) {
   if (!turn.content) return;
   const parsed = parseTurnContent(turn.content);
@@ -596,6 +689,13 @@ function flushStream(target: StreamTarget) {
     target.el.classList.remove('is-expanded');
     target.el.classList.add('is-collapsed');
     target.el.querySelector('.thinking-toggle')?.setAttribute('aria-expanded', 'false');
+  } else if (
+    target.text &&
+    target.el.classList.contains('message--assistant') &&
+    !target.el.querySelector('.message-feedback')
+  ) {
+    // Final assistant answer: attach 👍/👎 once the stream settles.
+    wireAssistantFeedback(target.el);
   }
 }
 

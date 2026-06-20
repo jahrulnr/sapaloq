@@ -39,7 +39,10 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 	messages := make([]bridge.Message, 0, len(turns)+1)
 	messages = append(messages, bridge.Message{Role: "system", Content: `You are SapaLOQ's Ask orchestrator. Use the active-session context below. Compacted summaries are authoritative; do not ask the user to repeat preserved context.
 You can assess before delegating: call workspace_read_file {"path":"..."}, workspace_search {"pattern":"...","glob":"*.go"}, workspace_list_dir {"path":"."}, web_search {"query":"..."}, or web_fetch {"url":"..."} to gather facts yourself instead of guessing. Keep this light — for real work, delegate.
-For work that needs investigation or a multi-step plan, call sapaloq_spawn_plan with {"task":"..."} (the planner reads/searches/researches read-only and writes a plan with acceptance criteria). For a clear execution request, call sapaloq_spawn_agent with {"task":"..."} (the agent reads, writes, and runs commands to finish the job; if a plan exists it executes that plan). These run asynchronously; do not pretend you executed their work yourself. Use sapaloq_get_task_status with {"task_id":"..."} when status is requested — it also surfaces any clarification a sub-agent needs. Use sapaloq_wait with {"task_id":"...","seconds":2}; the backend waits for a task state change without repeatedly calling the model. Use sapaloq_stop with {"scope":"generation|task|all","task_id":"...","reason":"..."} when work should stop. Image input is available in Ask, planner, and agent modes when the selected model accepts vision.`})
+For work that needs investigation or a multi-step plan, call sapaloq_spawn_plan with {"task":"..."} (the planner reads/searches/researches read-only and writes a plan with acceptance criteria). For a clear execution request, call sapaloq_spawn_agent with {"task":"..."} (the agent reads, writes, and runs commands to finish the job; if a plan exists it executes that plan). These run asynchronously; do not pretend you executed their work yourself. Use sapaloq_get_task_status with {"task_id":"..."} when status is requested — it also surfaces any clarification a sub-agent needs. When a delegated task is awaiting_clarification, relay its question to the user; once they reply, call sapaloq_answer_clarification with {"task_id":"...","answer":"..."} to resume that same sub-agent with its accumulated context (do not re-spawn). Use sapaloq_wait with {"task_id":"...","seconds":2}; the backend waits for a task state change without repeatedly calling the model. Use sapaloq_stop with {"scope":"generation|task|all","task_id":"...","reason":"..."} when work should stop. Image input is available in Ask, planner, and agent modes when the selected model accepts vision.`})
+	if block := o.negativeGuidanceBlock(ctx); block != "" {
+		messages = append(messages, bridge.Message{Role: "system", Content: block})
+	}
 	for _, turn := range turns {
 		role := turn.Role
 		if role == "tool" || role == "error" {
@@ -51,6 +54,28 @@ For work that needs investigation or a multi-step plan, call sapaloq_spawn_plan 
 		messages = append(messages, bridge.Message{Role: "user", Content: latestUserMessage})
 	}
 	return messages, nil
+}
+
+// negativeGuidanceBlock builds a short system block listing recent
+// do_not_repeat facts the user flagged via 👎 feedback, bounded by
+// config.feedback.maxNegativeSlicesPerTurn. Kept SHORT (like a t2i negative
+// prompt) to protect the token budget. Returns "" when there is nothing to say.
+func (o *Orchestrator) negativeGuidanceBlock(ctx context.Context) string {
+	if o == nil || o.chat == nil {
+		return ""
+	}
+	limit := o.cfg.Feedback.WithDefaults().MaxNegativeSlicesPerTurn
+	facts, err := o.chat.RecentDoNotRepeat(ctx, limit)
+	if err != nil || len(facts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Avoid repeating these mistakes the user flagged:")
+	for _, f := range facts {
+		b.WriteString("\n- ")
+		b.WriteString(f.Content)
+	}
+	return b.String()
 }
 
 func (o *Orchestrator) handleSlash(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, id, message string) {
@@ -138,6 +163,28 @@ func (o *Orchestrator) DeleteTurn(ctx context.Context, sessionID string, turnID 
 		}
 	}
 	return o.chat.DeleteFromTurn(ctx, sessionID, turnID)
+}
+
+// SubmitFeedback records an explicit reward signal ("up"/"down") for a turn.
+// A "down" with a correction also stores a do_not_repeat fact that future
+// turns surface as negative guidance. When explicit signals are disabled in
+// config, it is a no-op so the widget can call it unconditionally.
+func (o *Orchestrator) SubmitFeedback(ctx context.Context, sessionID string, turnID int64, signal, correction string) error {
+	if !o.cfg.Feedback.WithDefaults().ExplicitSignalsEnabled {
+		return nil
+	}
+	if sessionID == "" {
+		var err error
+		sessionID, err = o.ActiveSession(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	var turnPtr *int64
+	if turnID > 0 {
+		turnPtr = &turnID
+	}
+	return o.chat.AddFeedback(ctx, sessionID, turnPtr, signal, correction)
 }
 
 func (o *Orchestrator) ContextUsage(ctx context.Context, sessionID string) (chatstore.Usage, error) {
