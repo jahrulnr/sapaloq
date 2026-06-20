@@ -414,7 +414,7 @@
     "roles": {
       "orchestrator": {
         "description": "Ask mode — widget coordinator; spawn routing; light read-only assessment; never blocks on long IO",
-        "allowedTools": ["sapaloq_spawn_plan", "sapaloq_spawn_agent", "sapaloq_get_task_status", "sapaloq_wait", "sapaloq_stop", "workspace_read_file", "workspace_search", "workspace_list_dir", "web_search", "web_fetch"],
+        "allowedTools": ["sapaloq_spawn_plan", "sapaloq_spawn_agent", "sapaloq_get_task_status", "sapaloq_wait", "sapaloq_stop", "workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch"],
         "maxTurns": 3,
         "canEditConfig": false,
         "toolPolicy": "companion"
@@ -456,15 +456,15 @@
         "canEditConfig": false
       },
       "planner": {
-        "description": "Plan mode — read-only; produces Markdown plan.md before agent execution",
-        "allowedTools": ["workspace_read_file", "workspace_search", "workspace_list_dir", "web_search", "web_fetch", "sapaloq_write_plan_markdown", "sapaloq_request_clarification"],
+        "description": "Plan mode — read-only by policy; produces Markdown plan.md before agent execution (iterable)",
+        "allowedTools": ["workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch", "sapaloq_write_plan_markdown", "sapaloq_read_plan_markdown", "sapaloq_request_clarification"],
         "maxTurns": 12,
         "canEditConfig": false,
         "toolPolicy": "read_only"
       },
       "task-runner": {
         "description": "Agent mode — full tool access; executes Ask/Plan-designed task",
-        "allowedTools": ["workspace_read_file", "workspace_search", "workspace_list_dir", "web_search", "web_fetch", "workspace_write_file", "workspace_create_file", "terminal_run", "sapaloq_read_plan_markdown", "sapaloq_update_task_progress", "sapaloq_complete_task", "sapaloq_fail_task", "sapaloq_request_clarification"],
+        "allowedTools": ["workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch", "workspace_write_file", "workspace_create_file", "workspace_edit_file", "workspace_delete_file", "terminal_run", "sapaloq_read_plan_markdown", "sapaloq_update_task_progress", "sapaloq_complete_task", "sapaloq_fail_task", "sapaloq_request_clarification"],
         "maxTurns": 30,
         "canEditConfig": false,
         "toolPolicy": "full"

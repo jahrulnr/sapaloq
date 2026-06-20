@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,39 @@ func TestAuditToolWritesVault(t *testing.T) {
 
 	// Nil vault writer must be a no-op (no panic).
 	(&Orchestrator{}).auditTool("s", "ask", parse.ToolCall{Name: "x"})
+}
+
+// TestPlanWriteIsIterable verifies sapaloq_write_plan_markdown is non-terminal
+// (planner can revise) and that the planner can read its own plan back.
+func TestPlanWriteIsIterable(t *testing.T) {
+	o := &Orchestrator{memoryDir: t.TempDir()}
+	rec := &taskRecord{ID: "task-plan-1", Role: "planner", Status: "in_progress"}
+	if err := o.writeTask(*rec); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var result strings.Builder
+
+	first, _ := json.Marshal(map[string]string{"markdown": "## Goal\nv1\n"})
+	res := o.handleSubAgentTool(nil, rec, &result, parse.ToolCall{Name: "sapaloq_write_plan_markdown", Arguments: first})
+	if res.terminal {
+		t.Fatalf("write_plan_markdown must NOT be terminal (planner needs to iterate)")
+	}
+	if !strings.Contains(res.text, "plan.md") {
+		t.Fatalf("expected path hint in response, got: %s", res.text)
+	}
+
+	// Planner reads its own plan back.
+	readRes := o.handleSubAgentTool(nil, rec, &result, parse.ToolCall{Name: "sapaloq_read_plan_markdown", Arguments: []byte(`{}`)})
+	if !strings.Contains(readRes.text, "v1") {
+		t.Fatalf("planner should read its own plan, got: %s", readRes.text)
+	}
+
+	// Revise.
+	second, _ := json.Marshal(map[string]string{"markdown": "## Goal\nv2 revised\n"})
+	o.handleSubAgentTool(nil, rec, &result, parse.ToolCall{Name: "sapaloq_write_plan_markdown", Arguments: second})
+	if got := o.readPlanMarkdown(rec.ID); !strings.Contains(got, "v2 revised") {
+		t.Fatalf("revision not persisted, got: %q", got)
+	}
 }
 
 // TestRoleMaxTurns verifies fix #4: per-role maxTurns is read from config with

@@ -18,6 +18,7 @@ var readOnlyAssessmentTools = []string{
 	"workspace_read_file",
 	"workspace_search",
 	"workspace_list_dir",
+	"workspace_glob",
 	"web_search",
 	"web_fetch",
 }
@@ -31,16 +32,20 @@ var askTools = append([]string{
 	"sapaloq_stop",
 }, readOnlyAssessmentTools...)
 
-// planTools: read-only planner. Assessment + write the plan markdown.
+// planTools: read-only planner. Assessment + write/read its own plan markdown
+// (read enables iterating/refining the plan before finishing).
 var planTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"sapaloq_write_plan_markdown",
+	"sapaloq_read_plan_markdown",
 	"sapaloq_request_clarification",
 )
 
-// agentTools: full executor. Assessment + write/exec + lifecycle.
+// agentTools: full executor. Assessment + write/edit/delete/exec + lifecycle.
 var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"workspace_write_file",
 	"workspace_create_file",
+	"workspace_edit_file",
+	"workspace_delete_file",
 	"terminal_run",
 	"sapaloq_read_plan_markdown",
 	"sapaloq_update_task_progress",
@@ -72,7 +77,37 @@ func init() {
 		"type":"object",
 		"properties":{
 			"path":{"type":"string","description":"Relative path within the workspace root to read."},
-			"max_bytes":{"type":"integer","description":"Optional cap on bytes read (default 65536)."}
+			"offset":{"type":"integer","description":"Optional 1-based start line. With limit, returns only that line window (numbered)."},
+			"limit":{"type":"integer","description":"Optional max lines to read from offset (default 200 when offset/limit used)."},
+			"max_bytes":{"type":"integer","description":"Optional cap on bytes read (default 65536). Binary files are refused."}
+		},
+		"required":["path"]
+	}`)
+
+	reg("workspace_glob", `{
+		"type":"object",
+		"properties":{
+			"pattern":{"type":"string","description":"Glob pattern, e.g. *.go or **/*.ts (supports ** for recursive)."},
+			"max_results":{"type":"integer","description":"Max paths to return (default 40)."}
+		},
+		"required":["pattern"]
+	}`)
+
+	reg("workspace_edit_file", `{
+		"type":"object",
+		"properties":{
+			"path":{"type":"string","description":"Relative path within the workspace root to edit in place."},
+			"old_string":{"type":"string","description":"Exact text to replace (include surrounding context to make it unique)."},
+			"new_string":{"type":"string","description":"Replacement text."},
+			"replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring a unique match."}
+		},
+		"required":["path","old_string","new_string"]
+	}`)
+
+	reg("workspace_delete_file", `{
+		"type":"object",
+		"properties":{
+			"path":{"type":"string","description":"Relative path within the workspace root to delete (files only)."}
 		},
 		"required":["path"]
 	}`)

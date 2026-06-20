@@ -100,7 +100,16 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 			return
 		}
 		if len(toolResults) == 0 {
-			// No tools called this turn → the model's text is the final answer.
+			// No tools called this turn → the planner/agent is finished.
+			// For a planner that wrote a plan.md, that plan is the authoritative
+			// result (not any trailing chatter); otherwise use the text.
+			if record.Role == "planner" {
+				if plan := o.readPlanMarkdown(record.ID); plan != "" {
+					record.Result = plan
+					record.Status = "done"
+					return
+				}
+			}
 			record.Result = strings.TrimSpace(finalResult.String())
 			record.Status = "done"
 			return
@@ -148,13 +157,14 @@ func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Messag
 	var system strings.Builder
 	switch record.Role {
 	case "planner":
-		system.WriteString("You are SapaLOQ's read-only planner (Plan mode). ")
-		system.WriteString("Investigate using your tools — workspace_read_file, workspace_search, workspace_list_dir, web_search, web_fetch — then produce a concrete Markdown plan. ")
-		system.WriteString("You MUST end by calling sapaloq_write_plan_markdown with sections: ## Goal, ## Constraints, ## Steps (checkbox list), ## Risks, ## Acceptance (checkbox list of verifiable criteria). ")
-		system.WriteString("Do NOT write files, run commands, or claim implementation. If the request is ambiguous, call sapaloq_request_clarification.")
+		system.WriteString("You are SapaLOQ's planner (Plan mode). ")
+		system.WriteString("Investigate thoroughly with your assessment tools — workspace_read_file (supports offset/limit line ranges), workspace_search, workspace_list_dir, workspace_glob, web_search, web_fetch — then produce a concrete Markdown plan. ")
+		system.WriteString("Call sapaloq_write_plan_markdown with sections: ## Goal, ## Constraints, ## Steps (checkbox list), ## Risks, ## Acceptance (checkbox list of verifiable criteria). ")
+		system.WriteString("You MAY iterate: after writing, read it back with sapaloq_read_plan_markdown and rewrite to refine it. Stop calling tools when the plan is final. ")
+		system.WriteString("By policy (not platform) you stay read-only: do NOT write/edit/delete project files, run mutating commands, or claim implementation — that is the executor's job. If the request is ambiguous, call sapaloq_request_clarification.")
 	case "task-runner":
 		system.WriteString("You are SapaLOQ's executor (Agent mode) with full tool access. ")
-		system.WriteString("Assess first (workspace_read_file/search/list_dir, web_search/fetch), then implement using workspace_write_file/workspace_create_file/terminal_run. ")
+		system.WriteString("Assess first (workspace_read_file with offset/limit, workspace_search, workspace_list_dir, workspace_glob, web_search/fetch), then implement using workspace_edit_file (precise in-place edits), workspace_write_file/workspace_create_file (whole files), workspace_delete_file, and terminal_run. Prefer workspace_edit_file over rewriting whole files. ")
 		system.WriteString("Report progress with sapaloq_update_task_progress. ")
 		system.WriteString("When the work meets every acceptance criterion, call sapaloq_complete_task with a summary. If you cannot finish, call sapaloq_fail_task with the reason. ")
 		system.WriteString("If a decision is genuinely ambiguous, call sapaloq_request_clarification instead of guessing.")
@@ -214,6 +224,16 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			return subToolResult{text: "Error: create is not allowed in this mode."}
 		}
 		return subToolResult{text: toolWriteFile(args, true)}
+	case "workspace_edit_file":
+		if record.Role != "task-runner" {
+			return subToolResult{text: "Error: edit is not allowed in this mode."}
+		}
+		return subToolResult{text: toolEditFile(args)}
+	case "workspace_delete_file":
+		if record.Role != "task-runner" {
+			return subToolResult{text: "Error: delete is not allowed in this mode."}
+		}
+		return subToolResult{text: toolDeleteFile(args)}
 	case "terminal_run":
 		if record.Role != "task-runner" {
 			return subToolResult{text: "Error: terminal is not allowed in this mode."}
@@ -228,12 +248,20 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		result.WriteString(md)
 		record.Result = md
 		_ = writeFileAtomic(filepath.Join(o.taskDir(record.ID), "plan.md"), []byte(md+"\n"), 0o600)
-		record.Status = "done"
-		return subToolResult{text: "Plan saved.", terminal: true}
+		// Non-terminal: the planner may revise the plan (read it back, rewrite)
+		// before finishing. The loop ends naturally when the planner stops
+		// calling tools. The path is surfaced so the model knows where it lives.
+		return subToolResult{text: fmt.Sprintf("Plan saved to memory/tasks/%s/plan.md. You may refine it (read it back with sapaloq_read_plan_markdown and rewrite) or stop to finalize.", record.ID)}
 	case "sapaloq_read_plan_markdown":
-		plan := o.readPlanMarkdown(record.PlanTaskID)
+		// Planner reads its OWN plan (to iterate); agent reads the handed-off
+		// plan it must execute.
+		planID := record.PlanTaskID
+		if record.Role == "planner" {
+			planID = record.ID
+		}
+		plan := o.readPlanMarkdown(planID)
 		if plan == "" {
-			return subToolResult{text: "No plan available."}
+			return subToolResult{text: "No plan available yet."}
 		}
 		return subToolResult{text: plan}
 	case "sapaloq_update_task_progress":

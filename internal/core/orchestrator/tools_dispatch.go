@@ -18,6 +18,8 @@ func runSharedTool(ctx context.Context, call parse.ToolCall) (string, bool) {
 		return toolSearch(args), true
 	case "workspace_list_dir":
 		return toolListDir(args), true
+	case "workspace_glob":
+		return toolGlob(args), true
 	case "web_fetch":
 		return toolWebFetch(ctx, args), true
 	case "web_search":
