@@ -287,6 +287,10 @@
     "maxRolePromptTokens": 2500,
     "includeOverlayByDefault": true
   },
+  "vault": {
+    "maxLogBytes": 5242880,
+    "keepRotatedFiles": 3
+  },
   "feedback": {
     "explicitSignalsEnabled": true,
     "implicitSignalsEnabled": true,

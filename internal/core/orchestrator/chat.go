@@ -71,9 +71,14 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 			modTime = info.ModTime()
 		}
 	}
-	// Best-effort audit log of every tool the orchestrator executes. If the
-	// writer can't be created we proceed with a nil writer (auditTool no-ops).
-	vaultWriter, _ := vault.New(filepath.Join(dirs.VaultDir, "tool-calls.jsonl"))
+	// Best-effort audit log of every tool the orchestrator executes. The log
+	// rotates by size (config.vault) so it never grows unbounded. If the writer
+	// can't be created we proceed with a nil writer (auditTool no-ops).
+	vc := cfg.Vault.WithDefaults()
+	vaultWriter, _ := vault.NewWithOptions(
+		filepath.Join(dirs.VaultDir, "tool-calls.jsonl"),
+		vault.Options{MaxBytes: vc.MaxLogBytes, KeepFiles: vc.KeepRotatedFiles},
+	)
 	// Load file-driven skills (read-only context). Errors are non-fatal: a
 	// missing/unreadable skills dir simply leaves the feature inert.
 	var loadedSkills []skills.Skill

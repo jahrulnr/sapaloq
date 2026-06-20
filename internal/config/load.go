@@ -24,6 +24,31 @@ type Config struct {
 	Platform      PlatformConfig     `json:"platform,omitempty"`
 	Nodes         NodesConfig        `json:"nodes,omitempty"`
 	Prompts       PromptsConfig      `json:"prompts,omitempty"`
+	Vault         VaultConfig        `json:"vault,omitempty"`
+}
+
+// VaultConfig tunes the rotating tool-call audit log (vault/tool-calls.jsonl).
+// The log is append-only JSON-lines; rotation keeps it bounded so it never
+// grows without limit. An absent block uses safe defaults (5 MiB, keep 3).
+type VaultConfig struct {
+	// MaxLogBytes is the size at/after which the primary log rotates to a
+	// numbered sibling. <=0 → default (5 MiB).
+	MaxLogBytes int64 `json:"maxLogBytes,omitempty"`
+	// KeepRotatedFiles is how many rotated siblings (.1 … .N) to retain.
+	// <=0 → default (3).
+	KeepRotatedFiles int `json:"keepRotatedFiles,omitempty"`
+}
+
+// WithDefaults fills sane vault-rotation defaults: 5 MiB per file, keep 3
+// rotated siblings. A fully-unset block is treated as the default policy.
+func (v VaultConfig) WithDefaults() VaultConfig {
+	if v.MaxLogBytes <= 0 {
+		v.MaxLogBytes = 5 << 20
+	}
+	if v.KeepRotatedFiles <= 0 {
+		v.KeepRotatedFiles = 3
+	}
+	return v
 }
 
 // PromptsConfig governs the file-driven, replaceable per-mode system prompts
@@ -531,6 +556,7 @@ func Load(path string) (Config, error) {
 	cfg.Platform = cfg.Platform.WithDefaults()
 	cfg.Nodes = cfg.Nodes.WithDefaults()
 	cfg.Prompts = cfg.Prompts.WithDefaults()
+	cfg.Vault = cfg.Vault.WithDefaults()
 	if err := cfg.Commands.Validate(); err != nil {
 		return Config{}, err
 	}

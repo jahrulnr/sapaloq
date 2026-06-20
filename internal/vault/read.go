@@ -45,6 +45,48 @@ func ReadEntries(path string, limit int) ([]Entry, error) {
 	return entries, nil
 }
 
+// ReadRecent returns up to `limit` most-recent entries, reading across rotated
+// siblings (path, path.1, path.2, …) so history survives rotation. Older
+// rotated files are only consulted when the primary has fewer than `limit`
+// lines. With limit<=0 it reads only the primary file (same as ReadEntries).
+func ReadRecent(path string, limit int) ([]Entry, error) {
+	primary, err := ReadEntries(path, 0)
+	if err != nil {
+		return primary, err
+	}
+	if limit <= 0 || len(primary) >= limit {
+		if limit > 0 && len(primary) > limit {
+			return primary[len(primary)-limit:], nil
+		}
+		return primary, nil
+	}
+	// Need more: prepend from rotated siblings, oldest-last. We walk .1, .2, …
+	// (newest rotated first) and prepend each, stopping once we have `limit`.
+	collected := primary
+	for n := 1; ; n++ {
+		if len(collected) >= limit {
+			break
+		}
+		sib := fmt.Sprintf("%s.%d", path, n)
+		older, rerr := ReadEntries(sib, 0)
+		if rerr != nil {
+			// A corrupt/missing sibling shouldn't fail the recent read.
+			break
+		}
+		if len(older) == 0 {
+			if _, statErr := os.Stat(sib); statErr != nil {
+				break // no more rotated files
+			}
+			continue
+		}
+		collected = append(older, collected...)
+	}
+	if len(collected) > limit {
+		collected = collected[len(collected)-limit:]
+	}
+	return collected, nil
+}
+
 type Stats struct {
 	Total   int            `json:"total"`
 	ByReason map[string]int `json:"by_reason"`
