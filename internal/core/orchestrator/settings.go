@@ -97,9 +97,14 @@ func settingsShowEvent(sessionID string, cfg config.Config) bridge.StreamEvent {
 	ev := bridge.NewEvent(bridge.EventResponseDelta)
 	ev.SessionID = sessionID
 	entry, _ := cfg.LLMBridge.ActiveProvider()
-	ev.Delta = fmt.Sprintf("driver=%s model=%s socket=%s updatedAt=%s",
+	thinking := strings.TrimSpace(entry.ReasoningEffort)
+	if thinking == "" {
+		thinking = "default"
+	}
+	ev.Delta = fmt.Sprintf("driver=%s model=%s thinking=%s socket=%s updatedAt=%s",
 		entry.Driver,
 		entry.Model,
+		thinking,
 		cfg.Events.Bus.SocketPath,
 		time.Now().UTC().Format(time.RFC3339),
 	)

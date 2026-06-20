@@ -90,6 +90,10 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 	contextWindow := DetectContextWindow(b.entry)
 	// Apply the context window to the messages we forward to the model.
 	messages := FitMessagesToContext(req.Messages, contextWindow)
+	declaredTools := req.DeclaredTools
+	if len(declaredTools) == 0 {
+		declaredTools = b.entry.DeclaredTools
+	}
 	return WireOptions{
 		Parser:          parser,
 		Auth:            auth,
@@ -101,7 +105,7 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 		Images:          req.Images,
 		ReasoningEffort: reasoning,
 		MaxTokens:       maxTokens,
-		DeclaredTools:   b.entry.DeclaredTools,
+		DeclaredTools:   declaredTools,
 		SessionID:       req.SessionID,
 		ContextWindow:   contextWindow,
 	}
@@ -121,8 +125,11 @@ func (b *Bridge) runStream(ctx context.Context, opts WireOptions, req bridge.Req
 		})
 	}
 
+	// splitter separates inline <think>...</think> reasoning from the visible
+	// answer for providers that stream reasoning in the content channel.
+	var splitter thinkSplitter
 	handler := func(ev WireEvent) bool {
-		return b.handleWireEvent(ctx, &mu, out, req.SessionID, ev)
+		return b.handleWireEvent(ctx, &mu, out, req.SessionID, ev, &splitter)
 	}
 
 	err := Stream(ctx, opts, handler)
@@ -132,24 +139,46 @@ func (b *Bridge) runStream(ctx context.Context, opts WireOptions, req bridge.Req
 		eev.Error = err.Error()
 		sendStreamEvent(ctx, &mu, out, eev)
 	}
+	// Drain any text buffered by the splitter (e.g. a dangling partial tag).
+	for _, seg := range splitter.flush() {
+		if !b.emitSegment(ctx, &mu, out, req.SessionID, seg) {
+			break
+		}
+	}
 	finish()
 }
 
 // handleWireEvent fans a single WireEvent out into one or more StreamEvents.
 // Returns false when the runtime has hung up so the wire layer should stop.
-func (b *Bridge) handleWireEvent(ctx context.Context, mu *sync.Mutex, out chan<- bridge.StreamEvent, sessionID string, ev WireEvent) bool {
+func (b *Bridge) handleWireEvent(ctx context.Context, mu *sync.Mutex, out chan<- bridge.StreamEvent, sessionID string, ev WireEvent, splitter *thinkSplitter) bool {
+	// Native reasoning (reasoning_content) is already classified as thinking.
 	if ev.Thinking != "" && !b.emitThinking(ctx, mu, out, sessionID, ev.Thinking) {
 		return false
 	}
+	// Visible content may contain inline <think> tags; classify before emit.
 	if ev.Text != "" {
-		if !b.emitText(ctx, mu, out, sessionID, ev.Text) {
-			return false
+		for _, seg := range splitter.push(ev.Text) {
+			if !b.emitSegment(ctx, mu, out, sessionID, seg) {
+				return false
+			}
 		}
 	}
 	if ev.Tool.Name != "" && !b.emitToolCall(ctx, mu, out, sessionID, ev.Tool) {
 		return false
 	}
 	return true
+}
+
+// emitSegment routes one classified text segment to the thinking or response
+// channel.
+func (b *Bridge) emitSegment(ctx context.Context, mu *sync.Mutex, out chan<- bridge.StreamEvent, sessionID string, seg thinkSegment) bool {
+	if seg.text == "" {
+		return true
+	}
+	if seg.thinking {
+		return b.emitThinking(ctx, mu, out, sessionID, seg.text)
+	}
+	return b.emitText(ctx, mu, out, sessionID, seg.text)
 }
 
 // emitThinking pushes one EventThinkingDelta frame. Extracted to keep

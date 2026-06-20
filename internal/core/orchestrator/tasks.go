@@ -1,0 +1,605 @@
+package orchestrator
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/parse"
+)
+
+type taskRecord struct {
+	ID        string    `json:"id"`
+	SessionID string    `json:"session_id,omitempty"`
+	Role      string    `json:"role"`
+	Status    string    `json:"status"`
+	Task      string    `json:"task"`
+	Result    string    `json:"result,omitempty"`
+	Error     string    `json:"error,omitempty"`
+	// PlanTaskID references the planner task whose plan.md this agent executes
+	// (set when Ask spawns an agent after a plan). Empty for direct agents.
+	PlanTaskID string `json:"plan_task_id,omitempty"`
+	// Question holds the pending clarification text when Status is
+	// awaiting_clarification.
+	Question string `json:"question,omitempty"`
+	// Transcript is a minimal message log (role+content) of the sub-agent's
+	// conversation so far. It lets a task paused on awaiting_clarification be
+	// resumed by reconstruction (the in-memory messages slice is lost when the
+	// goroutine returns). Bounded by maxTurns; each entry is content-capped.
+	Transcript []taskTurn `json:"transcript,omitempty"`
+	// Answer is the user's clarification answer, set transiently on resume and
+	// consumed by buildSubAgentMessages as the resume nudge.
+	Answer string `json:"answer,omitempty"`
+	// Node is the execution node this task was routed to (observability).
+	// "local-default" (or empty) means in-proc execution.
+	Node      string    `json:"node,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// taskTurn is one persisted sub-agent turn used to resume a paused task. Only
+// role+content (no images) are stored to keep status.json small.
+type taskTurn struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// maxTranscriptTurnBytes caps the content stored per transcript turn so a
+// paused task's status.json stays bounded.
+const maxTranscriptTurnBytes = 8 * 1024
+
+// appendTranscript records a role/content turn on the record, truncating the
+// content to maxTranscriptTurnBytes. Empty content is skipped.
+func (r *taskRecord) appendTranscript(role, content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+	if len(content) > maxTranscriptTurnBytes {
+		content = content[:maxTranscriptTurnBytes] + "…[truncated]"
+	}
+	r.Transcript = append(r.Transcript, taskTurn{Role: role, Content: content})
+}
+
+type askToolResult struct {
+	text    string
+	handled bool
+	stop    bool
+}
+
+func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, call parse.ToolCall) askToolResult {
+	var args struct {
+		Task    string `json:"task"`
+		TaskID  string `json:"task_id"`
+		Seconds int    `json:"seconds"`
+		Reason  string `json:"reason"`
+		Scope   string `json:"scope"`
+		Answer  string `json:"answer"`
+	}
+	_ = json.Unmarshal(call.Arguments, &args)
+	o.auditTool(sessionID, "ask", call)
+	switch call.Name {
+	case "sapaloq_spawn_plan":
+		task := strings.TrimSpace(args.Task)
+		if task == "" {
+			task = fallbackTask
+		}
+		task = carryImageAttachments(task, fallbackTask)
+		id, err := o.spawnBackground(snap, sessionID, "planner", task, "")
+		if err != nil {
+			return askToolResult{text: "Failed to start planner: " + err.Error(), handled: true}
+		}
+		return askToolResult{text: fmt.Sprintf("Planner started in background (`%s`).", id), handled: true}
+	case "sapaloq_spawn_agent":
+		task := strings.TrimSpace(args.Task)
+		if task == "" {
+			task = fallbackTask
+		}
+		task = carryImageAttachments(task, fallbackTask)
+		// If a planner just produced a plan in this session, hand its plan.md to
+		// the agent so it executes with goal + acceptance criteria, not blind.
+		planTaskID := o.latestPlanTaskID(sessionID)
+		id, err := o.spawnBackground(snap, sessionID, "task-runner", task, planTaskID)
+		if err != nil {
+			return askToolResult{text: "Failed to start agent: " + err.Error(), handled: true}
+		}
+		msg := fmt.Sprintf("Agent started in background (`%s`).", id)
+		if planTaskID != "" {
+			msg += fmt.Sprintf(" Using plan from `%s`.", planTaskID)
+		}
+		return askToolResult{text: msg, handled: true}
+	case "sapaloq_spawn_scribe":
+		task := strings.TrimSpace(args.Task)
+		if task == "" {
+			task = fallbackTask
+		}
+		id, err := o.spawnBackground(snap, sessionID, "scribe", task, "")
+		if err != nil {
+			return askToolResult{text: "Failed to start scribe: " + err.Error(), handled: true}
+		}
+		return askToolResult{text: fmt.Sprintf("Scribe started in background (`%s`).", id), handled: true}
+	case "sapaloq_get_task_status":
+		taskID := strings.TrimSpace(args.TaskID)
+		if taskID == "" {
+			taskID = o.latestTaskID()
+		}
+		record, err := o.readTask(taskID)
+		if err != nil {
+			return askToolResult{text: "Task status unavailable: " + err.Error(), handled: true}
+		}
+		response := fmt.Sprintf("Task `%s` is **%s**.", record.ID, record.Status)
+		if record.Question != "" {
+			response += "\n\nNeeds clarification: " + record.Question
+		}
+		if record.Result != "" {
+			response += "\n\n" + record.Result
+		}
+		if record.Error != "" {
+			response += "\n\nError: " + record.Error
+		}
+		return askToolResult{text: response, handled: true}
+	case "sapaloq_wait":
+		taskID := strings.TrimSpace(args.TaskID)
+		if taskID == "" {
+			taskID = o.latestTaskID()
+		}
+		waitSecs := effectiveWaitSeconds(args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
+		o.emit(ctx, out, waitingEvent(sessionID, waitSecs))
+		record, changed, err := o.waitForTaskChange(ctx, taskID, args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
+		if err != nil {
+			if ctx.Err() != nil {
+				return askToolResult{text: "Wait cancelled.", handled: true, stop: true}
+			}
+			return askToolResult{text: "Wait failed: " + err.Error(), handled: true}
+		}
+		o.emit(ctx, out, statusEvent(sessionID, "working"))
+		if !changed {
+			return askToolResult{text: fmt.Sprintf("Task `%s` is still %s after the backend wait window.", record.ID, record.Status), handled: true}
+		}
+		response := fmt.Sprintf("Task `%s` changed to **%s**.", record.ID, record.Status)
+		if record.Question != "" {
+			response += "\n\nNeeds clarification: " + record.Question
+		}
+		if record.Result != "" {
+			response += "\n\n" + record.Result
+		}
+		if record.Error != "" {
+			response += "\n\nError: " + record.Error
+		}
+		return askToolResult{text: response, handled: true}
+	case "sapaloq_answer_clarification":
+		answer := strings.TrimSpace(args.Answer)
+		if answer == "" {
+			return askToolResult{text: "Error: answer is required.", handled: true}
+		}
+		taskID := strings.TrimSpace(args.TaskID)
+		if taskID == "" {
+			taskID = o.latestAwaitingTaskID(sessionID)
+		}
+		if taskID == "" {
+			return askToolResult{text: "No task is awaiting clarification.", handled: true}
+		}
+		record, err := o.readTask(taskID)
+		if err != nil {
+			return askToolResult{text: "Task unavailable: " + err.Error(), handled: true}
+		}
+		if record.Status != "awaiting_clarification" {
+			return askToolResult{text: fmt.Sprintf("Task `%s` is %s, not awaiting clarification; cannot answer.", record.ID, record.Status), handled: true}
+		}
+		record.Answer = answer
+		record.Question = ""
+		record.Status = "in_progress"
+		record.UpdatedAt = time.Now().UTC()
+		if err := o.writeTask(record); err != nil {
+			return askToolResult{text: "Failed to persist answer: " + err.Error(), handled: true}
+		}
+		o.resumeBackground(snap, sessionID, record)
+		return askToolResult{text: fmt.Sprintf("Answer delivered; task `%s` resumed in the background.", record.ID), handled: true}
+	case "sapaloq_stop":
+		reason := strings.TrimSpace(args.Reason)
+		if reason == "" {
+			reason = "model requested the continuation to stop"
+		}
+		scope := strings.TrimSpace(args.Scope)
+		if scope == "" || scope == "generation" {
+			return askToolResult{text: "Stopped: " + reason, handled: true, stop: true}
+		}
+		if scope == "task" {
+			stopped := o.stopTask(args.TaskID)
+			message := "no active task"
+			if stopped {
+				message = "task stopped"
+			}
+			return askToolResult{text: message + ": " + reason, handled: true}
+		}
+		if scope == "all" {
+			stopped := 0
+			for _, id := range o.tasksForSession(sessionID) {
+				if o.stopTask(id) {
+					stopped++
+				}
+			}
+			return askToolResult{text: fmt.Sprintf("generation and %d task(s) stopped: %s", stopped, reason), handled: true, stop: true}
+		}
+		return askToolResult{text: "Invalid stop scope: " + scope, handled: true}
+	case "desktop_notify":
+		return askToolResult{text: o.toolDesktopNotify(ctx, parseToolArgs(call.Arguments)), handled: true}
+	case "desktop_dnd_status":
+		return askToolResult{text: o.toolDesktopDNDStatus(ctx), handled: true}
+	default:
+		// Read-only assessment + web tools shared across all modes so Ask is
+		// no longer blind: it can read, search, and research before delegating.
+		if text, ok := runSharedTool(ctx, call); ok {
+			return askToolResult{text: text, handled: true}
+		}
+		return askToolResult{}
+	}
+}
+
+func (o *Orchestrator) latestTaskID() string {
+	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	if err != nil {
+		return ""
+	}
+	var latest os.DirEntry
+	var latestTime time.Time
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr == nil && (latest == nil || info.ModTime().After(latestTime)) {
+			latest = entry
+			latestTime = info.ModTime()
+		}
+	}
+	if latest == nil {
+		return ""
+	}
+	return latest.Name()
+}
+
+func carryImageAttachments(task, source string) string {
+	if strings.Contains(task, "data:image/") || !strings.Contains(source, "data:image/") {
+		return task
+	}
+	var attachments []string
+	for _, match := range inlineImageRE.FindAllString(source, -1) {
+		attachments = append(attachments, match)
+	}
+	if len(attachments) == 0 {
+		return task
+	}
+	return strings.TrimSpace(task) + "\n\n" + strings.Join(attachments, "\n")
+}
+
+func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, task, planTaskID string) (string, error) {
+	if strings.TrimSpace(task) == "" {
+		return "", fmt.Errorf("task is required")
+	}
+	now := time.Now().UTC()
+	id := fmt.Sprintf("task-%d", now.UnixNano())
+	// Route the spawn to an execution node. With only local-default configured
+	// this resolves to in-proc execution (unchanged behavior). The chosen node
+	// name is recorded for observability.
+	node := o.pickNode(context.Background(), role, "")
+	record := taskRecord{ID: id, SessionID: sessionID, Role: role, Status: "pending", Task: task, PlanTaskID: planTaskID, Node: node.Name, CreatedAt: now, UpdatedAt: now}
+	if err := o.writeTask(record); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	o.taskMu.Lock()
+	if o.taskCancels == nil {
+		o.taskCancels = make(map[string]context.CancelFunc)
+	}
+	if o.sessionTasks == nil {
+		o.sessionTasks = make(map[string]map[string]struct{})
+	}
+	o.taskCancels[id] = cancel
+	if o.sessionTasks[sessionID] == nil {
+		o.sessionTasks[sessionID] = make(map[string]struct{})
+	}
+	o.sessionTasks[sessionID][id] = struct{}{}
+	o.taskMu.Unlock()
+	go o.runBackgroundTask(ctx, cancel, snap, sessionID, record)
+	return id, nil
+}
+
+// resumeBackground re-enters the background loop for an already-persisted task
+// (e.g. one paused on awaiting_clarification and now answered). It mirrors the
+// goroutine plumbing of spawnBackground but reuses the existing record (with
+// its transcript + answer) rather than creating a new one.
+func (o *Orchestrator) resumeBackground(snap providerSnapshot, sessionID string, record taskRecord) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	o.taskMu.Lock()
+	if o.taskCancels == nil {
+		o.taskCancels = make(map[string]context.CancelFunc)
+	}
+	if o.sessionTasks == nil {
+		o.sessionTasks = make(map[string]map[string]struct{})
+	}
+	o.taskCancels[record.ID] = cancel
+	if o.sessionTasks[sessionID] == nil {
+		o.sessionTasks[sessionID] = make(map[string]struct{})
+	}
+	o.sessionTasks[sessionID][record.ID] = struct{}{}
+	o.taskMu.Unlock()
+	go o.runBackgroundTask(ctx, cancel, snap, sessionID, record)
+}
+
+// latestAwaitingTaskID returns the most recently updated task in this session
+// that is currently awaiting clarification, so the user can answer without
+// naming a task id.
+func (o *Orchestrator) latestAwaitingTaskID(sessionID string) string {
+	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	if err != nil {
+		return ""
+	}
+	var bestID string
+	var bestTime time.Time
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		rec, readErr := o.readTask(entry.Name())
+		if readErr != nil || rec.Status != "awaiting_clarification" {
+			continue
+		}
+		if sessionID != "" && rec.SessionID != sessionID {
+			continue
+		}
+		if rec.UpdatedAt.After(bestTime) {
+			bestTime = rec.UpdatedAt
+			bestID = rec.ID
+		}
+	}
+	return bestID
+}
+
+func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.CancelFunc, snap providerSnapshot, sessionID string, record taskRecord) {
+	defer cancel()
+	defer func() {
+		o.taskMu.Lock()
+		delete(o.taskCancels, record.ID)
+		if tasks := o.sessionTasks[sessionID]; tasks != nil {
+			delete(tasks, record.ID)
+			if len(tasks) == 0 {
+				delete(o.sessionTasks, sessionID)
+			}
+		}
+		o.taskMu.Unlock()
+	}()
+	record.Status = "in_progress"
+	record.UpdatedAt = time.Now().UTC()
+	_ = o.writeTask(record)
+
+	o.runSubAgentLoop(ctx, snap, sessionID, &record)
+
+	record.UpdatedAt = time.Now().UTC()
+	if ctx.Err() != nil && record.Status != "failed" {
+		record.Status = "stopped"
+	} else if record.Status == "in_progress" {
+		// Loop ended without an explicit complete/fail tool call: treat the
+		// accumulated result as the outcome.
+		if record.Error != "" {
+			record.Status = "failed"
+		} else {
+			record.Status = "done"
+		}
+	}
+	_ = o.writeTask(record)
+	// NOTE: plan.md is written ONLY when the planner explicitly calls
+	// sapaloq_write_plan_markdown (see handleSubAgentTool). We deliberately do
+	// NOT synthesize a plan.md from free-form planner text here: a planner that
+	// merely answered a question (without producing a real plan) must not leave
+	// a fake plan.md that latestPlanTaskID would later hand to an agent.
+}
+
+// latestPlanTaskID returns the most recent successful planner task for a
+// session, used to hand a plan to a freshly spawned agent.
+func (o *Orchestrator) latestPlanTaskID(sessionID string) string {
+	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	if err != nil {
+		return ""
+	}
+	var bestID string
+	var bestTime time.Time
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		rec, readErr := o.readTask(entry.Name())
+		if readErr != nil || rec.Role != "planner" {
+			continue
+		}
+		if sessionID != "" && rec.SessionID != sessionID {
+			continue
+		}
+		// Only treat this planner task as a plan source if it actually produced
+		// a plan.md (via sapaloq_write_plan_markdown). A planner that merely
+		// answered a question leaves no plan.md and must not be handed off.
+		if _, statErr := os.Stat(filepath.Join(o.taskDir(rec.ID), "plan.md")); statErr != nil {
+			continue
+		}
+		if rec.UpdatedAt.After(bestTime) {
+			bestTime = rec.UpdatedAt
+			bestID = rec.ID
+		}
+	}
+	return bestID
+}
+
+func (o *Orchestrator) taskDir(id string) string {
+	return filepath.Join(o.memoryDir, "tasks", filepath.Base(id))
+}
+
+func (o *Orchestrator) writeTask(record taskRecord) error {
+	dir := o.taskDir(record.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(filepath.Join(dir, "status.json"), append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	o.notifyTask(record.ID)
+	return nil
+}
+
+// writeFileAtomic writes data to path atomically: it writes to a temp file in
+// the same directory and renames it into place. os.Rename is atomic on the same
+// filesystem, so a concurrent reader never observes a truncated/partial file.
+// This fixes a race where sapaloq_wait/readTask could read status.json mid-write
+// and fail json.Unmarshal with "unexpected end of JSON input".
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op if rename succeeded
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+func (o *Orchestrator) readTask(id string) (taskRecord, error) {
+	if id == "" || filepath.Base(id) != id {
+		return taskRecord{}, fmt.Errorf("valid task_id is required")
+	}
+	path := filepath.Join(o.taskDir(id), "status.json")
+	// Writes are atomic (writeFileAtomic), so a partial read should not happen.
+	// Retry defensively against any transient empty/truncated read (e.g. from
+	// an external editor) so callers never see "unexpected end of JSON input".
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return taskRecord{}, err
+		}
+		var record taskRecord
+		if err := json.Unmarshal(raw, &record); err != nil {
+			lastErr = err
+			if len(raw) == 0 || err == io.ErrUnexpectedEOF || strings.Contains(err.Error(), "unexpected end of JSON input") {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			return taskRecord{}, err
+		}
+		return record, nil
+	}
+	return taskRecord{}, lastErr
+}
+
+func (o *Orchestrator) notifyTask(id string) {
+	o.taskMu.Lock()
+	if o.taskSignals == nil {
+		o.taskSignals = make(map[string]chan struct{})
+	}
+	if signal := o.taskSignals[id]; signal != nil {
+		close(signal)
+	}
+	o.taskSignals[id] = make(chan struct{})
+	o.taskMu.Unlock()
+}
+
+func (o *Orchestrator) taskSignal(id string) <-chan struct{} {
+	o.taskMu.Lock()
+	defer o.taskMu.Unlock()
+	if o.taskSignals == nil {
+		o.taskSignals = make(map[string]chan struct{})
+	}
+	if o.taskSignals[id] == nil {
+		o.taskSignals[id] = make(chan struct{})
+	}
+	return o.taskSignals[id]
+}
+
+func (o *Orchestrator) waitForTaskChange(ctx context.Context, taskID string, pollSeconds, maxWaitSeconds int) (taskRecord, bool, error) {
+	record, err := o.readTask(taskID)
+	if err != nil {
+		return taskRecord{}, false, err
+	}
+	if taskTerminal(record.Status) {
+		return record, true, nil
+	}
+	if pollSeconds < 1 {
+		pollSeconds = 2
+	}
+	if maxWaitSeconds < 1 {
+		maxWaitSeconds = 120
+	}
+	deadline := time.NewTimer(time.Duration(maxWaitSeconds) * time.Second)
+	defer deadline.Stop()
+	for {
+		signal := o.taskSignal(taskID)
+		tick := time.NewTimer(time.Duration(pollSeconds) * time.Second)
+		select {
+		case <-ctx.Done():
+			tick.Stop()
+			return record, false, ctx.Err()
+		case <-deadline.C:
+			tick.Stop()
+			return record, false, nil
+		case <-signal:
+			tick.Stop()
+		case <-tick.C:
+		}
+		next, readErr := o.readTask(taskID)
+		if readErr != nil {
+			return record, false, readErr
+		}
+		if next.UpdatedAt.After(record.UpdatedAt) || next.Status != record.Status {
+			return next, true, nil
+		}
+		record = next
+	}
+}
+
+func taskTerminal(status string) bool {
+	// awaiting_clarification is "terminal" for wait purposes: the orchestrator
+	// must surface the question to the user rather than keep polling.
+	return status == "done" || status == "failed" || status == "stopped" || status == "awaiting_clarification"
+}
+
+func statusEvent(sessionID, status string) bridge.StreamEvent {
+	return bridge.StreamEvent{Kind: bridge.EventStatus, SessionID: sessionID, Status: status, At: time.Now().UTC()}
+}
+
+// waitingEvent is a "waiting" status event that also carries the effective wait
+// window so the widget can show a live countdown instead of a static label.
+func waitingEvent(sessionID string, seconds int) bridge.StreamEvent {
+	ev := statusEvent(sessionID, "waiting")
+	ev.WaitSeconds = seconds
+	return ev
+}
+
+// effectiveWaitSeconds mirrors the deadline in waitForTaskChange so the UI
+// countdown matches how long the backend will actually block before giving up.
+// The backend deadline is maxWaitSeconds (default 120); the requested seconds
+// only controls poll cadence, so the true blocking window is maxWaitSeconds.
+func effectiveWaitSeconds(_ /*reqSeconds*/, maxWaitSeconds int) int {
+	if maxWaitSeconds < 1 {
+		return 120
+	}
+	return maxWaitSeconds
+}

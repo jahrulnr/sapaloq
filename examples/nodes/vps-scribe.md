@@ -2,7 +2,7 @@
 node: vps-scribe
 role: scribe
 wrapper: vps
-address: deploy@103.250.10.212
+address: deploy@103.250.x.x
 communicate: ws
 ---
 
@@ -12,8 +12,8 @@ Remote scribe on VPS — append-only notes, no desktop tools.
 
 ## Endpoints
 
-- WebSocket: `wss://103.250.10.212:8443/sapaloq/v1/node`
-- Health: `GET https://103.250.10.212:8443/health`
+- WebSocket: `wss://103.250.x.x:8443/sapaloq/v1/node`
+- Health: `GET https://103.250.x.x:8443/health`
 
 ## Auth
 

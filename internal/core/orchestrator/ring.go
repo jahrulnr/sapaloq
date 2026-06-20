@@ -17,6 +17,8 @@ func RingStateFor(kind bridge.EventKind) RingState {
 		return RingThinking
 	case bridge.EventToolCall:
 		return RingDelegating
+	case bridge.EventStatus:
+		return RingThinking
 	case bridge.EventError, bridge.EventDone:
 		return RingIdle
 	default:

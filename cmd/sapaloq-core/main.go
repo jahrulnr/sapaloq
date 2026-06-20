@@ -16,7 +16,20 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/core/orchestrator"
 	"github.com/jahrulnr/sapaloq/internal/debug"
 	"github.com/jahrulnr/sapaloq/internal/ipc"
+	"github.com/jahrulnr/sapaloq/internal/platform"
+	"github.com/jahrulnr/sapaloq/internal/platform/freedesktop"
 )
+
+// init registers the concrete desktop backends so platform.Detect can build
+// them. The core stays OS-agnostic: backends self-probe the session bus and
+// fall back to headless when unavailable.
+func init() {
+	platform.RegisterFactory(platform.AdapterFreedesktop, freedesktop.Factory())
+	platform.RegisterFactory(platform.AdapterGnome, freedesktop.Factory(
+		freedesktop.WithAdapterID("gnome-v1"),
+		freedesktop.WithDE("gnome"),
+	))
+}
 
 func main() {
 	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
@@ -65,12 +78,15 @@ func main() {
 		if err := config.EnsureRuntimeDirs(dirs); err != nil {
 			exitf("runtime dirs: %v", err)
 		}
+		orchestrator.SetBridgeFactory(newBridge)
 		orch, err := newOrchestrator(cfg, cfgPath)
 		if err != nil {
 			exitf("orchestrator: %v", err)
 		}
 		entry, _ := cfg.LLMBridge.ActiveProvider()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		orch.StartConfigWatcher(ctx)
+		startNotifyWatch(ctx, orch)
 		defer stop()
 		fmt.Printf("sapaloq-core listening on %s%s\n", dirs.SocketPath, envDebugHint())
 		if debug.Enabled() {
@@ -84,7 +100,73 @@ func main() {
 	}
 }
 
+// startNotifyWatch bridges incoming desktop notifications onto the event bus
+// under the canonical topic sapaloq.v1.platform.notification. It is a no-op when
+// the active adapter lacks CapNotifyWatch (headless returns a closed channel, so
+// the goroutine exits immediately).
+func startNotifyWatch(ctx context.Context, orch *orchestrator.Orchestrator) {
+	d := orch.Desktop()
+	if !platform.Has(d.Capabilities(), platform.CapNotifyWatch) {
+		return
+	}
+	ch, err := d.NotifyWatch(ctx)
+	if err != nil || ch == nil {
+		debug.Debugf("platform: notify-watch unavailable: %v", err)
+		return
+	}
+	b := orch.Bus()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				if b != nil {
+					b.Publish("sapaloq.v1.platform.notification", orchestrator.NotificationStreamEvent(ev))
+				}
+			}
+		}
+	}()
+}
+
 func newOrchestrator(cfg config.Config, cfgPath string) (*orchestrator.Orchestrator, error) {
+	b, err := newBridge(cfg)
+	if err != nil {
+		return nil, err
+	}
+	debug.Debugf("orchestrator: bridge=%s live_api=%v", b.ID(), b.Caps().LiveAPI)
+
+	eventBus := newEventBus(cfg)
+	return orchestrator.New(cfg, cfgPath, b, eventBus)
+}
+
+// newEventBus constructs the event bus, enabling the JSON-lines WAL when
+// config.events.bus.walPath is set. When replayOnBoot is also enabled it logs
+// how many durable events are recoverable (watchers attaching after boot can
+// call Bus.Replay to rehydrate). Falls back to an in-memory bus on any WAL
+// setup error so the core never fails to start over event durability.
+func newEventBus(cfg config.Config) *bus.Bus {
+	walPath := config.ExpandPath(cfg.Events.Bus.WALPath)
+	if walPath == "" {
+		return bus.New()
+	}
+	b, err := bus.NewWithWAL(walPath)
+	if err != nil {
+		debug.Debugf("event-bus: WAL disabled (%v); using in-memory bus", err)
+		return bus.New()
+	}
+	if cfg.Events.Bus.ReplayOnBoot {
+		var recovered int
+		_ = b.Replay(0, func(bus.Event) { recovered++ })
+		debug.Debugf("event-bus: WAL=%s replayable_events=%d", walPath, recovered)
+	}
+	return b
+}
+
+func newBridge(cfg config.Config) (bridge.Bridge, error) {
 	entry, err := cfg.LLMBridge.ActiveProvider()
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator: %w", err)
@@ -100,12 +182,7 @@ func newOrchestrator(cfg config.Config, cfgPath string) (*orchestrator.Orchestra
 			return nil, err
 		}
 	}
-	b, err := reg.Get(entry.Driver)
-	if err != nil {
-		return nil, err
-	}
-	debug.Debugf("orchestrator: bridge=%s live_api=%v", b.ID(), b.Caps().LiveAPI)
-	return orchestrator.New(cfg, cfgPath, b, bus.New())
+	return reg.Get(entry.Driver)
 }
 
 func exitf(format string, args ...any) {

@@ -11,7 +11,7 @@ CHAT_MSG ?= halo
 
 help:
 	@echo "SapaLOQ — common targets"
-	@echo "  make run              — run core + widget dev together (Ctrl+C stops both)"
+	@echo "  make run              — run core + widget dev together (Ctrl+C cleanly stops all child processes)"
 	@echo "  make test             — go test ./..."
 	@echo "  make e2e              — mock e2e (test/e2e)"
 	@echo "  make e2e-live         — live api2 e2e (needs Cursor creds, SAPALOQ_LIVE_E2E=1)"
@@ -27,22 +27,58 @@ help:
 
 run:
 	@set -euo pipefail; \
-	core_pid=""; widget_pid=""; \
+	core_pid=""; widget_pid=""; core_pgid=""; widget_pgid=""; \
 	cleanup() { \
 		trap - INT TERM EXIT; \
 		echo ""; \
 		echo "Shutting down SapaLOQ..."; \
-		if [[ -n "$$widget_pid" ]] && kill -0 "$$widget_pid" 2>/dev/null; then pkill -TERM -P "$$widget_pid" 2>/dev/null || true; kill -TERM "$$widget_pid" 2>/dev/null || true; fi; \
-		if [[ -n "$$core_pid" ]] && kill -0 "$$core_pid" 2>/dev/null; then pkill -TERM -P "$$core_pid" 2>/dev/null || true; kill -TERM "$$core_pid" 2>/dev/null || true; fi; \
-		wait "$$widget_pid" 2>/dev/null || true; \
-		wait "$$core_pid" 2>/dev/null || true; \
+		for pgid in "$$widget_pgid" "$$core_pgid"; do \
+			if [[ -n "$$pgid" && "$$pgid" != "0" ]]; then \
+				kill -TERM -- "-$$pgid" 2>/dev/null || true; \
+			fi; \
+		done; \
+		for pid in "$$widget_pid" "$$core_pid"; do \
+			[[ -n "$$pid" ]] && pkill -TERM -P "$$pid" 2>/dev/null || true; \
+		done; \
+		for _ in 1 2 3 4 5 6 7 8 9 10; do \
+			alive=0; \
+			for pgid in "$$widget_pgid" "$$core_pgid"; do \
+				if [[ -n "$$pgid" && "$$pgid" != "0" ]] && \
+					 ps -o pid= -p "$$pgid" >/dev/null 2>&1; then alive=1; fi; \
+			done; \
+			[[ $$alive -eq 0 ]] && break; \
+			sleep 0.3; \
+		done; \
+		for pgid in "$$widget_pgid" "$$core_pgid"; do \
+			if [[ -n "$$pgid" && "$$pgid" != "0" ]] && \
+				 ps -o pid= -p "$$pgid" >/dev/null 2>&1; then \
+				kill -KILL -- "-$$pgid" 2>/dev/null || true; \
+			fi; \
+		done; \
+		pkill -KILL -f 'go run ./cmd/sapaloq-core'   2>/dev/null || true; \
+		pkill -KILL -f 'go run ./cmd/sapaloq-widget' 2>/dev/null || true; \
+		pkill -KILL -f 'cmd/sapaloq-core'             2>/dev/null || true; \
+		pkill -KILL -f 'cmd/sapaloq-widget'           2>/dev/null || true; \
+		pkill -KILL -f 'wails dev'                    2>/dev/null || true; \
+		pkill -KILL -f 'node .*/vite'                 2>/dev/null || true; \
+		pkill -KILL -f 'esbuild --service'            2>/dev/null || true; \
+		for p in "$$widget_pid" "$$core_pid"; do \
+			if [[ -n "$$p" ]]; then wait "$$p" 2>/dev/null || true; fi; \
+		done; \
+		rm -f $$HOME/.config/sapaloq/run/sapaloq.sock 2>/dev/null || true; \
+		echo "SapaLOQ stopped."; \
 	}; \
 	trap cleanup INT TERM EXIT; \
 	echo "Starting sapaloq-core..."; \
-	$(CORE) run & core_pid=$$!; \
+	setsid bash -c '$(CORE) run' </dev/null >/tmp/sapaloq-core.out 2>&1 & core_pid=$$!; \
+	core_pgid=$$(ps -o pgid= -p "$$core_pid" 2>/dev/null | tr -d ' '); \
 	echo "Starting sapaloq-widget..."; \
-	( cd $(WIDGET_DIR) && wails dev -tags $(GO_TAGS) ) & widget_pid=$$!; \
-	wait -n "$$core_pid" "$$widget_pid"
+	setsid bash -c 'cd $(WIDGET_DIR) && exec wails dev -tags $(GO_TAGS)' \
+			</dev/null >/tmp/sapaloq-widget.out 2>&1 & widget_pid=$$!; \
+	widget_pgid=$$(ps -o pgid= -p "$$widget_pid" 2>/dev/null | tr -d ' '); \
+	echo "core_pid=$$core_pid core_pgid=$$core_pgid  widget_pid=$$widget_pid widget_pgid=$$widget_pgid"; \
+	wait -n "$$core_pid" "$$widget_pid" || true; \
+	cleanup
 
 test:
 	go test ./...

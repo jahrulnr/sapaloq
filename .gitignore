@@ -27,3 +27,4 @@ companion.db
 .vscode/
 *.swp
 *~
+tmp

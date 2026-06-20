@@ -109,7 +109,7 @@ CREATE INDEX idx_nodes_role ON nodes(role, enabled, priority DESC);
 | **name** | `vps-scribe` | Stable id; orchestrator references this |
 | **role** | `scribe` | Must match `subAgents.roles` |
 | **wrapper** | `vps` | How compute is wrapped |
-| **address** | `deploy@103.250.10.212` | SSH target, URL host, container name |
+| **address** | `deploy@103.250.x.x` | SSH target, URL host, container name |
 | **communicate** | `ws` | Transport to node agent |
 | **capabilities** | JSON override | Optional |
 | **share_memory** | `0` / `1` | `1` only same-machine; **always 0 for outer machine** |
@@ -155,7 +155,7 @@ Not hand-wavy config — **operating manual** for talking to this node.
 node: vps-scribe
 role: scribe
 wrapper: vps
-address: deploy@103.250.10.212
+address: deploy@103.250.x.x
 communicate: ws
 ---
 
@@ -163,8 +163,8 @@ communicate: ws
 
 ## Endpoints
 
-- WS: `wss://103.250.10.212:8443/sapaloq/v1/node`
-- Health: `GET https://103.250.10.212:8443/health`
+- WS: `wss://103.250.x.x:8443/sapaloq/v1/node`
+- Health: `GET https://103.250.x.x:8443/health`
 
 ## Auth
 

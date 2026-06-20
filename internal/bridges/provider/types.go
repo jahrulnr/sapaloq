@@ -311,11 +311,8 @@ func buildOpenAITools(names []string) []openAITool {
 		out = append(out, openAITool{
 			Type: "function",
 			Function: openAIFunc{
-				Name: name,
-				Parameters: json.RawMessage(`{
-					"type": "object",
-					"additionalProperties": true
-				}`),
+				Name:       name,
+				Parameters: toolSchemaFor(name),
 			},
 		})
 	}
@@ -328,11 +325,8 @@ func buildClaudeTools(names []string) []claudeTool {
 	out := make([]claudeTool, 0, len(names))
 	for _, name := range names {
 		out = append(out, claudeTool{
-			Name: name,
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"additionalProperties": true
-			}`),
+			Name:        name,
+			InputSchema: toolSchemaFor(name),
 		})
 	}
 	return out

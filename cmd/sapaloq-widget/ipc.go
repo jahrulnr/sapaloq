@@ -12,11 +12,16 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/ipc"
+	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
 type ipcRequest = ipc.Request
 
 type ipcResponse = ipc.Response
+
+// maxFrameBytes caps a single newline-delimited IPC frame, matching the core
+// server limit. It must exceed the 8 MB attachment cap after base64 inflation.
+const maxFrameBytes = 16 * 1024 * 1024
 
 type pingResult struct {
 	OK          bool   `json:"ok"`
@@ -38,11 +43,45 @@ type chatResult struct {
 	OK        bool                 `json:"ok"`
 	SessionID string               `json:"session_id,omitempty"`
 	Events    []bridge.StreamEvent `json:"events"`
+	Usage     *chatUsage           `json:"usage,omitempty"`
 }
 
-func sendChat(socketPath, message string) (chatResult, error) {
+type chatTurn struct {
+	ID      int64  `json:"id"`
+	Seq     int    `json:"seq"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatUsage struct {
+	SessionID      string `json:"session_id"`
+	UsedTokens     int    `json:"used_tokens"`
+	ContextWindow  int    `json:"context_window"`
+	Percent        int    `json:"percent"`
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	CompactedTurns int    `json:"compacted_turns"`
+	ActiveTurns    int    `json:"active_turns"`
+}
+
+type chatHistoryResult struct {
+	OK        bool       `json:"ok"`
+	SessionID string     `json:"session_id"`
+	Turns     []chatTurn `json:"turns"`
+	Usage     *chatUsage `json:"usage,omitempty"`
+}
+
+func sendChat(socketPath, sessionID, message string) (chatResult, error) {
+	return sendChatWithStatus(socketPath, sessionID, message, nil)
+}
+
+func sendChatWithStatus(socketPath, sessionID, message string, onEvent func(bridge.StreamEvent)) (chatResult, error) {
 	var result chatResult
-	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_send", Message: message})
+	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_send", SessionID: sessionID, Message: message}, func(res ipcResponse) {
+		if onEvent != nil && res.Event != nil {
+			onEvent(*res.Event)
+		}
+	})
 	if err != nil {
 		return result, err
 	}
@@ -53,12 +92,137 @@ func sendChat(socketPath, message string) (chatResult, error) {
 		if res.SessionID != "" {
 			result.SessionID = res.SessionID
 		}
+		if res.Usage != nil {
+			result.Usage = mapUsage(res.Usage)
+		}
 		if res.Event != nil {
 			result.Events = append(result.Events, *res.Event)
 		}
 	}
 	result.OK = true
 	return result, nil
+}
+
+func chatHistory(socketPath string) (chatHistoryResult, error) {
+	var result chatHistoryResult
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_history"})
+	if err != nil {
+		return result, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		return result, fmt.Errorf("core error")
+	}
+	res := responses[0]
+	result.OK = true
+	result.SessionID = res.SessionID
+	result.Usage = mapUsage(res.Usage)
+	for _, turn := range res.Turns {
+		if turn.Role == "system" {
+			continue
+		}
+		result.Turns = append(result.Turns, chatTurn{ID: turn.ID, Seq: turn.Seq, Role: turn.Role, Content: turn.Content})
+	}
+	return result, nil
+}
+
+func deleteChatTurn(socketPath, sessionID string, turnID int64) error {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_delete", SessionID: sessionID, TurnID: turnID})
+	if err != nil {
+		return err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
+func retryChatTurn(socketPath, sessionID string, turnID int64) (chatResult, error) {
+	return retryChatTurnWithStatus(socketPath, sessionID, turnID, nil)
+}
+
+func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, onEvent func(bridge.StreamEvent)) (chatResult, error) {
+	var result chatResult
+	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_retry", SessionID: sessionID, TurnID: turnID}, func(res ipcResponse) {
+		if onEvent != nil && res.Event != nil {
+			onEvent(*res.Event)
+		}
+	})
+	if err != nil {
+		return result, err
+	}
+	for _, res := range responses {
+		if !res.OK {
+			return result, fmt.Errorf("core error: %s", res.Message)
+		}
+		if res.SessionID != "" {
+			result.SessionID = res.SessionID
+		}
+		if res.Usage != nil {
+			result.Usage = mapUsage(res.Usage)
+		}
+		if res.Event != nil {
+			result.Events = append(result.Events, *res.Event)
+		}
+	}
+	result.OK = true
+	return result, nil
+}
+
+func submitFeedback(socketPath, sessionID string, turnID int64, signal, correction string) error {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "submit_feedback", SessionID: sessionID, TurnID: turnID, Signal: signal, Correction: correction})
+	if err != nil {
+		return err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
+func stopChat(socketPath, sessionID string) error {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_stop", SessionID: sessionID, Scope: "generation"})
+	if err != nil {
+		return err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		return fmt.Errorf("core error")
+	}
+	return nil
+}
+
+func contextUsage(socketPath string) (*chatUsage, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "context_usage"})
+	if err != nil {
+		return nil, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		return nil, fmt.Errorf("core error")
+	}
+	return mapUsage(responses[0].Usage), nil
+}
+
+func mapUsage(usage *chatstore.Usage) *chatUsage {
+	if usage == nil {
+		return nil
+	}
+	return &chatUsage{
+		SessionID:      usage.SessionID,
+		UsedTokens:     usage.UsedTokens,
+		ContextWindow:  usage.ContextWindow,
+		Percent:        usage.Percent,
+		Provider:       usage.Provider,
+		Model:          usage.Model,
+		CompactedTurns: usage.CompactedTurns,
+		ActiveTurns:    usage.ActiveTurns,
+	}
 }
 
 func slashSuggest(socketPath, query string) ([]config.CommandEntry, error) {
@@ -97,6 +261,10 @@ func pingCore(socketPath string) (pingResult, error) {
 }
 
 func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
+	return roundTripWithEvent(socketPath, req, nil)
+}
+
+func roundTripWithEvent(socketPath string, req ipcRequest, onResponse func(ipcResponse)) ([]ipcResponse, error) {
 	conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", socketPath, err)
@@ -104,8 +272,8 @@ func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
 	defer conn.Close()
 
 	deadline := 3 * time.Second
-	if req.Op == "chat_send" {
-		deadline = 5 * time.Minute
+	if req.Op == "chat_send" || req.Op == "chat_retry" {
+		deadline = 35 * time.Minute
 	}
 	if err := conn.SetDeadline(time.Now().Add(deadline)); err != nil {
 		return nil, fmt.Errorf("set deadline: %w", err)
@@ -116,6 +284,9 @@ func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
 		return nil, fmt.Errorf("write: %w", err)
 	}
 	sc := bufio.NewScanner(conn)
+	// Responses can echo large attachment payloads (e.g. chat_history turns with
+	// inlined images/files), which exceed bufio.Scanner's default 64KB line cap.
+	sc.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
 	var responses []ipcResponse
 	for sc.Scan() {
 		var res ipcResponse
@@ -123,7 +294,10 @@ func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
 			return nil, fmt.Errorf("decode: %w", err)
 		}
 		responses = append(responses, res)
-		if req.Op != "chat_send" || res.Op == "event" && res.Event != nil && res.Event.Kind == bridge.EventDone {
+		if onResponse != nil {
+			onResponse(res)
+		}
+		if req.Op != "chat_send" && req.Op != "chat_retry" || res.Op == "event" && res.Event != nil && res.Event.Kind == bridge.EventDone {
 			break
 		}
 	}
