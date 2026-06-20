@@ -8,6 +8,7 @@ export namespace bridge {
 	    leak?: string;
 	    error?: string;
 	    status?: string;
+	    wait_seconds?: number;
 	    // Go type: time
 	    at: any;
 	
@@ -24,6 +25,7 @@ export namespace bridge {
 	        this.leak = source["leak"];
 	        this.error = source["error"];
 	        this.status = source["status"];
+	        this.wait_seconds = source["wait_seconds"];
 	        this.at = this.convertValues(source["at"], null);
 	    }
 	

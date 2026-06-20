@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -11,7 +12,9 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bus"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/debug"
+	"github.com/jahrulnr/sapaloq/internal/parse"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
+	"github.com/jahrulnr/sapaloq/internal/vault"
 )
 
 type Orchestrator struct {
@@ -22,6 +25,7 @@ type Orchestrator struct {
 	bus          *bus.Bus
 	progress     ProgressWriter
 	chat         *chatstore.Store
+	vault        *vault.Writer
 	memoryDir    string
 	mu           sync.RWMutex
 	cfgModTime   time.Time
@@ -57,6 +61,9 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 			modTime = info.ModTime()
 		}
 	}
+	// Best-effort audit log of every tool the orchestrator executes. If the
+	// writer can't be created we proceed with a nil writer (auditTool no-ops).
+	vaultWriter, _ := vault.New(filepath.Join(dirs.VaultDir, "tool-calls.jsonl"))
 	return &Orchestrator{
 		cfgPath:      cfgPath,
 		cfg:          cfg,
@@ -65,6 +72,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		bus:          eventBus,
 		progress:     ProgressWriter{Dir: dirs.ProgressDir},
 		chat:         chatStore,
+		vault:        vaultWriter,
 		memoryDir:    dirs.MemoryDir,
 		cfgModTime:   modTime,
 		active:       make(map[string]*activeRun),
@@ -76,6 +84,25 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 }
 
 func (o *Orchestrator) Bus() *bus.Bus { return o.bus }
+
+// auditTool appends an executed tool call to the vault audit log. It is
+// best-effort: a nil writer or a write error is silently ignored so auditing
+// never disrupts the main flow. source identifies the executor (e.g. "ask" or
+// "subagent:planner").
+func (o *Orchestrator) auditTool(sessionID, source string, call parse.ToolCall) {
+	if o == nil || o.vault == nil {
+		return
+	}
+	_ = o.vault.Append(vault.Entry{
+		SessionID:    sessionID,
+		Provider:     o.entry.Key,
+		RawName:      call.Name,
+		ResolvedName: call.Name,
+		Arguments:    call.Arguments,
+		Source:       source,
+		Reason:       "executed",
+	})
+}
 
 func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) (<-chan bridge.StreamEvent, error) {
 	o.reloadConfigIfChanged(ctx)

@@ -16,6 +16,24 @@ type Config struct {
 	Commands      CommandsConfig     `json:"commands"`
 	Events        EventsConfig       `json:"events"`
 	Orchestrator  OrchestratorConfig `json:"orchestrator"`
+	SubAgents     SubAgentsConfig    `json:"subAgents,omitempty"`
+}
+
+// SubAgentsConfig models the per-role sub-agent settings from config.json.
+// Only the fields the orchestrator actually consumes are typed here (e.g.
+// MaxTurns); the rest of each role's JSON is preserved loosely so future
+// settings can be added without breaking parsing.
+type SubAgentsConfig struct {
+	Roles map[string]SubAgentRole `json:"roles,omitempty"`
+}
+
+// SubAgentRole captures the consumable knobs for one sub-agent role.
+type SubAgentRole struct {
+	Description   string   `json:"description,omitempty"`
+	AllowedTools  []string `json:"allowedTools,omitempty"`
+	ToolPolicy    string   `json:"toolPolicy,omitempty"`
+	MaxTurns      int      `json:"maxTurns,omitempty"`
+	CanEditConfig bool     `json:"canEditConfig,omitempty"`
 }
 
 type RuntimeConfig struct {

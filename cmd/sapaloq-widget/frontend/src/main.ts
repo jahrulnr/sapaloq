@@ -1,4 +1,6 @@
 import './style.css';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { ChatHistory, ContextUsage, DeleteChatTurn, OpenAttachment, PingCore, ReadDroppedFile, RetryChatTurn, SendMessage, SlashSuggest, StopChat } from '../wailsjs/go/main/App';
 import { EventsOn, OnFileDrop } from '../wailsjs/runtime/runtime';
 import { cyclePanelSize, initWindowLayout, isExpanded, setExpanded, toggleExpanded } from './window-layout';
@@ -6,7 +8,7 @@ import { cyclePanelSize, initWindowLayout, isExpanded, setExpanded, toggleExpand
 type RingState = 'idle' | 'thinking' | 'delegating' | 'needs-input';
 type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 type CommandEntry = { id: string; prefix: string; label: string; description: string; enabled: boolean };
-type StreamEvent = { kind: string; delta?: string; error?: string; status?: string; tool_call?: { name: string } };
+type StreamEvent = { kind: string; delta?: string; error?: string; status?: string; wait_seconds?: number; tool_call?: { name: string } };
 type ChatTurn = { id: number; seq: number; role: string; content: string };
 type ChatUsage = { session_id: string; used_tokens: number; context_window: number; percent: number; provider: string; model: string };
 type PendingAttachment = { name: string; type: string; size: number; path?: string; dataURI?: string; text?: string };
@@ -24,6 +26,7 @@ let currentUserGroup = 0;
 let lastSubmittedText = '';
 let activeMessageMenu: HTMLElement | null = null;
 let activeProgressBubble: HTMLElement | null = null;
+let activeCountdown: ReturnType<typeof setInterval> | null = null;
 
 function activeSlashAtChat(value: string, caret: number): { query: string; slashIndex: number } | null {
   const before = value.slice(0, caret);
@@ -84,152 +87,45 @@ function sanitizeDisplayText(text: string) {
   return text.replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '').replace(/\s+$/g, '');
 }
 
-function parseInlineMarkdown(text: string): DocumentFragment {
-  const fragment = document.createDocumentFragment();
-  const safeText = sanitizeDisplayText(text);
-  const pattern = /(!\[[^\]]*\]\((?:https?:\/\/|data:image\/)[^)]+\)|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\((https?:\/\/[^\s)]+)\))/g;
-  let cursor = 0;
-  for (const match of safeText.matchAll(pattern)) {
-    const index = match.index || 0;
-    if (index > cursor) fragment.append(document.createTextNode(safeText.slice(cursor, index)));
-    const token = match[0];
-    if (token.startsWith('![')) {
-      const labelEnd = token.indexOf('](');
-      const image = document.createElement('img');
-      image.className = 'message-image';
-      image.alt = token.slice(2, labelEnd) || 'image';
-      image.src = token.slice(labelEnd + 2, -1);
-      image.loading = 'lazy';
-      image.addEventListener('click', () => showImagePreview(image.src, image.alt));
-      fragment.append(image);
-    } else if (token.startsWith('`')) {
-      const code = document.createElement('code');
-      code.textContent = token.slice(1, -1);
-      fragment.append(code);
-    } else if (token.startsWith('**')) {
-      const strong = document.createElement('strong');
-      strong.textContent = token.slice(2, -2);
-      fragment.append(strong);
-    } else if (token.startsWith('*')) {
-      const em = document.createElement('em');
-      em.textContent = token.slice(1, -1);
-      fragment.append(em);
-    } else {
-      const labelEnd = token.indexOf('](');
-      const href = token.slice(labelEnd + 2, -1);
-      const link = document.createElement('a');
-      link.textContent = token.slice(1, labelEnd);
-      link.href = href;
-      link.target = '_blank';
-      link.rel = 'noreferrer';
-      fragment.append(link);
-    }
-    cursor = index + token.length;
-  }
-  if (cursor < safeText.length) fragment.append(document.createTextNode(safeText.slice(cursor)));
-  return fragment;
-}
+// Markdown is rendered with the `marked` library (GFM: headings, tables, lists,
+// code fences, blockquotes, etc.) and sanitized with DOMPurify before it ever
+// touches the DOM. This replaces the previous hand-rolled parser, which could
+// not handle GFM tables and mis-rendered headings glued to following content.
+marked.setOptions({
+  gfm: true,
+  breaks: true, // preserve the old single-newline => <br> behaviour
+});
 
-function appendCodeBlock(fragment: DocumentFragment, lang: string, code: string) {
-  const pre = document.createElement('pre');
-  pre.className = 'code-block';
-  const codeEl = document.createElement('code');
-  if (lang) codeEl.dataset.lang = lang;
-  codeEl.textContent = code.replace(/\n$/, '');
-  pre.append(codeEl);
-  fragment.append(pre);
-}
-
-function appendBlock(fragment: DocumentFragment, block: string) {
-  const lines = block.split('\n');
-
-  // Heading: #, ##, ... ######
-  const heading = /^(#{1,6})\s+(.*)$/.exec(lines[0]);
-  if (lines.length === 1 && heading) {
-    const level = Math.min(6, heading[1].length);
-    const h = document.createElement(`h${level}`);
-    h.className = 'md-heading';
-    h.append(parseInlineMarkdown(heading[2]));
-    fragment.append(h);
-    return;
-  }
-
-  // Horizontal rule
-  if (lines.length === 1 && /^(\s*[-*_]){3,}\s*$/.test(lines[0])) {
-    fragment.append(document.createElement('hr'));
-    return;
-  }
-
-  // Blockquote: every line starts with >
-  if (lines.every((line) => /^\s*>\s?/.test(line))) {
-    const quote = document.createElement('blockquote');
-    quote.className = 'md-quote';
-    lines.forEach((line, i) => {
-      if (i > 0) quote.append(document.createElement('br'));
-      quote.append(parseInlineMarkdown(line.replace(/^\s*>\s?/, '')));
-    });
-    fragment.append(quote);
-    return;
-  }
-
-  // Unordered / ordered list
-  const isUl = lines.every((line) => /^\s*[-*]\s+/.test(line));
-  const isOl = lines.every((line) => /^\s*\d+[.)]\s+/.test(line));
-  if (isUl || isOl) {
-    const list = document.createElement(isOl ? 'ol' : 'ul');
-    lines.forEach((line) => {
-      const li = document.createElement('li');
-      li.append(parseInlineMarkdown(line.replace(isOl ? /^\s*\d+[.)]\s+/ : /^\s*[-*]\s+/, '')));
-      list.append(li);
-    });
-    fragment.append(list);
-    return;
-  }
-
-  // Paragraph
-  const paragraph = document.createElement('p');
-  lines.forEach((line, lineIndex) => {
-    if (lineIndex > 0) paragraph.append(document.createElement('br'));
-    paragraph.append(parseInlineMarkdown(line));
+// Open links in a new tab + keep our image-preview affordance after sanitizing.
+function decorateRenderedMarkdown(root: ParentNode) {
+  root.querySelectorAll('a[href]').forEach((node) => {
+    const a = node as HTMLAnchorElement;
+    a.target = '_blank';
+    a.rel = 'noreferrer';
   });
-  fragment.append(paragraph);
+  root.querySelectorAll('img').forEach((node) => {
+    const img = node as HTMLImageElement;
+    img.classList.add('message-image');
+    img.loading = 'lazy';
+    img.addEventListener('click', () => showImagePreview(img.src, img.alt || 'image'));
+  });
+  // Keep existing heading/quote/code styling hooks the stylesheet relies on.
+  root.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((h) => h.classList.add('md-heading'));
+  root.querySelectorAll('blockquote').forEach((q) => q.classList.add('md-quote'));
+  root.querySelectorAll('pre').forEach((p) => p.classList.add('code-block'));
 }
 
 function renderMarkdown(text: string): DocumentFragment {
-  const fragment = document.createDocumentFragment();
-  const lines = text.split('\n');
-  let buffer: string[] = [];
-
-  const flushBuffer = () => {
-    if (!buffer.length) return;
-    const chunk = buffer.join('\n');
-    buffer = [];
-    // Split the non-code chunk into blocks on blank-line boundaries.
-    chunk.split(/\n{2,}/).forEach((block) => {
-      if (block.trim() === '') return;
-      appendBlock(fragment, block);
-    });
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const fence = /^\s*```(.*)$/.exec(lines[i]);
-    if (fence) {
-      flushBuffer();
-      const lang = fence[1].trim();
-      const code: string[] = [];
-      i++;
-      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
-        code.push(lines[i]);
-        i++;
-      }
-      // i now points at the closing fence (or end of input).
-      appendCodeBlock(fragment, lang, code.join('\n'));
-      continue;
-    }
-    buffer.push(lines[i]);
-  }
-  flushBuffer();
-  return fragment;
+  const safeText = sanitizeDisplayText(text);
+  const rawHTML = marked.parse(safeText, { async: false }) as string;
+  const clean = DOMPurify.sanitize(rawHTML, {
+    ADD_ATTR: ['target', 'rel'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|data:image\/)/i,
+  });
+  const template = document.createElement('template');
+  template.innerHTML = clean;
+  decorateRenderedMarkdown(template.content);
+  return template.content;
 }
 
 function appendMessage(className: string, text: string, groupID = currentUserGroup, turnID = 0, attachments: PendingAttachment[] = []) {
@@ -250,21 +146,54 @@ function appendMessage(className: string, text: string, groupID = currentUserGro
   return item;
 }
 
-function appendProgressBubble(label: 'waiting' | 'thinking' | 'working' | 'compacting' | 'stopping') {
+function stopCountdown() {
+  if (activeCountdown !== null) {
+    clearInterval(activeCountdown);
+    activeCountdown = null;
+  }
+}
+
+function appendProgressBubble(
+  label: 'waiting' | 'thinking' | 'working' | 'compacting' | 'stopping',
+  seconds = 0,
+) {
+  stopCountdown();
   activeProgressBubble?.remove();
   const list = document.getElementById('message-list');
   if (!list) return null;
   const bubble = document.createElement('div');
   bubble.className = 'message message--status';
   bubble.dataset.status = label;
-  bubble.innerHTML = `<span class="status-pulse" aria-hidden="true"><i></i><i></i><i></i></span><span>${label}</span>`;
+  bubble.innerHTML = `<span class="status-pulse" aria-hidden="true"><i></i><i></i><i></i></span><span class="status-label">${label}</span><span class="status-count" aria-live="polite"></span>`;
   list.append(bubble);
   list.scrollTop = list.scrollHeight;
   activeProgressBubble = bubble;
+
+  // Live countdown so the user can see the wait is real (e.g. 10s, 9s, ...),
+  // not a stalled turn. Driven purely client-side from the backend's window.
+  if (label === 'waiting' && seconds > 0) {
+    const countEl = bubble.querySelector('.status-count') as HTMLElement | null;
+    let remaining = Math.floor(seconds);
+    const paint = () => {
+      if (countEl) countEl.textContent = remaining > 0 ? `· ${remaining}s` : '· 0s';
+    };
+    paint();
+    activeCountdown = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        remaining = 0;
+        paint();
+        stopCountdown();
+        return;
+      }
+      paint();
+    }, 1000);
+  }
   return bubble;
 }
 
 function clearProgressBubble() {
+  stopCountdown();
   activeProgressBubble?.remove();
   activeProgressBubble = null;
 }
@@ -705,7 +634,7 @@ function feedStreamEvent(r: StreamRenderer, event: StreamEvent) {
   } else if (event.kind === 'status') {
     const status = event.status;
     if (status === 'waiting' || status === 'thinking' || status === 'working' || status === 'compacting' || status === 'stopping') {
-      appendProgressBubble(status);
+      appendProgressBubble(status, status === 'waiting' ? event.wait_seconds || 0 : 0);
     }
   } else if (event.kind === 'error') {
     clearProgressBubble();

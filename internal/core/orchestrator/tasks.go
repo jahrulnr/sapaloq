@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,14 +14,6 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
-var askTools = []string{
-	"sapaloq_spawn_plan",
-	"sapaloq_spawn_agent",
-	"sapaloq_get_task_status",
-	"sapaloq_wait",
-	"sapaloq_stop",
-}
-
 type taskRecord struct {
 	ID        string    `json:"id"`
 	SessionID string    `json:"session_id,omitempty"`
@@ -29,6 +22,12 @@ type taskRecord struct {
 	Task      string    `json:"task"`
 	Result    string    `json:"result,omitempty"`
 	Error     string    `json:"error,omitempty"`
+	// PlanTaskID references the planner task whose plan.md this agent executes
+	// (set when Ask spawns an agent after a plan). Empty for direct agents.
+	PlanTaskID string `json:"plan_task_id,omitempty"`
+	// Question holds the pending clarification text when Status is
+	// awaiting_clarification.
+	Question  string    `json:"question,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -48,6 +47,7 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		Scope   string `json:"scope"`
 	}
 	_ = json.Unmarshal(call.Arguments, &args)
+	o.auditTool(sessionID, "ask", call)
 	switch call.Name {
 	case "sapaloq_spawn_plan":
 		task := strings.TrimSpace(args.Task)
@@ -55,7 +55,7 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			task = fallbackTask
 		}
 		task = carryImageAttachments(task, fallbackTask)
-		id, err := o.spawnBackground(snap, sessionID, "planner", task)
+		id, err := o.spawnBackground(snap, sessionID, "planner", task, "")
 		if err != nil {
 			return askToolResult{text: "Failed to start planner: " + err.Error(), handled: true}
 		}
@@ -66,11 +66,18 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			task = fallbackTask
 		}
 		task = carryImageAttachments(task, fallbackTask)
-		id, err := o.spawnBackground(snap, sessionID, "task-runner", task)
+		// If a planner just produced a plan in this session, hand its plan.md to
+		// the agent so it executes with goal + acceptance criteria, not blind.
+		planTaskID := o.latestPlanTaskID(sessionID)
+		id, err := o.spawnBackground(snap, sessionID, "task-runner", task, planTaskID)
 		if err != nil {
 			return askToolResult{text: "Failed to start agent: " + err.Error(), handled: true}
 		}
-		return askToolResult{text: fmt.Sprintf("Agent started in background (`%s`).", id), handled: true}
+		msg := fmt.Sprintf("Agent started in background (`%s`).", id)
+		if planTaskID != "" {
+			msg += fmt.Sprintf(" Using plan from `%s`.", planTaskID)
+		}
+		return askToolResult{text: msg, handled: true}
 	case "sapaloq_get_task_status":
 		taskID := strings.TrimSpace(args.TaskID)
 		if taskID == "" {
@@ -81,6 +88,9 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			return askToolResult{text: "Task status unavailable: " + err.Error(), handled: true}
 		}
 		response := fmt.Sprintf("Task `%s` is **%s**.", record.ID, record.Status)
+		if record.Question != "" {
+			response += "\n\nNeeds clarification: " + record.Question
+		}
 		if record.Result != "" {
 			response += "\n\n" + record.Result
 		}
@@ -93,7 +103,8 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		if taskID == "" {
 			taskID = o.latestTaskID()
 		}
-		o.emit(ctx, out, statusEvent(sessionID, "waiting"))
+		waitSecs := effectiveWaitSeconds(args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
+		o.emit(ctx, out, waitingEvent(sessionID, waitSecs))
 		record, changed, err := o.waitForTaskChange(ctx, taskID, args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -106,6 +117,9 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			return askToolResult{text: fmt.Sprintf("Task `%s` is still %s after the backend wait window.", record.ID, record.Status), handled: true}
 		}
 		response := fmt.Sprintf("Task `%s` changed to **%s**.", record.ID, record.Status)
+		if record.Question != "" {
+			response += "\n\nNeeds clarification: " + record.Question
+		}
 		if record.Result != "" {
 			response += "\n\n" + record.Result
 		}
@@ -141,6 +155,11 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		}
 		return askToolResult{text: "Invalid stop scope: " + scope, handled: true}
 	default:
+		// Read-only assessment + web tools shared across all modes so Ask is
+		// no longer blind: it can read, search, and research before delegating.
+		if text, ok := runSharedTool(ctx, call); ok {
+			return askToolResult{text: text, handled: true}
+		}
 		return askToolResult{}
 	}
 }
@@ -182,13 +201,13 @@ func carryImageAttachments(task, source string) string {
 	return strings.TrimSpace(task) + "\n\n" + strings.Join(attachments, "\n")
 }
 
-func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, task string) (string, error) {
+func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, task, planTaskID string) (string, error) {
 	if strings.TrimSpace(task) == "" {
 		return "", fmt.Errorf("task is required")
 	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("task-%d", now.UnixNano())
-	record := taskRecord{ID: id, SessionID: sessionID, Role: role, Status: "pending", Task: task, CreatedAt: now, UpdatedAt: now}
+	record := taskRecord{ID: id, SessionID: sessionID, Role: role, Status: "pending", Task: task, PlanTaskID: planTaskID, CreatedAt: now, UpdatedAt: now}
 	if err := o.writeTask(record); err != nil {
 		return "", err
 	}
@@ -227,54 +246,60 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 	record.UpdatedAt = time.Now().UTC()
 	_ = o.writeTask(record)
 
-	system := "You are a background SapaLOQ task agent. Return a concise final result."
-	if record.Role == "planner" {
-		system = "You are SapaLOQ's read-only planner. Produce a concrete Markdown plan with goal, steps, risks, and acceptance criteria. Do not claim implementation."
-	}
-	cleanMessages, images := extractImages([]bridge.Message{
-		{Role: "system", Content: system},
-		{Role: "user", Content: record.Task},
-	})
-	stream, err := snap.br.Complete(ctx, bridge.Request{
-		SessionID: sessionID + ":" + record.ID,
-		Model:     snap.entry.Model,
-		Messages:  cleanMessages,
-		Images:    images,
-	})
-	if err != nil {
-		if ctx.Err() != nil {
-			record.Status = "stopped"
-		} else {
-			record.Status = "failed"
-			record.Error = err.Error()
-		}
-		record.UpdatedAt = time.Now().UTC()
-		_ = o.writeTask(record)
-		return
-	}
-	var result strings.Builder
-	for ev := range stream {
-		_ = o.progress.Append(record.ID, ev)
-		if ev.Kind == bridge.EventResponseDelta {
-			result.WriteString(ev.Delta)
-		}
-		if ev.Kind == bridge.EventError {
-			record.Error = ev.Error
-		}
-	}
-	record.Result = strings.TrimSpace(result.String())
+	o.runSubAgentLoop(ctx, snap, sessionID, &record)
+
 	record.UpdatedAt = time.Now().UTC()
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && record.Status != "failed" {
 		record.Status = "stopped"
-	} else if record.Error != "" {
-		record.Status = "failed"
-	} else {
-		record.Status = "done"
+	} else if record.Status == "in_progress" {
+		// Loop ended without an explicit complete/fail tool call: treat the
+		// accumulated result as the outcome.
+		if record.Error != "" {
+			record.Status = "failed"
+		} else {
+			record.Status = "done"
+		}
 	}
 	_ = o.writeTask(record)
-	if record.Role == "planner" && record.Result != "" {
-		_ = os.WriteFile(filepath.Join(o.taskDir(record.ID), "plan.md"), []byte(record.Result+"\n"), 0o600)
+	// NOTE: plan.md is written ONLY when the planner explicitly calls
+	// sapaloq_write_plan_markdown (see handleSubAgentTool). We deliberately do
+	// NOT synthesize a plan.md from free-form planner text here: a planner that
+	// merely answered a question (without producing a real plan) must not leave
+	// a fake plan.md that latestPlanTaskID would later hand to an agent.
+}
+
+// latestPlanTaskID returns the most recent successful planner task for a
+// session, used to hand a plan to a freshly spawned agent.
+func (o *Orchestrator) latestPlanTaskID(sessionID string) string {
+	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	if err != nil {
+		return ""
 	}
+	var bestID string
+	var bestTime time.Time
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		rec, readErr := o.readTask(entry.Name())
+		if readErr != nil || rec.Role != "planner" {
+			continue
+		}
+		if sessionID != "" && rec.SessionID != sessionID {
+			continue
+		}
+		// Only treat this planner task as a plan source if it actually produced
+		// a plan.md (via sapaloq_write_plan_markdown). A planner that merely
+		// answered a question leaves no plan.md and must not be handed off.
+		if _, statErr := os.Stat(filepath.Join(o.taskDir(rec.ID), "plan.md")); statErr != nil {
+			continue
+		}
+		if rec.UpdatedAt.After(bestTime) {
+			bestTime = rec.UpdatedAt
+			bestID = rec.ID
+		}
+	}
+	return bestID
 }
 
 func (o *Orchestrator) taskDir(id string) string {
@@ -290,26 +315,66 @@ func (o *Orchestrator) writeTask(record taskRecord) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "status.json"), append(raw, '\n'), 0o600); err != nil {
+	if err := writeFileAtomic(filepath.Join(dir, "status.json"), append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
 	o.notifyTask(record.ID)
 	return nil
 }
 
+// writeFileAtomic writes data to path atomically: it writes to a temp file in
+// the same directory and renames it into place. os.Rename is atomic on the same
+// filesystem, so a concurrent reader never observes a truncated/partial file.
+// This fixes a race where sapaloq_wait/readTask could read status.json mid-write
+// and fail json.Unmarshal with "unexpected end of JSON input".
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op if rename succeeded
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
 func (o *Orchestrator) readTask(id string) (taskRecord, error) {
 	if id == "" || filepath.Base(id) != id {
 		return taskRecord{}, fmt.Errorf("valid task_id is required")
 	}
-	raw, err := os.ReadFile(filepath.Join(o.taskDir(id), "status.json"))
-	if err != nil {
-		return taskRecord{}, err
+	path := filepath.Join(o.taskDir(id), "status.json")
+	// Writes are atomic (writeFileAtomic), so a partial read should not happen.
+	// Retry defensively against any transient empty/truncated read (e.g. from
+	// an external editor) so callers never see "unexpected end of JSON input".
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return taskRecord{}, err
+		}
+		var record taskRecord
+		if err := json.Unmarshal(raw, &record); err != nil {
+			lastErr = err
+			if len(raw) == 0 || err == io.ErrUnexpectedEOF || strings.Contains(err.Error(), "unexpected end of JSON input") {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			return taskRecord{}, err
+		}
+		return record, nil
 	}
-	var record taskRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
-		return taskRecord{}, err
-	}
-	return record, nil
+	return taskRecord{}, lastErr
 }
 
 func (o *Orchestrator) notifyTask(id string) {
@@ -378,9 +443,30 @@ func (o *Orchestrator) waitForTaskChange(ctx context.Context, taskID string, pol
 }
 
 func taskTerminal(status string) bool {
-	return status == "done" || status == "failed" || status == "stopped"
+	// awaiting_clarification is "terminal" for wait purposes: the orchestrator
+	// must surface the question to the user rather than keep polling.
+	return status == "done" || status == "failed" || status == "stopped" || status == "awaiting_clarification"
 }
 
 func statusEvent(sessionID, status string) bridge.StreamEvent {
 	return bridge.StreamEvent{Kind: bridge.EventStatus, SessionID: sessionID, Status: status, At: time.Now().UTC()}
+}
+
+// waitingEvent is a "waiting" status event that also carries the effective wait
+// window so the widget can show a live countdown instead of a static label.
+func waitingEvent(sessionID string, seconds int) bridge.StreamEvent {
+	ev := statusEvent(sessionID, "waiting")
+	ev.WaitSeconds = seconds
+	return ev
+}
+
+// effectiveWaitSeconds mirrors the deadline in waitForTaskChange so the UI
+// countdown matches how long the backend will actually block before giving up.
+// The backend deadline is maxWaitSeconds (default 120); the requested seconds
+// only controls poll cadence, so the true blocking window is maxWaitSeconds.
+func effectiveWaitSeconds(_ /*reqSeconds*/, maxWaitSeconds int) int {
+	if maxWaitSeconds < 1 {
+		return 120
+	}
+	return maxWaitSeconds
 }
