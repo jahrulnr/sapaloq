@@ -1,14 +1,12 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.1.0",
   "updatedAt": "2026-06-19T00:00:00Z",
   "updatedBy": "orchestrator",
-
   "runtime": {
     "singleBinary": true,
     "binaryName": "sapaloq-core",
     "dataDir": "~/.config/sapaloq"
   },
-
   "driver": {
     "mode": "auto",
     "override": null,
@@ -16,16 +14,27 @@
     "backupDir": "~/.config/sapaloq/cache",
     "rescanOnFingerprintMismatch": true,
     "backupOnRescan": true,
-    "detectOrder": ["gnome", "kde", "freedesktop", "windows", "headless"],
-    "capabilitiesRequired": ["notify", "notify.watch"]
+    "detectOrder": [
+      "gnome",
+      "kde",
+      "freedesktop",
+      "windows",
+      "headless"
+    ],
+    "capabilitiesRequired": [
+      "notify",
+      "notify.watch"
+    ]
   },
-
   "platform": {
     "adapter": "auto",
-    "detectOrder": ["gnome", "freedesktop", "headless"],
+    "detectOrder": [
+      "gnome",
+      "freedesktop",
+      "headless"
+    ],
     "allowFallback": true
   },
-
   "llmBridge": {
     "providerKey": "tokenrouter",
     "providers": [
@@ -72,46 +81,43 @@
     },
     "fallback": {
       "driver": "local-llama",
-      "on": ["auth_error", "offline"]
+      "on": [
+        "auth_error",
+        "offline"
+      ]
     },
     "communityBridge": {
       "enabled": false
     }
   },
-
   "commands": {
-    "triggerChars": ["/"],
-    "registry": [
-      {
-        "id": "settings",
-        "prefix": "/settings",
-        "pattern": "/settings(?:\\s+|$)",
-        "label": "Settings",
-        "description": "Patch config.json",
-        "category": "commands",
-        "enabled": true
-      },
-      {
-        "id": "compaction",
-        "prefix": "/compaction",
-        "pattern": "/compaction(?:\\s+|$)",
-        "label": "Compaction",
-        "description": "Compact active chat context",
-        "category": "commands",
-        "enabled": true
-      },
-      {
-        "id": "reset",
-        "prefix": "/reset",
-        "pattern": "/reset(?:\\s+|$)",
-        "label": "Reset",
-        "description": "Start a fresh active chat session",
-        "category": "commands",
-        "enabled": true
-      }
-    ]
+    "settings": {
+      "enabled": true,
+      "spawnDedicatedSubAgent": true,
+      "allowedPaths": [
+        "/notifications",
+        "/widget",
+        "/orchestrator/autoSpawn",
+        "/orchestrator/progressStreaming",
+        "/orchestrator/completion",
+        "/orchestrator/clarification",
+        "/orchestrator/spawnRouting",
+        "/orchestrator/subAgentControl",
+        "/context",
+        "/memory",
+        "/skills",
+        "/prompts",
+        "/learning",
+        "/feedback",
+        "/events",
+        "/nodes",
+        "/driver",
+        "/runtime",
+        "/storage",
+        "/apps"
+      ]
+    }
   },
-
   "notifications": {
     "enabled": true,
     "read": false,
@@ -119,13 +125,11 @@
     "dndRespect": true,
     "rateLimitPerMinute": 6
   },
-
   "widget": {
     "ringAnimations": true,
     "soundEffects": false,
     "mirrorSubAgentActivity": true
   },
-
   "orchestrator": {
     "maxConcurrentSubAgents": 4,
     "defaultMode": "auto",
@@ -195,7 +199,6 @@
       "allowNaturalLanguageControl": true
     }
   },
-
   "context": {
     "maxPromptTokens": 4000,
     "prefetchConfidenceThreshold": 0.7,
@@ -217,7 +220,6 @@
       "corePath": "~/.config/sapaloq/prompt/core.md"
     }
   },
-
   "memory": {
     "index": {
       "dbPath": "~/.config/sapaloq/memory/companion.db",
@@ -233,17 +235,20 @@
       "persistToSqlite": false
     }
   },
-
   "nodes": {
     "commSpecDirectory": "~/.config/sapaloq/nodes",
     "defaultLocalNode": "local-default",
     "requireTlsRemote": true,
-    "allowRemoteRoles": ["scribe", "research", "planner", "task-runner"],
+    "allowRemoteRoles": [
+      "scribe",
+      "research",
+      "planner",
+      "task-runner"
+    ],
     "healthCheckIntervalSec": 60,
     "fallbackToLocalOnRemoteFail": true,
     "allowSharedMemoryRemote": false
   },
-
   "skills": {
     "enabled": true,
     "dir": "~/.config/sapaloq/skills",
@@ -252,7 +257,6 @@
     "indexOnBoot": true,
     "allowAgentCreate": true
   },
-
   "learning": {
     "enabled": true,
     "queuePath": "~/.config/sapaloq/memory/learning-queue.jsonl",
@@ -276,7 +280,6 @@
       "logDeepCheckOverrides": true
     }
   },
-
   "prompts": {
     "rolesPath": "~/.config/sapaloq/prompt/roles",
     "rolesOverlayPath": "~/.config/sapaloq/prompt/roles.d",
@@ -284,7 +287,6 @@
     "maxRolePromptTokens": 2500,
     "includeOverlayByDefault": true
   },
-
   "feedback": {
     "explicitSignalsEnabled": true,
     "implicitSignalsEnabled": true,
@@ -298,7 +300,6 @@
     "thumbsDownWeight": -1,
     "thumbsUpWeight": 1
   },
-
   "events": {
     "enabled": true,
     "globalRateLimitPerMinute": 30,
@@ -319,7 +320,11 @@
         "source": "platform.notification",
         "mode": "any",
         "filters": {
-          "apps": ["slack", "thunderbird", "discord"],
+          "apps": [
+            "slack",
+            "thunderbird",
+            "discord"
+          ],
           "ignoreSilent": true
         },
         "action": {
@@ -335,7 +340,9 @@
         "source": "custom.reminder",
         "mode": "personal",
         "schedule": "0 14 * * *",
-        "payload": { "text": "Minum obat" },
+        "payload": {
+          "text": "Minum obat"
+        },
         "action": {
           "type": "notify_user",
           "priority": "high"
@@ -343,31 +350,39 @@
       }
     ]
   },
-
   "modes": {
     "personal": {
       "label": "Personal",
       "storageRoot": "~/Documents/sapaloq/personal",
       "memoryNamespace": "personal",
       "allowCrossModeRead": false,
-      "allowedApps": ["firefox", "spotify"]
+      "allowedApps": [
+        "firefox",
+        "spotify"
+      ]
     },
     "hobby": {
       "label": "Hobby",
       "storageRoot": "~/Documents/sapaloq/hobby",
       "memoryNamespace": "hobby",
       "allowCrossModeRead": false,
-      "allowedApps": ["blender", "gimp"]
+      "allowedApps": [
+        "blender",
+        "gimp"
+      ]
     },
     "work": {
       "label": "Work",
       "storageRoot": "~/Documents/sapaloq/work",
       "memoryNamespace": "work",
       "allowCrossModeRead": false,
-      "allowedApps": ["cursor", "code", "terminal"]
+      "allowedApps": [
+        "cursor",
+        "code",
+        "terminal"
+      ]
     }
   },
-
   "storage": {
     "paths": [
       {
@@ -399,7 +414,6 @@
       "hobby log": "hobby-journal"
     }
   },
-
   "apps": {
     "entries": [
       {
@@ -417,113 +431,187 @@
       }
     ]
   },
-
   "subAgents": {
     "roles": {
       "orchestrator": {
         "description": "Ask mode — widget coordinator; spawn routing; light read-only assessment; never blocks on long IO",
-        "allowedTools": ["sapaloq_spawn_plan", "sapaloq_spawn_agent", "sapaloq_spawn_scribe", "sapaloq_get_task_status", "sapaloq_wait", "sapaloq_answer_clarification", "sapaloq_stop", "workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch", "desktop_notify", "desktop_dnd_status"],
+        "allowedTools": [
+          "sapaloq_spawn_plan",
+          "sapaloq_spawn_agent",
+          "sapaloq_spawn_scribe",
+          "sapaloq_get_task_status",
+          "sapaloq_wait",
+          "sapaloq_answer_clarification",
+          "sapaloq_stop",
+          "workspace_read_file",
+          "workspace_search",
+          "workspace_list_dir",
+          "workspace_glob",
+          "web_search",
+          "web_fetch",
+          "desktop_notify",
+          "desktop_dnd_status",
+          "system_read_file",
+          "system_exec"
+        ],
         "maxTurns": 3,
         "canEditConfig": false,
         "toolPolicy": "companion"
       },
       "settings": {
         "description": "Mutates config.json from /settings natural language",
-        "allowedTools": ["read_config", "write_config", "validate_config"],
+        "allowedTools": [
+          "read_config",
+          "write_config",
+          "validate_config"
+        ],
         "maxTurns": 5,
         "canEditConfig": true
       },
       "scribe": {
         "description": "Writes notes to storage.paths by boundary",
-        "allowedTools": ["workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "scribe_write_note", "sapaloq_update_task_progress", "sapaloq_complete_task", "sapaloq_fail_task", "sapaloq_request_clarification"],
+        "allowedTools": [
+          "workspace_read_file",
+          "workspace_search",
+          "workspace_list_dir",
+          "workspace_glob",
+          "scribe_write_note",
+          "sapaloq_update_task_progress",
+          "sapaloq_complete_task",
+          "sapaloq_fail_task",
+          "sapaloq_request_clarification"
+        ],
         "maxTurns": 8,
         "canEditConfig": false
       },
       "memory-janitor": {
         "description": "Reorganizes, dedupes, tags memory; drains learning queue; tunes prefetch",
-        "allowedTools": ["read_memory", "write_memory", "read_index", "write_index", "embed", "tag"],
+        "allowedTools": [
+          "read_memory",
+          "write_memory",
+          "read_index",
+          "write_index",
+          "embed",
+          "tag"
+        ],
         "maxTurns": 20,
         "canEditConfig": false
       },
       "intent-router": {
         "description": "Classifies intent; spawn path scores (plan vs direct agent); prefetch from SQLite",
-        "allowedTools": ["read_index", "read_config", "classify_intent", "score_spawn_path"],
+        "allowedTools": [
+          "read_index",
+          "read_config",
+          "classify_intent",
+          "score_spawn_path"
+        ],
         "maxTurns": 2,
         "canEditConfig": false
       },
       "context-scaler": {
         "description": "Builds minimal context packet; enforces anti-deep-check",
-        "allowedTools": ["read_memory", "read_index", "read_task", "summarize", "assemble_prompt"],
+        "allowedTools": [
+          "read_memory",
+          "read_index",
+          "read_task",
+          "summarize",
+          "assemble_prompt"
+        ],
         "maxTurns": 5,
         "canEditConfig": false
       },
       "boundary-guard": {
         "description": "Detects mode/boundary violations before delegation",
-        "allowedTools": ["read_config", "read_task", "read_memory"],
+        "allowedTools": [
+          "read_config",
+          "read_task",
+          "read_memory"
+        ],
         "maxTurns": 3,
         "canEditConfig": false
       },
       "planner": {
         "description": "Plan mode — read-only by policy; produces Markdown plan.md before agent execution (iterable)",
-        "allowedTools": ["workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch", "sapaloq_write_plan_markdown", "sapaloq_read_plan_markdown", "sapaloq_request_clarification"],
+        "allowedTools": [
+          "workspace_read_file",
+          "workspace_search",
+          "workspace_list_dir",
+          "workspace_glob",
+          "web_search",
+          "web_fetch",
+          "sapaloq_write_plan_markdown",
+          "sapaloq_read_plan_markdown",
+          "sapaloq_request_clarification",
+          "system_read_file",
+          "system_exec"
+        ],
         "maxTurns": 12,
         "canEditConfig": false,
         "toolPolicy": "read_only"
       },
       "task-runner": {
         "description": "Agent mode — full tool access; executes Ask/Plan-designed task",
-        "allowedTools": ["workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch", "workspace_write_file", "workspace_create_file", "workspace_edit_file", "workspace_delete_file", "terminal_run", "sapaloq_read_plan_markdown", "sapaloq_update_task_progress", "sapaloq_complete_task", "sapaloq_fail_task", "sapaloq_request_clarification"],
+        "allowedTools": [
+          "workspace_read_file",
+          "workspace_search",
+          "workspace_list_dir",
+          "workspace_glob",
+          "web_search",
+          "web_fetch",
+          "workspace_write_file",
+          "workspace_create_file",
+          "workspace_edit_file",
+          "workspace_delete_file",
+          "terminal_run",
+          "sapaloq_read_plan_markdown",
+          "sapaloq_update_task_progress",
+          "sapaloq_complete_task",
+          "sapaloq_fail_task",
+          "sapaloq_request_clarification",
+          "system_read_file",
+          "system_exec"
+        ],
         "maxTurns": 30,
         "canEditConfig": false,
         "toolPolicy": "full"
       },
       "event-watcher": {
         "description": "Subscribes GNOME/custom sources; appends to events.jsonl",
-        "allowedTools": ["gnome_subscribe", "read_config", "emit_event", "schedule"],
+        "allowedTools": [
+          "gnome_subscribe",
+          "read_config",
+          "emit_event",
+          "schedule"
+        ],
         "maxTurns": 0,
         "canEditConfig": false
       },
       "learning-agent": {
         "description": "Post-task prompt/skill builder; queues research; drains to index",
-        "allowedTools": ["read_memory", "write_memory", "read_index", "write_index", "write_file", "spawn", "emit_progress"],
+        "allowedTools": [
+          "read_memory",
+          "write_memory",
+          "read_index",
+          "write_index",
+          "write_file",
+          "spawn",
+          "emit_progress"
+        ],
         "maxTurns": 15,
         "canEditConfig": false
       },
       "research": {
         "description": "Bounded web research for best practices; async only",
-        "allowedTools": ["web_search", "web_fetch", "read_index", "write_index", "emit_progress"],
+        "allowedTools": [
+          "web_search",
+          "web_fetch",
+          "read_index",
+          "write_index",
+          "emit_progress"
+        ],
         "maxTurns": 8,
         "canEditConfig": false
       }
-    }
-  },
-
-  "commands": {
-    "settings": {
-      "enabled": true,
-      "spawnDedicatedSubAgent": true,
-      "allowedPaths": [
-        "/notifications",
-        "/widget",
-        "/orchestrator/autoSpawn",
-        "/orchestrator/progressStreaming",
-        "/orchestrator/completion",
-        "/orchestrator/clarification",
-        "/orchestrator/spawnRouting",
-        "/orchestrator/subAgentControl",
-        "/context",
-        "/memory",
-        "/skills",
-        "/prompts",
-        "/learning",
-        "/feedback",
-        "/events",
-        "/nodes",
-        "/driver",
-        "/runtime",
-        "/storage",
-        "/apps"
-      ]
     }
   }
 }

@@ -23,6 +23,35 @@ type Config struct {
 	Skills        SkillsConfig       `json:"skills,omitempty"`
 	Platform      PlatformConfig     `json:"platform,omitempty"`
 	Nodes         NodesConfig        `json:"nodes,omitempty"`
+	Prompts       PromptsConfig      `json:"prompts,omitempty"`
+}
+
+// PromptsConfig governs the file-driven, replaceable per-mode system prompts
+// (Ask, planner, agent, scribe). Defaults ship embedded in the binary and are
+// materialized to Dir; a user edit is always preserved, while an unmodified
+// file is transparently upgraded when the shipped default changes.
+type PromptsConfig struct {
+	// Enabled toggles materializing/loading on-disk prompts. Because the JSON
+	// zero value of a bool is false, an entirely-absent prompts block is
+	// treated as enabled (see WithDefaults). An explicit {"enabled": false}
+	// keeps the prompts inert (embedded defaults are still served in-memory).
+	Enabled bool `json:"enabled"`
+	// Dir is the prompts directory (supports ~). Default ~/.config/sapaloq/prompts.
+	Dir string `json:"dir,omitempty"`
+}
+
+// WithDefaults fills sane prompt defaults. A fully-unset block (enabled=false,
+// no dir) is treated as enabled with the default dir — mirroring the skills
+// config convention so an older config without a prompts block still gets the
+// feature.
+func (p PromptsConfig) WithDefaults() PromptsConfig {
+	if !p.Enabled && strings.TrimSpace(p.Dir) == "" {
+		p.Enabled = true
+	}
+	if strings.TrimSpace(p.Dir) == "" {
+		p.Dir = "~/.config/sapaloq/prompts"
+	}
+	return p
 }
 
 // NodesConfig governs remote sub-agent nodes. Remote nodes only ever receive a
@@ -434,7 +463,7 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 
 func DefaultConfig() Config {
 	return Config{
-		SchemaVersion: "1.0.0",
+		SchemaVersion: CurrentSchemaVersion,
 		Runtime: RuntimeConfig{
 			DataDir:    defaultDataDir,
 			BinaryName: "sapaloq-core",
@@ -472,6 +501,25 @@ func Load(path string) (Config, error) {
 		}
 		return Config{}, err
 	}
+	// Schema migration: decode to a raw map first so older configs can be
+	// upgraded in place before being bound to the current struct. Old JSON
+	// formats are always preserved (the upgrade chain is additive/idempotent).
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return Config{}, err
+	}
+	migrated, changed, mErr := migrateRaw(raw)
+	if mErr != nil {
+		return Config{}, mErr
+	}
+	if changed {
+		if upgraded, mErr := json.Marshal(migrated); mErr == nil {
+			b = upgraded
+			// Persist the upgraded config so the bump happens once. Best-effort:
+			// a read-only config dir must not fail Load.
+			_ = SaveRaw(path, migrated, "schema-migration")
+		}
+	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return Config{}, err
 	}
@@ -482,6 +530,7 @@ func Load(path string) (Config, error) {
 	cfg.Skills = cfg.Skills.WithDefaults()
 	cfg.Platform = cfg.Platform.WithDefaults()
 	cfg.Nodes = cfg.Nodes.WithDefaults()
+	cfg.Prompts = cfg.Prompts.WithDefaults()
 	if err := cfg.Commands.Validate(); err != nil {
 		return Config{}, err
 	}

@@ -216,30 +216,15 @@ func isMutatingTool(tool string) bool {
 // including the user's original intent and (for agents) the handed-off plan
 // with its acceptance criteria.
 func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Message {
-	var system strings.Builder
-	switch record.Role {
-	case "planner":
-		system.WriteString("You are SapaLOQ's planner (Plan mode). ")
-		system.WriteString("Investigate thoroughly with your assessment tools — workspace_read_file (supports offset/limit line ranges), workspace_search, workspace_list_dir, workspace_glob, web_search, web_fetch — then produce a concrete Markdown plan. ")
-		system.WriteString("Call sapaloq_write_plan_markdown with sections: ## Goal, ## Constraints, ## Steps (checkbox list), ## Risks, ## Acceptance (checkbox list of verifiable criteria). ")
-		system.WriteString("You MAY iterate: after writing, read it back with sapaloq_read_plan_markdown and rewrite to refine it. Stop calling tools when the plan is final. ")
-		system.WriteString("By policy (not platform) you stay read-only: do NOT write/edit/delete project files, run mutating commands, or claim implementation — that is the executor's job. If the request is ambiguous, call sapaloq_request_clarification.")
-	case "task-runner":
-		system.WriteString("You are SapaLOQ's executor (Agent mode) with full tool access. ")
-		system.WriteString("Assess first (workspace_read_file with offset/limit, workspace_search, workspace_list_dir, workspace_glob, web_search/fetch), then implement using workspace_edit_file (precise in-place edits), workspace_write_file/workspace_create_file (whole files), workspace_delete_file, and terminal_run. Prefer workspace_edit_file over rewriting whole files. ")
-		system.WriteString("Report progress with sapaloq_update_task_progress. ")
-		system.WriteString("When the work meets every acceptance criterion, call sapaloq_complete_task with a summary. If you cannot finish, call sapaloq_fail_task with the reason. ")
-		system.WriteString("If a decision is genuinely ambiguous, call sapaloq_request_clarification instead of guessing.")
-	case "scribe":
-		system.WriteString("You are SapaLOQ's scribe. Your only job is to capture the user's note into their personal storage. ")
-		system.WriteString("Call scribe_write_note with the note text and a destination: storage_id, an intent phrase, or a mode (personal|work|hobby). ")
-		system.WriteString("You may assess context read-only (workspace_read_file/search/list/glob) but you must NOT write project files or run commands — scribe_write_note is your only write. ")
-		system.WriteString("When the note is saved, call sapaloq_complete_task with a one-line confirmation. If the destination is ambiguous, call sapaloq_request_clarification.")
-	default:
-		system.WriteString("You are a background SapaLOQ task agent. Use your tools, then return a concise final result.")
+	// Role system prompts are file-driven and replaceable (internal/prompts):
+	// the on-disk copy is preferred, falling back to the embedded default. An
+	// unknown role gets a minimal generic prompt.
+	systemContent := o.systemPrompt(record.Role)
+	if strings.TrimSpace(systemContent) == "" {
+		systemContent = "You are a background SapaLOQ task agent. Use your tools, then return a concise final result."
 	}
 
-	messages := []bridge.Message{{Role: "system", Content: system.String()}}
+	messages := []bridge.Message{{Role: "system", Content: systemContent}}
 
 	// Hand off the plan (goal + acceptance criteria) to the agent.
 	if record.Role == "task-runner" && record.PlanTaskID != "" {

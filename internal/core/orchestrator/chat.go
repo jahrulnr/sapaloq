@@ -17,6 +17,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/parse"
 	"github.com/jahrulnr/sapaloq/internal/platform"
 	"github.com/jahrulnr/sapaloq/internal/platform/headless"
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 	"github.com/jahrulnr/sapaloq/internal/skills"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 	"github.com/jahrulnr/sapaloq/internal/vault"
@@ -46,6 +47,7 @@ type Orchestrator struct {
 	skillsMu     sync.RWMutex
 	skills       []skills.Skill
 	desktop      platform.Desktop
+	prompts      *prompts.Manager
 }
 
 type activeRun struct {
@@ -87,6 +89,10 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		platform.EnvFromOS(runtime.GOOS),
 		func() platform.Desktop { return headless.New() },
 	)
+	// Load file-driven, replaceable system prompts (Ask/planner/agent/scribe).
+	// Never fails: a disabled/missing dir still serves embedded defaults.
+	promptCfg := cfg.Prompts.WithDefaults()
+	promptMgr := prompts.New(config.ExpandPath(promptCfg.Dir), promptCfg.Enabled)
 	o := &Orchestrator{
 		cfgPath:      cfgPath,
 		cfg:          cfg,
@@ -105,6 +111,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		vision:       make(map[string]bool),
 		skills:       loadedSkills,
 		desktop:      desktop,
+		prompts:      promptMgr,
 	}
 	// Best-effort: index skill bodies into facts (kind="skill") so the
 	// secondary FTS match in skillsBlock can find them. Never fatal.

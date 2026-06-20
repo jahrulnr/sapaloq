@@ -78,6 +78,7 @@ type toolArgs struct {
 	URL            string   `json:"url"`
 	Content        string   `json:"content"`
 	Command        string   `json:"command"`
+	Cwd            string   `json:"cwd"` // system_exec: optional working dir (unrestricted)
 	TimeoutSeconds int      `json:"timeout_seconds"`
 	Markdown       string   `json:"markdown"`
 	Note           string   `json:"note"`

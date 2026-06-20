@@ -23,6 +23,17 @@ var readOnlyAssessmentTools = []string{
 	"web_fetch",
 }
 
+// unrestrictedSystemTools give the model FULL host access (read any path, run
+// any command anywhere) — deliberately NOT sandboxed to the workspace root.
+// Per the user's design these are available in EVERY mode (Ask, planner,
+// agent), because spawning a plan/agent is overkill for many host-inspection
+// tasks. system_read_file is read-only; system_exec can mutate, but is offered
+// in all modes by explicit policy.
+var unrestrictedSystemTools = []string{
+	"system_read_file",
+	"system_exec",
+}
+
 // desktopTools: host-desktop integration (notifications / DND). Gated by the
 // active adapter's capabilities at execution time.
 var desktopTools = []string{
@@ -31,7 +42,9 @@ var desktopTools = []string{
 }
 
 // askTools: orchestrator coordinates and may assess lightly before delegating.
-var askTools = append(append([]string{
+// It also gets the unrestricted system_* tools so simple host tasks (e.g. "read
+// /etc/hosts", "run `id`") don't require spawning a plan/agent.
+var askTools = append(append(append([]string{
 	"sapaloq_spawn_plan",
 	"sapaloq_spawn_agent",
 	"sapaloq_spawn_scribe",
@@ -39,7 +52,7 @@ var askTools = append(append([]string{
 	"sapaloq_wait",
 	"sapaloq_answer_clarification",
 	"sapaloq_stop",
-}, readOnlyAssessmentTools...), desktopTools...)
+}, readOnlyAssessmentTools...), desktopTools...), unrestrictedSystemTools...)
 
 // scribeTools: a named sub-agent that captures notes into the user's storage by
 // boundary. It is read-only on the project (assessment tools) and may only
@@ -52,16 +65,17 @@ var scribeTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"sapaloq_request_clarification",
 )
 
-// planTools: read-only planner. Assessment + write/read its own plan markdown
-// (read enables iterating/refining the plan before finishing).
-var planTools = append(append([]string{}, readOnlyAssessmentTools...),
+// planTools: planner. Assessment + the unrestricted system_* tools (so it can
+// investigate the host while planning) + write/read its own plan markdown.
+var planTools = append(append(append([]string{}, readOnlyAssessmentTools...), unrestrictedSystemTools...),
 	"sapaloq_write_plan_markdown",
 	"sapaloq_read_plan_markdown",
 	"sapaloq_request_clarification",
 )
 
-// agentTools: full executor. Assessment + write/edit/delete/exec + lifecycle.
-var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
+// agentTools: full executor. Assessment + unrestricted host access +
+// write/edit/delete/exec + lifecycle.
+var agentTools = append(append(append([]string{}, readOnlyAssessmentTools...), unrestrictedSystemTools...),
 	"workspace_write_file",
 	"workspace_create_file",
 	"workspace_edit_file",
@@ -125,7 +139,7 @@ func (o *Orchestrator) toolsForRole(role string) []string {
 // names the orchestrator actually implements.
 func knownToolSet() map[string]struct{} {
 	set := map[string]struct{}{}
-	for _, profile := range [][]string{askTools, planTools, agentTools, scribeTools, desktopTools} {
+	for _, profile := range [][]string{askTools, planTools, agentTools, scribeTools, desktopTools, unrestrictedSystemTools} {
 		for _, name := range profile {
 			set[name] = struct{}{}
 		}
@@ -235,6 +249,27 @@ func init() {
 		"type":"object",
 		"properties":{
 			"command":{"type":"string","description":"Shell command to run inside the workspace root."},
+			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
+		},
+		"required":["command"]
+	}`)
+
+	reg("system_read_file", `{
+		"type":"object",
+		"properties":{
+			"path":{"type":"string","description":"Any file path on the host (absolute, ~-relative, or relative to CWD). NOT restricted to the workspace — e.g. /etc/hosts."},
+			"offset":{"type":"integer","description":"Optional 1-based start line. With limit, returns only that numbered line window."},
+			"limit":{"type":"integer","description":"Optional max lines to read from offset (default 200 when offset/limit used)."},
+			"max_bytes":{"type":"integer","description":"Optional cap on bytes read (default 262144, max 4194304). Binary files are refused."}
+		},
+		"required":["path"]
+	}`)
+
+	reg("system_exec", `{
+		"type":"object",
+		"properties":{
+			"command":{"type":"string","description":"Any shell command to run on the host with full, unrestricted access (run via bash -lc). NOT pinned to the workspace root."},
+			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded). Defaults to the process CWD."},
 			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
 		},
 		"required":["command"]

@@ -83,8 +83,21 @@ function cycleRingState() {
   setRingState(states[stateIndex]);
 }
 
+// Normalize text just before markdown rendering. We deliberately do NOT strip
+// emoji/pictographs here: models routinely use ✅/❌/✓/✗ (often with a U+FE0F
+// variation selector) to fill table cells and checklists, and stripping them
+// left those cells visually empty. marked + DOMPurify render these glyphs
+// safely, so we only trim trailing whitespace.
 function sanitizeDisplayText(text: string) {
-  return text.replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '').replace(/\s+$/g, '');
+  return text.replace(/\s+$/g, '');
+}
+
+// hasVisibleText reports whether an element renders any non-whitespace text.
+// Used to drop assistant bubbles that ended up empty (e.g. a stray empty
+// response delta) so we never show a blank bubble or attach feedback to it.
+function hasVisibleText(el: HTMLElement | null | undefined): boolean {
+  if (!el) return false;
+  return (el.textContent || '').replace(/\s+/g, '').length > 0;
 }
 
 // Markdown is rendered with the `marked` library (GFM: headings, tables, lists,
@@ -689,13 +702,16 @@ function flushStream(target: StreamTarget) {
     target.el.classList.remove('is-expanded');
     target.el.classList.add('is-collapsed');
     target.el.querySelector('.thinking-toggle')?.setAttribute('aria-expanded', 'false');
-  } else if (
-    target.text &&
-    target.el.classList.contains('message--assistant') &&
-    !target.el.querySelector('.message-feedback')
-  ) {
-    // Final assistant answer: attach 👍/👎 once the stream settles.
-    wireAssistantFeedback(target.el);
+  } else if (target.el.classList.contains('message--assistant')) {
+    // A settled assistant bubble with no visible rendered text (e.g. the model
+    // emitted only whitespace, or content that rendered to nothing) is dropped
+    // entirely — we never show a blank bubble nor attach feedback to it.
+    if (!hasVisibleText(target.el)) {
+      target.el.remove();
+    } else if (!target.el.querySelector('.message-feedback')) {
+      // Final assistant answer: attach 👍/👎 once the stream settles.
+      wireAssistantFeedback(target.el);
+    }
   }
 }
 
@@ -728,9 +744,13 @@ function feedStreamEvent(r: StreamRenderer, event: StreamEvent) {
     if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
     appendMessage('message--tool', `tool: ${event.tool_call?.name || 'unknown'}`);
   } else if (event.kind === 'response_delta') {
+    // Ignore empty/whitespace-only deltas so a stray empty chunk never spawns a
+    // blank assistant bubble (which previously also got 👍/👎 controls).
+    const delta = event.delta || '';
+    if (!r.assistant && delta.trim() === '') return;
     clearProgressBubble();
     if (!r.assistant) r.assistant = makeStreamTarget('message--assistant');
-    pushStream(r.assistant, event.delta || '');
+    pushStream(r.assistant, delta);
   } else if (event.kind === 'status') {
     const status = event.status;
     if (status === 'waiting' || status === 'thinking' || status === 'working' || status === 'compacting' || status === 'stopping') {

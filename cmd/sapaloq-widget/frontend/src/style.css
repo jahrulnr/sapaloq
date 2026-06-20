@@ -1,3 +1,22 @@
+/* Bundled color emoji font (Twemoji SVGinOT → woff2). Self-hosted so emoji
+   (✅ ❌ ✓ ✗ and everything else) render identically on every host — including
+   Linux/WebKitGTK boxes with no system emoji font installed — the same way
+   Firefox/WhatsApp ship their own emoji set instead of relying on the OS.
+   Vite fingerprints + emits this into dist/assets, which the widget binary
+   embeds via //go:embed all:frontend/dist. License: MIT + CC-BY-4.0 (Twemoji),
+   see assets/fonts/TWEMOJI-LICENSE.md. */
+@font-face {
+  font-family: "Twemoji SapaLOQ";
+  src: url("./assets/fonts/TwemojiColor.woff2") format("woff2");
+  font-display: swap;
+  /* Restrict to emoji/symbol ranges so this font is only consulted for emoji,
+     never for Latin text (keeps text rendering on the UI sans-serif). */
+  unicode-range:
+    U+1F000-1FAFF, U+2600-27BF, U+2300-23FF, U+2B00-2BFF,
+    U+2190-21FF, U+2000-206F, U+FE00-FE0F, U+1F1E6-1F1FF,
+    U+200D, U+20E3, U+E0020-E007F;
+}
+
 :root {
   color-scheme: dark;
   --orb-size: 52px;
@@ -29,7 +48,7 @@ body,
   background: transparent !important;
   user-select: none;
   -webkit-user-select: none;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Twemoji SapaLOQ", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
 }
 
 button,
@@ -307,7 +326,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   border-radius: 0;
   background: transparent;
   color: oklch(90% 0.03 200);
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, "Twemoji SapaLOQ", monospace;
   font-size: 0.78rem;
   line-height: 1.5;
   white-space: pre;

@@ -7,9 +7,23 @@ import (
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 	"github.com/jahrulnr/sapaloq/internal/skills"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
+
+// systemPrompt resolves the system prompt for a role via the prompt manager,
+// falling back to the embedded default when the manager is nil (e.g. an
+// Orchestrator constructed directly in tests). This is the single source of
+// truth for every mode's system prompt.
+func (o *Orchestrator) systemPrompt(role string) string {
+	if o != nil && o.prompts != nil {
+		if p := o.prompts.Get(role); strings.TrimSpace(p) != "" {
+			return p
+		}
+	}
+	return prompts.Default(role)
+}
 
 const (
 	defaultContextWindow = 1000000
@@ -38,9 +52,7 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 		return nil, err
 	}
 	messages := make([]bridge.Message, 0, len(turns)+1)
-	messages = append(messages, bridge.Message{Role: "system", Content: `You are SapaLOQ's Ask orchestrator. Use the active-session context below. Compacted summaries are authoritative; do not ask the user to repeat preserved context.
-You can assess before delegating: call workspace_read_file {"path":"..."}, workspace_search {"pattern":"...","glob":"*.go"}, workspace_list_dir {"path":"."}, web_search {"query":"..."}, or web_fetch {"url":"..."} to gather facts yourself instead of guessing. Keep this light — for real work, delegate.
-For work that needs investigation or a multi-step plan, call sapaloq_spawn_plan with {"task":"..."} (the planner reads/searches/researches read-only and writes a plan with acceptance criteria). For a clear execution request, call sapaloq_spawn_agent with {"task":"..."} (the agent reads, writes, and runs commands to finish the job; if a plan exists it executes that plan). These run asynchronously; do not pretend you executed their work yourself. Use sapaloq_get_task_status with {"task_id":"..."} when status is requested — it also surfaces any clarification a sub-agent needs. When a delegated task is awaiting_clarification, relay its question to the user; once they reply, call sapaloq_answer_clarification with {"task_id":"...","answer":"..."} to resume that same sub-agent with its accumulated context (do not re-spawn). Use sapaloq_wait with {"task_id":"...","seconds":2}; the backend waits for a task state change without repeatedly calling the model. Use sapaloq_stop with {"scope":"generation|task|all","task_id":"...","reason":"..."} when work should stop. Image input is available in Ask, planner, and agent modes when the selected model accepts vision.`})
+	messages = append(messages, bridge.Message{Role: "system", Content: o.systemPrompt(prompts.RoleAsk)})
 	if block := o.negativeGuidanceBlock(ctx); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
