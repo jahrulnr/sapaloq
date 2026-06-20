@@ -455,7 +455,6 @@
           "web_fetch",
           "desktop_notify",
           "desktop_dnd_status",
-          "system_read_file",
           "system_exec"
         ],
         "maxTurns": 3,
@@ -546,7 +545,6 @@
           "sapaloq_write_plan_markdown",
           "sapaloq_read_plan_markdown",
           "sapaloq_request_clarification",
-          "system_read_file",
           "system_exec"
         ],
         "maxTurns": 12,
@@ -572,7 +570,6 @@
           "sapaloq_complete_task",
           "sapaloq_fail_task",
           "sapaloq_request_clarification",
-          "system_read_file",
           "system_exec"
         ],
         "maxTurns": 30,

@@ -10,92 +10,15 @@ import (
 	"time"
 )
 
-// Unrestricted host tools.
+// Unrestricted host tool.
 //
 // By explicit design, SapaLOQ is NOT sandboxed to the workspace root. The
 // workspace_* tools remain boundary-rooted for scoped, safe project edits, but
-// these system_* tools give the model full host access: read any file, run any
-// command anywhere. This is intentional — the user does not want the assistant
-// "kebiri" (crippled) to a single directory. They are available in every mode
-// (Ask, planner, agent) via the shared-tool dispatcher.
-
-const (
-	systemReadDefaultBytes = 256 * 1024
-	systemReadMaxBytes     = 4 * 1024 * 1024
-)
-
-// toolSystemReadFile reads any file on the host by absolute or relative path,
-// with no workspace-boundary check. Relative paths resolve against the current
-// process working directory. Binary content is refused (use system_exec with
-// file/xxd/strings instead). A byte cap protects the context budget.
-func toolSystemReadFile(args toolArgs) string {
-	path := strings.TrimSpace(args.Path)
-	if path == "" {
-		return "Error: path is required."
-	}
-	path = expandHome(path)
-	if !filepath.IsAbs(path) {
-		if abs, err := filepath.Abs(path); err == nil {
-			path = abs
-		}
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return "Error: " + err.Error()
-	}
-	if info.IsDir() {
-		return fmt.Sprintf("Error: %q is a directory; use system_exec (e.g. `ls -la %s`).", path, path)
-	}
-	limit := args.MaxBytes
-	if limit <= 0 {
-		limit = systemReadDefaultBytes
-	}
-	if limit > systemReadMaxBytes {
-		limit = systemReadMaxBytes
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return "Error: " + err.Error()
-	}
-	defer f.Close()
-	buf := make([]byte, limit)
-	n, _ := f.Read(buf)
-	data := buf[:n]
-	if looksBinary(data) {
-		return fmt.Sprintf("Error: %q looks like a binary file (%d bytes). Refusing to read as text; use system_exec (e.g. `file`, `xxd`, `strings`).", path, info.Size())
-	}
-	content := string(data)
-
-	// Line-range mode (offset/limit) mirrors workspace_read_file.
-	if args.Offset > 0 || args.Limit > 0 {
-		lines := strings.Split(content, "\n")
-		start := args.Offset
-		if start < 1 {
-			start = 1
-		}
-		if start > len(lines) {
-			return fmt.Sprintf("[no content: file has %d lines, offset %d is past end]", len(lines), start)
-		}
-		count := args.Limit
-		if count <= 0 {
-			count = 200
-		}
-		end := start - 1 + count
-		if end > len(lines) {
-			end = len(lines)
-		}
-		var b strings.Builder
-		for i := start; i <= end; i++ {
-			fmt.Fprintf(&b, "%d\t%s\n", i, lines[i-1])
-		}
-		return b.String()
-	}
-
-	if int64(n) < info.Size() {
-		content += fmt.Sprintf("\n[truncated: read %d of %d bytes]", n, info.Size())
-	}
-	return content
-}
+// system_exec gives the model full host access: run any command anywhere
+// (which also covers reading any host file via cat/sed/head/tail/rg). This is
+// intentional — the user does not want the assistant "kebiri" (crippled) to a
+// single directory. It is available in every mode (Ask, planner, agent) via
+// the shared-tool dispatcher.
 
 // toolSystemExec runs an arbitrary shell command anywhere on the host with full
 // access. Unlike terminal_run it does NOT pin the working directory to the

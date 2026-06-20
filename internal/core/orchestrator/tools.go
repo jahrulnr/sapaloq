@@ -23,14 +23,13 @@ var readOnlyAssessmentTools = []string{
 	"web_fetch",
 }
 
-// unrestrictedSystemTools give the model FULL host access (read any path, run
-// any command anywhere) — deliberately NOT sandboxed to the workspace root.
-// Per the user's design these are available in EVERY mode (Ask, planner,
-// agent), because spawning a plan/agent is overkill for many host-inspection
-// tasks. system_read_file is read-only; system_exec can mutate, but is offered
-// in all modes by explicit policy.
+// unrestrictedSystemTools give the model FULL host access (run any command
+// anywhere) — deliberately NOT sandboxed to the workspace root. Per the user's
+// design this is available in EVERY mode (Ask, planner, agent), because
+// spawning a plan/agent is overkill for many host-inspection tasks. A single
+// `system_exec` is enough: cat/sed/head/tail/rg cover any host file read, so a
+// separate `system_read_file` would be redundant surface.
 var unrestrictedSystemTools = []string{
-	"system_read_file",
 	"system_exec",
 }
 
@@ -254,21 +253,10 @@ func init() {
 		"required":["command"]
 	}`)
 
-	reg("system_read_file", `{
-		"type":"object",
-		"properties":{
-			"path":{"type":"string","description":"Any file path on the host (absolute, ~-relative, or relative to CWD). NOT restricted to the workspace — e.g. /etc/hosts."},
-			"offset":{"type":"integer","description":"Optional 1-based start line. With limit, returns only that numbered line window."},
-			"limit":{"type":"integer","description":"Optional max lines to read from offset (default 200 when offset/limit used)."},
-			"max_bytes":{"type":"integer","description":"Optional cap on bytes read (default 262144, max 4194304). Binary files are refused."}
-		},
-		"required":["path"]
-	}`)
-
 	reg("system_exec", `{
 		"type":"object",
 		"properties":{
-			"command":{"type":"string","description":"Any shell command to run on the host with full, unrestricted access (run via bash -lc). NOT pinned to the workspace root."},
+			"command":{"type":"string","description":"Any shell command to run on the host with full, unrestricted access. NOT pinned to the workspace root. Use this to read host files too (e.g. cat/sed -n/head/tail/rg). NOTE: commands run via 'bash -lc', so syntax is POSIX/Unix (Linux & macOS); macOS BSD tools differ slightly from GNU (e.g. sed -i, date), and on Windows hosts a bash shell may be unavailable — prefer portable invocations or check the OS first."},
 			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded). Defaults to the process CWD."},
 			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
 		},
