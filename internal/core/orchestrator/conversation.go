@@ -17,7 +17,10 @@ import (
 var inlineImageRE = regexp.MustCompile(`!\[([^\]]*)\]\((data:(image/[^;,]+)(?:;base64)?,[^)]+)\)`)
 var attachmentMetaRE = regexp.MustCompile(`<!--sapaloq-attachment:[A-Za-z0-9+/=]+-->`)
 
-func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, messages []bridge.Message) (strings.Builder, error) {
+// runConversation drives one Ask turn. If thinkingOut is non-nil, reasoning
+// (EventThinkingDelta) text is accumulated into it so the caller can persist it
+// as a show-only "thinking" turn — separate from the assistant answer (`all`).
+func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, messages []bridge.Message, thinkingOut *strings.Builder) (strings.Builder, error) {
 	var all strings.Builder
 	cleanMessages, images := extractImages(messages)
 	if len(images) > 0 && !o.visionAllowed(snap.entry.Key, snap.entry.Model) {
@@ -120,6 +123,13 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 				hadError = true
 				if len(images) > 0 && looksLikeVisionUnsupported(ev.Error) {
 					o.setVisionSupport(snap.entry.Key, snap.entry.Model, false)
+				}
+				o.emit(runCtx, out, ev)
+			case bridge.EventThinkingDelta:
+				// Accumulate reasoning so it can be persisted as a show-only
+				// "thinking" turn (survives restart), then forward it live.
+				if thinkingOut != nil {
+					thinkingOut.WriteString(ev.Delta)
 				}
 				o.emit(runCtx, out, ev)
 			case bridge.EventDone:

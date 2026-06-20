@@ -61,6 +61,11 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 	}
 	for _, turn := range turns {
 		role := turn.Role
+		// Thinking turns are persisted for the UI only — never replay reasoning
+		// back into the model's context window.
+		if role == "thinking" {
+			continue
+		}
 		if role == "tool" || role == "error" {
 			role = "assistant"
 		}
@@ -202,6 +207,9 @@ func (o *Orchestrator) compactActiveSession(ctx context.Context, sessionID, reas
 	}
 	b.WriteString("]\n")
 	for _, t := range turns[:len(turns)-4] {
+		if t.Role == "thinking" {
+			continue // reasoning is UI-only; don't bloat the compaction summary
+		}
 		line := strings.TrimSpace(t.Content)
 		if line == "" {
 			continue

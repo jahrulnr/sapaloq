@@ -577,8 +577,46 @@ function openCorrectionBox(
   textarea?.focus();
 }
 
+// appendThinkingBubble re-creates a settled (collapsed, done) reasoning bubble
+// from a persisted "thinking" turn so reasoning survives a restart. It mirrors
+// makeThinkingTarget's markup but in its finished state (no pulse, "thought"
+// label, re-expandable via the toggle).
+function appendThinkingBubble(text: string, groupID = currentUserGroup) {
+  const list = document.getElementById('message-list');
+  if (!list || !text.trim()) return;
+  const el = document.createElement('div');
+  el.className = 'message message--thinking is-collapsed is-done';
+  el.dataset.seq = `${++messageSeq}`;
+  el.dataset.group = `${groupID}`;
+  el.dataset.rawText = text;
+
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.className = 'thinking-toggle';
+  header.setAttribute('aria-expanded', 'false');
+  header.innerHTML = `<span class="status-pulse" aria-hidden="true"><i></i><i></i><i></i></span><span class="thinking-label">thought</span><span class="thinking-chevron" aria-hidden="true">⌄</span>`;
+
+  const body = document.createElement('div');
+  body.className = 'thinking-body';
+  body.append(renderMarkdown(text));
+
+  header.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const expanded = el.classList.toggle('is-expanded');
+    el.classList.toggle('is-collapsed', !expanded);
+    header.setAttribute('aria-expanded', String(expanded));
+  });
+
+  el.append(header, body);
+  list.appendChild(el);
+}
+
 function renderTurn(turn: ChatTurn) {
   if (!turn.content) return;
+  if (turn.role === 'thinking') {
+    appendThinkingBubble(turn.content);
+    return;
+  }
   const parsed = parseTurnContent(turn.content);
   if (turn.role === 'user') {
     currentUserGroup++;
@@ -697,11 +735,16 @@ function flushStream(target: StreamTarget) {
   target.typing = false;
   target.el.classList.remove('message--streaming');
   // Reasoning bubbles auto-collapse once complete so the answer that follows is
-  // front-and-centre, but the toggle keeps them re-expandable.
+  // front-and-centre, but the toggle keeps them re-expandable. Mark the bubble
+  // as done so the header shows a finished state (no pulse, "thought") instead
+  // of looking identical to a still-streaming reasoning bubble.
   if (target.body && target.el.classList.contains('message--thinking')) {
     target.el.classList.remove('is-expanded');
-    target.el.classList.add('is-collapsed');
-    target.el.querySelector('.thinking-toggle')?.setAttribute('aria-expanded', 'false');
+    target.el.classList.add('is-collapsed', 'is-done');
+    const toggle = target.el.querySelector('.thinking-toggle');
+    toggle?.setAttribute('aria-expanded', 'false');
+    const label = target.el.querySelector('.thinking-label');
+    if (label) label.textContent = 'thought';
   } else if (target.el.classList.contains('message--assistant')) {
     // A settled assistant bubble with no visible rendered text (e.g. the model
     // emitted only whitespace, or content that rendered to nothing) is dropped
@@ -1130,11 +1173,6 @@ document.querySelector('#app')!.innerHTML = `
         </div>
       </header>
       <div class="popup-body">
-        <div class="empty-state" aria-hidden="true">
-          <span class="empty-kicker">ready</span>
-          <strong>Ask, route, delegate.</strong>
-          <span>Gunakan <code>/</code> untuk command cepat.</span>
-        </div>
         <div class="message-list" id="message-list"></div>
       </div>
       <footer class="popup-compose">

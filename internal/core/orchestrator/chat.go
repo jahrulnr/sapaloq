@@ -218,11 +218,17 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 			return
 		}
-		assistant, err := o.runConversation(runCtx, snap, out, sessionID, message, messages)
+		var thinking strings.Builder
+		assistant, err := o.runConversation(runCtx, snap, out, sessionID, message, messages, &thinking)
 		if err != nil {
 			debug.Debugf("orchestrator: conversation error session=%s err=%v", sessionID, err)
 			o.emit(runCtx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 			return
+		}
+		// Persist reasoning as a show-only "thinking" turn before the answer so
+		// it survives a restart (excluded from the LLM context window).
+		if strings.TrimSpace(thinking.String()) != "" {
+			_ = o.chat.AppendTurn(ctx, sessionID, "thinking", thinking.String(), 0)
 		}
 		_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
 		usage, _ := o.ContextUsage(ctx, sessionID)
@@ -273,10 +279,14 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 		o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 		return
 	}
-	assistant, err := o.runConversation(ctx, snap, out, sessionID, message, messages)
+	var thinking strings.Builder
+	assistant, err := o.runConversation(ctx, snap, out, sessionID, message, messages, &thinking)
 	if err != nil {
 		o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 		return
+	}
+	if strings.TrimSpace(thinking.String()) != "" {
+		_ = o.chat.AppendTurn(ctx, sessionID, "thinking", thinking.String(), 0)
 	}
 	_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
 	usage, _ := o.ContextUsage(ctx, sessionID)

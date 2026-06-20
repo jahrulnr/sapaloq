@@ -213,18 +213,6 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   overflow: hidden;
 }
 
-.empty-state {
-  margin-bottom: 10px;
-  padding: 13px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: linear-gradient(135deg, oklch(100% 0 0 / 0.1), oklch(100% 0 0 / 0.035));
-}
-.empty-kicker { display: block; color: var(--accent-hot); font-size: 0.62rem; font-weight: 850; letter-spacing: 0.18em; text-transform: uppercase; }
-.empty-state strong { display: block; margin-top: 3px; font-size: 1.06rem; letter-spacing: -0.04em; }
-.empty-state span:last-child { display: block; margin-top: 4px; color: var(--muted); font-size: 0.78rem; }
-.empty-state code { color: var(--accent); font-weight: 800; }
-
 .message-list {
   min-height: 0;
   max-height: none;
@@ -237,11 +225,6 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   user-select: text;
   -webkit-user-select: text;
 }
-
-.message-list:not(:empty) + .empty-state,
-.message-list:not(:empty) ~ .empty-state { display: none; }
-.message-list:not(:empty) { margin-top: 0; }
-.popup-body:has(.message-list:not(:empty)) .empty-state { display: none; }
 
 .message {
   position: relative;
@@ -519,6 +502,26 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .message--thinking.is-expanded .thinking-chevron { transform: rotate(180deg); }
 /* While streaming the dots pulse; once flushed they rest. */
 .message--thinking:not(.message--streaming) .status-pulse i { animation-play-state: paused; opacity: 0.5; }
+
+/* Finished reasoning: clearly distinct from a live "thinking" bubble — the
+   pulsing dots are replaced by a steady ✓, and the pill takes a calm green
+   tint so a settled "thought" never looks like it is still thinking. */
+.message--thinking.is-done .thinking-toggle {
+  border-color: oklch(73% 0.18 150 / 0.3);
+  background: oklch(73% 0.18 150 / 0.08);
+  color: oklch(82% 0.07 175);
+}
+.message--thinking.is-done .thinking-toggle:hover {
+  background: oklch(73% 0.18 150 / 0.16);
+  border-color: oklch(73% 0.18 150 / 0.45);
+}
+.message--thinking.is-done .status-pulse { display: none; }
+.message--thinking.is-done .thinking-label::before {
+  content: "✓";
+  margin-right: 6px;
+  color: var(--ok);
+  font-weight: 900;
+}
 
 .message--thinking .thinking-body {
   overflow: hidden;

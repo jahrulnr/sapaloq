@@ -43,6 +43,12 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Implemented this session (2026-06-21) — thinking persistence + widget polish
+
+- **Reasoning now persists across restarts.** Previously the thinking stream was render-only — killing/restarting the core lost it from history. `runConversation` now accumulates `EventThinkingDelta` into an optional `*strings.Builder` (`thinkingOut`); `SendChat`/`RetryChat` persist it as a `chat_turns` row with role `"thinking"` (token estimate 0) **before** the assistant turn. The thinking turn is **show-only**: excluded from the LLM context window (`contextMessages` skips `role=="thinking"`) and from the compaction summary, so reasoning never gets replayed back into the model. Widget `renderTurn` rebuilds it via a new `appendThinkingBubble` (collapsed, re-expandable). `conversation.go`, `chat.go`, `session.go`, `conversation_test.go` (`TestRunConversationCapturesThinking`), `cmd/sapaloq-widget/frontend/src/main.ts`.
+- **Live vs finished thinking are now visually distinct.** A settled reasoning bubble was indistinguishable from a streaming one. `flushStream` now adds `is-done` + relabels `thinking`→`thought`; CSS renders the done state with the pulse hidden, a steady green `✓`, and a calm green pill tint. `main.ts`, `style.css`.
+- **Removed the "Ask, route, delegate" empty-state card.** It didn't scroll with content, vanished after hide→reopen, and only cramped the panel. Dropped the template block + its CSS. `main.ts`, `style.css`.
+
 ## Implemented this session (2026-06-21) — docs sync + AGENTS.md
 
 - **Synced outdated design docs** to match the code shipped this session: `docs/RUNTIME.md` (vault is now dual-purpose `undeclared`+`executed` audit, added a Rotation & retention subsection + `config.vault.*`; config schema migration marked implemented), `docs/BLUEPRINT.md` (added a `vault` config-domain row + an unrestricted host-tools `system_read_file`/`system_exec` defaults row; noted replaceable on-disk prompts), `docs/PROMPT-BUILDER-SOP.md` (new "Replaceable prompts (on-disk override)" section + `config.prompts.*`). Bumped each doc's `Last updated`.

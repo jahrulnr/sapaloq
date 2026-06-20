@@ -37,6 +37,49 @@ func (b *sequenceBridge) Complete(_ context.Context, req bridge.Request) (<-chan
 	return out, nil
 }
 
+// thinkingBridge emits one reasoning delta then a response, with no tool calls.
+type thinkingBridge struct{}
+
+func (b *thinkingBridge) ID() string              { return "thinking" }
+func (b *thinkingBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *thinkingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	out := make(chan bridge.StreamEvent, 4)
+	go func() {
+		defer close(out)
+		out <- bridge.StreamEvent{Kind: bridge.EventThinkingDelta, Delta: "let me reason "}
+		out <- bridge.StreamEvent{Kind: bridge.EventThinkingDelta, Delta: "about this"}
+		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "final answer"}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+func TestRunConversationCapturesThinking(t *testing.T) {
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: &thinkingBridge{}}
+	out := make(chan bridge.StreamEvent, 16)
+	go func() {
+		for range out {
+		}
+	}()
+	var thinking strings.Builder
+	result, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "hi"}}, &thinking)
+	close(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "final answer" {
+		t.Fatalf("answer = %q, want %q", result.String(), "final answer")
+	}
+	if thinking.String() != "let me reason about this" {
+		t.Fatalf("thinking = %q, want accumulated reasoning", thinking.String())
+	}
+}
+
 func TestRunConversationContinuesAfterToolResult(t *testing.T) {
 	fake := &sequenceBridge{}
 	orch := &Orchestrator{
@@ -56,7 +99,7 @@ func TestRunConversationContinuesAfterToolResult(t *testing.T) {
 		for range out {
 		}
 	}()
-	result, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "status"}})
+	result, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "status"}}, nil)
 	close(out)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +158,7 @@ func TestRunConversationSupportsMoreThanEightContinuations(t *testing.T) {
 		for range out {
 		}
 	}()
-	result, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "run"}})
+	result, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "run"}}, nil)
 	close(out)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +187,7 @@ func TestRunConversationStopsIdenticalToolLoop(t *testing.T) {
 		for range out {
 		}
 	}()
-	_, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "loop"}})
+	_, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "loop"}}, nil)
 	close(out)
 	if err == nil || !strings.Contains(err.Error(), "identical tool call") {
 		t.Fatalf("err = %v", err)
