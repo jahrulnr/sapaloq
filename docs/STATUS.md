@@ -43,6 +43,11 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Implemented this session (2026-06-21) — docs sync + AGENTS.md
+
+- **Synced outdated design docs** to match the code shipped this session: `docs/RUNTIME.md` (vault is now dual-purpose `undeclared`+`executed` audit, added a Rotation & retention subsection + `config.vault.*`; config schema migration marked implemented), `docs/BLUEPRINT.md` (added a `vault` config-domain row + an unrestricted host-tools `system_read_file`/`system_exec` defaults row; noted replaceable on-disk prompts), `docs/PROMPT-BUILDER-SOP.md` (new "Replaceable prompts (on-disk override)" section + `config.prompts.*`). Bumped each doc's `Last updated`.
+- **Added `AGENTS.md`** at the repo root: build/test gate (`go build/vet/test ./...` + frontend `npm run build`), conventions, a project map, and a **"Keep docs in sync (REQUIRED)"** table mapping each code area → the doc(s) to update — so future agents update the relevant docs (and STATUS.md) alongside behavior changes.
+
 ## Implemented this session (2026-06-21) — vault rotation + widget emoji/render fixes
 
 - **Vault audit-log rotation/retention:** the tool-call vault (`vault/tool-calls.jsonl`) was append-only and unbounded — and now logs both `reason="undeclared"` (provider anomalies, e.g. cursor's server-hardcoded tools) *and* `reason="executed"` (full orchestrator tool-audit), so it grows during normal use. Added size-based numbered rotation directly in `vault.Writer.Append` (best-effort: a rotation error falls back to plain append so an audit write is never lost): when the primary would exceed `MaxBytes` it cascades `tool-calls.jsonl` → `.1` → `.2` …, dropping the oldest beyond `KeepFiles`. New `Options{MaxBytes,KeepFiles}` + `NewWithOptions` with defaults 5 MiB / keep 3 (`New` still works = defaults, so the cursor-bridge writer inherits rotation). New `ReadRecent(path,limit)` reads across rotated siblings so stats/CLI still see recent history after a rotation. New `config.vault.{maxLogBytes,keepRotatedFiles}` (absent block = defaults), wired in `chat.go`. `internal/vault/{vault.go,read.go,rotate_test.go}`, `config/load.go`, `core/orchestrator/chat.go`, `config/config.example.json`.

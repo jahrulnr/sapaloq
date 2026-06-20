@@ -1670,10 +1670,11 @@ Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 | `llmBridge`                                                      | Brain driver, parsers, coercion, fallback — secrets via env only                                |
 | `notifications`, `widget`                                        | TTS read, ring mirror prefs                                                                     |
 | `orchestrator`                                                   | Concurrency, anti-poisoning, spawnRouting, progress, completion, clarification, subAgentControl |
-| `context`, `memory`, `skills`, `prompts`, `learning`, `feedback` | Ingress, SQLite, skills, overlays, auto-learning, slices                                        |
+| `context`, `memory`, `skills`, `prompts`, `learning`, `feedback` | Ingress, SQLite, skills, **replaceable on-disk role prompts** (see [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md)), auto-learning, slices |
 | `events`                                                         | Bus + watchers[]                                                                                |
 | `modes`, `storage`, `apps`                                       | Boundary roots, path intents, app index                                                         |
 | `nodes`, `subAgents`, `commands`                                 | Remote registry, role templates, `/settings` allowedPaths                                       |
+| `vault`                                                          | Tool-call audit log rotation/retention (`maxLogBytes`, `keepRotatedFiles`) — see [RUNTIME.md](./RUNTIME.md#rotation--retention) |
 
 
 **Required:** `schemaVersion`, `notifications`, `modes`, `storage`. Full schema: [config.schema.json](../schema/config.schema.json).
@@ -1687,6 +1688,7 @@ Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 | `llmBridge.driver`                          | `cursor-bridge` | Primary brain; `local-llama` = offline fallback only |
 | `orchestrator.spawnRouting.agentToolPolicy` | `"full"`        | Agent unrestricted post-plan                         |
 | `orchestrator.spawnRouting.autoApprovePlan` | `false`         | User reviews plans                                   |
+| Unrestricted host tools (`system_read_file`, `system_exec`) | available in **all** modes | Read any host path / run any command (not sandboxed to workspace); shared dispatch in every mode — see `internal/core/orchestrator/tools_system.go` |
 | `nodes.allowSharedMemoryRemote`             | `false`         | Remote = context packet only                         |
 | `events.bus.wakeViaBus`                     | `true`          | Bus primary wake                                     |
 | `feedback.banditTunePrefetch`               | `true`          | Lightweight RL on rules                              |

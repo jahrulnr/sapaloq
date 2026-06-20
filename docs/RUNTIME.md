@@ -1,7 +1,7 @@
 # SapaLOQ — Runtime: Single Binary
 
 > **Satu binary Go** — goroutine + channel + persistence lokal. Zero external daemons.
-> Last updated: 2026-06-19
+> Last updated: 2026-06-21
 
 Related: [EVENT-BUS.md](./EVENT-BUS.md) · [VISION.md](./VISION.md)
 
@@ -158,7 +158,14 @@ Without explicit env vars, `sapaloq-core` autoloads from `.env` then Cursor IDE 
 
 | Path | Writer | Purpose |
 |------|--------|---------|
-| `vault/tool-calls.jsonl` | cursor-bridge (and future drivers) | Undeclared/unknown structured tool calls for alias/surface review |
+| `vault/tool-calls.jsonl` | cursor-bridge + orchestrator | Structured tool-call audit log (see two reasons below) |
+
+The vault log is JSON-lines and serves **two** purposes, distinguished by the `reason` field on each entry:
+
+| `reason` | Source | Meaning |
+|----------|--------|---------|
+| `undeclared` | cursor-bridge (and future drivers) | A provider whose tool surface is hardcoded server-side called a tool **outside** `llmBridge.declaredTools` — the original anomaly/alias-review signal |
+| `executed` | `Orchestrator.auditTool` (Ask + sub-agent chokepoints) | Audit trail of every tool the orchestrator actually ran |
 
 Review via CLI:
 
@@ -167,7 +174,18 @@ sapaloq-core vault stats
 sapaloq-core vault list --limit 50 --json
 ```
 
-Vault **does not** filter thinking/chat text — only structured tool calls outside `llmBridge.declaredTools`. See [BRIDGE.md](./BRIDGE.md#vault-undeclared-tool-calls).
+Vault **does not** filter thinking/chat text — only structured tool calls (`undeclared` anomalies and `executed` audit entries). See [BRIDGE.md](./BRIDGE.md#vault-undeclared-tool-calls).
+
+### Rotation & retention
+
+The log is append-only, so it is **size-rotated** to stay bounded (it would otherwise grow forever, and reads — which scan the whole file — would get slower over time). When the primary file would exceed `maxLogBytes`, it cascades to numbered siblings (`tool-calls.jsonl` → `.1` → `.2` …) and the oldest beyond `keepRotatedFiles` is dropped. Rotation is **best-effort**: if a rename fails, the writer falls back to a plain append so an audit write is never lost. `ReadRecent` reads across rotated siblings so stats/CLI still see recent history after a rotation.
+
+| Config (`config.json` → `vault`) | Default | Meaning |
+|-----------------------------------|---------|---------|
+| `maxLogBytes` | `5242880` (5 MiB) | Size at/after which the primary log rotates |
+| `keepRotatedFiles` | `3` | How many numbered siblings (`.1` … `.N`) to retain |
+
+An absent `vault` block uses the defaults (the cursor-bridge writer inherits the same default rotation). Implementation: `internal/vault` (`vault.go`, `read.go`).
 
 ---
 
@@ -188,7 +206,7 @@ sapaloq-core doctor --json       # machine-readable exit payload
 | Socket | `sapaloq.sock` path writable |
 | LLM bridge | Cursor credentials via autoload (`process.env` → `.env` → `state.vscdb`) |
 
-Planned (M1+): schema validate, `os.json`, `companion.db` migrations, `local-default` node row.
+Config **schema migration** is implemented: `Load` decodes to a raw map, runs an ordered upgrade chain (`internal/config/migrate.go`, `CurrentSchemaVersion` = `1.1.0`; lower → upgrade + persist, equal → no-op, higher → load as-is) before unmarshalling. Still planned (M1+): `os.json` regen checks, `companion.db` migrations, `local-default` node row.
 
 ```bash
 sapaloq-core doctor              # current checks
