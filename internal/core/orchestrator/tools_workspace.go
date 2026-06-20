@@ -89,6 +89,9 @@ type toolArgs struct {
 	Intent         string   `json:"intent"`     // scribe_write_note: intent phrase → path
 	Mode           string   `json:"mode"`       // scribe_write_note: personal|work|hobby
 	Kind           string   `json:"kind"`       // scribe_write_note: notes|inbox|journal…
+	Title          string   `json:"title"`      // desktop_notify: notification title
+	Body           string   `json:"body"`       // desktop_notify: notification body
+	Urgency        string   `json:"urgency"`    // desktop_notify: low|normal|critical
 }
 
 func parseToolArgs(raw json.RawMessage) toolArgs {

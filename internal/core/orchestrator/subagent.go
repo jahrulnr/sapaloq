@@ -317,6 +317,10 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		return subToolResult{text: toolTerminalRun(ctx, args)}
 	case "scribe_write_note":
 		return subToolResult{text: o.toolScribeWriteNote(args)}
+	case "desktop_notify":
+		return subToolResult{text: o.toolDesktopNotify(ctx, args)}
+	case "desktop_dnd_status":
+		return subToolResult{text: o.toolDesktopDNDStatus(ctx)}
 	case "sapaloq_write_plan_markdown":
 		md := strings.TrimSpace(args.Markdown)
 		if md == "" {

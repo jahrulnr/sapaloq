@@ -20,6 +20,12 @@
     "capabilitiesRequired": ["notify", "notify.watch"]
   },
 
+  "platform": {
+    "adapter": "auto",
+    "detectOrder": ["gnome", "freedesktop", "headless"],
+    "allowFallback": true
+  },
+
   "llmBridge": {
     "providerKey": "tokenrouter",
     "providers": [
@@ -239,8 +245,10 @@
   },
 
   "skills": {
-    "directory": "~/.config/sapaloq/skills",
+    "enabled": true,
+    "dir": "~/.config/sapaloq/skills",
     "maxLoadPerTurn": 2,
+    "maxBodyLines": 40,
     "indexOnBoot": true,
     "allowAgentCreate": true
   },
@@ -414,7 +422,7 @@
     "roles": {
       "orchestrator": {
         "description": "Ask mode — widget coordinator; spawn routing; light read-only assessment; never blocks on long IO",
-        "allowedTools": ["sapaloq_spawn_plan", "sapaloq_spawn_agent", "sapaloq_spawn_scribe", "sapaloq_get_task_status", "sapaloq_wait", "sapaloq_answer_clarification", "sapaloq_stop", "workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch"],
+        "allowedTools": ["sapaloq_spawn_plan", "sapaloq_spawn_agent", "sapaloq_spawn_scribe", "sapaloq_get_task_status", "sapaloq_wait", "sapaloq_answer_clarification", "sapaloq_stop", "workspace_read_file", "workspace_search", "workspace_list_dir", "workspace_glob", "web_search", "web_fetch", "desktop_notify", "desktop_dnd_status"],
         "maxTurns": 3,
         "canEditConfig": false,
         "toolPolicy": "companion"

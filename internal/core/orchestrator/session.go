@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/skills"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
@@ -43,6 +44,9 @@ For work that needs investigation or a multi-step plan, call sapaloq_spawn_plan 
 	if block := o.negativeGuidanceBlock(ctx); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
+	if block := o.skillsBlock(ctx, latestUserMessage); block != "" {
+		messages = append(messages, bridge.Message{Role: "system", Content: block})
+	}
 	for _, turn := range turns {
 		role := turn.Role
 		if role == "tool" || role == "error" {
@@ -74,6 +78,70 @@ func (o *Orchestrator) negativeGuidanceBlock(ctx context.Context) string {
 	for _, f := range facts {
 		b.WriteString("\n- ")
 		b.WriteString(f.Content)
+	}
+	return b.String()
+}
+
+// skillsBlock builds a short system block listing the skills relevant to the
+// current user message. Selection is trigger-phrase first (fast, deterministic),
+// then augmented by an FTS/keyword search over indexed skill bodies, deduped by
+// id, sorted by priority, and capped by skills.maxLoadPerTurn. Each body is
+// bounded by skills.maxBodyLines. Returns "" when disabled or nothing matches.
+func (o *Orchestrator) skillsBlock(ctx context.Context, userMsg string) string {
+	if o == nil {
+		return ""
+	}
+	cfg := o.cfg.Skills.WithDefaults()
+	if !cfg.Enabled {
+		return ""
+	}
+	o.skillsMu.RLock()
+	loaded := o.skills
+	o.skillsMu.RUnlock()
+	if len(loaded) == 0 {
+		return ""
+	}
+
+	byID := make(map[string]skills.Skill, len(loaded))
+	for _, sk := range loaded {
+		byID[sk.ID] = sk
+	}
+
+	selected := make(map[string]skills.Skill)
+	for _, sk := range skills.Match(loaded, userMsg) {
+		selected[sk.ID] = sk
+	}
+
+	// Secondary signal: FTS/keyword search over indexed skill bodies. Map any
+	// hit back to a loaded skill by id (first token of the stored content).
+	if len(selected) < cfg.MaxLoadPerTurn && o.chat != nil && strings.TrimSpace(userMsg) != "" {
+		if facts, err := o.chat.SearchFacts(ctx, userMsg, []string{"skill"}, cfg.MaxLoadPerTurn*3); err == nil {
+			for _, f := range facts {
+				id, _, ok := splitSkillFact(f.Content)
+				if !ok {
+					continue
+				}
+				if sk, ok := byID[id]; ok {
+					selected[sk.ID] = sk
+				}
+			}
+		}
+	}
+	if len(selected) == 0 {
+		return ""
+	}
+
+	picks := make([]skills.Skill, 0, len(selected))
+	for _, sk := range selected {
+		picks = append(picks, sk)
+	}
+	picks = skills.SortByRelevance(picks, cfg.MaxLoadPerTurn)
+
+	var b strings.Builder
+	b.WriteString("Relevant skills (apply when appropriate):")
+	for _, sk := range picks {
+		b.WriteString("\n")
+		b.WriteString(sk.Render(cfg.MaxBodyLines))
 	}
 	return b.String()
 }

@@ -20,6 +20,110 @@ type Config struct {
 	SubAgents     SubAgentsConfig    `json:"subAgents,omitempty"`
 	Feedback      FeedbackConfig     `json:"feedback,omitempty"`
 	Storage       StorageConfig      `json:"storage,omitempty"`
+	Skills        SkillsConfig       `json:"skills,omitempty"`
+	Platform      PlatformConfig     `json:"platform,omitempty"`
+	Nodes         NodesConfig        `json:"nodes,omitempty"`
+}
+
+// NodesConfig governs remote sub-agent nodes. Remote nodes only ever receive a
+// bounded context packet (never the memory bus); these knobs add policy on top.
+type NodesConfig struct {
+	// AllowRemoteRoles lists roles permitted to run on remote nodes. Empty =
+	// none (local-only) unless a role's node is explicitly enabled.
+	AllowRemoteRoles []string `json:"allowRemoteRoles,omitempty"`
+	// RequireTls rejects ws:// (non-TLS) remote endpoints when true. (JSON key
+	// matches the existing config.example.json: requireTlsRemote.)
+	RequireTls bool `json:"requireTlsRemote,omitempty"`
+	// AllowSharedMemoryRemote permits share_memory=1 on remote nodes (off by
+	// default; remote always gets a bounded packet otherwise).
+	AllowSharedMemoryRemote bool `json:"allowSharedMemoryRemote,omitempty"`
+	// FallbackToLocalOnRemoteFail routes a failed remote spawn to local-default.
+	FallbackToLocalOnRemoteFail bool `json:"fallbackToLocalOnRemoteFail,omitempty"`
+}
+
+// WithDefaults fills sane node policy defaults: TLS required, fallback on.
+func (n NodesConfig) WithDefaults() NodesConfig {
+	// A fully-unset block (no roles, all flags false) is treated as the safe
+	// default: TLS required + fallback to local on failure.
+	if len(n.AllowRemoteRoles) == 0 && !n.RequireTls && !n.AllowSharedMemoryRemote && !n.FallbackToLocalOnRemoteFail {
+		n.RequireTls = true
+		n.FallbackToLocalOnRemoteFail = true
+	}
+	return n
+}
+
+// PlatformConfig selects and tunes the desktop adapter (notifications, DND, …).
+// adapter "auto" detects from the environment using detectOrder; an explicit
+// adapter id forces that backend. When allowFallback is true, a failed/absent
+// backend falls back to headless instead of erroring.
+type PlatformConfig struct {
+	Adapter       string   `json:"adapter,omitempty"`
+	DetectOrder   []string `json:"detectOrder,omitempty"`
+	AllowFallback bool     `json:"allowFallback,omitempty"`
+}
+
+// WithDefaults fills sane platform defaults: auto-detect, gnome→freedesktop→
+// headless order, fallback allowed.
+func (p PlatformConfig) WithDefaults() PlatformConfig {
+	if strings.TrimSpace(p.Adapter) == "" {
+		p.Adapter = "auto"
+	}
+	if len(p.DetectOrder) == 0 {
+		p.DetectOrder = []string{"gnome", "freedesktop", "headless"}
+	}
+	// allowFallback defaults to true; a fully-unset struct (adapter empty) is
+	// treated as fallback-on. An explicit {"allowFallback": false} is honored
+	// only when the user also set an adapter (so it isn't masked by the
+	// auto-default path). For simplicity we default it on whenever auto.
+	if p.Adapter == "auto" {
+		p.AllowFallback = true
+	}
+	return p
+}
+
+// SkillsConfig controls the file-driven skills system: where skill Markdown
+// files live and how much skill guidance is injected per Ask turn. Skills are
+// read-only context (no tool grants, no execution).
+type SkillsConfig struct {
+	// Enabled toggles the whole feature. Because the JSON zero value of a bool
+	// is false, callers treat an entirely-absent skills block as enabled — see
+	// WithDefaults / the absentEnabled handling at the call site.
+	Enabled bool `json:"enabled"`
+	// Dir is the skills directory (supports ~). Default ~/.config/sapaloq/skills.
+	Dir string `json:"dir,omitempty"`
+	// MaxLoadPerTurn bounds how many skills are injected per turn. Default 2.
+	MaxLoadPerTurn int `json:"maxLoadPerTurn,omitempty"`
+	// MaxBodyLines bounds each injected skill body. Default 40.
+	MaxBodyLines int `json:"maxBodyLines,omitempty"`
+}
+
+// WithDefaults fills sane skill defaults and clamps bounds. A fully-unset block
+// (no dir, no limits, enabled=false) is treated as enabled — mirroring the
+// feedback config convention — so an older config without a skills block still
+// gets the feature. An explicit {"enabled": false} disables it.
+func (s SkillsConfig) WithDefaults() SkillsConfig {
+	if !s.Enabled && strings.TrimSpace(s.Dir) == "" && s.MaxLoadPerTurn == 0 && s.MaxBodyLines == 0 {
+		s.Enabled = true
+	}
+	if strings.TrimSpace(s.Dir) == "" {
+		s.Dir = "~/.config/sapaloq/skills"
+	}
+	if s.MaxLoadPerTurn <= 0 {
+		s.MaxLoadPerTurn = 2
+	}
+	if s.MaxLoadPerTurn > 5 {
+		s.MaxLoadPerTurn = 5
+	}
+	if s.MaxBodyLines <= 0 {
+		s.MaxBodyLines = 40
+	}
+	if s.MaxBodyLines < 5 {
+		s.MaxBodyLines = 5
+	}
+	if s.MaxBodyLines > 200 {
+		s.MaxBodyLines = 200
+	}
+	return s
 }
 
 // StorageConfig maps note "intents" and boundary paths the scribe sub-agent may
@@ -375,6 +479,9 @@ func Load(path string) (Config, error) {
 	cfg.Events.Bus.SocketPath = ExpandPath(defaultIfEmpty(cfg.Events.Bus.SocketPath, "~/.config/sapaloq/run/sapaloq.sock"))
 	cfg.Commands = cfg.Commands.WithDefaults()
 	cfg.Orchestrator = cfg.Orchestrator.WithDefaults()
+	cfg.Skills = cfg.Skills.WithDefaults()
+	cfg.Platform = cfg.Platform.WithDefaults()
+	cfg.Nodes = cfg.Nodes.WithDefaults()
 	if err := cfg.Commands.Validate(); err != nil {
 		return Config{}, err
 	}

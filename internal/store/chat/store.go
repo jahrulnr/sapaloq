@@ -146,6 +146,28 @@ func (s *Store) migrate(ctx context.Context) error {
 			correction TEXT,
 			created_at TEXT NOT NULL
 		)`,
+		// nodes registers local + remote execution targets for sub-agents
+		// (see docs/NODES.md). A bootstrapped "local-default" row preserves the
+		// existing in-proc spawn behavior. Tokens are NEVER stored here — comm
+		// specs reference auth via ENV vars. share_memory is only honored for
+		// local nodes (remote always gets a bounded context packet).
+		`CREATE TABLE IF NOT EXISTS nodes (
+			name TEXT PRIMARY KEY,
+			role TEXT NOT NULL DEFAULT '*',
+			wrapper TEXT NOT NULL DEFAULT 'local',
+			address TEXT NOT NULL DEFAULT '',
+			communicate TEXT NOT NULL DEFAULT 'unix',
+			comm_spec_path TEXT NOT NULL DEFAULT '',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			priority INTEGER NOT NULL DEFAULT 0,
+			capabilities TEXT NOT NULL DEFAULT '[]',
+			share_memory INTEGER NOT NULL DEFAULT 0,
+			last_seen_at TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role, enabled, priority DESC)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {

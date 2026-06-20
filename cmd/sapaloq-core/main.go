@@ -16,7 +16,20 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/core/orchestrator"
 	"github.com/jahrulnr/sapaloq/internal/debug"
 	"github.com/jahrulnr/sapaloq/internal/ipc"
+	"github.com/jahrulnr/sapaloq/internal/platform"
+	"github.com/jahrulnr/sapaloq/internal/platform/freedesktop"
 )
+
+// init registers the concrete desktop backends so platform.Detect can build
+// them. The core stays OS-agnostic: backends self-probe the session bus and
+// fall back to headless when unavailable.
+func init() {
+	platform.RegisterFactory(platform.AdapterFreedesktop, freedesktop.Factory())
+	platform.RegisterFactory(platform.AdapterGnome, freedesktop.Factory(
+		freedesktop.WithAdapterID("gnome-v1"),
+		freedesktop.WithDE("gnome"),
+	))
+}
 
 func main() {
 	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
@@ -73,6 +86,7 @@ func main() {
 		entry, _ := cfg.LLMBridge.ActiveProvider()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		orch.StartConfigWatcher(ctx)
+		startNotifyWatch(ctx, orch)
 		defer stop()
 		fmt.Printf("sapaloq-core listening on %s%s\n", dirs.SocketPath, envDebugHint())
 		if debug.Enabled() {
@@ -84,6 +98,38 @@ func main() {
 	default:
 		exitf("unknown command %q\n\n%s", cmd, usageText)
 	}
+}
+
+// startNotifyWatch bridges incoming desktop notifications onto the event bus
+// under the canonical topic sapaloq.v1.platform.notification. It is a no-op when
+// the active adapter lacks CapNotifyWatch (headless returns a closed channel, so
+// the goroutine exits immediately).
+func startNotifyWatch(ctx context.Context, orch *orchestrator.Orchestrator) {
+	d := orch.Desktop()
+	if !platform.Has(d.Capabilities(), platform.CapNotifyWatch) {
+		return
+	}
+	ch, err := d.NotifyWatch(ctx)
+	if err != nil || ch == nil {
+		debug.Debugf("platform: notify-watch unavailable: %v", err)
+		return
+	}
+	b := orch.Bus()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				if b != nil {
+					b.Publish("sapaloq.v1.platform.notification", orchestrator.NotificationStreamEvent(ev))
+				}
+			}
+		}
+	}()
 }
 
 func newOrchestrator(cfg config.Config, cfgPath string) (*orchestrator.Orchestrator, error) {

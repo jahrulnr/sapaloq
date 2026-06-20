@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +15,9 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/debug"
 	"github.com/jahrulnr/sapaloq/internal/parse"
+	"github.com/jahrulnr/sapaloq/internal/platform"
+	"github.com/jahrulnr/sapaloq/internal/platform/headless"
+	"github.com/jahrulnr/sapaloq/internal/skills"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 	"github.com/jahrulnr/sapaloq/internal/vault"
 )
@@ -38,6 +43,9 @@ type Orchestrator struct {
 	sessionTasks map[string]map[string]struct{}
 	visionMu     sync.RWMutex
 	vision       map[string]bool
+	skillsMu     sync.RWMutex
+	skills       []skills.Skill
+	desktop      platform.Desktop
 }
 
 type activeRun struct {
@@ -64,7 +72,22 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	// Best-effort audit log of every tool the orchestrator executes. If the
 	// writer can't be created we proceed with a nil writer (auditTool no-ops).
 	vaultWriter, _ := vault.New(filepath.Join(dirs.VaultDir, "tool-calls.jsonl"))
-	return &Orchestrator{
+	// Load file-driven skills (read-only context). Errors are non-fatal: a
+	// missing/unreadable skills dir simply leaves the feature inert.
+	var loadedSkills []skills.Skill
+	if cfg.Skills.WithDefaults().Enabled {
+		loadedSkills, _ = skills.Load(config.ExpandPath(cfg.Skills.WithDefaults().Dir))
+	}
+	// Detect the desktop adapter (notifications/DND). Falls back to headless on
+	// non-Linux/headless hosts or when no real backend is registered, so this
+	// never fails startup.
+	pc := cfg.Platform.WithDefaults()
+	desktop := platform.Detect(
+		platform.Prefs{Adapter: pc.Adapter, DetectOrder: pc.DetectOrder, Fallback: pc.AllowFallback},
+		platform.EnvFromOS(runtime.GOOS),
+		func() platform.Desktop { return headless.New() },
+	)
+	o := &Orchestrator{
 		cfgPath:      cfgPath,
 		cfg:          cfg,
 		entry:        entry,
@@ -80,10 +103,60 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		taskSignals:  make(map[string]chan struct{}),
 		sessionTasks: make(map[string]map[string]struct{}),
 		vision:       make(map[string]bool),
-	}, nil
+		skills:       loadedSkills,
+		desktop:      desktop,
+	}
+	// Best-effort: index skill bodies into facts (kind="skill") so the
+	// secondary FTS match in skillsBlock can find them. Never fatal.
+	o.indexSkills(context.Background())
+	// Ensure the local-default execution node exists so spawns always have a
+	// routable in-proc target. Best-effort.
+	o.bootstrapLocalDefaultNode(context.Background())
+	return o, nil
 }
 
 func (o *Orchestrator) Bus() *bus.Bus { return o.bus }
+
+// indexSkills upserts the in-memory skills into the facts store under
+// kind="skill" so SearchFacts can surface them as a secondary signal. It is
+// idempotent per boot: a skill id already present is left untouched. Best-effort
+// — any error is ignored so indexing never disrupts startup.
+func (o *Orchestrator) indexSkills(ctx context.Context) {
+	if o == nil || o.chat == nil || len(o.skills) == 0 {
+		return
+	}
+	existing, err := o.chat.RecentFacts(ctx, "skill", 1000)
+	if err != nil {
+		return
+	}
+	have := make(map[string]struct{}, len(existing))
+	for _, f := range existing {
+		if id, _, ok := splitSkillFact(f.Content); ok {
+			have[id] = struct{}{}
+		}
+	}
+	for _, sk := range o.skills {
+		if _, ok := have[sk.ID]; ok {
+			continue
+		}
+		content := sk.ID + "\n" + strings.Join(sk.Triggers, " ") + "\n" + sk.Body
+		_, _ = o.chat.AddFact(ctx, "skill", content)
+	}
+}
+
+// splitSkillFact parses a fact stored by indexSkills back into its skill id and
+// trigger line. Layout: "<id>\n<triggers...>\n<body>".
+func splitSkillFact(content string) (id, triggers string, ok bool) {
+	parts := strings.SplitN(content, "\n", 3)
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return "", "", false
+	}
+	id = strings.TrimSpace(parts[0])
+	if len(parts) >= 2 {
+		triggers = parts[1]
+	}
+	return id, triggers, true
+}
 
 // auditTool appends an executed tool call to the vault audit log. It is
 // best-effort: a nil writer or a write error is silently ignored so auditing

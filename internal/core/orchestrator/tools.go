@@ -23,8 +23,15 @@ var readOnlyAssessmentTools = []string{
 	"web_fetch",
 }
 
+// desktopTools: host-desktop integration (notifications / DND). Gated by the
+// active adapter's capabilities at execution time.
+var desktopTools = []string{
+	"desktop_notify",
+	"desktop_dnd_status",
+}
+
 // askTools: orchestrator coordinates and may assess lightly before delegating.
-var askTools = append([]string{
+var askTools = append(append([]string{
 	"sapaloq_spawn_plan",
 	"sapaloq_spawn_agent",
 	"sapaloq_spawn_scribe",
@@ -32,7 +39,7 @@ var askTools = append([]string{
 	"sapaloq_wait",
 	"sapaloq_answer_clarification",
 	"sapaloq_stop",
-}, readOnlyAssessmentTools...)
+}, readOnlyAssessmentTools...), desktopTools...)
 
 // scribeTools: a named sub-agent that captures notes into the user's storage by
 // boundary. It is read-only on the project (assessment tools) and may only
@@ -65,6 +72,7 @@ var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"sapaloq_complete_task",
 	"sapaloq_fail_task",
 	"sapaloq_request_clarification",
+	"desktop_notify",
 )
 
 // staticToolsForRole returns the built-in declared-tool profile for a role.
@@ -117,7 +125,7 @@ func (o *Orchestrator) toolsForRole(role string) []string {
 // names the orchestrator actually implements.
 func knownToolSet() map[string]struct{} {
 	set := map[string]struct{}{}
-	for _, profile := range [][]string{askTools, planTools, agentTools, scribeTools} {
+	for _, profile := range [][]string{askTools, planTools, agentTools, scribeTools, desktopTools} {
 		for _, name := range profile {
 			set[name] = struct{}{}
 		}
@@ -303,4 +311,16 @@ func init() {
 		},
 		"required":["note"]
 	}`)
+
+	reg("desktop_notify", `{
+		"type":"object",
+		"properties":{
+			"title":{"type":"string","description":"Notification title."},
+			"body":{"type":"string","description":"Notification body text."},
+			"urgency":{"type":"string","description":"Optional urgency: low | normal | critical (default normal)."}
+		},
+		"required":["title"]
+	}`)
+
+	reg("desktop_dnd_status", `{"type":"object","properties":{}}`)
 }

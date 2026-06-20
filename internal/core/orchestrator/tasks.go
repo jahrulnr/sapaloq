@@ -35,7 +35,10 @@ type taskRecord struct {
 	Transcript []taskTurn `json:"transcript,omitempty"`
 	// Answer is the user's clarification answer, set transiently on resume and
 	// consumed by buildSubAgentMessages as the resume nudge.
-	Answer    string    `json:"answer,omitempty"`
+	Answer string `json:"answer,omitempty"`
+	// Node is the execution node this task was routed to (observability).
+	// "local-default" (or empty) means in-proc execution.
+	Node      string    `json:"node,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -225,6 +228,10 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			return askToolResult{text: fmt.Sprintf("generation and %d task(s) stopped: %s", stopped, reason), handled: true, stop: true}
 		}
 		return askToolResult{text: "Invalid stop scope: " + scope, handled: true}
+	case "desktop_notify":
+		return askToolResult{text: o.toolDesktopNotify(ctx, parseToolArgs(call.Arguments)), handled: true}
+	case "desktop_dnd_status":
+		return askToolResult{text: o.toolDesktopDNDStatus(ctx), handled: true}
 	default:
 		// Read-only assessment + web tools shared across all modes so Ask is
 		// no longer blind: it can read, search, and research before delegating.
@@ -278,7 +285,11 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("task-%d", now.UnixNano())
-	record := taskRecord{ID: id, SessionID: sessionID, Role: role, Status: "pending", Task: task, PlanTaskID: planTaskID, CreatedAt: now, UpdatedAt: now}
+	// Route the spawn to an execution node. With only local-default configured
+	// this resolves to in-proc execution (unchanged behavior). The chosen node
+	// name is recorded for observability.
+	node := o.pickNode(context.Background(), role, "")
+	record := taskRecord{ID: id, SessionID: sessionID, Role: role, Status: "pending", Task: task, PlanTaskID: planTaskID, Node: node.Name, CreatedAt: now, UpdatedAt: now}
 	if err := o.writeTask(record); err != nil {
 		return "", err
 	}
