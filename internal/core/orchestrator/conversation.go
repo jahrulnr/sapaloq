@@ -163,7 +163,13 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 			bridge.Message{Role: "assistant", Content: response.String()},
 			bridge.Message{Role: "user", Content: "[Tool results]\n" + strings.Join(toolResults, "\n\n") + "\nContinue the original request using these results. Do not repeat the tool call unless another tool action is required."},
 		)
-		images = nil
+		// Re-extract images from the freshly appended tool-results message so a
+		// read_image tool call (which returns inline-image markdown) becomes real
+		// vision input on the next turn — the same channel widget attachments use.
+		cleanMessages, images = extractImages(cleanMessages)
+		if len(images) > 0 && !o.visionAllowed(snap.entry.Key, snap.entry.Model) {
+			return all, fmt.Errorf("model %s is marked as not supporting image input", snap.entry.Model)
+		}
 	}
 	return all, fmt.Errorf("inference-turn budget exhausted after %d turns", budget.MaxInferenceTurns)
 }

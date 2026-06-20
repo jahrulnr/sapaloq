@@ -1689,6 +1689,7 @@ Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 | `orchestrator.spawnRouting.agentToolPolicy` | `"full"`        | Agent unrestricted post-plan                         |
 | `orchestrator.spawnRouting.autoApprovePlan` | `false`         | User reviews plans                                   |
 | Unrestricted host tool (`system_exec`) | available in **all** modes | Run any command anywhere (not sandboxed to workspace) — also reads any host file via `cat`/`sed`/`head`/`tail`/`rg`; shared dispatch in every mode — see `internal/core/orchestrator/tools_system.go` |
+| Local image vision (`read_image`) | available in **all** modes | Read a local image file (png/jpeg/gif/webp) into the model's vision — returns inline `data:` markdown that `extractImages` re-ingests into `bridge.Request.Images` (same channel as widget attachments); needs a vision-capable model |
 | `nodes.allowSharedMemoryRemote`             | `false`         | Remote = context packet only                         |
 | `events.bus.wakeViaBus`                     | `true`          | Bus primary wake                                     |
 | `feedback.banditTunePrefetch`               | `true`          | Lightweight RL on rules                              |

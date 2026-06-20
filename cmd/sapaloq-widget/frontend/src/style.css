@@ -62,7 +62,9 @@ textarea { font: inherit; }
   flex-direction: column;
   justify-content: flex-end;
   align-items: flex-start;
-  padding: 10px;
+  /* Breathing room so the popup's drop shadow fades within the window instead
+     of being clipped at the transparent edge. */
+  padding: 16px 16px 12px;
   background: transparent;
 }
 
@@ -84,10 +86,12 @@ textarea { font: inherit; }
     radial-gradient(circle at 16% -10%, oklch(73% 0.16 186 / 0.22), transparent 32%),
     radial-gradient(circle at 102% 10%, oklch(65% 0.18 292 / 0.24), transparent 38%),
     linear-gradient(145deg, var(--shell-strong), var(--shell));
+  /* Keep the drop shadow tight enough that it fades out well within the
+     transparent window bounds — a large/offset shadow gets hard-clipped by the
+     window edge (html/body overflow:hidden) and reads as a thin, ragged line. */
   box-shadow:
-    0 28px 80px oklch(0% 0 0 / 0.48),
-    0 8px 24px oklch(0% 0 0 / 0.28),
-    inset 0 1px 0 oklch(100% 0 0 / 0.16);
+    0 14px 40px oklch(0% 0 0 / 0.42),
+    inset 0 1px 0 oklch(100% 0 0 / 0.14);
   opacity: 0;
   transform: translateY(14px) scale(0.96);
   pointer-events: none;

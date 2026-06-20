@@ -19,6 +19,7 @@ var readOnlyAssessmentTools = []string{
 	"workspace_search",
 	"workspace_list_dir",
 	"workspace_glob",
+	"read_image",
 	"web_search",
 	"web_fetch",
 }
@@ -261,6 +262,15 @@ func init() {
 			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
 		},
 		"required":["command"]
+	}`)
+
+	reg("read_image", `{
+		"type":"object",
+		"properties":{
+			"path":{"type":"string","description":"Path to an image file on the host (absolute, ~-relative, or relative to CWD). Loads the actual image into your vision so you can SEE it — use this for local image files (png, jpeg, gif, webp). Do NOT use workspace_read_file/system_exec to read image bytes as text; use this instead. Requires a vision-capable model."},
+			"max_bytes":{"type":"integer","description":"Optional cap on bytes read (default 10485760 / 10 MiB; larger files are refused)."}
+		},
+		"required":["path"]
 	}`)
 
 	reg("sapaloq_write_plan_markdown", `{
