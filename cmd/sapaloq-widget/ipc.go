@@ -68,8 +68,16 @@ type chatHistoryResult struct {
 }
 
 func sendChat(socketPath, sessionID, message string) (chatResult, error) {
+	return sendChatWithStatus(socketPath, sessionID, message, nil)
+}
+
+func sendChatWithStatus(socketPath, sessionID, message string, onStatus func(bridge.StreamEvent)) (chatResult, error) {
 	var result chatResult
-	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_send", SessionID: sessionID, Message: message})
+	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_send", SessionID: sessionID, Message: message}, func(res ipcResponse) {
+		if onStatus != nil && res.Event != nil && res.Event.Kind == bridge.EventStatus {
+			onStatus(*res.Event)
+		}
+	})
 	if err != nil {
 		return result, err
 	}
@@ -129,8 +137,16 @@ func deleteChatTurn(socketPath, sessionID string, turnID int64) error {
 }
 
 func retryChatTurn(socketPath, sessionID string, turnID int64) (chatResult, error) {
+	return retryChatTurnWithStatus(socketPath, sessionID, turnID, nil)
+}
+
+func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, onStatus func(bridge.StreamEvent)) (chatResult, error) {
 	var result chatResult
-	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_retry", SessionID: sessionID, TurnID: turnID})
+	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_retry", SessionID: sessionID, TurnID: turnID}, func(res ipcResponse) {
+		if onStatus != nil && res.Event != nil && res.Event.Kind == bridge.EventStatus {
+			onStatus(*res.Event)
+		}
+	})
 	if err != nil {
 		return result, err
 	}
@@ -150,6 +166,17 @@ func retryChatTurn(socketPath, sessionID string, turnID int64) (chatResult, erro
 	}
 	result.OK = true
 	return result, nil
+}
+
+func stopChat(socketPath, sessionID string) error {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_stop", SessionID: sessionID, Scope: "generation"})
+	if err != nil {
+		return err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		return fmt.Errorf("core error")
+	}
+	return nil
 }
 
 func contextUsage(socketPath string) (*chatUsage, error) {
@@ -215,6 +242,10 @@ func pingCore(socketPath string) (pingResult, error) {
 }
 
 func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
+	return roundTripWithEvent(socketPath, req, nil)
+}
+
+func roundTripWithEvent(socketPath string, req ipcRequest, onResponse func(ipcResponse)) ([]ipcResponse, error) {
 	conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", socketPath, err)
@@ -222,8 +253,8 @@ func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
 	defer conn.Close()
 
 	deadline := 3 * time.Second
-	if req.Op == "chat_send" {
-		deadline = 5 * time.Minute
+	if req.Op == "chat_send" || req.Op == "chat_retry" {
+		deadline = 35 * time.Minute
 	}
 	if err := conn.SetDeadline(time.Now().Add(deadline)); err != nil {
 		return nil, fmt.Errorf("set deadline: %w", err)
@@ -241,7 +272,10 @@ func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
 			return nil, fmt.Errorf("decode: %w", err)
 		}
 		responses = append(responses, res)
-		if req.Op != "chat_send" || res.Op == "event" && res.Event != nil && res.Event.Kind == bridge.EventDone {
+		if onResponse != nil {
+			onResponse(res)
+		}
+		if req.Op != "chat_send" && req.Op != "chat_retry" || res.Op == "event" && res.Event != nil && res.Event.Kind == bridge.EventDone {
 			break
 		}
 	}

@@ -122,6 +122,20 @@
   "orchestrator": {
     "maxConcurrentSubAgents": 4,
     "defaultMode": "auto",
+    "continuation": {
+      "maxInferenceTurns": 128,
+      "maxToolCalls": 512,
+      "maxWallTimeMinutes": 30,
+      "maxNoProgressTurns": 5,
+      "maxIdenticalToolCalls": 5,
+      "maxWaitSeconds": 120
+    },
+    "compaction": {
+      "backgroundThreshold": 0.7,
+      "blockingThreshold": 0.88,
+      "preserveRecentFraction": 0.3,
+      "resumeAfterCompaction": true
+    },
     "antiContextPoisoning": {
       "enabled": true,
       "requireExplicitTaskSwitch": true,

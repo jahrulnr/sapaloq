@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -16,16 +15,30 @@ import (
 )
 
 type Orchestrator struct {
-	cfgPath    string
-	cfg        config.Config
-	entry      config.LLMBridge
-	bridge     bridge.Bridge
-	bus        *bus.Bus
-	progress   ProgressWriter
-	chat       *chatstore.Store
-	memoryDir  string
-	mu         sync.RWMutex
-	cfgModTime time.Time
+	cfgPath      string
+	cfg          config.Config
+	entry        config.LLMBridge
+	bridge       bridge.Bridge
+	bus          *bus.Bus
+	progress     ProgressWriter
+	chat         *chatstore.Store
+	memoryDir    string
+	mu           sync.RWMutex
+	cfgModTime   time.Time
+	activeMu     sync.Mutex
+	active       map[string]*activeRun
+	runSeq       uint64
+	taskMu       sync.Mutex
+	taskCancels  map[string]context.CancelFunc
+	taskSignals  map[string]chan struct{}
+	sessionTasks map[string]map[string]struct{}
+	visionMu     sync.RWMutex
+	vision       map[string]bool
+}
+
+type activeRun struct {
+	id     uint64
+	cancel context.CancelFunc
 }
 
 func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) (*Orchestrator, error) {
@@ -45,15 +58,20 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		}
 	}
 	return &Orchestrator{
-		cfgPath:    cfgPath,
-		cfg:        cfg,
-		entry:      entry,
-		bridge:     b,
-		bus:        eventBus,
-		progress:   ProgressWriter{Dir: dirs.ProgressDir},
-		chat:       chatStore,
-		memoryDir:  dirs.MemoryDir,
-		cfgModTime: modTime,
+		cfgPath:      cfgPath,
+		cfg:          cfg,
+		entry:        entry,
+		bridge:       b,
+		bus:          eventBus,
+		progress:     ProgressWriter{Dir: dirs.ProgressDir},
+		chat:         chatStore,
+		memoryDir:    dirs.MemoryDir,
+		cfgModTime:   modTime,
+		active:       make(map[string]*activeRun),
+		taskCancels:  make(map[string]context.CancelFunc),
+		taskSignals:  make(map[string]chan struct{}),
+		sessionTasks: make(map[string]map[string]struct{}),
+		vision:       make(map[string]bool),
 	}, nil
 }
 
@@ -70,8 +88,12 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		}
 	}
 	out := make(chan bridge.StreamEvent, 32)
+	runCtx, cancel := context.WithCancel(ctx)
+	runID := o.setActiveGeneration(sessionID, cancel)
 	go func() {
 		defer close(out)
+		defer o.clearActiveGeneration(sessionID, runID)
+		defer cancel()
 		if entry, ok := MatchRegistry(message, snap.cfg.Commands); ok {
 			debug.Debugf("orchestrator: slash route id=%s session=%s", entry.ID, sessionID)
 			o.handleSlash(ctx, out, sessionID, entry.ID, message)
@@ -84,31 +106,11 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 			return
 		}
-		stream, err := snap.br.Complete(ctx, bridge.Request{SessionID: sessionID, Messages: messages, Model: snap.entry.Model, DeclaredTools: askTools})
+		assistant, err := o.runConversation(runCtx, snap, out, sessionID, message, messages)
 		if err != nil {
-			debug.Debugf("orchestrator: bridge error session=%s err=%v", sessionID, err)
-			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+			debug.Debugf("orchestrator: conversation error session=%s err=%v", sessionID, err)
+			o.emit(runCtx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 			return
-		}
-		var assistant strings.Builder
-		var toolResponses []string
-		for ev := range stream {
-			if ev.SessionID == "" {
-				ev.SessionID = sessionID
-			}
-			if ev.Kind == bridge.EventResponseDelta {
-				assistant.WriteString(ev.Delta)
-			}
-			if ev.Kind == bridge.EventToolCall && ev.ToolCall != nil {
-				if response, handled := o.handleAskTool(ctx, snap, sessionID, message, *ev.ToolCall); handled {
-					toolResponses = append(toolResponses, response)
-				}
-			}
-			o.emit(ctx, out, ev)
-		}
-		for _, response := range toolResponses {
-			assistant.WriteString(response)
-			o.emit(ctx, out, responseEvent(sessionID, response))
 		}
 		_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
 		usage, _ := o.ContextUsage(ctx, sessionID)
@@ -144,45 +146,119 @@ func (o *Orchestrator) RetryChat(ctx context.Context, sessionID string, turnID i
 		return nil, err
 	}
 	out := make(chan bridge.StreamEvent, 32)
-	go o.completeExistingTurn(ctx, snap, out, sessionID, turn.Content)
+	runCtx, cancel := context.WithCancel(ctx)
+	runID := o.setActiveGeneration(sessionID, cancel)
+	go o.completeExistingTurn(runCtx, cancel, runID, snap, out, sessionID, turn.Content)
 	return out, nil
 }
 
-func (o *Orchestrator) completeExistingTurn(ctx context.Context, snap providerSnapshot, out chan bridge.StreamEvent, sessionID, message string) {
+func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.CancelFunc, runID uint64, snap providerSnapshot, out chan bridge.StreamEvent, sessionID, message string) {
 	defer close(out)
+	defer o.clearActiveGeneration(sessionID, runID)
+	defer cancel()
 	messages, err := o.contextMessages(ctx, sessionID, message)
 	if err != nil {
 		o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 		return
 	}
-	stream, err := snap.br.Complete(ctx, bridge.Request{SessionID: sessionID, Messages: messages, Model: snap.entry.Model, DeclaredTools: askTools})
+	assistant, err := o.runConversation(ctx, snap, out, sessionID, message, messages)
 	if err != nil {
 		o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 		return
 	}
-	var assistant strings.Builder
-	var toolResponses []string
-	for ev := range stream {
-		if ev.SessionID == "" {
-			ev.SessionID = sessionID
-		}
-		if ev.Kind == bridge.EventResponseDelta {
-			assistant.WriteString(ev.Delta)
-		}
-		if ev.Kind == bridge.EventToolCall && ev.ToolCall != nil {
-			if response, handled := o.handleAskTool(ctx, snap, sessionID, message, *ev.ToolCall); handled {
-				toolResponses = append(toolResponses, response)
-			}
-		}
-		o.emit(ctx, out, ev)
-	}
-	for _, response := range toolResponses {
-		assistant.WriteString(response)
-		o.emit(ctx, out, responseEvent(sessionID, response))
-	}
 	_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
 	usage, _ := o.ContextUsage(ctx, sessionID)
 	_ = o.chat.SnapshotUsage(ctx, usage)
+}
+
+func (o *Orchestrator) setActiveGeneration(sessionID string, cancel context.CancelFunc) uint64 {
+	o.activeMu.Lock()
+	o.runSeq++
+	runID := o.runSeq
+	if previous := o.active[sessionID]; previous != nil {
+		previous.cancel()
+	}
+	o.active[sessionID] = &activeRun{id: runID, cancel: cancel}
+	o.activeMu.Unlock()
+	return runID
+}
+
+func (o *Orchestrator) clearActiveGeneration(sessionID string, runID uint64) {
+	o.activeMu.Lock()
+	if current := o.active[sessionID]; current != nil && current.id == runID {
+		delete(o.active, sessionID)
+	}
+	o.activeMu.Unlock()
+}
+
+func (o *Orchestrator) StopChat(sessionID string) bool {
+	stopped, _ := o.Stop(sessionID, "generation", "")
+	return stopped
+}
+
+func (o *Orchestrator) Stop(sessionID, scope, taskID string) (bool, string) {
+	if scope == "" {
+		scope = "generation"
+	}
+	stopped := false
+	if scope == "generation" || scope == "all" {
+		o.activeMu.Lock()
+		run := o.active[sessionID]
+		o.activeMu.Unlock()
+		if run != nil {
+			run.cancel()
+			stopped = true
+		}
+	}
+	if scope == "task" {
+		if o.stopTask(taskID) {
+			return true, "task stopped"
+		}
+		return stopped, "no active task"
+	}
+	if scope == "all" {
+		for _, id := range o.tasksForSession(sessionID) {
+			if o.stopTask(id) {
+				stopped = true
+			}
+		}
+	}
+	if scope != "generation" && scope != "all" {
+		return false, "invalid stop scope"
+	}
+	if stopped {
+		return true, scope + " stopped"
+	}
+	return false, "no active " + scope
+}
+
+func (o *Orchestrator) tasksForSession(sessionID string) []string {
+	o.taskMu.Lock()
+	defer o.taskMu.Unlock()
+	var ids []string
+	for id := range o.sessionTasks[sessionID] {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (o *Orchestrator) stopTask(taskID string) bool {
+	if taskID == "" {
+		return false
+	}
+	o.taskMu.Lock()
+	cancel := o.taskCancels[taskID]
+	o.taskMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	if record, err := o.readTask(taskID); err == nil && !taskTerminal(record.Status) {
+		record.Status = "stopping"
+		record.UpdatedAt = time.Now().UTC()
+		_ = o.writeTask(record)
+	}
+	return true
 }
 
 func (o *Orchestrator) emit(ctx context.Context, out chan<- bridge.StreamEvent, ev bridge.StreamEvent) bool {
@@ -213,6 +289,8 @@ func topicFor(kind bridge.EventKind) string {
 		return "sapaloq.v1.chat.response"
 	case bridge.EventToolCall:
 		return "sapaloq.v1.chat.tool_call"
+	case bridge.EventStatus:
+		return "sapaloq.v1.chat.status"
 	default:
 		return "sapaloq.v1.chat." + string(kind)
 	}

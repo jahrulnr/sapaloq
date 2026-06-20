@@ -151,3 +151,24 @@ func TestLLMBridgeRootActiveProviderMissing(t *testing.T) {
 		t.Fatal("expected error for missing key")
 	}
 }
+
+func TestOrchestratorConfigDefaultsAndOverrides(t *testing.T) {
+	defaults := (OrchestratorConfig{}).WithDefaults()
+	if defaults.Continuation.MaxInferenceTurns != 128 || defaults.Continuation.MaxToolCalls != 512 {
+		t.Fatalf("unexpected continuation defaults: %+v", defaults.Continuation)
+	}
+	if defaults.Compaction.BackgroundThreshold != 0.70 || defaults.Compaction.BlockingThreshold != 0.88 {
+		t.Fatalf("unexpected compaction defaults: %+v", defaults.Compaction)
+	}
+
+	custom := OrchestratorConfig{
+		Continuation: ContinuationConfig{MaxInferenceTurns: 256},
+		Compaction:   CompactionConfig{BackgroundThreshold: 0.60, BlockingThreshold: 0.90, PreserveRecentFraction: 0.40},
+	}.WithDefaults()
+	if custom.Continuation.MaxInferenceTurns != 256 {
+		t.Fatalf("custom max inference turns lost: %+v", custom.Continuation)
+	}
+	if custom.Compaction.BackgroundThreshold != 0.60 || custom.Compaction.PreserveRecentFraction != 0.40 {
+		t.Fatalf("custom compaction config lost: %+v", custom.Compaction)
+	}
+}

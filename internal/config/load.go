@@ -10,11 +10,12 @@ import (
 )
 
 type Config struct {
-	SchemaVersion string         `json:"schemaVersion"`
-	Runtime       RuntimeConfig  `json:"runtime"`
-	LLMBridge     LLMBridgeRoot  `json:"llmBridge"`
-	Commands      CommandsConfig `json:"commands"`
-	Events        EventsConfig   `json:"events"`
+	SchemaVersion string             `json:"schemaVersion"`
+	Runtime       RuntimeConfig      `json:"runtime"`
+	LLMBridge     LLMBridgeRoot      `json:"llmBridge"`
+	Commands      CommandsConfig     `json:"commands"`
+	Events        EventsConfig       `json:"events"`
+	Orchestrator  OrchestratorConfig `json:"orchestrator"`
 }
 
 type RuntimeConfig struct {
@@ -149,6 +150,81 @@ type BusConfig struct {
 	SocketPath string `json:"socketPath"`
 }
 
+type OrchestratorConfig struct {
+	Continuation ContinuationConfig `json:"continuation"`
+	Compaction   CompactionConfig   `json:"compaction"`
+}
+
+type ContinuationConfig struct {
+	MaxInferenceTurns     int `json:"maxInferenceTurns"`
+	MaxToolCalls          int `json:"maxToolCalls"`
+	MaxWallTimeMinutes    int `json:"maxWallTimeMinutes"`
+	MaxNoProgressTurns    int `json:"maxNoProgressTurns"`
+	MaxIdenticalToolCalls int `json:"maxIdenticalToolCalls"`
+	MaxWaitSeconds        int `json:"maxWaitSeconds"`
+}
+
+type CompactionConfig struct {
+	BackgroundThreshold    float64 `json:"backgroundThreshold"`
+	BlockingThreshold      float64 `json:"blockingThreshold"`
+	PreserveRecentFraction float64 `json:"preserveRecentFraction"`
+	ResumeAfterCompaction  bool    `json:"resumeAfterCompaction"`
+}
+
+func DefaultOrchestratorConfig() OrchestratorConfig {
+	return OrchestratorConfig{
+		Continuation: ContinuationConfig{
+			MaxInferenceTurns:     128,
+			MaxToolCalls:          512,
+			MaxWallTimeMinutes:    30,
+			MaxNoProgressTurns:    5,
+			MaxIdenticalToolCalls: 5,
+			MaxWaitSeconds:        120,
+		},
+		Compaction: CompactionConfig{
+			BackgroundThreshold:    0.70,
+			BlockingThreshold:      0.88,
+			PreserveRecentFraction: 0.30,
+			ResumeAfterCompaction:  true,
+		},
+	}
+}
+
+func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
+	defaults := DefaultOrchestratorConfig()
+	if c.Continuation.MaxInferenceTurns <= 0 {
+		c.Continuation.MaxInferenceTurns = defaults.Continuation.MaxInferenceTurns
+	}
+	if c.Continuation.MaxToolCalls <= 0 {
+		c.Continuation.MaxToolCalls = defaults.Continuation.MaxToolCalls
+	}
+	if c.Continuation.MaxWallTimeMinutes <= 0 {
+		c.Continuation.MaxWallTimeMinutes = defaults.Continuation.MaxWallTimeMinutes
+	}
+	if c.Continuation.MaxNoProgressTurns <= 0 {
+		c.Continuation.MaxNoProgressTurns = defaults.Continuation.MaxNoProgressTurns
+	}
+	if c.Continuation.MaxIdenticalToolCalls <= 0 {
+		c.Continuation.MaxIdenticalToolCalls = defaults.Continuation.MaxIdenticalToolCalls
+	}
+	if c.Continuation.MaxWaitSeconds <= 0 {
+		c.Continuation.MaxWaitSeconds = defaults.Continuation.MaxWaitSeconds
+	}
+	if c.Compaction.BackgroundThreshold <= 0 || c.Compaction.BackgroundThreshold >= 1 {
+		c.Compaction.BackgroundThreshold = defaults.Compaction.BackgroundThreshold
+	}
+	if c.Compaction.BlockingThreshold <= 0 || c.Compaction.BlockingThreshold >= 1 {
+		c.Compaction.BlockingThreshold = defaults.Compaction.BlockingThreshold
+	}
+	if c.Compaction.BlockingThreshold < c.Compaction.BackgroundThreshold {
+		c.Compaction.BlockingThreshold = defaults.Compaction.BlockingThreshold
+	}
+	if c.Compaction.PreserveRecentFraction <= 0 || c.Compaction.PreserveRecentFraction >= 1 {
+		c.Compaction.PreserveRecentFraction = defaults.Compaction.PreserveRecentFraction
+	}
+	return c
+}
+
 func DefaultConfig() Config {
 	return Config{
 		SchemaVersion: "1.0.0",
@@ -168,8 +244,9 @@ func DefaultConfig() Config {
 				},
 			},
 		},
-		Commands: DefaultCommands(),
-		Events:   EventsConfig{Bus: BusConfig{SocketPath: "~/.config/sapaloq/run/sapaloq.sock"}},
+		Commands:     DefaultCommands(),
+		Events:       EventsConfig{Bus: BusConfig{SocketPath: "~/.config/sapaloq/run/sapaloq.sock"}},
+		Orchestrator: DefaultOrchestratorConfig(),
 	}
 }
 
@@ -194,6 +271,7 @@ func Load(path string) (Config, error) {
 	cfg.Runtime.DataDir = ExpandPath(defaultIfEmpty(cfg.Runtime.DataDir, defaultDataDir))
 	cfg.Events.Bus.SocketPath = ExpandPath(defaultIfEmpty(cfg.Events.Bus.SocketPath, "~/.config/sapaloq/run/sapaloq.sock"))
 	cfg.Commands = cfg.Commands.WithDefaults()
+	cfg.Orchestrator = cfg.Orchestrator.WithDefaults()
 	if err := cfg.Commands.Validate(); err != nil {
 		return Config{}, err
 	}

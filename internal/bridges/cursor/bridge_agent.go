@@ -30,6 +30,9 @@ func wantsAgentPath(req bridge.Request) bool {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("SAPALOQ_AGENT_PATH")), "1") {
 		return true
 	}
+	if len(req.Images) > 0 {
+		return true
+	}
 	for _, m := range req.Messages {
 		if strings.Contains(m.Content, "data:image/") {
 			return true

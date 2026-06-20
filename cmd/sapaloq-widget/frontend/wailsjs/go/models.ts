@@ -7,6 +7,7 @@ export namespace bridge {
 	    tool_call?: parse.ToolCall;
 	    leak?: string;
 	    error?: string;
+	    status?: string;
 	    // Go type: time
 	    at: any;
 	
@@ -22,6 +23,7 @@ export namespace bridge {
 	        this.tool_call = this.convertValues(source["tool_call"], parse.ToolCall);
 	        this.leak = source["leak"];
 	        this.error = source["error"];
+	        this.status = source["status"];
 	        this.at = this.convertValues(source["at"], null);
 	    }
 	
@@ -196,6 +198,7 @@ export namespace main {
 	
 	
 	export class droppedFile {
+	    path?: string;
 	    name: string;
 	    mime: string;
 	    size: number;
@@ -209,6 +212,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
 	        this.name = source["name"];
 	        this.mime = source["mime"];
 	        this.size = source["size"];

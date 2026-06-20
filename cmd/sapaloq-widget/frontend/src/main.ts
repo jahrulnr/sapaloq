@@ -1,15 +1,15 @@
 import './style.css';
-import { ChatHistory, ContextUsage, DeleteChatTurn, PingCore, ReadDroppedFile, RetryChatTurn, SendMessage, SlashSuggest } from '../wailsjs/go/main/App';
-import { OnFileDrop } from '../wailsjs/runtime/runtime';
+import { ChatHistory, ContextUsage, DeleteChatTurn, OpenAttachment, PingCore, ReadDroppedFile, RetryChatTurn, SendMessage, SlashSuggest, StopChat } from '../wailsjs/go/main/App';
+import { EventsOn, OnFileDrop } from '../wailsjs/runtime/runtime';
 import { cyclePanelSize, initWindowLayout, isExpanded, setExpanded, toggleExpanded } from './window-layout';
 
 type RingState = 'idle' | 'thinking' | 'delegating' | 'needs-input';
 type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 type CommandEntry = { id: string; prefix: string; label: string; description: string; enabled: boolean };
-type StreamEvent = { kind: string; delta?: string; error?: string; tool_call?: { name: string } };
+type StreamEvent = { kind: string; delta?: string; error?: string; status?: string; tool_call?: { name: string } };
 type ChatTurn = { id: number; seq: number; role: string; content: string };
 type ChatUsage = { session_id: string; used_tokens: number; context_window: number; percent: number; provider: string; model: string };
-type PendingAttachment = { name: string; type: string; size: number; dataURI?: string; text?: string };
+type PendingAttachment = { name: string; type: string; size: number; path?: string; dataURI?: string; text?: string };
 
 const states: RingState[] = ['idle', 'thinking', 'delegating', 'needs-input'];
 let stateIndex = 0;
@@ -23,6 +23,7 @@ let messageSeq = 0;
 let currentUserGroup = 0;
 let lastSubmittedText = '';
 let activeMessageMenu: HTMLElement | null = null;
+let activeProgressBubble: HTMLElement | null = null;
 
 function activeSlashAtChat(value: string, caret: number): { query: string; slashIndex: number } | null {
   const before = value.slice(0, caret);
@@ -82,13 +83,22 @@ function sanitizeDisplayText(text: string) {
 function parseInlineMarkdown(text: string): DocumentFragment {
   const fragment = document.createDocumentFragment();
   const safeText = sanitizeDisplayText(text);
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\((https?:\/\/[^\s)]+)\))/g;
+  const pattern = /(!\[[^\]]*\]\((?:https?:\/\/|data:image\/)[^)]+\)|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\((https?:\/\/[^\s)]+)\))/g;
   let cursor = 0;
   for (const match of safeText.matchAll(pattern)) {
     const index = match.index || 0;
     if (index > cursor) fragment.append(document.createTextNode(safeText.slice(cursor, index)));
     const token = match[0];
-    if (token.startsWith('`')) {
+    if (token.startsWith('![')) {
+      const labelEnd = token.indexOf('](');
+      const image = document.createElement('img');
+      image.className = 'message-image';
+      image.alt = token.slice(2, labelEnd) || 'image';
+      image.src = token.slice(labelEnd + 2, -1);
+      image.loading = 'lazy';
+      image.addEventListener('click', () => showImagePreview(image.src, image.alt));
+      fragment.append(image);
+    } else if (token.startsWith('`')) {
       const code = document.createElement('code');
       code.textContent = token.slice(1, -1);
       fragment.append(code);
@@ -142,7 +152,7 @@ function renderMarkdown(text: string): DocumentFragment {
   return fragment;
 }
 
-function appendMessage(className: string, text: string, groupID = currentUserGroup, turnID = 0) {
+function appendMessage(className: string, text: string, groupID = currentUserGroup, turnID = 0, attachments: PendingAttachment[] = []) {
   const list = document.getElementById('message-list');
   if (!list || !text) return;
   const item = document.createElement('div');
@@ -152,11 +162,120 @@ function appendMessage(className: string, text: string, groupID = currentUserGro
   if (turnID > 0) item.dataset.turnId = `${turnID}`;
   item.dataset.rawText = text;
   item.append(renderMarkdown(text));
+  if (attachments.length) item.append(renderMessageAttachments(attachments));
   if (className.includes('message--user')) wireUserMessage(item, text);
   if (className.includes('message--error')) wireErrorMessage(item);
   list.appendChild(item);
   list.scrollTop = list.scrollHeight;
   return item;
+}
+
+function appendProgressBubble(label: 'waiting' | 'thinking' | 'working' | 'compacting' | 'stopping') {
+  activeProgressBubble?.remove();
+  const list = document.getElementById('message-list');
+  if (!list) return null;
+  const bubble = document.createElement('div');
+  bubble.className = 'message message--status';
+  bubble.dataset.status = label;
+  bubble.innerHTML = `<span class="status-pulse" aria-hidden="true"><i></i><i></i><i></i></span><span>${label}</span>`;
+  list.append(bubble);
+  list.scrollTop = list.scrollHeight;
+  activeProgressBubble = bubble;
+  return bubble;
+}
+
+function clearProgressBubble() {
+  activeProgressBubble?.remove();
+  activeProgressBubble = null;
+}
+
+function showImagePreview(src: string, alt = 'image') {
+  document.getElementById('image-preview')?.remove();
+  const overlay = document.createElement('button');
+  overlay.type = 'button';
+  overlay.id = 'image-preview';
+  overlay.className = 'image-preview';
+  overlay.setAttribute('aria-label', 'Close image preview');
+  const image = document.createElement('img');
+  image.src = src;
+  image.alt = alt;
+  overlay.append(image);
+  overlay.addEventListener('click', () => overlay.remove());
+  document.body.append(overlay);
+}
+
+function renderMessageAttachments(attachments: PendingAttachment[]) {
+  const wrap = document.createElement('div');
+  wrap.className = 'message-attachments';
+  const badge = document.createElement('button');
+  badge.type = 'button';
+  badge.className = 'message-attachment-badge';
+  badge.textContent = `${attachments.length} attachment${attachments.length > 1 ? 's' : ''}`;
+  const list = document.createElement('div');
+  list.className = 'message-attachment-list';
+  list.hidden = true;
+  badge.addEventListener('click', (event) => {
+    event.stopPropagation();
+    list.hidden = !list.hidden;
+  });
+  attachments.forEach((attachment) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'message-attachment-row';
+    const preview = attachment.dataURI && attachment.type.startsWith('image/')
+      ? `<img src="${attachment.dataURI}" alt="">`
+      : `<span class="attachment-file-icon">${attachmentKind(attachment)}</span>`;
+    row.innerHTML = `${preview}<span><strong></strong><small>${formatBytes(attachment.size)} · ${attachment.type || 'file'}</small></span>`;
+    const name = row.querySelector('strong');
+    if (name) name.textContent = attachment.name;
+    const image = row.querySelector('img');
+    image?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (attachment.dataURI) showImagePreview(attachment.dataURI, attachment.name);
+    });
+    row.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (attachment.path) {
+        void OpenAttachment(attachment.path);
+      } else if (attachment.dataURI && attachment.type.startsWith('image/')) {
+        showImagePreview(attachment.dataURI, attachment.name);
+      }
+    });
+    list.append(row);
+  });
+  wrap.append(badge, list);
+  return wrap;
+}
+
+function encodeAttachmentMeta(attachment: PendingAttachment) {
+  const json = JSON.stringify({ name: attachment.name, type: attachment.type, size: attachment.size, path: attachment.path || '' });
+  return btoa(unescape(encodeURIComponent(json)));
+}
+
+function decodeAttachmentMeta(encoded: string): PendingAttachment | null {
+  try {
+    return JSON.parse(decodeURIComponent(escape(atob(encoded)))) as PendingAttachment;
+  } catch {
+    return null;
+  }
+}
+
+function parseTurnContent(content: string): { text: string; attachments: PendingAttachment[] } {
+  const attachments: PendingAttachment[] = [];
+  const metadata = /<!--sapaloq-attachment:([A-Za-z0-9+/=]+)-->/g;
+  for (const match of content.matchAll(metadata)) {
+    const attachment = decodeAttachmentMeta(match[1]);
+    if (attachment) attachments.push(attachment);
+  }
+  let text = content.replace(metadata, '');
+  text = text.replace(/\n*!\[([^\]]*)\]\((data:image\/[^)]+)\)/g, (_match, name, dataURI) => {
+    const existing = attachments.find((item) => item.name === name);
+    if (existing) existing.dataURI = dataURI;
+    else attachments.push({ name: name || 'image', type: dataURI.slice(5, dataURI.indexOf(';')), size: 0, dataURI });
+    return '';
+  });
+  text = text.replace(/\n*--- file: ([^\n]+) \(([^)]+)\) ---[\s\S]*?--- end file: \1 ---/g, '');
+  return { text: text.trim(), attachments };
 }
 
 function clearMessages() {
@@ -169,6 +288,26 @@ function clearMessages() {
 
 function getComposeInput() {
   return document.getElementById('compose-input') as HTMLTextAreaElement | null;
+}
+
+function setSubmittingUI(active: boolean) {
+  const button = document.getElementById('send-btn') as HTMLButtonElement | null;
+  if (!button) return;
+  button.dataset.mode = active ? 'stop' : 'send';
+  button.setAttribute('aria-label', active ? 'Stop response' : 'Kirim');
+  button.title = active ? 'Stop response' : 'Kirim';
+  const icon = button.querySelector('span');
+  if (icon) icon.textContent = active ? '■' : '↗';
+}
+
+async function stopActiveResponse() {
+  if (!submitting) return;
+  appendProgressBubble('stopping');
+  try {
+    await StopChat(currentSessionID);
+  } catch (err) {
+    appendMessage('message--error', errorText(err), currentUserGroup);
+  }
 }
 
 async function copyText(text: string) {
@@ -216,7 +355,10 @@ async function retryMessage(turnID: number) {
   if (!turnID || submitting || !input) return;
   closeMessageMenu();
   setRingState('thinking');
+  appendProgressBubble('waiting');
+  const thinkingTimer = window.setTimeout(() => appendProgressBubble('thinking'), 450);
   submitting = true;
+  setSubmittingUI(true);
   input.disabled = true;
   try {
     const res = await RetryChatTurn(currentSessionID, turnID);
@@ -228,7 +370,10 @@ async function retryMessage(turnID: number) {
   } catch (err) {
     appendMessage('message--error', errorText(err), currentUserGroup, turnID);
   } finally {
+    window.clearTimeout(thinkingTimer);
+    clearProgressBubble();
     submitting = false;
+    setSubmittingUI(false);
     input.disabled = false;
     input.focus();
     setRingState('idle');
@@ -298,9 +443,10 @@ function wireErrorMessage(item: HTMLElement) {
 
 function renderTurn(turn: ChatTurn) {
   if (!turn.content) return;
+  const parsed = parseTurnContent(turn.content);
   if (turn.role === 'user') {
     currentUserGroup++;
-    appendMessage('message--user', turn.content, currentUserGroup, turn.id);
+    appendMessage('message--user', parsed.text || parsed.attachments.map((item) => item.name).join(', '), currentUserGroup, turn.id, parsed.attachments);
   } else if (turn.role === 'error') appendMessage('message--error', turn.content, currentUserGroup, turn.id);
   else appendMessage('message--assistant', turn.content, currentUserGroup, turn.id);
 }
@@ -407,14 +553,22 @@ function renderEvents(events: StreamEvent[]) {
       if (assistant) { flushStream(assistant); assistant = null; }
       appendMessage('message--tool', `tool: ${event.tool_call?.name || 'unknown'}`);
     } else if (event.kind === 'response_delta') {
+      clearProgressBubble();
       if (!assistant) assistant = makeStreamTarget('message--assistant');
       pushStream(assistant, event.delta || '');
+    } else if (event.kind === 'status') {
+      const status = event.status;
+      if (status === 'waiting' || status === 'thinking' || status === 'working' || status === 'compacting' || status === 'stopping') {
+        appendProgressBubble(status);
+      }
     } else if (event.kind === 'error') {
+      clearProgressBubble();
       if (thinking) { flushStream(thinking); thinking = null; }
       if (assistant) { flushStream(assistant); assistant = null; }
       appendMessage('message--error', event.error || 'chat failed');
       setRingState('idle');
     } else if (event.kind === 'done') {
+      clearProgressBubble();
       if (thinking) { flushStream(thinking); thinking = null; }
       if (assistant) { flushStream(assistant); assistant = null; }
       setRingState('idle');
@@ -507,8 +661,9 @@ function renderAttachments() {
 
 function buildAttachmentPrompt() {
   return pendingAttachments.map((attachment) => {
-    if (attachment.dataURI) return `![${attachment.name}](${attachment.dataURI})`;
-    return `\n\n--- file: ${attachment.name} (${attachment.type || 'text/plain'}) ---\n${attachment.text || ''}\n--- end file: ${attachment.name} ---`;
+    const metadata = `<!--sapaloq-attachment:${encodeAttachmentMeta(attachment)}-->`;
+    if (attachment.dataURI) return `${metadata}\n![${attachment.name}](${attachment.dataURI})`;
+    return `${metadata}\n--- file: ${attachment.name} (${attachment.type || 'text/plain'}) ---\n${attachment.text || ''}\n--- end file: ${attachment.name} ---`;
   }).join('\n');
 }
 
@@ -561,6 +716,7 @@ async function addDroppedPaths(paths: string[]) {
         if (!file) continue;
         pendingAttachments.push({
           name: file.name,
+          path: file.path || undefined,
           type: file.mime || (file.is_image ? 'image/*' : 'text/plain'),
           size: file.size,
           dataURI: file.data_uri || undefined,
@@ -625,16 +781,19 @@ function collectTransferFiles(transfer: DataTransfer | null): File[] {
   return files;
 }
 
-async function sendText(text: string, visibleText = text) {
+async function sendText(text: string, visibleText = text, attachments: PendingAttachment[] = []) {
   const input = getComposeInput();
   if (submitting || !input || !text.trim()) return;
   closeMessageMenu();
   hideSlashSuggest();
   lastSubmittedText = text;
   currentUserGroup++;
-  appendMessage('message--user', visibleText.trim(), currentUserGroup);
+  appendMessage('message--user', visibleText.trim(), currentUserGroup, 0, attachments);
   setRingState('thinking');
+  appendProgressBubble('waiting');
+  const thinkingTimer = window.setTimeout(() => appendProgressBubble('thinking'), 450);
   submitting = true;
+  setSubmittingUI(true);
   input.disabled = true;
   try {
     const res = await SendMessage(currentSessionID, text);
@@ -652,7 +811,10 @@ async function sendText(text: string, visibleText = text) {
     setConnection(message.includes('dial ') ? 'disconnected' : 'connected');
     setRingState('idle');
   } finally {
+    window.clearTimeout(thinkingTimer);
+    clearProgressBubble();
     submitting = false;
+    setSubmittingUI(false);
     input.disabled = false;
     input.focus();
   }
@@ -664,10 +826,11 @@ async function submitMessage() {
   if (!input || (!input.value.trim() && !attachmentPrompt)) return;
   const text = `${input.value.trim()}${attachmentPrompt}`.trim();
   const visibleText = input.value.trim() || pendingAttachments.map((file) => file.name).join(', ');
+  const sentAttachments = pendingAttachments.map((attachment) => ({ ...attachment }));
   input.value = '';
   pendingAttachments = [];
   renderAttachments();
-  await sendText(text, visibleText);
+  await sendText(text, visibleText, sentAttachments);
 }
 
 function hideSlashSuggest() {
@@ -769,7 +932,10 @@ document.getElementById('orb')?.addEventListener('dblclick', (e) => {
   }
   if (!isExpanded()) cycleRingState();
 });
-document.getElementById('send-btn')?.addEventListener('click', () => void submitMessage());
+document.getElementById('send-btn')?.addEventListener('click', () => {
+  if (submitting) void stopActiveResponse();
+  else void submitMessage();
+});
 document.getElementById('attach-btn')?.addEventListener('click', () => {
   const input = document.getElementById('attach-input') as HTMLInputElement | null;
   input?.click();
@@ -828,10 +994,15 @@ function hideDragOverlay(force = false) {
 // Native file drop (Wails). On WebKitGTK the webview drag events are disabled
 // (DisableWebViewDrop:true in main.go), so the only way to receive drops from
 // the file manager / desktop is this GTK-level callback, which hands us file
-// *paths*. CSS property --wails-drop-target:"drop" marks #popup as a valid
-// drop target so the native overlay also lights up the right element.
-if (popup) popup.style.setProperty('--wails-drop-target', 'drop');
+// *paths*. Listen on the whole native window: target-scoped drops become
+// unreliable after the GTK input shape switches between orb and panel.
 try {
+  EventsOn('sapaloq:status', (event: StreamEvent) => {
+    const status = event?.status;
+    if (status === 'waiting' || status === 'thinking' || status === 'working' || status === 'compacting' || status === 'stopping') {
+      appendProgressBubble(status);
+    }
+  });
   OnFileDrop((_x, _y, paths) => {
     if (paths?.length) {
       hideDragOverlay(true);
@@ -839,7 +1010,7 @@ try {
       void addDroppedPaths(paths);
       document.getElementById('compose-input')?.focus();
     }
-  }, true);
+  }, false);
 } catch {
   // OnFileDrop only exists inside a Wails runtime; ignore in plain browser.
 }

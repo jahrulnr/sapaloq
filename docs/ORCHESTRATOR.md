@@ -180,6 +180,20 @@ agent:
 
 Provider `declaredTools` should be generated from this role profile. Static per-provider `declaredTools` remains a compatibility fallback only.
 
+### Continuation runtime
+
+Ask-mode tool continuation is budgeted across several independent limits instead of a fixed small loop:
+
+- `orchestrator.continuation.maxInferenceTurns` (default `128`)
+- `maxToolCalls` (default `512`)
+- `maxWallTimeMinutes` (default `30`)
+- `maxNoProgressTurns` and `maxIdenticalToolCalls` (default `5`)
+- `maxWaitSeconds` (default `120`)
+
+`sapaloq_wait` blocks in the backend until the selected task changes state or the wait window expires. Waiting emits a `status=waiting` event but does not spend inference turns. `sapaloq_stop` accepts `scope=generation|task|all`; the widget stop button uses `generation`, so background tasks are not killed accidentally.
+
+During a long run, local continuation messages are compacted when estimated context reaches `orchestrator.compaction.backgroundThreshold` (default `0.70`). At the blocking threshold (`0.88`) the UI receives `status=compacting`; the checkpoint preserves the original task and recent messages, then resumes the same run.
+
 ### Mapping SapaLOQ
 
 | Cursor mode | SapaLOQ | Tool policy | Job |

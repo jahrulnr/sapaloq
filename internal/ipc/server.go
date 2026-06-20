@@ -75,6 +75,9 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			s.handleDelete(ctx, conn, req, start)
 		case "chat_retry":
 			s.handleRetry(ctx, conn, req, start)
+		case "chat_stop":
+			_, message := s.orch.Stop(req.SessionID, req.Scope, req.TaskID)
+			write(conn, Response{OK: true, Op: req.Op, Message: message, SessionID: req.SessionID, ServerMs: time.Since(start).Milliseconds()})
 		case "chat_send":
 			s.handleChat(ctx, conn, req, start)
 		case "watch":

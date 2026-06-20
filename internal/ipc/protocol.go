@@ -11,6 +11,8 @@ type Request struct {
 	Message   string `json:"message,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	TurnID    int64  `json:"turn_id,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
+	Scope     string `json:"scope,omitempty"`
 	Query     string `json:"query,omitempty"`
 }
 

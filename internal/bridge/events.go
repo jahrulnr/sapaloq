@@ -13,6 +13,7 @@ const (
 	EventResponseDelta EventKind = "response_delta"
 	EventToolCall      EventKind = "tool_call"
 	EventToolLeak      EventKind = "tool_leak"
+	EventStatus        EventKind = "status"
 	EventDone          EventKind = "done"
 	EventError         EventKind = "error"
 )
@@ -24,6 +25,7 @@ type StreamEvent struct {
 	ToolCall  *parse.ToolCall `json:"tool_call,omitempty"`
 	Leak      string          `json:"leak,omitempty"`
 	Error     string          `json:"error,omitempty"`
+	Status    string          `json:"status,omitempty"`
 	At        time.Time       `json:"at"`
 }
 

@@ -9,6 +9,8 @@ export function ContextUsage():Promise<main.chatUsage>;
 
 export function DeleteChatTurn(arg1:string,arg2:number):Promise<void>;
 
+export function OpenAttachment(arg1:string):Promise<void>;
+
 export function PingCore():Promise<main.pingResult>;
 
 export function ReadDroppedFile(arg1:string):Promise<main.droppedFile>;
@@ -20,5 +22,7 @@ export function SendMessage(arg1:string,arg2:string):Promise<main.chatResult>;
 export function SlashSuggest(arg1:string):Promise<Array<config.CommandEntry>>;
 
 export function SocketPath():Promise<string>;
+
+export function StopChat(arg1:string):Promise<void>;
 
 export function SyncInputShape(arg1:boolean):Promise<void>;

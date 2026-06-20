@@ -14,6 +14,10 @@ export function DeleteChatTurn(arg1, arg2) {
   return window['go']['main']['App']['DeleteChatTurn'](arg1, arg2);
 }
 
+export function OpenAttachment(arg1) {
+  return window['go']['main']['App']['OpenAttachment'](arg1);
+}
+
 export function PingCore() {
   return window['go']['main']['App']['PingCore']();
 }
@@ -36,6 +40,10 @@ export function SlashSuggest(arg1) {
 
 export function SocketPath() {
   return window['go']['main']['App']['SocketPath']();
+}
+
+export function StopChat(arg1) {
+  return window['go']['main']['App']['StopChat'](arg1);
 }
 
 export function SyncInputShape(arg1) {

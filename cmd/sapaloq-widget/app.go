@@ -7,10 +7,13 @@ import (
 	"io"
 	"mime"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App exposes Go methods to the Wails frontend.
@@ -36,7 +39,9 @@ func (a *App) PingCore() (pingResult, error) {
 }
 
 func (a *App) SendMessage(sessionID string, text string) (chatResult, error) {
-	return sendChat(a.socketPath, sessionID, text)
+	return sendChatWithStatus(a.socketPath, sessionID, text, func(event bridge.StreamEvent) {
+		runtime.EventsEmit(a.ctx, "sapaloq:status", event)
+	})
 }
 
 func (a *App) ChatHistory() (chatHistoryResult, error) {
@@ -48,7 +53,13 @@ func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 }
 
 func (a *App) RetryChatTurn(sessionID string, turnID int64) (chatResult, error) {
-	return retryChatTurn(a.socketPath, sessionID, turnID)
+	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, func(event bridge.StreamEvent) {
+		runtime.EventsEmit(a.ctx, "sapaloq:status", event)
+	})
+}
+
+func (a *App) StopChat(sessionID string) error {
+	return stopChat(a.socketPath, sessionID)
 }
 
 func (a *App) ContextUsage() (*chatUsage, error) {
@@ -73,6 +84,7 @@ func (a *App) SyncInputShape(collapsed bool) {
 // Images and other binary files are returned as a data URI; text files are
 // returned as plain text so the widget can inline them into the prompt.
 type droppedFile struct {
+	Path    string `json:"path,omitempty"`
 	Name    string `json:"name"`
 	MIME    string `json:"mime"`
 	Size    int64  `json:"size"`
@@ -127,13 +139,40 @@ func (a *App) ReadDroppedFile(path string) (*droppedFile, error) {
 	}
 	isImage := strings.HasPrefix(mimeType, "image/")
 
-	out := &droppedFile{Name: name, MIME: mimeType, Size: int64(len(raw)), IsImage: isImage}
+	out := &droppedFile{Path: cleaned, Name: name, MIME: mimeType, Size: int64(len(raw)), IsImage: isImage}
 	if isTextual(mimeType, name, raw) && !isImage {
 		out.Text = string(raw)
 		return out, nil
 	}
 	out.DataURI = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(raw)
 	return out, nil
+}
+
+// OpenAttachment reveals a local attachment in the platform file manager.
+func (a *App) OpenAttachment(path string) error {
+	cleaned := filepath.Clean(path)
+	if cleaned == "" || !filepath.IsAbs(cleaned) {
+		return errors.New("attachment path must be absolute")
+	}
+	if _, err := os.Stat(cleaned); err != nil {
+		return err
+	}
+	target := filepath.Dir(cleaned)
+	var command *exec.Cmd
+	switch {
+	case commandExists("nautilus"):
+		command = exec.Command("nautilus", "--select", cleaned)
+	case commandExists("gio"):
+		command = exec.Command("gio", "open", target)
+	default:
+		command = exec.Command("xdg-open", target)
+	}
+	return command.Start()
+}
+
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }
 
 // isTextual decides whether a file should be inlined as text rather than as a

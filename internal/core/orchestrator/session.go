@@ -38,7 +38,7 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 	}
 	messages := make([]bridge.Message, 0, len(turns)+1)
 	messages = append(messages, bridge.Message{Role: "system", Content: `You are SapaLOQ's Ask orchestrator. Use the active-session context below. Compacted summaries are authoritative; do not ask the user to repeat preserved context.
-For work that needs investigation or a multi-step plan, call sapaloq_spawn_plan with {"task":"..."}. For a clear execution request, call sapaloq_spawn_agent with {"task":"..."}. These run asynchronously; do not pretend you executed their work yourself. Use sapaloq_get_task_status with {"task_id":"..."} when status is requested.`})
+For work that needs investigation or a multi-step plan, call sapaloq_spawn_plan with {"task":"..."}. For a clear execution request, call sapaloq_spawn_agent with {"task":"..."}. These run asynchronously; do not pretend you executed their work yourself. Use sapaloq_get_task_status with {"task_id":"..."} when status is requested. Use sapaloq_wait with {"task_id":"...","seconds":2}; the backend waits for a task state change without repeatedly calling the model. Use sapaloq_stop with {"scope":"generation|task|all","task_id":"...","reason":"..."} when work should stop. Image input is available in Ask, planner, and agent modes when the selected model accepts vision.`})
 	for _, turn := range turns {
 		role := turn.Role
 		if role == "tool" || role == "error" {
