@@ -118,6 +118,10 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		desktop:      desktop,
 		prompts:      promptMgr,
 	}
+	// Seed the in-memory vision cache from config so a model previously proven
+	// text-only (supportsImages:false) is skipped before we ever send an image
+	// again — and a known-good one (true) isn't needlessly re-probed.
+	o.seedVisionFromConfig(cfg)
 	// Best-effort: index skill bodies into facts (kind="skill") so the
 	// secondary FTS match in skillsBlock can find them. Never fatal.
 	o.indexSkills(context.Background())

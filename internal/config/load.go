@@ -320,6 +320,13 @@ type LLMBridge struct {
 	// conversation exceeds this. Defaults to 1,000,000 (matches Claude
 	// Sonnet 4, Gemini 2.5 Pro, GPT-5 family).
 	ContextWindow int `json:"contextWindow,omitempty"`
+	// SupportsImages is a tri-state vision-capability cache. nil means
+	// "unknown — try sending images and learn from the response"; a non-nil
+	// value records what the orchestrator discovered at runtime (false after
+	// the upstream rejected an image request with a 400, true after a
+	// successful image turn). Persisted so a model proven text-only is never
+	// re-probed across restarts. Auto-managed; rarely set by hand.
+	SupportsImages *bool `json:"supportsImages,omitempty"`
 }
 
 // LLMBridgeRoot is the top-level llmBridge config block — registry of
