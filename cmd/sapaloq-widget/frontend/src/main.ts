@@ -28,6 +28,15 @@ let activeMessageMenu: HTMLElement | null = null;
 let activeProgressBubble: HTMLElement | null = null;
 let activeCountdown: ReturnType<typeof setInterval> | null = null;
 
+// Inline stroke icons (no external sprite/font dependency). `fill:none` + currentColor
+// styling lives in style.css under .send-btn svg; send is an arrow-up (à la ChatGPT),
+// stop is a rounded square shown while a response is streaming.
+const ICON_SEND = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+const ICON_STOP = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg>';
+// Diagonal "expand" chevrons (↗ + ↙ corners) ↔ "collapse" inward arrows.
+const ICON_EXPAND = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg>';
+const ICON_COLLAPSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10h-6V4M14 10l6-6M4 14h6v6M10 14l-6 6"/></svg>';
+
 function activeSlashAtChat(value: string, caret: number): { query: string; slashIndex: number } | null {
   const before = value.slice(0, caret);
   const slashIndex = before.lastIndexOf('/');
@@ -313,14 +322,58 @@ function getComposeInput() {
   return document.getElementById('compose-input') as HTMLTextAreaElement | null;
 }
 
+// Grow the textarea to fit its content up to the CSS max-height (--compose-max,
+// or --compose-max-tall when the composer is in the expanded state), à la ChatGPT.
+// Toggles `.is-tall` on the footer once the content actually overflows the normal
+// cap, which reveals the expand button.
+function autosizeCompose() {
+  const input = getComposeInput();
+  if (!input) return;
+  const footer = input.closest('.popup-compose');
+  const wrap = input.closest('.compose-wrap');
+  input.style.height = 'auto';
+  input.style.height = `${input.scrollHeight}px`;
+  // overflowing = content taller than the current visible textarea (after the
+  // CSS max-height clamp kicked in).
+  const overflowing = input.scrollHeight > input.clientHeight + 1;
+  const isExpandedState = wrap?.classList.contains('expanded') ?? false;
+  footer?.classList.toggle('is-tall', overflowing || isExpandedState);
+}
+
+function resetComposeSize() {
+  const input = getComposeInput();
+  const wrap = input?.closest('.compose-wrap');
+  const footer = input?.closest('.popup-compose');
+  const expandBtn = document.getElementById('compose-expand');
+  wrap?.classList.remove('expanded');
+  footer?.classList.remove('is-tall');
+  expandBtn?.setAttribute('aria-pressed', 'false');
+  if (expandBtn) expandBtn.innerHTML = ICON_EXPAND;
+  if (input) input.style.height = 'auto';
+}
+
+function toggleComposeExpand() {
+  const input = getComposeInput();
+  const wrap = input?.closest('.compose-wrap');
+  const expandBtn = document.getElementById('compose-expand');
+  if (!wrap || !expandBtn) return;
+  const next = !wrap.classList.contains('expanded');
+  wrap.classList.toggle('expanded', next);
+  expandBtn.setAttribute('aria-pressed', String(next));
+  expandBtn.setAttribute('aria-label', next ? 'Perkecil input' : 'Perbesar input');
+  expandBtn.title = next ? 'Perkecil input' : 'Perbesar input';
+  expandBtn.innerHTML = next ? ICON_COLLAPSE : ICON_EXPAND;
+  autosizeCompose();
+  input?.focus();
+}
+
 function setSubmittingUI(active: boolean) {
   const button = document.getElementById('send-btn') as HTMLButtonElement | null;
   if (!button) return;
   button.dataset.mode = active ? 'stop' : 'send';
   button.setAttribute('aria-label', active ? 'Stop response' : 'Kirim');
   button.title = active ? 'Stop response' : 'Kirim';
-  const icon = button.querySelector('span');
-  if (icon) icon.textContent = active ? '■' : '↗';
+  button.innerHTML = active ? ICON_STOP : ICON_SEND;
 }
 
 async function stopActiveResponse() {
@@ -354,6 +407,7 @@ function editText(text: string) {
   input.value = text;
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
+  autosizeCompose();
   void refreshSlashSuggest();
 }
 
@@ -1116,6 +1170,7 @@ async function submitMessage() {
   const visibleText = input.value.trim() || pendingAttachments.map((file) => file.name).join(', ');
   const sentAttachments = pendingAttachments.map((attachment) => ({ ...attachment }));
   input.value = '';
+  resetComposeSize();
   pendingAttachments = [];
   renderAttachments();
   await sendText(text, visibleText, sentAttachments);
@@ -1147,6 +1202,7 @@ async function refreshSlashSuggest() {
         input.value = input.value.slice(0, active.slashIndex) + prefix + input.value.slice(input.selectionStart || 0);
         input.focus();
         input.setSelectionRange(active.slashIndex + prefix.length, active.slashIndex + prefix.length);
+        autosizeCompose();
         hideSlashSuggest();
       });
     });
@@ -1179,11 +1235,14 @@ document.querySelector('#app')!.innerHTML = `
         <div class="compose-wrap" id="compose-wrap">
           <div class="slash-popover" id="slash-popover"></div>
           <div class="attachment-tray" id="attachment-tray" aria-live="polite"></div>
-          <textarea id="compose-input" placeholder="Ask anything" autocomplete="off" rows="1"></textarea>
+          <button type="button" class="compose-expand" id="compose-expand" aria-label="Perbesar input" title="Perbesar input" aria-pressed="false">${ICON_EXPAND}</button>
+          <div class="compose-row">
+            <button type="button" class="attach-btn" id="attach-btn" aria-label="Attach file" title="Attach file"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+            <textarea id="compose-input" placeholder="Ask anything" autocomplete="off" rows="1"></textarea>
+            <button type="button" class="send-btn" id="send-btn" aria-label="Kirim">${ICON_SEND}</button>
+          </div>
           <input type="file" id="attach-input" class="attach-input" multiple aria-hidden="true" tabindex="-1">
         </div>
-        <button type="button" class="attach-btn" id="attach-btn" aria-label="Attach file" title="Attach file"><span>＋</span></button>
-        <button type="button" class="send-btn" id="send-btn" aria-label="Kirim"><span>↗</span></button>
       </footer>
     </section>
     <div class="fab-row"><button type="button" class="orb" id="orb" data-state="idle" aria-label="Buka SapaLOQ" style="--wails-draggable: drag"><span class="orb-aura" aria-hidden="true"></span><span class="orb-ring" aria-hidden="true"></span><span class="orb-body" aria-hidden="true"><span class="orb-grid" aria-hidden="true"></span><span class="sapa-glyph" aria-hidden="true"><span class="glyph-node glyph-node--a"></span><span class="glyph-node glyph-node--b"></span><span class="glyph-node glyph-node--c"></span><span class="glyph-path glyph-path--a"></span><span class="glyph-path glyph-path--b"></span></span><span class="orb-specular" aria-hidden="true"></span><span class="ring-badge" id="ring-badge" aria-hidden="true"></span><span class="orb-chevron" aria-hidden="true">⌄</span></span></button></div>
@@ -1228,8 +1287,9 @@ document.getElementById('attach-input')?.addEventListener('change', (event) => {
   if (input.files?.length) void addFiles(input.files);
   input.value = '';
 });
-document.getElementById('compose-input')?.addEventListener('input', () => void refreshSlashSuggest());
+document.getElementById('compose-input')?.addEventListener('input', () => { autosizeCompose(); void refreshSlashSuggest(); });
 document.getElementById('compose-input')?.addEventListener('keyup', () => void refreshSlashSuggest());
+document.getElementById('compose-expand')?.addEventListener('click', () => toggleComposeExpand());
 document.getElementById('compose-input')?.addEventListener('keydown', (event) => {
   const keyEvent = event as KeyboardEvent;
   if (keyEvent.key === 'Enter' && !keyEvent.shiftKey) {

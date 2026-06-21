@@ -159,9 +159,20 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 		if noProgressTurns >= budget.MaxNoProgressTurns {
 			return all, fmt.Errorf("loop detected: no observable progress for %d inference turns", noProgressTurns)
 		}
+		toolResultsBody := "[Tool results]\n" + strings.Join(toolResults, "\n\n")
+		// Persist tool results as a "tool" turn so they count toward context
+		// usage and auto-compaction. These messages ARE sent to the model (they
+		// are appended to cleanMessages below and replayed via contextMessages,
+		// which maps role "tool" → "assistant"), so leaving them unrecorded made
+		// ContextUsage under-count and auto-compact trigger too late. Use the
+		// outer ctx (not the cancelable runCtx) so a wall-time timeout does not
+		// drop the audit/accounting record.
+		if o.chat != nil {
+			_ = o.chat.AppendTurn(ctx, sessionID, "tool", toolResultsBody, estimateTextTokens(toolResultsBody))
+		}
 		cleanMessages = append(cleanMessages,
 			bridge.Message{Role: "assistant", Content: response.String()},
-			bridge.Message{Role: "user", Content: "[Tool results]\n" + strings.Join(toolResults, "\n\n") + "\nContinue the original request using these results. Do not repeat the tool call unless another tool action is required."},
+			bridge.Message{Role: "user", Content: toolResultsBody + "\nContinue the original request using these results. Do not repeat the tool call unless another tool action is required."},
 		)
 		// Re-extract images from the freshly appended tool-results message so a
 		// read_image tool call (which returns inline-image markdown) becomes real

@@ -284,7 +284,22 @@ func (o *Orchestrator) ContextUsage(ctx context.Context, sessionID string) (chat
 		}
 	}
 	snap := o.snapshot()
-	return o.chat.Usage(ctx, sessionID, snap.entry.Key, snap.entry.Model, o.contextWindow())
+	usage, err := o.chat.Usage(ctx, sessionID, snap.entry.Key, snap.entry.Model, o.contextWindow())
+	if err != nil {
+		return usage, err
+	}
+	// Add the fixed per-request prompt overhead that the chat-turn sum ignores:
+	// the Ask system prompt plus the negative-guidance block are sent on every
+	// turn but never stored as chat_turns. Without this, usage (and the
+	// auto-compact threshold that reads it) understates how full the context
+	// window actually is.
+	overhead := estimateTextTokens(o.systemPrompt(prompts.RoleAsk))
+	overhead += estimateTextTokens(o.negativeGuidanceBlock(ctx))
+	usage.UsedTokens += overhead
+	if usage.ContextWindow > 0 {
+		usage.Percent = (usage.UsedTokens * 100) / usage.ContextWindow
+	}
+	return usage, nil
 }
 
 func responseEvent(sessionID, text string) bridge.StreamEvent {
