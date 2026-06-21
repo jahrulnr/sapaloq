@@ -97,6 +97,15 @@ ack, the IPC server rehydrates recent `EventTaskUpdate` snapshots from
 where task completion happened before the widget connected or while it was
 reconnecting. Provider-level `EventDone` is not a task lifecycle event.
 
+On a **terminal** task transition (done/failed/awaiting/stopped) the
+orchestrator does two things: it publishes the `task_update` card event **and**
+`speakTaskCompletion` (`completion.go`) injects a durable assistant turn into the
+task's session and republishes it as a `response_delta` on
+`sapaloq.v1.chat.response`. That republish is the "speak" trigger that closes the
+event-driven loop — a completion arriving after `sapaloq_wait` has already
+returned is still surfaced in chat, not just as a silently-updated card. It is
+idempotent per task id and gated by `completion.speakOnTerminal`.
+
 ---
 
 ## Topics

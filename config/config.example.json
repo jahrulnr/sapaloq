@@ -118,10 +118,12 @@
     },
     "completion": {
       "trigger": "both",
-      "heartbeatIntervalSec": 60,
-      "staleAfterSec": 120,
+      "heartbeatIntervalSec": 15,
+      "staleAfterSec": 180,
       "requireTerminalEvent": true,
-      "notifyUserOnDone": false
+      "notifyUserOnDone": false,
+      "speakOnTerminal": true,
+      "workerErrorLog": true
     }
   },
   "subAgents": {

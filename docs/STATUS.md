@@ -28,7 +28,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; markdown via `marked`+DOMPurify; wait countdown; one durable lifecycle card per background `task_id`, rehydrated on watcher reconnect |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
-| 17 | Event bus (in-proc pub/sub) | ✅ | `internal/bus/bus.go`: topic-pattern routing (`*`/`**` via `matchTopic`/`SubscribeTopics`), JSON-lines WAL (`NewWithWAL`, non-blocking append goroutine, seq monotonic across boots), `Replay(since, fn)`, boot replay wired in `cmd/sapaloq-core/main.go` (`newEventBus`). `Subscribe` stays receive-all for live widget updates; IPC `watch` also rehydrates recent task snapshots from durable `status.json`, so reconnect cannot silently lose completion/failure |
+| 17 | Event bus (in-proc pub/sub) | ✅ | `internal/bus/bus.go`: topic-pattern routing (`*`/`**` via `matchTopic`/`SubscribeTopics`), JSON-lines WAL (`NewWithWAL`, non-blocking append goroutine, seq monotonic across boots), `Replay(since, fn)`, boot replay wired in `cmd/sapaloq-core/main.go` (`newEventBus`). `Subscribe` stays receive-all for live widget updates; IPC `watch` also rehydrates recent task snapshots from durable `status.json`, so reconnect cannot silently lose completion/failure. Terminal task transitions also **speak** a durable assistant turn + `response_delta` republish (`completion.go`), so a finish landing after `sapaloq_wait` is surfaced in chat, not just as a card |
 | 18 | Context-SOP: FTS index / prefetch / anti-deep-check / intent-router | 🟡 | `facts` + `facts_fts` (FTS5-probed, LIKE fallback) now live in the chat store (`store.go` migrate, `facts.go`): `AddFact`/`SearchFacts`/`RecentFacts`/`DeleteFact`. No prefetch/anti-deep-check/intent-router yet |
 | 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `feedback_events` table + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; bounded negative-guidance slice injected into Ask prompt (`session.go`); widget 👍/👎 + correction box wired (`app.go`, `ipc.go`, `main.ts`). No learning_queue / bandit yet |
 | 20 | Named sub-agent roles (scribe, memory-janitor, intent-router, boundary-guard, event-watcher, learning-agent, research) | 🟡 | `scribe` is now spawnable (`sapaloq_spawn_scribe`); the sub-agent tool gate is config-driven (`roleAllows` honors `subAgents.roles[].allowedTools` with `*`-wildcards, default-deny mutation when unconfigured); `toolsForRole` offers only allowed+registered tools. memory-janitor/intent-router/boundary-guard/event-watcher/learning-agent/research still not spawnable |
@@ -41,6 +41,48 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` — `CurrentSchemaVersion` (1.1.0) + semver compare; lower version → ordered upgrade chain (old JSON formats preserved, additive/idempotent), equal → no-op, higher → load as-is (forward-compat; mandatory-empty validated post-load via `LLMBridge.Validate`). Hooked into `Load`, upgraded config persisted atomically |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` — size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` — the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
+
+---
+
+## Implemented this session (2026-06-21) — worker health + event-driven completion that speaks
+
+Fixes the "after delegating to planner/agent we never know if it finished"
+bug observed in the widget (agent spawned → `sapaloq_wait` → "still in_progress"
+→ generation ends → completion never surfaced).
+
+- **Per-worker identity + health watchdog.** New `internal/core/orchestrator/worker.go`
+  adds a `workerRegistry`: every background sub-agent registers a `WorkerHandle`
+  (id, role, session, **PID** = `os.Getpid()` today, phase, heartbeat) and
+  heartbeats each turn / tool call (`subagent.go`). A watchdog
+  (`StartWorkerWatchdog`, wired in `cmd/sapaloq-core/main.go`) force-fails any
+  worker with no heartbeat within `completion.staleAfterSec`, so a wedged
+  goroutine can no longer masquerade as `in_progress` forever. Live health is
+  also persisted to `memory/workers/<task-id>/health.json` for outside-process
+  inspection. (PID field is first-class so a future real-subprocess upgrade via
+  `internal/node` Transport needs no consumer/schema change.)
+- **Per-worker error-only log.** `worklog.go` writes
+  `memory/workers/<task-id>/error.log` (errors only — separate from the verbose
+  progress JSONL) on inference errors, task failure, and stalls. Gated by
+  `completion.workerErrorLog` (default on).
+- **Event-driven completion now SPEAKS.** `completion.go`
+  (`speakTaskCompletion`) injects a durable assistant turn into the task's
+  session **and** republishes it as a `response_delta` on the bus on every
+  terminal transition (done/failed/awaiting/stopped). Hooked into
+  `publishTaskUpdate`, idempotent per task id, gated by
+  `completion.speakOnTerminal` (default on). This closes the loop: a completion
+  landing **after** `sapaloq_wait` returns is surfaced as a real chat message,
+  not just a card.
+- **`sapaloq_wait` no longer over-promises.** The "still in_progress after the
+  wait window" reply now tells the user the result will be delivered
+  automatically instead of implying continued watching (`tasks.go`).
+- **Config:** wired the previously-inert `orchestrator.completion` block
+  (`HeartbeatIntervalSec`/`StaleAfterSec` now drive the watchdog) and added
+  `speakOnTerminal` + `workerErrorLog` (`load.go`, `schema/config.schema.json`,
+  `config/config.example.json`). New `memory/workers` runtime dir
+  (`internal/config/paths.go`).
+- **Tests:** `worker_test.go` (stall→fail, healthy untouched, health snapshot),
+  `completion_test.go` (spoken-on-terminal regression, idempotent, opt-in,
+  end-to-end via `runBackgroundTask`).
 
 ---
 

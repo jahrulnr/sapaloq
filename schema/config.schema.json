@@ -322,9 +322,11 @@
               "default": 60,
               "description": "Watchdog when wakeViaBus; not primary event path"
             },
-            "staleAfterSec": { "type": "integer", "minimum": 30, "default": 120 },
+            "staleAfterSec": { "type": "integer", "minimum": 30, "default": 180, "description": "Worker health watchdog: a worker with no heartbeat for this long is marked failed (stalled)." },
             "requireTerminalEvent": { "type": "boolean", "default": true },
-            "notifyUserOnDone": { "type": "boolean", "default": false }
+            "notifyUserOnDone": { "type": "boolean", "default": false },
+            "speakOnTerminal": { "type": "boolean", "default": true, "description": "Inject a spoken assistant turn into the task session on done/failed/awaiting so a completion landing AFTER sapaloq_wait is still surfaced in chat (not just a card)." },
+            "workerErrorLog": { "type": "boolean", "default": true, "description": "Write a per-worker error-only log at memory/workers/<task-id>/error.log for debugging." }
           }
         },
         "clarification": {

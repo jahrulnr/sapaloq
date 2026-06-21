@@ -37,6 +37,8 @@ sapaloq-core (one binary)
 |-------|------|------|
 | SQLite | `~/.config/sapaloq/memory/companion.db` | Facts, FTS, skills index, dedupe |
 | jsonl | `events.jsonl`, `progress/*.jsonl` | WAL, audit, replay on boot |
+| Worker health | `memory/workers/<task-id>/health.json` | Live per-worker PID/phase/heartbeat snapshot (observability) |
+| Worker errors | `memory/workers/<task-id>/error.log` | Errors-only trail per sub-agent (debugging) |
 | Files | `config.json`, `skills/`, `prompt/` | Agent-editable, git-friendly |
 | In-memory | goroutine LRU | Session hot cache — **lost on restart OK** |
 

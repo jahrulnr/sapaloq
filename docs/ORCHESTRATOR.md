@@ -1,7 +1,7 @@
 # SapaLOQ — Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-21 (flat unrestricted tool surface)
+> Last updated: 2026-06-21 (worker health + spoken event-driven completion)
 
 ---
 
@@ -16,7 +16,8 @@
 - **Anti context poisoning** — task stack; tidak loncat task tanpa park/done/switch eksplisit.
 - **Anti-blocker** — orchestrator never awaits sub-agent; sub-agent agresif & parallel where safe.
 - **Progress streaming** — orchestrator **watch live** sub-agent: thinking, response, toolcall, todo, status.
-- **Completion triggers** — in-proc event bus wake (ms) + jsonl WAL; heartbeat hanya watchdog.
+- **Completion triggers** — in-proc event bus wake (ms) + jsonl WAL; heartbeat watchdog force-fails stalled workers. On every terminal transition the orchestrator **speaks** the outcome into chat (durable assistant turn + `response_delta` republish), so a finish that lands after `sapaloq_wait` returns is surfaced as a real message — not just a card (`internal/core/orchestrator/completion.go`).
+- **Worker health** — each background sub-agent is a tracked worker (`workerRegistry`, `worker.go`): id, role, session, PID, phase, heartbeat. Live snapshot at `memory/workers/<id>/health.json`; errors-only trail at `memory/workers/<id>/error.log`. The watchdog (`StartWorkerWatchdog`, interval `completion.heartbeatIntervalSec`, stall `completion.staleAfterSec`) fails any worker that stops heartbeating.
 - **Event watchers** — GNOME notification + custom (reminder, email, …) → orchestrator react.
 - **Context ingress** — intent-router + SQLite prefetch + dynamic prompt before spawn ([CONTEXT-SOP.md](./CONTEXT-SOP.md)).
 - **Role system-prompt** — setiap spawn sub-agent dapat `systemPrompt` per role ([PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md)).
@@ -1128,7 +1129,7 @@ Agent bisa tambah watcher via `/settings` → sub-agent:settings patch `events.w
 | Parallel when safe | memory-janitor + scribe concurrent if different namespaces |
 | Widget responsive | ring shows sub-agent count + **last progress event**; chat never frozen |
 | Progress without blocking | tail jsonl / inotify; orchestrator never joins sub-agent process |
-| Completion without blocking | event trigger primary; heartbeat only for stale detection |
+| Completion without blocking | event trigger primary (terminal transition → spoken assistant turn + bus republish); heartbeat watchdog fails stalled workers |
 | Aggressive workers | sub-agent task-runner high maxTurns; orchestrator doesn't wait |
 
 Event flow:

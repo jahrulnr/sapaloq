@@ -435,6 +435,33 @@ type CompletionConfig struct {
 	StaleAfterSec        int    `json:"staleAfterSec,omitempty"`
 	RequireTerminalEvent bool   `json:"requireTerminalEvent,omitempty"`
 	NotifyUserOnDone     bool   `json:"notifyUserOnDone,omitempty"`
+	// SpeakOnTerminal, when true, injects a spoken assistant turn into the
+	// task's session on every terminal transition (done/failed/awaiting),
+	// closing the event-driven loop so a completion that lands AFTER
+	// sapaloq_wait returns is still surfaced in chat (not just as a card).
+	SpeakOnTerminal bool `json:"speakOnTerminal,omitempty"`
+	// WorkerErrorLog enables a per-worker error-only log at
+	// memory/workers/<task-id>/error.log for debugging without trawling the
+	// verbose progress JSONL.
+	WorkerErrorLog bool `json:"workerErrorLog,omitempty"`
+}
+
+// WithDefaults fills zero-valued completion knobs with sane defaults. The
+// heartbeat/stall pair drives the worker health watchdog; SpeakOnTerminal and
+// WorkerErrorLog default ON because they are the fix for the "we never know if
+// the agent finished" bug and are cheap.
+func (c CompletionConfig) WithDefaults() CompletionConfig {
+	if c.HeartbeatIntervalSec <= 0 {
+		c.HeartbeatIntervalSec = 15
+	}
+	if c.StaleAfterSec <= 0 {
+		c.StaleAfterSec = 180
+	}
+	// A stall window must comfortably exceed one heartbeat interval.
+	if c.StaleAfterSec < c.HeartbeatIntervalSec*2 {
+		c.StaleAfterSec = c.HeartbeatIntervalSec * 2
+	}
+	return c
 }
 
 type ContinuationConfig struct {
@@ -462,6 +489,12 @@ func DefaultOrchestratorConfig() OrchestratorConfig {
 			MaxNoProgressTurns:    5,
 			MaxIdenticalToolCalls: 5,
 			MaxWaitSeconds:        120,
+		},
+		Completion: CompletionConfig{
+			HeartbeatIntervalSec: 15,
+			StaleAfterSec:        180,
+			SpeakOnTerminal:      true,
+			WorkerErrorLog:       true,
 		},
 		Compaction: CompactionConfig{
 			BackgroundThreshold:    0.70,
@@ -504,6 +537,7 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 	if c.Compaction.PreserveRecentFraction <= 0 || c.Compaction.PreserveRecentFraction >= 1 {
 		c.Compaction.PreserveRecentFraction = defaults.Compaction.PreserveRecentFraction
 	}
+	c.Completion = c.Completion.WithDefaults()
 	return c
 }
 

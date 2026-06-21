@@ -165,7 +165,14 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		}
 		o.emit(ctx, out, statusEvent(sessionID, "working"))
 		if !changed {
-			return askToolResult{text: fmt.Sprintf("Task `%s` is still %s after the backend wait window.", record.ID, record.Status), handled: true}
+			// IMPORTANT: do NOT imply you will keep watching. This generation is
+			// about to end; the task keeps running in the background and its
+			// completion is delivered asynchronously (the orchestrator speaks it
+			// into chat on the terminal transition). Tell the user it will be
+			// surfaced automatically instead of promising to "wait a bit more".
+			return askToolResult{text: fmt.Sprintf(
+				"Task `%s` masih %s setelah jendela tunggu. Tidak perlu menunggu — aku akan otomatis mengabari di chat begitu task selesai/gagal/butuh keputusan (kamu juga bisa cek `sapaloq_get_task_status`).",
+				record.ID, record.Status), handled: true}
 		}
 		response := fmt.Sprintf("Task `%s` changed to **%s**.", record.ID, record.Status)
 		if record.Question != "" {
@@ -370,7 +377,12 @@ func (o *Orchestrator) latestAwaitingTaskID(sessionID string) string {
 
 func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.CancelFunc, snap providerSnapshot, sessionID string, record taskRecord) {
 	defer cancel()
+	// Register this worker in the live roster so its health (PID, phase,
+	// heartbeat) is observable and the watchdog can detect a stall. The final
+	// status is recorded on deregister for post-mortem inspection.
+	o.workers.register(record.ID, record.Role, sessionID, record.Node)
 	defer func() {
+		o.workers.deregister(record.ID, record.Status)
 		o.taskMu.Lock()
 		delete(o.taskCancels, record.ID)
 		if tasks := o.sessionTasks[sessionID]; tasks != nil {
@@ -403,6 +415,10 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 			record.Status = "done"
 		}
 	}
+	o.workers.heartbeat(record.ID, "finalizing")
+	if record.Status == "failed" && record.Error != "" {
+		o.workerLogError(record.ID, "task failed: "+record.Error)
+	}
 	_ = o.writeTask(record)
 	// Completion trigger: push the terminal/notable state to the widget via the
 	// event bus (the `watch` op streams it). This is what lets the chat surface
@@ -428,6 +444,10 @@ func (o *Orchestrator) publishTaskUpdate(sessionID string, record taskRecord) {
 	if o.bus != nil {
 		o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
 	}
+	// Event-driven completion: on a terminal transition, also SPEAK the outcome
+	// into the conversation so a finish that lands after sapaloq_wait returns is
+	// surfaced as a real chat message, not just a card. Idempotent per task id.
+	o.speakTaskCompletion(sessionID, record)
 }
 
 func (o *Orchestrator) publishTaskActivity(sessionID string, record taskRecord, summary string) {

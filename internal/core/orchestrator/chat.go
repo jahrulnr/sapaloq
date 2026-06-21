@@ -33,6 +33,8 @@ type Orchestrator struct {
 	chat         *chatstore.Store
 	vault        *vault.Writer
 	memoryDir    string
+	workersDir   string
+	workers      *workerRegistry
 	mu           sync.RWMutex
 	cfgModTime   time.Time
 	activeMu     sync.Mutex
@@ -42,6 +44,8 @@ type Orchestrator struct {
 	taskCancels  map[string]context.CancelFunc
 	taskSignals  map[string]chan struct{}
 	sessionTasks map[string]map[string]struct{}
+	spokenMu     sync.Mutex
+	spokenTasks  map[string]struct{}
 	visionMu     sync.RWMutex
 	vision       map[string]bool
 	skillsMu     sync.RWMutex
@@ -108,6 +112,8 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		chat:         chatStore,
 		vault:        vaultWriter,
 		memoryDir:    dirs.MemoryDir,
+		workersDir:   dirs.WorkersDir,
+		workers:      newWorkerRegistry(dirs.WorkersDir),
 		cfgModTime:   modTime,
 		active:       make(map[string]*activeRun),
 		taskCancels:  make(map[string]context.CancelFunc),

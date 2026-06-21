@@ -51,6 +51,9 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 			record.Status = "stopped"
 			return
 		}
+		// Heartbeat at the top of every turn so the health watchdog can tell a
+		// genuinely-working agent (advancing turns) from a wedged goroutine.
+		o.workers.heartbeat(record.ID, fmt.Sprintf("inference turn %d/%d", turn, maxTurns))
 		cleanMessages, images := extractImages(messages)
 		stream, err := snap.br.Complete(ctx, bridge.Request{
 			SessionID:     subSession,
@@ -65,6 +68,7 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 			} else {
 				record.Status = "failed"
 				record.Error = err.Error()
+				o.workerLogError(record.ID, "inference error: "+err.Error())
 			}
 			return
 		}
@@ -93,6 +97,7 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 				if ev.ToolCall == nil {
 					continue
 				}
+				o.workers.heartbeat(record.ID, "tool: "+ev.ToolCall.Name)
 				o.publishTaskActivity(sessionID, *record, "Menjalankan `"+ev.ToolCall.Name+"`.")
 				res := o.handleSubAgentTool(ctx, record, &finalResult, *ev.ToolCall)
 				if res.text != "" {
