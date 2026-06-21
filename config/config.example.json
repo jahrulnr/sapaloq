@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.2.0",
+  "schemaVersion": "1.3.0",
   "updatedAt": "2026-06-21T00:00:00Z",
   "updatedBy": "bootstrap",
   "runtime": {
@@ -127,16 +127,16 @@
   "subAgents": {
     "roles": {
       "planner": {
-        "description": "Plan mode: explore, including system_exec, but do not mutate target artifacts",
+        "description": "Plan mode: explore, including exec, but do not mutate target artifacts",
         "allowedTools": [
-          "workspace_read_file",
-          "workspace_search",
-          "workspace_list_dir",
-          "workspace_glob",
+          "read_file",
+          "search",
+          "list_dir",
+          "glob",
           "read_image",
           "web_search",
           "web_fetch",
-          "system_exec",
+          "exec",
           "sapaloq_write_plan_markdown",
           "sapaloq_read_plan_markdown",
           "sapaloq_request_clarification"
@@ -146,21 +146,20 @@
         "toolPolicy": "read_only"
       },
       "task-runner": {
-        "description": "Agent mode: execute the task with full workspace and host tools",
+        "description": "Agent mode: execute the task with full file and host tools",
         "allowedTools": [
-          "workspace_read_file",
-          "workspace_search",
-          "workspace_list_dir",
-          "workspace_glob",
+          "read_file",
+          "search",
+          "list_dir",
+          "glob",
           "read_image",
           "web_search",
           "web_fetch",
-          "system_exec",
-          "workspace_write_file",
-          "workspace_create_file",
-          "workspace_edit_file",
-          "workspace_delete_file",
-          "terminal_run",
+          "exec",
+          "write_file",
+          "create_file",
+          "edit_file",
+          "delete_file",
           "sapaloq_read_plan_markdown",
           "sapaloq_update_task_progress",
           "sapaloq_complete_task",
@@ -175,10 +174,10 @@
       "scribe": {
         "description": "Append notes only through scribe_write_note",
         "allowedTools": [
-          "workspace_read_file",
-          "workspace_search",
-          "workspace_list_dir",
-          "workspace_glob",
+          "read_file",
+          "search",
+          "list_dir",
+          "glob",
           "read_image",
           "web_search",
           "web_fetch",

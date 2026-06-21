@@ -28,6 +28,8 @@ let lastSubmittedText = '';
 let activeMessageMenu: HTMLElement | null = null;
 let activeProgressBubble: HTMLElement | null = null;
 let activeCountdown: ReturnType<typeof setInterval> | null = null;
+const taskBubbles = new Map<string, HTMLElement>();
+const taskStatuses = new Map<string, string>();
 
 // Inline stroke icons (no external sprite/font dependency). `fill:none` + currentColor
 // styling lives in style.css under .send-btn svg; send is an arrow-up (à la ChatGPT),
@@ -898,13 +900,16 @@ function finishStreamRenderer(r: StreamRenderer) {
   if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
 }
 
-// renderTaskUpdate surfaces an asynchronous background sub-agent completion
-// (EventTaskUpdate) as a concise chat bubble — the "completion trigger" the
-// realtime flow expects. It renders the human summary (never raw tool/JSON
-// text) and tags the bubble by terminal status so styling can differentiate
-// success / failure / needs-input.
+// renderTaskUpdate surfaces asynchronous background sub-agent lifecycle
+// updates as one concise card per task. Snapshot catch-up can overlap queued
+// live events, so a stale active event must never regress an already-terminal
+// card.
 function renderTaskUpdate(event: StreamEvent) {
   const status = event.task_status || '';
+  const taskID = event.task_id || '';
+  const previousStatus = taskID ? taskStatuses.get(taskID) : undefined;
+  const terminal = new Set(['done', 'failed', 'stopped']);
+  if (previousStatus && terminal.has(previousStatus) && !terminal.has(status)) return;
   const role = event.task_role || 'task';
   const summary = (event.summary || '').trim();
   if (!summary) return;
@@ -913,10 +918,34 @@ function renderTaskUpdate(event: StreamEvent) {
     case 'done': prefix = `✅ ${role} selesai`; break;
     case 'failed': prefix = `⚠️ ${role} gagal`; break;
     case 'awaiting_clarification': prefix = `❓ ${role} butuh keputusan`; setRingState('needs-input'); break;
+    case 'pending': prefix = `🕓 ${role} dijadwalkan`; break;
+    case 'in_progress': prefix = `⏳ ${role} sedang bekerja`; break;
+    case 'stopping': prefix = `⏹️ ${role} sedang dihentikan`; break;
     case 'stopped': prefix = `⏹️ ${role} dihentikan`; break;
     default: prefix = `${role}`; break;
   }
-  appendMessage('message--task', `**${prefix}**\n\n${summary}`);
+  const text = `**${prefix}**\n\n${summary}`;
+  let item = taskID ? taskBubbles.get(taskID) : undefined;
+  if (!item || !item.isConnected) {
+    item = appendMessage('message--task', text);
+    if (!item) return;
+    if (taskID) {
+      item.dataset.taskId = taskID;
+      taskBubbles.set(taskID, item);
+    }
+  } else {
+    item.dataset.rawText = text;
+    item.replaceChildren(renderMarkdown(text));
+    const list = document.getElementById('message-list');
+    if (list) list.scrollTop = list.scrollHeight;
+  }
+  if (taskID) taskStatuses.set(taskID, status);
+  if (status === 'pending' || status === 'in_progress') {
+    setRingState('delegating');
+  } else if (status !== 'awaiting_clarification') {
+    const active = [...taskStatuses.values()].some((value) => value === 'pending' || value === 'in_progress' || value === 'stopping');
+    if (!active) setRingState('idle');
+  }
 }
 
 // Live renderer for the in-flight turn, fed by the sapaloq:stream Wails event.

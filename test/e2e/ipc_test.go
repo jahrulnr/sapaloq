@@ -1,8 +1,14 @@
 package e2e_test
 
 import (
+	"bufio"
+	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
@@ -139,6 +145,65 @@ func TestE2ESettingsPatchViaIPC(t *testing.T) {
 	completion, ok := orchestratorCfg["completion"].(map[string]any)
 	if !ok || completion["notifyUserOnDone"] != true {
 		t.Fatalf("completion = %#v", orchestratorCfg["completion"])
+	}
+}
+
+func TestE2EWatchRehydratesDurableTaskStatus(t *testing.T) {
+	h := startInProcessCore(t)
+	taskID := "task-watch-catchup"
+	taskDir := filepath.Join(filepath.Dir(h.ConfigPath), "memory", "tasks", taskID)
+	if err := os.MkdirAll(taskDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	raw, err := json.Marshal(map[string]any{
+		"id":         taskID,
+		"session_id": "watch-session",
+		"role":       "task-runner",
+		"status":     "failed",
+		"task":       "build profile",
+		"error":      "executor stopped without an explicit terminal tool",
+		"created_at": now,
+		"updated_at": now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "status.json"), append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := net.DialTimeout("unix", h.SocketPath, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := json.Marshal(ipc.Request{Op: "watch"})
+	if _, err := conn.Write(append(request, '\n')); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := bufio.NewScanner(conn)
+	var responses []ipc.Response
+	for len(responses) < 2 && scanner.Scan() {
+		var response ipc.Response
+		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		responses = append(responses, response)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(responses) != 2 || responses[0].Op != "watch" {
+		t.Fatalf("watch handshake/snapshot missing: %+v", responses)
+	}
+	event := responses[1].Event
+	if event == nil || event.Kind != bridge.EventTaskUpdate || event.TaskID != taskID || event.TaskStatus != "failed" {
+		t.Fatalf("durable task snapshot not delivered: %+v", responses[1])
 	}
 }
 

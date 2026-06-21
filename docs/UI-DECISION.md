@@ -1,7 +1,7 @@
 # SapaLOQ — UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-19 (M5a spike synced)
+> Last updated: 2026-06-21 (durable task lifecycle cards)
 
 **Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** — orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) — not two independent products long-term.
 
@@ -58,6 +58,14 @@ GNOME Wayland (optional, M5c):
 ```
 
 Widget is **not** embedded inside `sapaloq-core` process for M5 — separate `sapaloq-widget` binary keeps core headless-testable and matches `doctor` / no-UI recovery story. Same repo, shared types package optional.
+
+### Background task visibility
+
+The widget keeps one lifecycle card per `task_id`. `pending`, `in_progress`,
+`stopping`, `awaiting_clarification`, `done`, `failed`, and `stopped` update the
+same card and ring state. On startup/reconnect, IPC `watch` first sends recent
+durable task snapshots and then live events, so a completion or failure cannot
+disappear merely because the widget was disconnected.
 
 ---
 

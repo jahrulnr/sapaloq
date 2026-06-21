@@ -2,7 +2,7 @@
 
 > **Internal pub/sub** inside `sapaloq-core` — goroutine + channel + route watcher.
 > Bukan service terpisah. Bukan Redis / Rabbit / MQTT.
-> Last updated: 2026-06-19
+> Last updated: 2026-06-21
 
 Related: [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md)
 
@@ -90,6 +90,12 @@ Publish never blocks on slow consumer — drop + log.
 Ops: `publish`, `watch`, `unwatch`, `event`, `ping`.
 
 Orchestrator uses in-proc channel — **no socket hop**.
+
+The widget `watch` stream is live-first but not live-only. After the subscribe
+ack, the IPC server rehydrates recent `EventTaskUpdate` snapshots from
+`memory/tasks/*/status.json`, then streams bus events. This closes the race
+where task completion happened before the widget connected or while it was
+reconnecting. Provider-level `EventDone` is not a task lifecycle event.
 
 ---
 

@@ -1,7 +1,7 @@
 # SapaLOQ — Development Blueprint (Proposal)
 
 > **Unified synthesis** of all SapaLOQ architecture docs. Single book for implementers, reviewers, and future contributors.
-> Last updated: 2026-06-21 · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
+> Last updated: 2026-06-21 (flat unrestricted tool surface) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
 
 ---
 
@@ -1693,7 +1693,8 @@ exist.
 | `llmBridge.driver`                          | `cursor-bridge` | Primary brain; `local-llama` = offline fallback only |
 | `orchestrator.spawnRouting.agentToolPolicy` | `"full"`        | Agent unrestricted post-plan                         |
 | `orchestrator.spawnRouting.autoApprovePlan` | `false`         | User reviews plans                                   |
-| Unrestricted host tool (`system_exec`) | available in **all** modes | Run any command anywhere (not sandboxed to workspace) — also reads any host file via `cat`/`sed`/`head`/`tail`/`rg`; shared dispatch in every mode — see `internal/core/orchestrator/tools_system.go` |
+| Host command tool (`exec`) | available in **all** modes | Run any command anywhere (any path; optional `cwd`) — also reads any host file via `cat`/`sed`/`head`/`tail`/`rg`; shared dispatch in every mode — see `internal/core/orchestrator/tools_workspace.go` (`toolExec`) |
+| File tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`) | agent mutates; read/search/list everywhere | Flat, unrestricted CRUD — every `path` accepts absolute/`~`/CWD-relative. No workspace sandbox (a feature-not-security design) — see `internal/core/orchestrator/tools_workspace.go` |
 | Local image vision (`read_image`) | available in **all** modes | Read a local image file (png/jpeg/gif/webp) into the model's vision — returns inline `data:` markdown that `extractImages` re-ingests into `bridge.Request.Images` (same channel as widget attachments); needs a vision-capable model |
 | `nodes.allowSharedMemoryRemote`             | `false`         | Remote = context packet only                         |
 | `events.bus.wakeViaBus`                     | `true`          | Bus primary wake                                     |

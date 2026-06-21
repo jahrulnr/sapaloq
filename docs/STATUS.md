@@ -15,7 +15,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 1 | Execution modes Ask / Plan / Agent | ✅ | `internal/core/orchestrator/conversation.go` (`runConversation`), `tasks.go` (`handleAskTool`), roles `planner` / `task-runner` |
 | 2 | Sub-agent tool loop + per-role profiles | ✅ | `subagent.go` (`runSubAgentLoop`, `handleSubAgentTool`), `tools.go` (`toolsForRole`); `maxTurns` read from config (`roleMaxTurns`). Role policy is checked before shared-tool dispatch, so undeclared/provider-poisoned calls cannot bypass the role allowlist |
 | 3 | Assessment tools (read/search/list_dir, web_search/fetch) | ✅ | `tools_workspace.go`, `tools_web.go`, dispatch in `tools_dispatch.go` |
-| 4 | Write/exec tools (write_file/create_file, terminal_run) | ✅ | `tools_workspace.go`; gated to `task-runner` in `subagent.go` |
+| 4 | File + exec tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`, `exec`) | ✅ | `tools_workspace.go`; flat unrestricted surface (any path; no workspace sandbox). Mutating file tools gated to `task-runner`; `exec` available in every mode |
 | 5 | In-place edit / delete / glob tools | ✅ | `tools_workspace.go` (`toolEditFile`, `toolDeleteFile`, `toolGlob`) — added 2026-06-20 |
 | 6 | `read_file` binary guard + line-range read | ✅ | `tools_workspace.go` (`toolReadFile`: NUL/non-printable sniff + `offset`/`limit` line range) — added 2026-06-20 |
 | 7 | Plan artifact + handoff | ✅ | `subagent.go` (`sapaloq_write_plan_markdown`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment |
@@ -25,10 +25,10 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go` |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor` |
-| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; markdown via `marked`+DOMPurify; wait countdown |
+| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; markdown via `marked`+DOMPurify; wait countdown; one durable lifecycle card per background `task_id`, rehydrated on watcher reconnect |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
-| 17 | Event bus (in-proc pub/sub) | ✅ | `internal/bus/bus.go`: topic-pattern routing (`*`/`**` via `matchTopic`/`SubscribeTopics`), JSON-lines WAL (`NewWithWAL`, non-blocking append goroutine, seq monotonic across boots), `Replay(since, fn)`, boot replay wired in `cmd/sapaloq-core/main.go` (`newEventBus`). `Subscribe` stays receive-all for the widget `watch`. **Completion trigger now wired end-to-end** (2026-06-21): sub-agent finish → `EventTaskUpdate` published to bus → widget `watchEvents` IPC subscriber → `task_update` chat bubble. Socket bus publish op still a follow-up |
+| 17 | Event bus (in-proc pub/sub) | ✅ | `internal/bus/bus.go`: topic-pattern routing (`*`/`**` via `matchTopic`/`SubscribeTopics`), JSON-lines WAL (`NewWithWAL`, non-blocking append goroutine, seq monotonic across boots), `Replay(since, fn)`, boot replay wired in `cmd/sapaloq-core/main.go` (`newEventBus`). `Subscribe` stays receive-all for live widget updates; IPC `watch` also rehydrates recent task snapshots from durable `status.json`, so reconnect cannot silently lose completion/failure |
 | 18 | Context-SOP: FTS index / prefetch / anti-deep-check / intent-router | 🟡 | `facts` + `facts_fts` (FTS5-probed, LIKE fallback) now live in the chat store (`store.go` migrate, `facts.go`): `AddFact`/`SearchFacts`/`RecentFacts`/`DeleteFact`. No prefetch/anti-deep-check/intent-router yet |
 | 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `feedback_events` table + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; bounded negative-guidance slice injected into Ask prompt (`session.go`); widget 👍/👎 + correction box wired (`app.go`, `ipc.go`, `main.ts`). No learning_queue / bandit yet |
 | 20 | Named sub-agent roles (scribe, memory-janitor, intent-router, boundary-guard, event-watcher, learning-agent, research) | 🟡 | `scribe` is now spawnable (`sapaloq_spawn_scribe`); the sub-agent tool gate is config-driven (`roleAllows` honors `subAgents.roles[].allowedTools` with `*`-wildcards, default-deny mutation when unconfigured); `toolsForRole` offers only allowed+registered tools. memory-janitor/intent-router/boundary-guard/event-watcher/learning-agent/research still not spawnable |
@@ -37,12 +37,35 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 23 | Nodes (remote sub-agents) | 🟡 | nodes table + local-default bootstrap + role/priority picker + local spawn routing (no behavior change) + remote Transport (ws) behind a connect probe + fake for tests; full remote execution wiring (envelope→runSubAgentLoop bridge) + /settings node CRUD still deferred |
 | 24 | Driver / Platform (GNOME / D-Bus notifications, `desktop_*`) | 🟡 | `internal/platform` abstraction + headless + freedesktop/gnome D-Bus adapter (behind session-bus probe) + `desktop_notify`/`desktop_dnd_status` + notify→bus bridge; window/screenshot/clipboard still deferred |
 | 25 | Replaceable per-mode system prompts (Ask/planner/agent/scribe) | ✅ | `internal/prompts` — embedded defaults materialized to `~/.config/sapaloq/prompts` with a sha256 manifest; user edits preserved, unmodified files upgraded when the shipped default changes. Wired via `Orchestrator.systemPrompt` in `session.go` (Ask) + `subagent.go` (planner/agent/scribe). `config.prompts.{enabled,dir}` |
-| 26 | Unrestricted host tool (`system_exec`) | ✅ | NOT sandboxed to the workspace root by design — run any command anywhere (which also covers reading any host file via cat/sed/head/tail/rg), available in **every** mode (Ask/plan/agent) via the shared-tool dispatcher. `tools_system.go`, registered in `tools.go` (`unrestrictedSystemTools`), dispatched in `tools_dispatch.go`. Fixes the "/etc/hosts" limitation. `system_read_file` was removed as redundant (2026-06-21). Workspace_* tools stay boundary-safe for scoped edits |
+| 26 | Host command tool (`exec`) | ✅ | Run any command anywhere (any path; optional `cwd`), also reads any host file via cat/sed/head/tail/rg; available in **every** mode via the shared dispatcher. `tools_workspace.go` (`toolExec`), in `askTools`/`planTools`/`agentTools`, dispatched in `tools_dispatch.go`. Merged the former `system_exec` + `terminal_run` into one flat `exec` (2026-06-21) |
 | 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` — `CurrentSchemaVersion` (1.1.0) + semver compare; lower version → ordered upgrade chain (old JSON formats preserved, additive/idempotent), equal → no-op, higher → load as-is (forward-compat; mandatory-empty validated post-load via `LLMBridge.Validate`). Hooked into `Load`, upgraded config persisted atomically |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` — size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` — the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
 
 ---
+
+## Implemented this session (2026-06-21) — flat unrestricted tool surface
+
+- **Removed the `workspace_`/`system_`/`terminal_` prefixes.** The split between
+  boundary-rooted `workspace_*` tools and an "unrestricted" `system_exec` was an
+  AI-coding mistake that created bugs (the model got bound to the process CWD and
+  failed on any path outside it) and forced it to choose between overlapping
+  tools. SapaLOQ is unrestricted by design (less-bugs over security), so the
+  surface is now flat: `read_file`, `write_file`, `create_file`, `edit_file`,
+  `delete_file`, `search`, `list_dir`, `glob`, `exec` (and `read_image`).
+- **Dropped the workspace sandbox.** `resolveInWorkspace`/`workspaceRoot` are
+  gone; every `path` accepts absolute, `~`-relative, or CWD-relative input. New
+  `TestFileToolsAreNotWorkspaceBound` proves CRUD works on a path outside the
+  CWD with no boundary rejection.
+- **Merged `system_exec` + `terminal_run` → `exec`** (one host command tool,
+  optional `cwd`). `exec` stays exploration (non-mutating) so Ask/Plan keep it.
+- **Schema migration `1.2.0 → 1.3.0`** renames any legacy `allowedTools` entries
+  in pre-existing configs (de-duplicating `system_exec`+`terminal_run` → `exec`)
+  so the rename is not a silent break. `TestMigrate120FlattensToolNames`.
+- Updated default prompts, `config.example.json`, `schema` version, and the
+  contract/role tests to the flat names. `internal/core/orchestrator/{tools.go,
+  tools_workspace.go,tools_system.go,tools_dispatch.go,subagent.go}`,
+  `internal/config/{migrate.go,migrate_test.go}`, `internal/prompts/defaults/*`.
 
 ## Audit this session (2026-06-21) — architecture remediation
 
@@ -58,6 +81,27 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   are role-gated before dispatch while preserving Planner `system_exec`.
 - Plan → Agent binding no longer guesses from the latest session plan. Agent
   receives a plan only through an explicit validated `plan_task_id`.
+
+## Implemented this session (2026-06-21) — durable sub-agent certainty
+
+- Reconstructed `task-1782049903924067527`: provider/tool turns succeeded, but
+  `/tmp/profile/index.html` was never created; the executor only narrated its
+  next action and was incorrectly persisted as `done`.
+- Task-runner completion is now explicit. After bounded idle nudges or turn
+  exhaustion without `sapaloq_complete_task`/`sapaloq_fail_task`, the task is
+  persisted as `failed` with a concrete reason. Provider `EventDone` no longer
+  leaks into progress JSONL as fake task completion.
+- Every lifecycle transition (`pending`, `in_progress`, terminal/notable state)
+  emits and persists `EventTaskUpdate`; `notifyUserOnDone` no longer suppresses
+  chat certainty. Tool execution also emits a concise activity update.
+- IPC `watch` sends recent durable task snapshots before live bus events.
+  Frontend cards are keyed by `task_id`, update in place, and drive the ring
+  state. Core startup marks detached `pending`/`in_progress`/`stopping` tasks
+  as explicit orphan failures.
+- Regression coverage:
+  `subagent_completion_test.go` checks false-done prevention, bridge-done
+  separation, durable snapshots, and restart recovery;
+  `test/e2e/ipc_test.go` checks late watcher catch-up.
 
 ## Implemented this session (2026-06-21) — thinking persistence + widget polish
 
@@ -76,8 +120,8 @@ Root cause of sub-agents stalling ("kepentok") with no continuation, plus the mi
 
 - **Bug #1 — live config `allowedTools` named non-existent tools (the root cause).** `sapaloq-config/config.json` `subAgents.roles[task-runner/planner/scribe].allowedTools` used abstract doc names (`gnome_*`, `exec`, `write_file`, `mcp:*`, `emit_progress`, `ask_orchestrator`) that match **no** registered Go tool. Because `roleAllows` treats a present allowlist as authoritative, this silently default-denied **every real tool**, so the agent could never act (jsonl evidence: `workspace_list_dir` → "skip workspace_*, pakai system_exec" → denied → tool-less turn → premature done). Fixed the live config to real tool names (`workspace_*`, `terminal_run`, `system_exec`, `read_image`, `web_search`/`web_fetch`, `desktop_*`, `sapaloq_*`). `config.example.json` was already correct from 2026-06-20; the live config had drifted.
 - **Defense-in-depth in code.** `roleAllows` now calls a new `allowlistMatchesKnownTool()` — if a configured allowlist matches **zero** registered tools (typo/drift), it falls back to the static per-role default policy + warns, so a broken config can never again silently disarm an agent. `subagent.go`, `subagent_completion_test.go` (`TestRoleAllowsFallsBackOnUnknownAllowlist`, `TestRoleAllowsHonorsValidAllowlist`).
-- **Bug #2 — task-runner finished prematurely on a tool-less turn.** `runSubAgentLoop` previously set `Status="done"` whenever a turn had no tool calls. For `task-runner` that's wrong when it merely narrated intent. Added `idleNudges`/`maxIdleNudges=2`: a tool-less task-runner turn (without a terminal event) injects a nudge to call a tool or `sapaloq_complete_task`/`sapaloq_fail_task` and continues; `planner`/`scribe` keep the old "no tools = finished" behavior. `subagent.go`, `subagent_completion_test.go` (`TestTaskRunnerDoesNotCompleteOnToolLessTurn`, `TestPlannerCompletesOnToolLessTurn`).
-- **Bug #3 — completion trigger ("speak" event) was config/doc-only.** `orchestrator.completion` + `progressStreaming.mirrorToWidget` had **0** Go references; sub-agents only wrote `status.json` and chat had to poll. Implemented end-to-end: new `EventTaskUpdate` kind + `TaskID`/`TaskRole`/`TaskStatus`/`Summary` fields (`bridge/events.go`); `CompletionConfig` struct (`config/load.go`); `publishTaskUpdate()` at the end of `runBackgroundTask` publishes to the bus (success stays quiet unless `notifyUserOnDone`; failures/clarifications/stopped always surface a human summary) (`tasks.go`). Widget side: a long-lived `watchEvents()` IPC `watch` subscriber with reconnect/backoff (`ipc.go`), launched in `app.go` `startup()` + torn down in `shutdown()` (`OnShutdown` in `main.go`), forwarding `task_update` to `sapaloq:stream`; `renderTaskUpdate()` renders a `message--task` bubble (status emoji + summary markdown) instead of raw `[Tool results]`/`speak` JSON (`main.ts`, `style.css`). Tests: `subagent_completion_test.go` (`TestPublishTaskUpdateFailureAlwaysSurfaces`, `TestPublishTaskUpdateDoneQuietByDefault`).
+- **Bug #2 — task-runner finished prematurely on a tool-less turn.** `runSubAgentLoop` previously set `Status="done"` whenever a turn had no tool calls. For `task-runner` that's wrong when it merely narrated intent. Added `idleNudges`/`maxIdleNudges=2`: a tool-less task-runner turn injects a bounded nudge to act or call `sapaloq_complete_task`/`sapaloq_fail_task`; if it still does neither, the task fails explicitly. `planner`/`scribe` retain natural no-tool completion. `subagent.go`, `subagent_completion_test.go`.
+- **Bug #3 — completion trigger ("speak" event) was config/doc-only.** Lifecycle updates now publish end-to-end and are durable. Success is always visible in chat regardless of `notifyUserOnDone`; late/reconnected watchers receive `status.json` snapshots before live events, and widget cards update in place by task id. `tasks.go`, `ipc/server.go`, `main.ts`, `subagent_completion_test.go`, `test/e2e/ipc_test.go`.
 - **Note — `thinking` token=0 is intentional, not a bug.** Thinking turns are skipped in `contextMessages` (never replayed to the LLM) and excluded from the compaction summary, so they genuinely don't consume the window; leaving their estimate at 0 is correct. Sub-agent loop tool accounting is out of scope here (sub-agents track their own task records, not `chat_turns`).
 - **Removed the popup drop shadow entirely.** The transparent window (`overflow:hidden`) hard-clips any outer shadow at the edge, leaving a thin ragged line that looked worse than none — especially on light backgrounds. Depth now comes from the border + inset top highlight; dock padding reverted to `10px`. `cmd/sapaloq-widget/frontend/src/style.css`.
 - **Removed the orb (collapsed/non-popup mode) drop shadow.** `.orb-body` had `box-shadow: 0 14px 30px …` whose lower half got clipped by the transparent window edge, leaving a gray smudge under the orb on light backgrounds. Dropped the outer shadow, kept the inset rim highlight; depth/glow still come from `.orb-aura`/`.orb-ring`/`.orb-specular`. Verified on a forced-white background. `cmd/sapaloq-widget/frontend/src/style.css`.

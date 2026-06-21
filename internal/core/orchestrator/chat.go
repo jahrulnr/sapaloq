@@ -128,6 +128,10 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	// Ensure the local-default execution node exists so spawns always have a
 	// routable in-proc target. Best-effort.
 	o.bootstrapLocalDefaultNode(context.Background())
+	// A process restart loses in-memory worker goroutines. Persisted tasks that
+	// still claim pending/in_progress/stopping would otherwise leave the user
+	// staring at a task that can never advance.
+	o.recoverOrphanedTasks()
 	return o, nil
 }
 

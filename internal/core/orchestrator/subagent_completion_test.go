@@ -1,9 +1,14 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/bus"
@@ -50,7 +55,7 @@ func toolCallEvent(name string, args map[string]any) bridge.StreamEvent {
 func TestTaskRunnerDoesNotCompleteOnToolLessTurn(t *testing.T) {
 	fake := &scriptedBridge{turns: [][]bridge.StreamEvent{
 		// Turn 1: model only talks, calls no tool (the "kepentok" trigger).
-		{{Kind: bridge.EventResponseDelta, Delta: "I'll switch to system_exec and build it."}},
+		{{Kind: bridge.EventResponseDelta, Delta: "I'll switch to exec and build it."}},
 		// Turn 2: after the nudge, it actually finishes via the terminal tool.
 		{toolCallEvent("sapaloq_complete_task", map[string]any{"summary": "Website built."})},
 	}}
@@ -68,6 +73,53 @@ func TestTaskRunnerDoesNotCompleteOnToolLessTurn(t *testing.T) {
 	}
 	if fake.call < 2 {
 		t.Fatalf("expected at least 2 turns (nudge then complete), got %d", fake.call)
+	}
+}
+
+func TestTaskRunnerFailsWhenItNeverSignalsTerminalState(t *testing.T) {
+	fake := &scriptedBridge{turns: [][]bridge.StreamEvent{
+		{{Kind: bridge.EventResponseDelta, Delta: "I will do it."}},
+		{{Kind: bridge.EventResponseDelta, Delta: "Let me invoke the tool."}},
+		{{Kind: bridge.EventResponseDelta, Delta: "I am about to invoke it."}},
+	}}
+	o := &Orchestrator{memoryDir: t.TempDir(), cfg: config.Config{}}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
+	rec := &taskRecord{ID: "task-stuck", Role: "task-runner", Status: "in_progress", Task: "build a site"}
+
+	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+
+	if rec.Status != "failed" {
+		t.Fatalf("status = %q, want failed", rec.Status)
+	}
+	if rec.Error == "" {
+		t.Fatalf("stuck executor must record a concrete failure")
+	}
+}
+
+func TestSubAgentProgressDoesNotPersistBridgeDoneAsTaskCompletion(t *testing.T) {
+	progressDir := t.TempDir()
+	fake := &scriptedBridge{turns: [][]bridge.StreamEvent{
+		{toolCallEvent("sapaloq_complete_task", map[string]any{"summary": "done for real"})},
+	}}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		progress:  ProgressWriter{Dir: progressDir},
+		cfg:       config.Config{},
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
+	rec := &taskRecord{ID: "task-progress", Role: "task-runner", Status: "in_progress", Task: "finish"}
+
+	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+
+	raw, err := os.ReadFile(filepath.Join(progressDir, "orch-task-progress.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"kind":"done"`)) {
+		t.Fatalf("bridge turn completion leaked into task progress: %s", raw)
+	}
+	if !bytes.Contains(raw, []byte(`"kind":"task_update"`)) {
+		t.Fatalf("tool activity task_update missing from progress: %s", raw)
 	}
 }
 
@@ -100,16 +152,16 @@ func TestRoleAllowsFallsBackOnUnknownAllowlist(t *testing.T) {
 	o := &Orchestrator{cfg: config.Config{
 		SubAgents: config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{
 			// The old broken live-config shape: abstract names, none real.
-			"task-runner": {AllowedTools: []string{"gnome_*", "exec", "write_file", "mcp:*"}},
+			"task-runner": {AllowedTools: []string{"gnome_*", "mcp:*", "emit_progress", "ask_orchestrator"}},
 		}},
 	}}
-	// terminal_run is a real mutating tool that the bogus allowlist does not
-	// match; the fallback must still grant it to task-runner.
-	if !o.roleAllows("task-runner", "terminal_run") {
-		t.Fatalf("task-runner should be allowed terminal_run via static fallback when allowlist names no real tool")
+	// exec is a real tool the bogus allowlist does not match; the fallback must
+	// still grant it to task-runner.
+	if !o.roleAllows("task-runner", "exec") {
+		t.Fatalf("task-runner should be allowed exec via static fallback when allowlist names no real tool")
 	}
-	if !o.roleAllows("task-runner", "workspace_create_file") {
-		t.Fatalf("task-runner should be allowed workspace_create_file via fallback")
+	if !o.roleAllows("task-runner", "create_file") {
+		t.Fatalf("task-runner should be allowed create_file via fallback")
 	}
 }
 
@@ -118,14 +170,14 @@ func TestRoleAllowsFallsBackOnUnknownAllowlist(t *testing.T) {
 func TestRoleAllowsHonorsValidAllowlist(t *testing.T) {
 	o := &Orchestrator{cfg: config.Config{
 		SubAgents: config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{
-			"scribe": {AllowedTools: []string{"workspace_read_file", "scribe_write_note"}},
+			"scribe": {AllowedTools: []string{"read_file", "scribe_write_note"}},
 		}},
 	}}
-	if !o.roleAllows("scribe", "workspace_read_file") {
-		t.Fatalf("scribe should be allowed workspace_read_file")
+	if !o.roleAllows("scribe", "read_file") {
+		t.Fatalf("scribe should be allowed read_file")
 	}
-	if o.roleAllows("scribe", "terminal_run") {
-		t.Fatalf("scribe must NOT be allowed terminal_run (not in its valid allowlist)")
+	if o.roleAllows("scribe", "exec") {
+		t.Fatalf("scribe must NOT be allowed exec (not in its valid allowlist)")
 	}
 }
 
@@ -155,31 +207,108 @@ func TestPublishTaskUpdateFailureAlwaysSurfaces(t *testing.T) {
 	}
 }
 
-// TestPublishTaskUpdateDoneQuietByDefault verifies a successful task stays quiet
-// unless notifyUserOnDone is enabled.
-func TestPublishTaskUpdateDoneQuietByDefault(t *testing.T) {
+// TestPublishTaskUpdateDoneAlwaysSurfaces verifies chat certainty is not tied
+// to the optional desktop-notification preference.
+func TestPublishTaskUpdateDoneAlwaysSurfaces(t *testing.T) {
 	b := bus.New()
 	events, cancel := b.Subscribe(8)
 	defer cancel()
-	o := &Orchestrator{bus: b, cfg: config.Config{}}
+	dir := t.TempDir()
+	o := &Orchestrator{bus: b, cfg: config.Config{}, progress: ProgressWriter{Dir: dir}}
 
 	o.publishTaskUpdate("s1", taskRecord{ID: "t1", Role: "task-runner", Status: "done", Result: "ok"})
 
-	select {
-	case ev := <-events:
-		t.Fatalf("expected no event when notifyUserOnDone is false, got %q", ev.Data.Kind)
-	default:
-	}
-
-	// With notify enabled, success surfaces.
-	o.cfg.Orchestrator.Completion.NotifyUserOnDone = true
-	o.publishTaskUpdate("s1", taskRecord{ID: "t1", Role: "task-runner", Status: "done", Result: "ok"})
 	select {
 	case ev := <-events:
 		if ev.Data.TaskStatus != "done" {
 			t.Fatalf("task_status = %q, want done", ev.Data.TaskStatus)
 		}
 	default:
-		t.Fatalf("expected a done task_update when notifyUserOnDone is true")
+		t.Fatalf("expected a done task_update regardless of notifyUserOnDone")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "orch-t1.jsonl"))
+	if err != nil {
+		t.Fatalf("terminal task event not persisted to progress: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"kind":"task_update"`)) {
+		t.Fatalf("progress missing task_update: %s", raw)
+	}
+}
+
+func TestRecentTaskUpdatesRehydratesDurableState(t *testing.T) {
+	now := time.Now().UTC()
+	o := &Orchestrator{memoryDir: t.TempDir()}
+	for _, record := range []taskRecord{
+		{ID: "t1", SessionID: "s1", Role: "task-runner", Status: "in_progress", CreatedAt: now, UpdatedAt: now},
+		{ID: "t2", SessionID: "s1", Role: "task-runner", Status: "failed", Error: "boom", CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+	} {
+		if err := o.writeTask(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events := o.RecentTaskUpdates(20)
+	if len(events) != 2 {
+		t.Fatalf("got %d updates, want 2", len(events))
+	}
+	if events[0].TaskID != "t1" || events[1].TaskID != "t2" {
+		t.Fatalf("updates not in chronological order: %+v", events)
+	}
+	if events[1].TaskStatus != "failed" || events[1].Summary == "" {
+		t.Fatalf("failed snapshot incomplete: %+v", events[1])
+	}
+}
+
+func TestRecoverOrphanedTasksFailsDetachedWorkers(t *testing.T) {
+	now := time.Now().UTC()
+	b := bus.New()
+	events, cancel := b.Subscribe(8)
+	defer cancel()
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		progress:  ProgressWriter{Dir: t.TempDir()},
+		bus:       b,
+	}
+	for _, record := range []taskRecord{
+		{ID: "pending", SessionID: "s1", Role: "task-runner", Status: "pending", CreatedAt: now, UpdatedAt: now},
+		{ID: "working", SessionID: "s1", Role: "task-runner", Status: "in_progress", CreatedAt: now, UpdatedAt: now},
+		{ID: "complete", SessionID: "s1", Role: "task-runner", Status: "done", Result: "ok", CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := o.writeTask(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	o.recoverOrphanedTasks()
+
+	for _, id := range []string{"pending", "working"} {
+		record, err := o.readTask(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.Status != "failed" || !strings.Contains(record.Error, "orphaned") {
+			t.Fatalf("%s not recovered as explicit failure: %+v", id, record)
+		}
+	}
+	complete, err := o.readTask("complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if complete.Status != "done" {
+		t.Fatalf("terminal task changed during recovery: %+v", complete)
+	}
+
+	seen := 0
+	for {
+		select {
+		case ev := <-events:
+			if ev.Data.Kind == bridge.EventTaskUpdate && ev.Data.TaskStatus == "failed" {
+				seen++
+			}
+		default:
+			if seen != 2 {
+				t.Fatalf("published %d orphan recovery updates, want 2", seen)
+			}
+			return
+		}
 	}
 }

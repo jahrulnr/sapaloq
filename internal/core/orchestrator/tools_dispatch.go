@@ -12,18 +12,18 @@ import (
 func runSharedTool(ctx context.Context, call parse.ToolCall) (string, bool) {
 	args := parseToolArgs(call.Arguments)
 	switch call.Name {
-	case "workspace_read_file":
+	case "read_file":
 		return toolReadFile(args), true
-	case "workspace_search":
+	case "search":
 		return toolSearch(args), true
-	case "workspace_list_dir":
+	case "list_dir":
 		return toolListDir(args), true
-	case "workspace_glob":
+	case "glob":
 		return toolGlob(args), true
 	case "read_image":
 		return toolReadImage(args), true
-	case "system_exec":
-		return toolSystemExec(ctx, args), true
+	case "exec":
+		return toolExec(ctx, args), true
 	case "web_fetch":
 		return toolWebFetch(ctx, args), true
 	case "web_search":

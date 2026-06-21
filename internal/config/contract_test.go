@@ -54,11 +54,11 @@ func TestPublicExampleLoadsActiveRuntimeFields(t *testing.T) {
 		t.Fatalf("event WAL path not loaded: %+v", cfg.Events.Bus)
 	}
 	planner, ok := cfg.SubAgents.Roles["planner"]
-	if !ok || !containsString(planner.AllowedTools, "system_exec") {
+	if !ok || !containsString(planner.AllowedTools, "exec") {
 		t.Fatalf("planner exploration tools not loaded: %+v", planner)
 	}
 	scribe, ok := cfg.SubAgents.Roles["scribe"]
-	if !ok || containsString(scribe.AllowedTools, "system_exec") {
+	if !ok || containsString(scribe.AllowedTools, "exec") {
 		t.Fatalf("scribe policy not loaded: %+v", scribe)
 	}
 }

@@ -11,7 +11,7 @@ import (
 // matching upgrade step in migrationSteps so older configs are upgraded in
 // place. Old JSON formats are always preserved in code (the upgrade steps are
 // additive and idempotent) so a config written by any prior version still loads.
-const CurrentSchemaVersion = "1.2.0"
+const CurrentSchemaVersion = "1.3.0"
 
 // migrationStep upgrades a raw config map from one schema version to the next.
 // from is the version the step applies to; to is the version it produces. Steps
@@ -69,6 +69,59 @@ var migrationSteps = []migrationStep{
 					}
 					delete(events, "busPath")
 				}
+			}
+		},
+	},
+	{
+		from: "1.2.0",
+		to:   "1.3.0",
+		apply: func(raw map[string]any) {
+			// Tool surface flattened: drop the workspace_/system_/terminal_
+			// prefixes (a feature-not-security design). Rewrite any role
+			// allowedTools so configs written before the rename keep working.
+			renames := map[string]string{
+				"workspace_read_file":   "read_file",
+				"workspace_write_file":  "write_file",
+				"workspace_create_file": "create_file",
+				"workspace_edit_file":   "edit_file",
+				"workspace_delete_file": "delete_file",
+				"workspace_search":      "search",
+				"workspace_list_dir":    "list_dir",
+				"workspace_glob":        "glob",
+				"system_exec":           "exec",
+				"terminal_run":          "exec",
+			}
+			subAgents, ok := raw["subAgents"].(map[string]any)
+			if !ok {
+				return
+			}
+			roles, ok := subAgents["roles"].(map[string]any)
+			if !ok {
+				return
+			}
+			for _, r := range roles {
+				role, ok := r.(map[string]any)
+				if !ok {
+					continue
+				}
+				list, ok := role["allowedTools"].([]any)
+				if !ok {
+					continue
+				}
+				seen := map[string]bool{}
+				var out []any
+				for _, item := range list {
+					name, _ := item.(string)
+					if repl, found := renames[name]; found {
+						name = repl
+					}
+					if name == "" || seen[name] {
+						continue
+					}
+					seen[name] = true
+					out = append(out, name)
+				}
+				role["allowedTools"] = out
 			}
 		},
 	},

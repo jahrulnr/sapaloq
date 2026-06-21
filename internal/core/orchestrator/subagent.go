@@ -39,7 +39,7 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	var finalResult strings.Builder
 	// idleNudges counts consecutive turns where an executor role (task-runner)
 	// produced neither a tool call nor a terminal event. Such a turn is usually
-	// the model "announcing intent" (e.g. "I'll switch to system_exec") without
+	// the model "announcing intent" (e.g. "I'll switch to exec") without
 	// acting. Treating that as completion ends the task prematurely (the
 	// observed "kepentok" bug), so instead we nudge it to act or finish — but
 	// only a bounded number of times so a stuck model can't loop forever.
@@ -76,7 +76,13 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 			if ev.SessionID == "" {
 				ev.SessionID = record.ID
 			}
-			_ = o.progress.Append(record.ID, ev)
+			// Bridge EventDone ends one inference response, not the background
+			// task. Persisting it as "done" made progress JSONL falsely look
+			// terminal multiple times. Task lifecycle is recorded separately as
+			// EventTaskUpdate.
+			if ev.Kind != bridge.EventDone {
+				_ = o.progress.Append(record.ID, ev)
+			}
 			switch ev.Kind {
 			case bridge.EventResponseDelta:
 				turnText.WriteString(ev.Delta)
@@ -87,6 +93,7 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 				if ev.ToolCall == nil {
 					continue
 				}
+				o.publishTaskActivity(sessionID, *record, "Menjalankan `"+ev.ToolCall.Name+"`.")
 				res := o.handleSubAgentTool(ctx, record, &finalResult, *ev.ToolCall)
 				if res.text != "" {
 					toolResults = append(toolResults, fmt.Sprintf("[%s] %s", ev.ToolCall.Name, res.text))
@@ -139,8 +146,8 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 				nudge := "You did not call any tool this turn and have not finished. " +
 					"If the task is complete, call sapaloq_complete_task with a summary. " +
 					"If it cannot be done, call sapaloq_fail_task with a reason. " +
-					"Otherwise, actually invoke the tool you need (e.g. system_exec, " +
-					"terminal_run, workspace_create_file) — do not just describe what you will do."
+					"Otherwise, actually invoke the tool you need (e.g. exec, " +
+					"create_file, edit_file) — do not just describe what you will do."
 				record.appendTranscript("assistant", turnText.String())
 				record.appendTranscript("user", nudge)
 				messages = append(messages,
@@ -151,6 +158,11 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 				continue
 			}
 			record.Result = strings.TrimSpace(finalResult.String())
+			if record.Role == "task-runner" {
+				record.Error = fmt.Sprintf("executor stopped without calling sapaloq_complete_task or sapaloq_fail_task after %d idle nudges", idleNudges)
+				record.Status = "failed"
+				return
+			}
 			record.Status = "done"
 			return
 		}
@@ -253,8 +265,7 @@ func matchToolAllowlist(allow []string, tool string) bool {
 // are denied to read-only roles under the fallback policy.
 func isMutatingTool(tool string) bool {
 	switch tool {
-	case "workspace_write_file", "workspace_create_file", "workspace_edit_file",
-		"workspace_delete_file", "terminal_run":
+	case "write_file", "create_file", "edit_file", "delete_file":
 		return true
 	}
 	return false
@@ -340,16 +351,16 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 	}
 	args := parseToolArgs(call.Arguments)
 	switch call.Name {
-	case "workspace_write_file":
+	case "write_file":
 		return subToolResult{text: toolWriteFile(args, false)}
-	case "workspace_create_file":
+	case "create_file":
 		return subToolResult{text: toolWriteFile(args, true)}
-	case "workspace_edit_file":
+	case "edit_file":
 		return subToolResult{text: toolEditFile(args)}
-	case "workspace_delete_file":
+	case "delete_file":
 		return subToolResult{text: toolDeleteFile(args)}
-	case "terminal_run":
-		return subToolResult{text: toolTerminalRun(ctx, args)}
+	case "exec":
+		return subToolResult{text: toolExec(ctx, args)}
 	case "scribe_write_note":
 		return subToolResult{text: o.toolScribeWriteNote(args)}
 	case "desktop_notify":

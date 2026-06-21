@@ -102,9 +102,17 @@ func TestDeleteFile(t *testing.T) {
 	if out := toolDeleteFile(toolArgs{Path: "sub"}); !strings.Contains(out, "directory") {
 		t.Fatalf("expected directory refusal, got: %s", out)
 	}
-	// Traversal is rejected.
-	if out := toolDeleteFile(toolArgs{Path: "../escape.txt"}); !strings.Contains(out, "outside the workspace") {
-		t.Fatalf("expected traversal rejection, got: %s", out)
+	// No workspace boundary: a path outside the CWD is resolved and deleted,
+	// not rejected. SapaLOQ is unrestricted by design.
+	outside := filepath.Join(t.TempDir(), "escape.txt")
+	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := toolDeleteFile(toolArgs{Path: outside}); !strings.Contains(out, "Deleted") {
+		t.Fatalf("expected out-of-CWD delete to succeed, got: %s", out)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("out-of-CWD file should be gone")
 	}
 }
 

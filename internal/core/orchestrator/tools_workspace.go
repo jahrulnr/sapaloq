@@ -14,43 +14,24 @@ import (
 	"time"
 )
 
-// workspaceRoot is the sandbox root for workspace_* tools: the directory the
-// core process was launched from. All paths are resolved against it and any
-// attempt to escape it is rejected.
-func workspaceRoot() string {
-	if wd, err := os.Getwd(); err == nil {
-		return wd
+// resolvePath turns a user-supplied path into an absolute host path. SapaLOQ is
+// unrestricted by design: there is no workspace sandbox. A leading ~ expands to
+// the home directory and relative paths resolve against the process CWD. Any
+// path on the host is permitted.
+func resolvePath(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		p = "."
 	}
-	return "."
-}
-
-// resolveInWorkspace joins rel against the workspace root and verifies the
-// result stays within the root (no traversal via .. or symlink-style escapes
-// on the lexical path).
-func resolveInWorkspace(rel string) (string, error) {
-	root := workspaceRoot()
-	rootAbs, err := filepath.Abs(root)
+	p = expandHome(p)
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p), nil
+	}
+	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", err
 	}
-	rel = strings.TrimSpace(rel)
-	if rel == "" {
-		rel = "."
-	}
-	var joined string
-	if filepath.IsAbs(rel) {
-		joined = filepath.Clean(rel)
-	} else {
-		joined = filepath.Clean(filepath.Join(rootAbs, rel))
-	}
-	relCheck, err := filepath.Rel(rootAbs, joined)
-	if err != nil {
-		return "", err
-	}
-	if relCheck == ".." || strings.HasPrefix(relCheck, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q is outside the workspace root", rel)
-	}
-	return joined, nil
+	return abs, nil
 }
 
 const (
@@ -78,7 +59,7 @@ type toolArgs struct {
 	URL            string   `json:"url"`
 	Content        string   `json:"content"`
 	Command        string   `json:"command"`
-	Cwd            string   `json:"cwd"` // system_exec: optional working dir (unrestricted)
+	Cwd            string   `json:"cwd"` // exec: optional working dir
 	TimeoutSeconds int      `json:"timeout_seconds"`
 	Markdown       string   `json:"markdown"`
 	Note           string   `json:"note"`
@@ -123,7 +104,7 @@ func looksBinary(b []byte) bool {
 }
 
 func toolReadFile(args toolArgs) string {
-	abs, err := resolveInWorkspace(args.Path)
+	abs, err := resolvePath(args.Path)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
@@ -132,7 +113,7 @@ func toolReadFile(args toolArgs) string {
 		return "Error: " + err.Error()
 	}
 	if info.IsDir() {
-		return fmt.Sprintf("Error: %q is a directory; use workspace_list_dir.", args.Path)
+		return fmt.Sprintf("Error: %q is a directory; use list_dir.", args.Path)
 	}
 
 	limit := args.MaxBytes
@@ -153,7 +134,7 @@ func toolReadFile(args toolArgs) string {
 
 	// Binary guard: never return raw binary content as text.
 	if looksBinary(data) {
-		return fmt.Sprintf("Error: %q looks like a binary file (%d bytes). Refusing to read as text; use terminal_run (e.g. `file`, `xxd`, `strings`) if you need to inspect it.", args.Path, info.Size())
+		return fmt.Sprintf("Error: %q looks like a binary file (%d bytes). Refusing to read as text; use exec (e.g. `file`, `xxd`, `strings`) if you need to inspect it.", args.Path, info.Size())
 	}
 
 	content := string(data)
@@ -206,12 +187,12 @@ func byteTruncNote(size int64, n int) string {
 // edit), instead of overwriting the whole file. old_string must be unique
 // unless replace_all is set. The write is atomic.
 func toolEditFile(args toolArgs) string {
-	abs, err := resolveInWorkspace(args.Path)
+	abs, err := resolvePath(args.Path)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
 	if args.OldString == "" {
-		return "Error: old_string is required (use workspace_create_file for new files)."
+		return "Error: old_string is required (use create_file for new files)."
 	}
 	if args.OldString == args.NewString {
 		return "Error: old_string and new_string are identical; nothing to change."
@@ -254,10 +235,10 @@ func toolEditFile(args toolArgs) string {
 	return fmt.Sprintf("Edited %s (%d replacement(s)).", args.Path, n)
 }
 
-// toolDeleteFile removes a file within the sandbox. Directories are rejected to
-// avoid accidental recursive deletes.
+// toolDeleteFile removes a single file at any host path. Directories are
+// rejected to avoid accidental recursive deletes.
 func toolDeleteFile(args toolArgs) string {
-	abs, err := resolveInWorkspace(args.Path)
+	abs, err := resolvePath(args.Path)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
@@ -274,14 +255,18 @@ func toolDeleteFile(args toolArgs) string {
 	return fmt.Sprintf("Deleted %s.", args.Path)
 }
 
-// toolGlob lists files matching a glob pattern under the workspace root. It
-// supports "**" for recursive matching. Native — no shell needed.
+// toolGlob lists files matching a glob pattern under a root directory (path
+// arg, default CWD). It supports "**" for recursive matching. Native — no
+// shell needed.
 func toolGlob(args toolArgs) string {
 	pattern := strings.TrimSpace(args.Pattern)
 	if pattern == "" {
 		return "Error: pattern is required."
 	}
-	root := workspaceRoot()
+	root, err := resolvePath(args.Path)
+	if err != nil {
+		return "Error: " + err.Error()
+	}
 	limit := args.MaxResults
 	if limit <= 0 || limit > maxSearchResults {
 		limit = maxSearchResults
@@ -348,7 +333,7 @@ func globMatch(pattern, rel string, recursive bool) bool {
 }
 
 func toolListDir(args toolArgs) string {
-	abs, err := resolveInWorkspace(args.Path)
+	abs, err := resolvePath(args.Path)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
@@ -385,7 +370,10 @@ func toolSearch(args toolArgs) string {
 	if err != nil {
 		return "Error: invalid regex: " + err.Error()
 	}
-	root := workspaceRoot()
+	root, err := resolvePath(args.Path)
+	if err != nil {
+		return "Error: " + err.Error()
+	}
 	limit := args.MaxResults
 	if limit <= 0 || limit > maxSearchResults {
 		limit = maxSearchResults
@@ -444,13 +432,13 @@ func toolSearch(args toolArgs) string {
 }
 
 func toolWriteFile(args toolArgs, mustNotExist bool) string {
-	abs, err := resolveInWorkspace(args.Path)
+	abs, err := resolvePath(args.Path)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
 	if mustNotExist {
 		if _, statErr := os.Stat(abs); statErr == nil {
-			return fmt.Sprintf("Error: %q already exists; use workspace_write_file to overwrite.", args.Path)
+			return fmt.Sprintf("Error: %q already exists; use write_file to overwrite.", args.Path)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -462,7 +450,11 @@ func toolWriteFile(args toolArgs, mustNotExist bool) string {
 	return fmt.Sprintf("Wrote %d bytes to %s.", len(args.Content), args.Path)
 }
 
-func toolTerminalRun(ctx context.Context, args toolArgs) string {
+// toolExec runs an arbitrary shell command anywhere on the host. SapaLOQ is
+// unrestricted by design: the working directory defaults to the process CWD and
+// honors an explicit cwd argument (any path). Output is byte-capped and a
+// timeout guards runaway commands.
+func toolExec(ctx context.Context, args toolArgs) string {
 	cmd := strings.TrimSpace(args.Command)
 	if cmd == "" {
 		return "Error: command is required."
@@ -477,7 +469,9 @@ func toolTerminalRun(ctx context.Context, args toolArgs) string {
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 	c := exec.CommandContext(runCtx, "bash", "-lc", cmd)
-	c.Dir = workspaceRoot()
+	if dir := strings.TrimSpace(args.Cwd); dir != "" {
+		c.Dir = expandHome(dir)
+	}
 	out, err := c.CombinedOutput()
 	text := string(out)
 	if len(text) > 16*1024 {

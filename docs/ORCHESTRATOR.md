@@ -1,7 +1,7 @@
 # SapaLOQ — Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-21 (runtime tool-policy enforcement + active config truth)
+> Last updated: 2026-06-21 (flat unrestricted tool surface)
 
 ---
 
@@ -139,9 +139,9 @@ Provider-bridge backends (OpenAI/Claude/Kimi/OpenRouter/TokenRouter/etc.) do not
 
 | SapaLOQ mode | Role | Declared tools profile | Policy |
 |--------------|------|------------------------|--------|
-| **Ask** | `orchestrator` | spawn/status/clarification, assessment, web, light `desktop_*`, `system_exec` | Coordinate and explore; do not mutate task artifacts directly |
-| **Plan** | `planner` | read-only workspace/search/web, `system_exec`, `sapaloq_write_plan_markdown` | Explore thoroughly; terminal inspection is allowed, target-artifact mutation is not |
-| **Agent** | `task-runner` | workspace write tools, terminal/build/test, progress/complete, clarification | Execute approved/direct task under boundary guard |
+| **Ask** | `orchestrator` | spawn/status/clarification, assessment, web, light `desktop_*`, `exec` | Coordinate and explore; do not mutate task artifacts directly |
+| **Plan** | `planner` | read-only file/search/web, `exec`, `sapaloq_write_plan_markdown` | Explore thoroughly; terminal inspection is allowed, target-artifact mutation is not |
+| **Agent** | `task-runner` | file write tools, exec/build/test, progress/complete, clarification | Execute approved/direct task |
 
 Recommended MVP profile names:
 
@@ -161,9 +161,9 @@ ask:
 plan:
   sapaloq_read_context_packet
   sapaloq_read_memory_brief
-  workspace_search
-  workspace_read_file
-  workspace_list_errors
+  search
+  read_file
+  exec
   sapaloq_write_plan_markdown
   sapaloq_request_clarification
 
@@ -173,21 +173,19 @@ agent:
   sapaloq_update_task_progress
   sapaloq_complete_task
   sapaloq_fail_task
-  workspace_search
-  workspace_read_file
-  workspace_edit_file
-  workspace_create_file
-  terminal_run
-  tests_run
-  build_run
+  search
+  read_file
+  edit_file
+  create_file
+  exec
   sapaloq_request_clarification
 ```
 
 Provider `declaredTools` should be generated from this role profile. Static per-provider `declaredTools` remains a compatibility fallback only.
 
 Runtime enforcement rule: reusable/shared tool implementations still pass
-through the active role allowlist before execution. `system_exec` is expected
-for Ask and Planner, but an undeclared/provider-poisoned `system_exec` call from
+through the active role allowlist before execution. `exec` is expected
+for Ask and Planner, but an undeclared/provider-poisoned `exec` call from
 Scribe is denied.
 
 ### Continuation runtime
@@ -696,7 +694,11 @@ Orchestrator: "Task proposal masih jalan. Park dulu, switch ke work bugfix, atau
 
 ## Progress streaming (orchestrator watches sub-agents)
 
-Orchestrator **tidak menunggu** sub-agent selesai, tapi **streaming melihat progress** — termasuk state terakhir: thinking, response, toolcall, todo, in_progress, done.
+Orchestrator **tidak menunggu** sub-agent selesai, tapi **streaming melihat
+progress** — termasuk state terakhir: thinking, response, toolcall, todo,
+in_progress, done. Lifecycle task (`pending`, `in_progress`, terminal state)
+berbeda dari lifecycle satu inference response. Provider `done` hanya menutup
+satu turn dan tidak boleh dianggap task selesai.
 
 ### Progress event schema
 
@@ -794,6 +796,12 @@ Orchestrator holds **slim snapshot** per active sub-agent (bukan full stream):
 ```
 
 User bisa tanya: *"scribe lagi ngapain?"* → orchestrator baca snapshot + optional tail N events — **tanpa** inject full sub-agent history ke prompt (anti poisoning).
+
+`memory/tasks/<taskId>/status.json` adalah snapshot lifecycle durable. IPC
+`watch` mengirim snapshot task terbaru setelah handshake, lalu meneruskan event
+live. Karena itu widget yang baru start/reconnect tetap menerima kepastian
+status walaupun event bus in-memory terlewat. Widget meng-update satu card per
+`task_id`, bukan menambah bubble baru untuk setiap perubahan.
 
 Config: `orchestrator.progressStreaming` (see config.schema.json).
 
@@ -956,7 +964,8 @@ Orchestrator perlu **tahu kapan sub-agent selesai** untuk: update widget, notify
 
 ### Primary: event trigger
 
-Sub-agent **wajib** emit terminal event sebelum exit:
+Sub-agent executor **wajib** memanggil `sapaloq_complete_task` atau
+`sapaloq_fail_task` sebelum exit:
 
 ```json
 {
@@ -986,11 +995,18 @@ Orchestrator **subscribe** via in-proc bus — lihat [EVENT-BUS.md](./EVENT-BUS.
 2. **jsonl WAL** — async append (audit/replay)
 3. **Unix socket** — sub-agent child → same binary
 
-Boot replay: tail `events.jsonl` if `replayOnBoot` — then live bus only.
+Untuk widget, reconnect catch-up dibaca dari
+`memory/tasks/*/status.json`; event bus tetap dipakai untuk update live.
+`notifyUserOnDone` hanya boleh mengatur notifikasi desktop opsional, bukan
+menyembunyikan status lifecycle dari chat.
 
 ### Fallback: heartbeat (watchdog only)
 
-Kalau sapaloq-core crash / sub-agent hang tanpa terminal event:
+Kalau sapaloq-core restart, worker goroutine lama sudah tidak ada. Task durable
+yang masih `pending`, `in_progress`, atau `stopping` dipindahkan ke `failed`
+dengan alasan orphaned; task tidak boleh diam-diam tetap aktif. Executor yang
+kehabisan idle nudge/turn tanpa terminal tool juga berakhir `failed`, bukan
+`done`.
 
 | Config | Default | Behavior |
 |--------|---------|----------|

@@ -55,7 +55,7 @@ func TestAuditToolWritesVault(t *testing.T) {
 	o := &Orchestrator{vault: w, entry: config.LLMBridge{Key: "tokenrouter"}}
 
 	args, _ := json.Marshal(map[string]string{"path": "README.md"})
-	o.auditTool("sess-1", "subagent:planner", parse.ToolCall{Name: "workspace_read_file", Arguments: args})
+	o.auditTool("sess-1", "subagent:planner", parse.ToolCall{Name: "read_file", Arguments: args})
 
 	entries, err := vault.ReadEntries(path, 10)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestAuditToolWritesVault(t *testing.T) {
 		t.Fatalf("expected 1 vault entry, got %d", len(entries))
 	}
 	e := entries[0]
-	if e.ResolvedName != "workspace_read_file" || e.Reason != "executed" || e.Source != "subagent:planner" || e.Provider != "tokenrouter" {
+	if e.ResolvedName != "read_file" || e.Reason != "executed" || e.Source != "subagent:planner" || e.Provider != "tokenrouter" {
 		t.Fatalf("unexpected entry: %+v", e)
 	}
 

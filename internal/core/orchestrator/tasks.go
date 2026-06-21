@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -297,6 +298,7 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 	if err := o.writeTask(record); err != nil {
 		return "", err
 	}
+	o.publishTaskUpdate(sessionID, record)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	o.taskMu.Lock()
 	if o.taskCancels == nil {
@@ -382,6 +384,7 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 	record.Status = "in_progress"
 	record.UpdatedAt = time.Now().UTC()
 	_ = o.writeTask(record)
+	o.publishTaskUpdate(sessionID, record)
 
 	o.runSubAgentLoop(ctx, snap, sessionID, &record)
 
@@ -390,8 +393,11 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 		record.Status = "stopped"
 	} else if record.Status == "in_progress" {
 		// Loop ended without an explicit complete/fail tool call: treat the
-		// accumulated result as the outcome.
-		if record.Error != "" {
+		// accumulated result as the outcome for non-executor roles only.
+		if record.Error != "" || record.Role == "task-runner" {
+			if record.Error == "" {
+				record.Error = "executor exited without an explicit terminal tool"
+			}
 			record.Status = "failed"
 		} else {
 			record.Status = "done"
@@ -410,24 +416,100 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 	// a fake artifact that can pass explicit plan_task_id validation.
 }
 
-// publishTaskUpdate emits an EventTaskUpdate onto the bus when a background
-// sub-agent reaches a notable state. Whether a *successful* completion is
-// surfaced to the user is governed by orchestrator.completion.notifyUserOnDone;
-// failures and clarification requests are always surfaced because they need a
-// human. The event carries a short human summary so the widget can render a
-// chat bubble rather than leaking raw tool/JSON text.
+// publishTaskUpdate emits durable lifecycle visibility for every background
+// sub-agent state. Chat visibility is unconditional: notifyUserOnDone may
+// govern desktop notifications later, but it must never hide task certainty.
 func (o *Orchestrator) publishTaskUpdate(sessionID string, record taskRecord) {
-	if o.bus == nil {
+	ev := taskUpdateEvent(sessionID, record)
+	if ev.Kind == "" {
 		return
 	}
-	notifyOnDone := o.cfg.Orchestrator.Completion.NotifyUserOnDone
-	if record.Status == "done" && !notifyOnDone {
-		// Success stays quiet unless explicitly configured to notify.
-		return
+	_ = o.progress.Append(record.ID, ev)
+	if o.bus != nil {
+		o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
 	}
+}
 
+func (o *Orchestrator) publishTaskActivity(sessionID string, record taskRecord, summary string) {
+	record.Status = "in_progress"
+	record.UpdatedAt = time.Now().UTC()
+	ev := taskUpdateEvent(sessionID, record)
+	ev.Summary = summary
+	_ = o.progress.Append(record.ID, ev)
+	if o.bus != nil {
+		o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
+	}
+}
+
+// RecentTaskUpdates returns the latest durable task states for widget catch-up.
+// It makes reconnect/startup independent from whether the UI happened to be
+// subscribed at the exact instant an in-memory bus event was published.
+func (o *Orchestrator) RecentTaskUpdates(limit int) []bridge.StreamEvent {
+	if limit <= 0 {
+		limit = 20
+	}
+	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	if err != nil {
+		return nil
+	}
+	records := make([]taskRecord, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		record, readErr := o.readTask(entry.Name())
+		if readErr == nil {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].UpdatedAt.After(records[j].UpdatedAt)
+	})
+	if len(records) > limit {
+		records = records[:limit]
+	}
+	out := make([]bridge.StreamEvent, 0, len(records))
+	for i := len(records) - 1; i >= 0; i-- {
+		record := records[i]
+		ev := taskUpdateEvent(record.SessionID, record)
+		if ev.Kind != "" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func (o *Orchestrator) recoverOrphanedTasks() {
+	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		record, readErr := o.readTask(entry.Name())
+		if readErr != nil {
+			continue
+		}
+		switch record.Status {
+		case "pending", "in_progress", "stopping":
+			record.Status = "failed"
+			record.Error = "task orphaned by core restart; no worker is attached"
+			record.UpdatedAt = time.Now().UTC()
+			_ = o.writeTask(record)
+			o.publishTaskUpdate(record.SessionID, record)
+		}
+	}
+}
+
+func taskUpdateEvent(sessionID string, record taskRecord) bridge.StreamEvent {
 	var summary string
 	switch record.Status {
+	case "pending":
+		summary = "Task dijadwalkan dan menunggu worker."
+	case "in_progress":
+		summary = "Sub-agent sedang mengerjakan task."
 	case "done":
 		summary = strings.TrimSpace(record.Result)
 		if summary == "" {
@@ -443,22 +525,26 @@ func (o *Orchestrator) publishTaskUpdate(sessionID string, record taskRecord) {
 		if q := strings.TrimSpace(record.Question); q != "" {
 			summary += ": " + q
 		}
+	case "stopping":
+		summary = "Task sedang dihentikan."
 	case "stopped":
 		summary = "Task dihentikan."
 	default:
-		return
+		return bridge.StreamEvent{}
 	}
 	if len(summary) > maxTranscriptTurnBytes {
 		summary = summary[:maxTranscriptTurnBytes] + "…"
 	}
-
 	ev := bridge.NewEvent(bridge.EventTaskUpdate)
 	ev.SessionID = sessionID
 	ev.TaskID = record.ID
 	ev.TaskRole = record.Role
 	ev.TaskStatus = record.Status
 	ev.Summary = summary
-	o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
+	if !record.UpdatedAt.IsZero() {
+		ev.At = record.UpdatedAt
+	}
+	return ev
 }
 
 // validatePlanForAgent makes Plan → Agent handoff explicit and task-scoped.
