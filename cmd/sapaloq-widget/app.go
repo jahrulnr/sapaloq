@@ -47,8 +47,21 @@ func (a *App) startup(ctx context.Context) {
 	a.stopWatch = make(chan struct{})
 	go watchEvents(a.socketPath, a.stopWatch, func(event bridge.StreamEvent) {
 		switch event.Kind {
-		case bridge.EventTaskUpdate, bridge.EventResponseDelta:
+		case bridge.EventTaskUpdate:
 			runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+		case bridge.EventResponseDelta:
+			// CRITICAL: only forward SPOKEN-COMPLETION deltas (those stamped
+			// with a TaskID) from the watch stream. A live chat turn's
+			// response_delta is ALSO published on the bus, and it already
+			// reaches the webview via the per-request SendMessage/RetryChatTurn
+			// stream below. Forwarding the bus copy too delivered every live
+			// delta TWICE to the single `sapaloq:stream` listener, so the live
+			// renderer fed each character twice — the "MantMantap, agent lagi
+			// jalanap" interleave / duplicated bubble. Task-stamped completions
+			// have no per-request stream, so they must come through here.
+			if event.TaskID != "" {
+				runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+			}
 		}
 	})
 }

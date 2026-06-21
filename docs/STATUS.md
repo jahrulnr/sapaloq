@@ -44,6 +44,40 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Fixed this session (2026-06-21) — chat race: duplicated / interleaved assistant bubble
+
+Regression introduced by the "error auto-follows to chat" note below: that change
+made `cmd/sapaloq-widget/app.go`'s `watchEvents` forward **all** `EventResponseDelta`
+from the bus to `sapaloq:stream`. But a **live chat turn's** `response_delta` is
+ALSO published on the bus, and it already reaches the webview via the per-request
+`SendMessage`/`RetryChatTurn` stream. So every live delta was delivered **twice**
+to the single `sapaloq:stream` listener and fed into the live renderer twice —
+producing a duplicated bubble and character interleave ("MantMantap, agent lagi
+jalanap").
+
+- **Root fix — forward only spoken-completion deltas from `watch`.** Completion
+  deltas are the *only* `response_delta`s that have no per-request stream, and the
+  orchestrator now stamps them with `TaskID` (`completion.go`). `watchEvents`
+  forwards a `response_delta` **only when `event.TaskID != ""`**; live-turn deltas
+  (no TaskID) flow solely through the per-request stream. No more double source.
+- **Defence in depth in the widget.** `frontend/src/main.ts` renders a
+  `response_delta` that carries `task_id` as its **own** assistant bubble (never
+  fed into the shared live renderer, so two concurrent completions can't
+  interleave) and **dedupes per `task_id`** via `spokenTaskIDs` (cleared in
+  `clearMessages`), so a re-published terminal transition can't append twice.
+- **Cleanup.** Removed the dead `o.progress.Append(...)` for the spoken completion
+  in `completion.go` (write-only `orch-<id>.jsonl`, never replayed to clients;
+  was also misusing `record.ID` as the session id).
+- **Note on the native fail message.** "executor stopped without calling
+  sapaloq_complete_task or sapaloq_fail_task after 2 idle nudges" is a **native**
+  Go watchdog error (`subagent.go`, `const maxIdleNudges = 2`), not an LLM/provider
+  error — expected when a `task-runner` narrates intent without calling a tool.
+- **Verify:** `go build/vet/test ./...` + `-race` orchestrator green; widget
+  `tsc --noEmit` green. Widget binary must be rebuilt (`make run` / `make
+  widget-build`) for the `app.go` + `main.ts` changes to take effect.
+
+---
+
 ## Implemented this session (2026-06-21) — error auto-follows to chat + configurable inference timeout
 
 Two issues seen when a sub-agent failed: the orchestrator looked "silent" (only
@@ -58,7 +92,9 @@ a passive task card, no chat follow-up), and the failure itself was an opaque
   `EventResponseDelta`; `frontend/src/main.ts` renders an idle `response_delta`
   (no turn in flight) as a new assistant bubble. So a sub-agent that finishes or
   fails AFTER the chat turn closed now speaks into the conversation, not just a
-  card.
+  card. **(Superseded by the race fix above — `watch` now forwards only
+  `TaskID`-stamped completion deltas, never live-turn deltas, to avoid a
+  double-delivered/interleaved bubble.)**
 - **Inference request timeout is configurable; default raised 120s → 600s.**
   Both bridge wires had a hardcoded 120s per-request timeout that truncated long
   sub-agent steps (e.g. generating a large file) into "context deadline

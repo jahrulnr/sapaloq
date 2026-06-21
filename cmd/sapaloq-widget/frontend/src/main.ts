@@ -22,6 +22,11 @@ let pingTimer: ReturnType<typeof setInterval> | null = null;
 let submitting = false;
 let currentSessionID = '';
 let compose: ComposeBox | null = null;
+// Task ids whose spoken-completion bubble has already been rendered this
+// session. The orchestrator stamps response_delta completions with task_id and
+// may re-publish a terminal transition, so we render at most one bubble per
+// task — preventing the duplicate "Task … selesai/gagal" assistant bubble.
+const spokenTaskIDs = new Set<string>();
 let messageSeq = 0;
 let currentUserGroup = 0;
 let lastSubmittedText = '';
@@ -334,6 +339,11 @@ function clearMessages() {
   activeMessageMenu = null;
   messageSeq = 0;
   currentUserGroup = 0;
+  // The DOM is wiped (e.g. history restore renders completions from persisted
+  // turns instead), so the live spoken-completion dedupe set must reset too —
+  // otherwise a task spoken before the clear would be suppressed if it legitly
+  // re-arrives live afterwards.
+  spokenTaskIDs.clear();
 }
 
 function getComposeInput() {
@@ -1399,12 +1409,23 @@ try {
       renderTaskUpdate(event);
       return;
     }
-    // The orchestrator SPEAKS a sub-agent's terminal outcome as a single
-    // response_delta on the event bus. When this arrives while idle (no chat
-    // turn in flight), the in-flight live renderer is gone, so render it as a
-    // new assistant bubble — this is the failure/success auto-following into
-    // the chat instead of only showing a passive task card. While a turn is in
-    // flight, normal request-stream deltas drive the live renderer as before.
+    // The orchestrator SPEAKS a sub-agent's terminal outcome as a SINGLE,
+    // whole response_delta stamped with task_id. This is a self-contained
+    // completion line, not a streaming fragment, so it must be rendered as its
+    // own assistant bubble and must NEVER be fed into the live renderer —
+    // otherwise two concurrent completions (or a completion racing the active
+    // turn) interleave their characters into one shared bubble. We also dedupe
+    // per task_id so a re-published terminal transition can't append twice.
+    if (event.kind === 'response_delta' && event.task_id) {
+      const id = event.task_id;
+      if (spokenTaskIDs.has(id)) return;
+      spokenTaskIDs.add(id);
+      const text = (event.delta || '').trim();
+      if (text) appendMessage('message--assistant', text);
+      return;
+    }
+    // A response_delta with no task_id while idle is an orphan completion
+    // (legacy path): still surface it rather than silently dropping it.
     if (event.kind === 'response_delta' && !submitting) {
       const text = (event.delta || '').trim();
       if (text) appendMessage('message--assistant', text);

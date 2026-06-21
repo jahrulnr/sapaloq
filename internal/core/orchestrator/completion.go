@@ -55,18 +55,21 @@ func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) 
 
 	// Republish as a streamed response so a connected widget hears it live via
 	// the watch stream — this is the missing "speak" trigger.
+	//
+	// The event carries TaskID so the widget can (a) dedupe it to exactly one
+	// bubble per task id even if the terminal transition is published more than
+	// once, and (b) render it as a standalone completion bubble instead of
+	// feeding it into the active chat turn's live renderer — otherwise two
+	// concurrent completions (or a completion racing the in-flight turn) would
+	// interleave their characters into one shared assistant bubble (the
+	// "MantMantap, agent lagi jalanap" corruption) or append twice.
 	if o.bus != nil {
 		ev := bridge.NewEvent(bridge.EventResponseDelta)
 		ev.SessionID = sessionID
 		ev.Delta = text
+		ev.TaskID = record.ID
 		o.bus.Publish(topicFor(bridge.EventResponseDelta), ev)
 	}
-	_ = o.progress.Append(record.ID, func() bridge.StreamEvent {
-		ev := bridge.NewEvent(bridge.EventResponseDelta)
-		ev.SessionID = sessionID
-		ev.Delta = text
-		return ev
-	}())
 }
 
 // spokenCompletionText renders the human-facing chat line for a terminal task.
