@@ -33,6 +33,12 @@ type WireOptions struct {
 	DeclaredTools   []string
 	SessionID       string
 	Timeout         time.Duration
+	// IdleTimeout bounds the silence between two consecutive SSE events once
+	// the stream is open. Timeout is a generous whole-request cap; IdleTimeout
+	// catches a stream that connects and then hangs (no data) far sooner, so
+	// the sub-agent loop can retry the turn before the worker watchdog fails
+	// it. Zero disables the idle check (whole-request Timeout still applies).
+	IdleTimeout time.Duration
 	// ContextWindow is the maximum input the bridge will forward, in
 	// tokens. The bridge estimates tokens as len(content)/4 and drops the
 	// oldest non-system messages when the conversation exceeds this.
@@ -191,21 +197,82 @@ func runSSE(ctx context.Context, opts WireOptions, body []byte, onLine func([]by
 		return fmt.Errorf("provider-bridge: upstream status %d: %s", resp.StatusCode, upstreamErrorBody(raw))
 	}
 	reader := newSSEReader(resp.Body)
-	for {
-		line, lineErr := reader.ReadLine()
-		if len(line) > 0 {
-			if err := onLine(line); err != nil {
-				if err == errStreamStopped {
-					return nil
-				}
-				return err
+	return pumpSSE(ctx, reader, resp.Body, opts.IdleTimeout, onLine)
+}
+
+// sseLine is one result from the background reader goroutine.
+type sseLine struct {
+	data []byte
+	err  error
+}
+
+// errStreamIdle signals that the upstream stopped sending data mid-stream for
+// longer than the configured idle window. It is distinct from a whole-request
+// deadline so the bridge can explain it (and the sub-agent loop can retry).
+var errStreamIdle = fmt.Errorf("provider-bridge: SSE idle timeout: no data from upstream")
+
+// pumpSSE reads SSE lines while enforcing a per-event idle timeout. The
+// blocking bufio read runs in a goroutine so a hung socket (connection open,
+// no bytes) is bounded by idleTimeout rather than the much larger whole-request
+// timeout. When the idle timer fires we close the body to unblock the reader
+// goroutine, then return errStreamIdle. idleTimeout <= 0 disables the check.
+func pumpSSE(ctx context.Context, reader *sseReader, body io.Closer, idleTimeout time.Duration, onLine func([]byte) error) error {
+	lines := make(chan sseLine, 8)
+	go func() {
+		for {
+			data, err := reader.ReadLine()
+			lines <- sseLine{data: data, err: err}
+			if err != nil {
+				return
 			}
 		}
-		if lineErr != nil {
-			if lineErr == io.EOF {
-				return nil
+	}()
+
+	var idle *time.Timer
+	var idleC <-chan time.Time
+	if idleTimeout > 0 {
+		idle = time.NewTimer(idleTimeout)
+		idleC = idle.C
+		defer idle.Stop()
+	}
+	resetIdle := func() {
+		if idle == nil {
+			return
+		}
+		if !idle.Stop() {
+			select {
+			case <-idle.C:
+			default:
 			}
-			return lineErr
+		}
+		idle.Reset(idleTimeout)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-idleC:
+			// Unblock the reader goroutine by closing the body; it will
+			// observe a read error and exit, draining into the channel.
+			_ = body.Close()
+			return errStreamIdle
+		case ln := <-lines:
+			resetIdle()
+			if len(ln.data) > 0 {
+				if err := onLine(ln.data); err != nil {
+					if err == errStreamStopped {
+						return nil
+					}
+					return err
+				}
+			}
+			if ln.err != nil {
+				if ln.err == io.EOF {
+					return nil
+				}
+				return ln.err
+			}
 		}
 	}
 }

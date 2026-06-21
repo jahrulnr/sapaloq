@@ -110,6 +110,7 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 		SessionID:       req.SessionID,
 		ContextWindow:   contextWindow,
 		Timeout:         b.entry.RequestTimeout(),
+		IdleTimeout:     b.entry.StreamIdleTimeout(),
 	}
 }
 
@@ -158,6 +159,10 @@ func (b *Bridge) explainStreamError(err error) string {
 		return ""
 	}
 	msg := err.Error()
+	if strings.Contains(msg, "SSE idle timeout") {
+		secs := int(b.entry.StreamIdleTimeout() / time.Second)
+		return fmt.Sprintf("inference stream went silent for %ds mid-response (upstream stalled; set llmBridge.providers[].streamIdleTimeoutSec to tune): %s", secs, msg)
+	}
 	if strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "deadline exceeded") {
 		secs := int(b.entry.RequestTimeout() / time.Second)
 		return fmt.Sprintf("inference request timed out after %ds (set llmBridge.providers[].requestTimeoutSec higher for long sub-agent steps): %s", secs, msg)

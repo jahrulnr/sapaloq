@@ -46,6 +46,15 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	idleNudges := 0
 	const maxIdleNudges = 2
 
+	// streamRetries counts consecutive turns whose stream failed transiently —
+	// the upstream connected then went silent / truncated mid-response (an
+	// EventError, or an empty turn that produced no text AND no tool). That is
+	// a transport fault, not the model "narrating intent", so we re-issue the
+	// SAME turn instead of burning an idle nudge. Bounded so a persistently
+	// broken provider still terminates the task with a clear error.
+	streamRetries := 0
+	const maxStreamRetries = 2
+
 	for turn := 1; turn <= maxTurns; turn++ {
 		if ctx.Err() != nil {
 			record.Status = "stopped"
@@ -76,6 +85,21 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 		var turnText strings.Builder
 		var toolResults []string
 		terminal := false
+		streamErr := ""
+		var lastBeat time.Time
+		// beat refreshes liveness while events are flowing. The watchdog's
+		// stall window is short relative to the whole-request timeout, so a
+		// long-but-alive stream (lots of thinking/response deltas before any
+		// tool call) must keep the heartbeat warm or it is falsely failed.
+		// Throttled to once per heartbeat-ish interval to avoid disk churn.
+		beat := func(phase string) {
+			now := time.Now()
+			if now.Sub(lastBeat) < 5*time.Second {
+				return
+			}
+			lastBeat = now
+			o.workers.heartbeat(record.ID, phase)
+		}
 		for ev := range stream {
 			if ev.SessionID == "" {
 				ev.SessionID = record.ID
@@ -88,11 +112,15 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 				_ = o.progress.Append(record.ID, ev)
 			}
 			switch ev.Kind {
+			case bridge.EventThinkingDelta:
+				beat(fmt.Sprintf("thinking turn %d/%d", turn, maxTurns))
 			case bridge.EventResponseDelta:
 				turnText.WriteString(ev.Delta)
 				finalResult.WriteString(ev.Delta)
+				beat(fmt.Sprintf("responding turn %d/%d", turn, maxTurns))
 			case bridge.EventError:
 				record.Error = ev.Error
+				streamErr = ev.Error
 			case bridge.EventToolCall:
 				if ev.ToolCall == nil {
 					continue
@@ -106,6 +134,36 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 				terminal = terminal || res.terminal
 			}
 		}
+
+		// Transient stream fault: the upstream connected then errored or went
+		// silent mid-response. This is the SSE-hang / truncation class of bug
+		// (e.g. a turn that emits "You're right, let me actually" then the
+		// stream dies). Such a turn yields no tool result and no terminal
+		// signal; re-issue the SAME turn rather than treating it as the model
+		// idling. Bounded by maxStreamRetries.
+		streamTruncated := streamErr != "" ||
+			(len(toolResults) == 0 && !terminal &&
+				record.Status != "awaiting_clarification" &&
+				strings.TrimSpace(turnText.String()) == "")
+		if streamTruncated && streamRetries < maxStreamRetries {
+			streamRetries++
+			faultDetail := streamErr
+			if faultDetail == "" {
+				faultDetail = "empty/truncated stream"
+			}
+			o.workerLogError(record.ID, fmt.Sprintf(
+				"transient stream fault on turn %d (retry %d/%d): %s",
+				turn, streamRetries, maxStreamRetries, faultDetail))
+			o.workers.heartbeat(record.ID, fmt.Sprintf("retry turn %d/%d", streamRetries, maxStreamRetries))
+			// Clear the soft error so it doesn't poison the next iteration's
+			// post-loop checks; do NOT mutate messages so the turn replays
+			// identically.
+			record.Error = ""
+			images = nil
+			continue
+		}
+		// A clean turn resets the transient-fault budget.
+		streamRetries = 0
 
 		if record.Error != "" && len(toolResults) == 0 {
 			record.Status = "failed"

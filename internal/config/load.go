@@ -333,6 +333,15 @@ type LLMBridge struct {
 	// hardcoded 120s and surface as "context deadline exceeded", so this is
 	// configurable per provider. 0 → DefaultRequestTimeoutSec.
 	RequestTimeoutSec int `json:"requestTimeoutSec,omitempty"`
+	// StreamIdleTimeoutSec bounds the gap between two consecutive SSE events
+	// once a stream is open. RequestTimeoutSec is a generous *whole-request*
+	// cap (600s) so a long generation is not truncated; but if the upstream
+	// accepts the connection and then goes silent mid-stream, the request-level
+	// cap is far too long — the worker health watchdog (StaleAfterSec, default
+	// 180s) fires first and the sub-agent's work is lost. This per-event idle
+	// cap detects a wedged/hung stream quickly and surfaces an actionable error
+	// so the sub-agent loop can retry the turn. 0 → DefaultStreamIdleTimeoutSec.
+	StreamIdleTimeoutSec int `json:"streamIdleTimeoutSec,omitempty"`
 }
 
 // DefaultRequestTimeoutSec is the per-inference-request timeout when a provider
@@ -340,6 +349,12 @@ type LLMBridge struct {
 // deliberately long-running (high maxTurns, big file writes); the old 120s
 // default truncated legitimate long generations.
 const DefaultRequestTimeoutSec = 600
+
+// DefaultStreamIdleTimeoutSec is the max silence between two SSE events before
+// the stream is considered hung. It must be comfortably below the worker stall
+// window (Completion.StaleAfterSec, default 180s) so a hung stream is caught and
+// retried by the sub-agent loop before the watchdog force-fails the worker.
+const DefaultStreamIdleTimeoutSec = 60
 
 // RequestTimeout returns the resolved per-request timeout as a duration,
 // falling back to DefaultRequestTimeoutSec when unset/invalid.
@@ -349,6 +364,22 @@ func (b LLMBridge) RequestTimeout() time.Duration {
 		secs = DefaultRequestTimeoutSec
 	}
 	return time.Duration(secs) * time.Second
+}
+
+// StreamIdleTimeout returns the resolved per-event idle timeout for an open
+// stream, falling back to DefaultStreamIdleTimeoutSec when unset/invalid. The
+// value is clamped to never exceed the whole-request timeout (an idle cap
+// longer than the hard cap would be meaningless).
+func (b LLMBridge) StreamIdleTimeout() time.Duration {
+	secs := b.StreamIdleTimeoutSec
+	if secs <= 0 {
+		secs = DefaultStreamIdleTimeoutSec
+	}
+	idle := time.Duration(secs) * time.Second
+	if req := b.RequestTimeout(); idle > req {
+		idle = req
+	}
+	return idle
 }
 
 // LLMBridgeRoot is the top-level llmBridge config block — registry of
