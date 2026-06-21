@@ -245,12 +245,18 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   box-shadow: 0 8px 18px oklch(0% 0 0 / 0.16);
   user-select: text;
   -webkit-user-select: text;
+  /* Long unbroken tokens (URLs, absolute paths) have no whitespace to wrap on
+     and would otherwise spill past the bubble's max-width. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .message p { margin: 0; white-space: pre-wrap; }
 .message p + br { display: none; }
 .message p + p { margin-top: 0.55em; }
 .message code { padding: 0.08em 0.35em; border-radius: 6px; background: oklch(0% 0 0 / 0.22); color: var(--accent-hot); }
-.message a { color: var(--accent); }
+/* Links are the most common overflow culprit (long doc URLs); force them to
+   break mid-string instead of pushing the bubble wider. */
+.message a { color: var(--accent); overflow-wrap: anywhere; word-break: break-word; }
 .message ul, .message ol { margin: 0.2em 0; padding-left: 1.25em; }
 .message li + li { margin-top: 0.2em; }
 
@@ -545,6 +551,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .message--thinking:not(.is-expanded) .thinking-body { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; border-color: transparent; }
 .message--tool { color: oklch(87% 0.11 150); background: oklch(73% 0.18 150 / 0.11); }
 .message--error { color: oklch(86% 0.11 28); background: oklch(67% 0.21 28 / 0.13); }
+.message--task { background: oklch(72% 0.16 250 / 0.13); border-left: 3px solid oklch(72% 0.16 250 / 0.6); }
 .message--status {
   width: max-content;
   max-width: 180px;
@@ -778,7 +785,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .attachment-size { flex: 0 0 auto; color: var(--muted); font-size: 0.58rem; }
 .attachment-remove { flex: 0 0 auto; color: var(--accent-hot); font-weight: 900; }
 
-.popup-compose textarea {
+.popup-compose .compose-input {
   display: block;
   flex: 1;
   min-width: 0;
@@ -789,16 +796,68 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   border-radius: 0;
   outline: none;
   padding: 8px 4px;
-  resize: none;
   line-height: 1.4;
   color: var(--ink);
   background: transparent;
   user-select: text;
   -webkit-user-select: text;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
-.compose-wrap.expanded textarea { max-height: var(--compose-max-tall); }
-.popup-compose textarea::placeholder { color: var(--subtle); }
-.popup-compose textarea:disabled { opacity: 0.58; cursor: wait; }
+.compose-wrap.expanded .compose-input { max-height: var(--compose-max-tall); }
+/* Placeholder for the empty contenteditable box. */
+.popup-compose .compose-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--subtle);
+  pointer-events: none;
+}
+.popup-compose .compose-input.is-disabled { opacity: 0.58; cursor: wait; }
+
+/* Inline attachment pill that lives between the user's words at the caret. */
+.att-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  margin: 0 1px;
+  padding: 1px 5px 1px 3px;
+  border: 1px solid oklch(73% 0.16 186 / 0.46);
+  border-radius: 8px;
+  background: linear-gradient(135deg, oklch(73% 0.16 186 / 0.22), oklch(65% 0.18 292 / 0.16));
+  color: var(--ink);
+  font-size: 0.74rem;
+  font-weight: 650;
+  line-height: 1.3;
+  white-space: nowrap;
+  vertical-align: baseline;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.att-pill-tag {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: oklch(9% 0.03 250);
+  font-size: 0.54rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+}
+.att-pill-name { overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.att-pill-x {
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0 1px;
+  background: transparent;
+  color: var(--accent-hot);
+  font-weight: 900;
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.att-pill-x:hover { color: var(--danger); }
 .popup.is-dragging-file { border-color: oklch(73% 0.16 186 / 0.82); box-shadow: 0 0 0 3px oklch(73% 0.16 186 / 0.22), 0 28px 80px oklch(0% 0 0 / 0.48); }
 .popup.is-dragging-file::after {
   content: "Lepas untuk attach file";

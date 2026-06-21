@@ -394,11 +394,67 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 		}
 	}
 	_ = o.writeTask(record)
+	// Completion trigger: push the terminal/notable state to the widget via the
+	// event bus (the `watch` op streams it). This is what lets the chat surface
+	// "task done/failed/needs-clarification" without the user polling — the
+	// "speak"-style trigger the realtime flow expects.
+	o.publishTaskUpdate(sessionID, record)
 	// NOTE: plan.md is written ONLY when the planner explicitly calls
 	// sapaloq_write_plan_markdown (see handleSubAgentTool). We deliberately do
 	// NOT synthesize a plan.md from free-form planner text here: a planner that
 	// merely answered a question (without producing a real plan) must not leave
 	// a fake plan.md that latestPlanTaskID would later hand to an agent.
+}
+
+// publishTaskUpdate emits an EventTaskUpdate onto the bus when a background
+// sub-agent reaches a notable state. Whether a *successful* completion is
+// surfaced to the user is governed by orchestrator.completion.notifyUserOnDone;
+// failures and clarification requests are always surfaced because they need a
+// human. The event carries a short human summary so the widget can render a
+// chat bubble rather than leaking raw tool/JSON text.
+func (o *Orchestrator) publishTaskUpdate(sessionID string, record taskRecord) {
+	if o.bus == nil {
+		return
+	}
+	notifyOnDone := o.cfg.Orchestrator.Completion.NotifyUserOnDone
+	if record.Status == "done" && !notifyOnDone {
+		// Success stays quiet unless explicitly configured to notify.
+		return
+	}
+
+	var summary string
+	switch record.Status {
+	case "done":
+		summary = strings.TrimSpace(record.Result)
+		if summary == "" {
+			summary = "Task selesai."
+		}
+	case "failed":
+		summary = "Task gagal"
+		if e := strings.TrimSpace(record.Error); e != "" {
+			summary += ": " + e
+		}
+	case "awaiting_clarification":
+		summary = "Sub-agent butuh keputusan"
+		if q := strings.TrimSpace(record.Question); q != "" {
+			summary += ": " + q
+		}
+	case "stopped":
+		summary = "Task dihentikan."
+	default:
+		return
+	}
+	if len(summary) > maxTranscriptTurnBytes {
+		summary = summary[:maxTranscriptTurnBytes] + "…"
+	}
+
+	ev := bridge.NewEvent(bridge.EventTaskUpdate)
+	ev.SessionID = sessionID
+	ev.TaskID = record.ID
+	ev.TaskRole = record.Role
+	ev.TaskStatus = record.Status
+	ev.Summary = summary
+	o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
 }
 
 // latestPlanTaskID returns the most recent successful planner task for a

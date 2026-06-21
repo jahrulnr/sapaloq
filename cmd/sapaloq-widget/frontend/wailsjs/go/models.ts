@@ -9,6 +9,10 @@ export namespace bridge {
 	    error?: string;
 	    status?: string;
 	    wait_seconds?: number;
+	    task_id?: string;
+	    task_role?: string;
+	    task_status?: string;
+	    summary?: string;
 	    // Go type: time
 	    at: any;
 	
@@ -26,6 +30,10 @@ export namespace bridge {
 	        this.error = source["error"];
 	        this.status = source["status"];
 	        this.wait_seconds = source["wait_seconds"];
+	        this.task_id = source["task_id"];
+	        this.task_role = source["task_role"];
+	        this.task_status = source["task_status"];
+	        this.summary = source["summary"];
 	        this.at = this.convertValues(source["at"], null);
 	    }
 	

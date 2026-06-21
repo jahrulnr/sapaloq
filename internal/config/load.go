@@ -421,6 +421,20 @@ type BusConfig struct {
 type OrchestratorConfig struct {
 	Continuation ContinuationConfig `json:"continuation"`
 	Compaction   CompactionConfig   `json:"compaction"`
+	Completion   CompletionConfig   `json:"completion"`
+}
+
+// CompletionConfig controls how a finished background sub-agent is surfaced
+// back to the chat / widget (the "completion trigger"). NotifyUserOnDone, when
+// true, pushes a chat bubble on every terminal transition; when false only
+// failures and clarifications are surfaced (success stays quiet unless the user
+// asked to be told).
+type CompletionConfig struct {
+	Trigger              string `json:"trigger,omitempty"`
+	HeartbeatIntervalSec int    `json:"heartbeatIntervalSec,omitempty"`
+	StaleAfterSec        int    `json:"staleAfterSec,omitempty"`
+	RequireTerminalEvent bool   `json:"requireTerminalEvent,omitempty"`
+	NotifyUserOnDone     bool   `json:"notifyUserOnDone,omitempty"`
 }
 
 type ContinuationConfig struct {

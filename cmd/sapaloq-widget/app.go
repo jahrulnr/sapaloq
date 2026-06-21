@@ -20,6 +20,7 @@ import (
 type App struct {
 	ctx        context.Context
 	socketPath string
+	stopWatch  chan struct{}
 }
 
 func NewApp() *App {
@@ -30,6 +31,23 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if p := os.Getenv("SAPALOQ_SOCKET"); p != "" {
 		a.socketPath = p
+	}
+	// Subscribe to the core event bus so asynchronous background-task pushes
+	// (EventTaskUpdate — the completion trigger) reach the chat even when no
+	// request is in flight. Only task_update is forwarded here; live chat
+	// deltas already arrive via the chat_send/chat_retry request streams.
+	a.stopWatch = make(chan struct{})
+	go watchEvents(a.socketPath, a.stopWatch, func(event bridge.StreamEvent) {
+		if event.Kind == bridge.EventTaskUpdate {
+			runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+		}
+	})
+}
+
+func (a *App) shutdown(ctx context.Context) {
+	if a.stopWatch != nil {
+		close(a.stopWatch)
+		a.stopWatch = nil
 	}
 }
 
@@ -177,6 +195,39 @@ func (a *App) OpenAttachment(path string) error {
 		command = exec.Command("xdg-open", target)
 	}
 	return command.Start()
+}
+
+// OpenExternal opens a link target chosen from a rendered chat message. WebKitGTK
+// ignores target=_blank/window.open, so the frontend routes anchor clicks here.
+// Two shapes are accepted, everything else is rejected so a malicious message
+// can't run arbitrary commands:
+//   - http(s) URLs           -> opened in the default browser
+//   - absolute paths / file: -> revealed in the file manager (via OpenAttachment)
+func (a *App) OpenExternal(target string) error {
+	t := strings.TrimSpace(target)
+	if t == "" {
+		return errors.New("empty target")
+	}
+	lower := strings.ToLower(t)
+	switch {
+	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"):
+		var command *exec.Cmd
+		switch {
+		case commandExists("xdg-open"):
+			command = exec.Command("xdg-open", t)
+		case commandExists("gio"):
+			command = exec.Command("gio", "open", t)
+		default:
+			return errors.New("no URL opener available")
+		}
+		return command.Start()
+	case strings.HasPrefix(lower, "file://"):
+		return a.OpenAttachment(strings.TrimPrefix(t, "file://"))
+	case filepath.IsAbs(t):
+		return a.OpenAttachment(t)
+	default:
+		return errors.New("unsupported link target")
+	}
 }
 
 func commandExists(name string) bool {

@@ -28,3 +28,4 @@ companion.db
 *.swp
 *~
 tmp
+.blackboxcli/

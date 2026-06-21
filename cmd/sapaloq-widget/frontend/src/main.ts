@@ -1,14 +1,15 @@
 import './style.css';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { ChatHistory, ContextUsage, DeleteChatTurn, OpenAttachment, PingCore, ReadDroppedFile, RetryChatTurn, SendMessage, SlashSuggest, StopChat, SubmitFeedback } from '../wailsjs/go/main/App';
+import { ChatHistory, ContextUsage, DeleteChatTurn, OpenAttachment, OpenExternal, PingCore, ReadDroppedFile, RetryChatTurn, SendMessage, SlashSuggest, StopChat, SubmitFeedback } from '../wailsjs/go/main/App';
 import { EventsOn, OnFileDrop } from '../wailsjs/runtime/runtime';
 import { cyclePanelSize, initWindowLayout, isExpanded, setExpanded, toggleExpanded } from './window-layout';
+import { ComposeBox, type AttachmentData } from './compose';
 
 type RingState = 'idle' | 'thinking' | 'delegating' | 'needs-input';
 type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 type CommandEntry = { id: string; prefix: string; label: string; description: string; enabled: boolean };
-type StreamEvent = { kind: string; delta?: string; error?: string; status?: string; wait_seconds?: number; tool_call?: { name: string } };
+type StreamEvent = { kind: string; delta?: string; error?: string; status?: string; wait_seconds?: number; tool_call?: { name: string }; task_id?: string; task_role?: string; task_status?: string; summary?: string };
 type ChatTurn = { id: number; seq: number; role: string; content: string };
 type ChatUsage = { session_id: string; used_tokens: number; context_window: number; percent: number; provider: string; model: string };
 type PendingAttachment = { name: string; type: string; size: number; path?: string; dataURI?: string; text?: string };
@@ -20,7 +21,7 @@ let connection: ConnectionState = 'connecting';
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let submitting = false;
 let currentSessionID = '';
-let pendingAttachments: PendingAttachment[] = [];
+let compose: ComposeBox | null = null;
 let messageSeq = 0;
 let currentUserGroup = 0;
 let lastSubmittedText = '';
@@ -118,12 +119,25 @@ marked.setOptions({
   breaks: true, // preserve the old single-newline => <br> behaviour
 });
 
-// Open links in a new tab + keep our image-preview affordance after sanitizing.
+// Open links + keep our image-preview affordance after sanitizing. WebKitGTK
+// ignores target=_blank/window.open, so anchor clicks are routed Go-side via
+// OpenExternal (http→browser, abs path/file:→file manager). target/rel are kept
+// for plain-browser environments where the native binding is absent.
 function decorateRenderedMarkdown(root: ParentNode) {
   root.querySelectorAll('a[href]').forEach((node) => {
     const a = node as HTMLAnchorElement;
     a.target = '_blank';
     a.rel = 'noreferrer';
+    a.addEventListener('click', (event) => {
+      const href = a.getAttribute('href') || '';
+      if (!href || href.startsWith('#')) return;
+      event.preventDefault();
+      try {
+        void OpenExternal(href);
+      } catch {
+        try { window.open(href, '_blank'); } catch { /* no-op */ }
+      }
+    });
   });
   root.querySelectorAll('img').forEach((node) => {
     const img = node as HTMLImageElement;
@@ -142,7 +156,11 @@ function renderMarkdown(text: string): DocumentFragment {
   const rawHTML = marked.parse(safeText, { async: false }) as string;
   const clean = DOMPurify.sanitize(rawHTML, {
     ADD_ATTR: ['target', 'rel'],
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|data:image\/)/i,
+    // Allow http(s)/mailto/tel + data:image (inline previews) AND local file
+    // references — `file:` URLs and absolute paths (`/…`) — so a `[name](/tmp/x)`
+    // link keeps its href and stays clickable (routed via OpenExternal).
+    // Everything else (notably `javascript:`) is still stripped.
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|file):|data:image\/|\/)/i,
   });
   const template = document.createElement('template');
   template.innerHTML = clean;
@@ -256,7 +274,7 @@ function renderMessageAttachments(attachments: PendingAttachment[]) {
     row.className = 'message-attachment-row';
     const preview = attachment.dataURI && attachment.type.startsWith('image/')
       ? `<img src="${attachment.dataURI}" alt="">`
-      : `<span class="attachment-file-icon">${attachmentKind(attachment)}</span>`;
+      : `<span class="attachment-file-icon">${attachment.type.startsWith('image/') ? 'IMG' : 'FILE'}</span>`;
     row.innerHTML = `${preview}<span><strong></strong><small>${formatBytes(attachment.size)} · ${attachment.type || 'file'}</small></span>`;
     const name = row.querySelector('strong');
     if (name) name.textContent = attachment.name;
@@ -277,11 +295,6 @@ function renderMessageAttachments(attachments: PendingAttachment[]) {
   });
   wrap.append(badge, list);
   return wrap;
-}
-
-function encodeAttachmentMeta(attachment: PendingAttachment) {
-  const json = JSON.stringify({ name: attachment.name, type: attachment.type, size: attachment.size, path: attachment.path || '' });
-  return btoa(unescape(encodeURIComponent(json)));
 }
 
 function decodeAttachmentMeta(encoded: string): PendingAttachment | null {
@@ -307,6 +320,9 @@ function parseTurnContent(content: string): { text: string; attachments: Pending
     return '';
   });
   text = text.replace(/\n*--- file: ([^\n]+) \(([^)]+)\) ---[\s\S]*?--- end file: \1 ---/g, '');
+  // The chip already shows the name/path, so drop the model-facing
+  // "[Local file: …]" lines from the displayed bubble to avoid duplication.
+  text = text.replace(/\n*\[Local file:[^\]]*\]/g, '');
   return { text: text.trim(), attachments };
 }
 
@@ -319,37 +335,42 @@ function clearMessages() {
 }
 
 function getComposeInput() {
-  return document.getElementById('compose-input') as HTMLTextAreaElement | null;
+  return document.getElementById('compose-input') as HTMLElement | null;
+}
+
+// Lock/unlock the contenteditable compose box while a response streams.
+function setComposeDisabled(disabled: boolean) {
+  const input = getComposeInput();
+  if (!input) return;
+  input.setAttribute('contenteditable', disabled ? 'false' : 'true');
+  input.classList.toggle('is-disabled', disabled);
 }
 
 // Grow the textarea to fit its content up to the CSS max-height (--compose-max,
 // or --compose-max-tall when the composer is in the expanded state), à la ChatGPT.
 // Toggles `.is-tall` on the footer once the content actually overflows the normal
 // cap, which reveals the expand button.
+// The contenteditable box grows naturally up to its CSS max-height (then
+// scrolls). We only need to toggle `.is-tall` once the content overflows the
+// normal cap so the expand button appears.
 function autosizeCompose() {
   const input = getComposeInput();
   if (!input) return;
   const footer = input.closest('.popup-compose');
   const wrap = input.closest('.compose-wrap');
-  input.style.height = 'auto';
-  input.style.height = `${input.scrollHeight}px`;
-  // overflowing = content taller than the current visible textarea (after the
-  // CSS max-height clamp kicked in).
   const overflowing = input.scrollHeight > input.clientHeight + 1;
   const isExpandedState = wrap?.classList.contains('expanded') ?? false;
   footer?.classList.toggle('is-tall', overflowing || isExpandedState);
 }
 
 function resetComposeSize() {
-  const input = getComposeInput();
-  const wrap = input?.closest('.compose-wrap');
-  const footer = input?.closest('.popup-compose');
+  const wrap = getComposeInput()?.closest('.compose-wrap');
+  const footer = getComposeInput()?.closest('.popup-compose');
   const expandBtn = document.getElementById('compose-expand');
   wrap?.classList.remove('expanded');
   footer?.classList.remove('is-tall');
   expandBtn?.setAttribute('aria-pressed', 'false');
   if (expandBtn) expandBtn.innerHTML = ICON_EXPAND;
-  if (input) input.style.height = 'auto';
 }
 
 function toggleComposeExpand() {
@@ -391,22 +412,25 @@ async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
-    const input = getComposeInput();
-    if (!input) return;
-    const previous = input.value;
-    input.value = text;
-    input.select();
-    document.execCommand('copy');
-    input.value = previous;
+    // Fallback: copy via a throwaway off-screen textarea (the compose box is now
+    // contenteditable and isn't a reliable execCommand('copy') source).
+    const scratch = document.createElement('textarea');
+    scratch.value = text;
+    scratch.setAttribute('aria-hidden', 'true');
+    scratch.style.position = 'fixed';
+    scratch.style.left = '-9999px';
+    document.body.appendChild(scratch);
+    scratch.select();
+    try { document.execCommand('copy'); } catch { /* no-op */ }
+    scratch.remove();
   }
 }
 
 function editText(text: string) {
-  const input = getComposeInput();
-  if (!input) return;
-  input.value = text;
-  input.focus();
-  input.setSelectionRange(input.value.length, input.value.length);
+  if (!compose) return;
+  compose.clear();
+  compose.insertText(text);
+  compose.focus();
   autosizeCompose();
   void refreshSlashSuggest();
 }
@@ -456,7 +480,7 @@ async function retryMessage(turnID: number) {
   const thinkingTimer = window.setTimeout(() => appendProgressBubble('thinking'), 450);
   submitting = true;
   setSubmittingUI(true);
-  input.disabled = true;
+  setComposeDisabled(true);
   beginLiveStream();
   try {
     const res = await RetryChatTurn(currentSessionID, turnID);
@@ -472,7 +496,7 @@ async function retryMessage(turnID: number) {
     clearProgressBubble();
     submitting = false;
     setSubmittingUI(false);
-    input.disabled = false;
+    setComposeDisabled(false);
     input.focus();
     setRingState('idle');
   }
@@ -874,6 +898,27 @@ function finishStreamRenderer(r: StreamRenderer) {
   if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
 }
 
+// renderTaskUpdate surfaces an asynchronous background sub-agent completion
+// (EventTaskUpdate) as a concise chat bubble — the "completion trigger" the
+// realtime flow expects. It renders the human summary (never raw tool/JSON
+// text) and tags the bubble by terminal status so styling can differentiate
+// success / failure / needs-input.
+function renderTaskUpdate(event: StreamEvent) {
+  const status = event.task_status || '';
+  const role = event.task_role || 'task';
+  const summary = (event.summary || '').trim();
+  if (!summary) return;
+  let prefix = '';
+  switch (status) {
+    case 'done': prefix = `✅ ${role} selesai`; break;
+    case 'failed': prefix = `⚠️ ${role} gagal`; break;
+    case 'awaiting_clarification': prefix = `❓ ${role} butuh keputusan`; setRingState('needs-input'); break;
+    case 'stopped': prefix = `⏹️ ${role} dihentikan`; break;
+    default: prefix = `${role}`; break;
+  }
+  appendMessage('message--task', `**${prefix}**\n\n${summary}`);
+}
+
 // Live renderer for the in-flight turn, fed by the sapaloq:stream Wails event.
 // When non-null, the batch result returned by SendMessage/RetryChatTurn is
 // ignored (already rendered live); it's used only as a fallback otherwise.
@@ -967,68 +1012,25 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function attachmentKind(attachment: PendingAttachment) {
-  if (attachment.type.startsWith('image/')) return 'IMG';
-  return 'FILE';
-}
-
-function renderAttachments() {
-  const tray = document.getElementById('attachment-tray');
-  const input = document.getElementById('compose-input') as HTMLTextAreaElement | null;
-  const wrap = document.getElementById('compose-wrap');
-  if (!tray) return;
-  tray.innerHTML = '';
-  tray.dataset.count = `${pendingAttachments.length}`;
-  if (pendingAttachments.length) {
-    input?.classList.add('has-attachments');
-    wrap?.classList.add('has-attachments');
-  } else {
-    input?.classList.remove('has-attachments');
-    wrap?.classList.remove('has-attachments');
-  }
-  pendingAttachments.forEach((attachment, index) => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'attachment-chip';
-    chip.title = 'Klik untuk hapus attachment';
-    chip.innerHTML = `<span class="attachment-kind">${attachmentKind(attachment)}</span><span class="attachment-name"></span><span class="attachment-size">${formatBytes(attachment.size)}</span><span class="attachment-remove">×</span>`;
-    const name = chip.querySelector('.attachment-name');
-    if (name) name.textContent = attachment.name;
-    chip.addEventListener('click', () => {
-      pendingAttachments.splice(index, 1);
-      renderAttachments();
-    });
-    tray.append(chip);
-  });
-}
-
-function buildAttachmentPrompt() {
-  return pendingAttachments.map((attachment) => {
-    const metadata = `<!--sapaloq-attachment:${encodeAttachmentMeta(attachment)}-->`;
-    if (attachment.dataURI) return `${metadata}\n![${attachment.name}](${attachment.dataURI})`;
-    return `${metadata}\n--- file: ${attachment.name} (${attachment.type || 'text/plain'}) ---\n${attachment.text || ''}\n--- end file: ${attachment.name} ---`;
-  }).join('\n');
-}
-
+// Insert files picked via the + button, pasted, or dropped in-browser as inline
+// pills at the caret. Images keep a dataURI (for inline vision); other files are
+// read as text. None of these carry a host path (browser sandbox), so the pill
+// holds the dataURI/text payload.
 async function addFiles(files: FileList | File[]) {
   const incoming = Array.from(files).filter(Boolean);
-  if (!incoming.length) return;
-  const tray = document.getElementById('attachment-tray');
+  if (!incoming.length || !compose) return;
   const wrap = document.getElementById('compose-wrap');
-  tray?.classList.add('is-loading');
-  wrap?.classList.add('has-attachments');
+  wrap?.classList.add('is-loading');
   try {
     for (const file of incoming) {
-      if (file.type.startsWith('image/')) {
-        pendingAttachments.push({ name: file.name || 'pasted-image', type: file.type, size: file.size, dataURI: await fileToDataURI(file) });
-      } else {
-        pendingAttachments.push({ name: file.name || 'pasted-file', type: file.type || 'text/plain', size: file.size, text: await fileToText(file) });
-      }
+      const att: AttachmentData = file.type.startsWith('image/')
+        ? { name: file.name || 'pasted-image', type: file.type, size: file.size, dataURI: await fileToDataURI(file) }
+        : { name: file.name || 'pasted-file', type: file.type || 'text/plain', size: file.size, text: await fileToText(file) };
+      compose.insertAttachment(att);
     }
   } finally {
-    tray?.classList.remove('is-loading');
-    renderAttachments();
-    document.getElementById('compose-input')?.focus();
+    wrap?.classList.remove('is-loading');
+    compose.focus();
   }
 }
 
@@ -1042,22 +1044,22 @@ async function addClipboardItems(clipboard: DataTransfer | null) {
 
 // Ingest native (Wails OnFileDrop) file paths. WebKitGTK cannot hand File
 // objects to the webview for out-of-browser drops, so the drag is handled in
-// GTK and we get paths back. The webview cannot read file:// URLs itself, so
-// each path is read Go-side via ReadDroppedFile and turned into the same
-// PendingAttachment shape as paste/browser drops.
+// GTK and we get paths back. Each path is read Go-side via ReadDroppedFile and
+// inserted as an inline pill at the caret, carrying the real host `path`. That
+// path flows to the model when the message is serialized (a model-visible
+// `[Local file: <path>]` block, base64 dropped for path-backed binaries), which
+// stops a delegated sub-agent from losing the file.
 async function addDroppedPaths(paths: string[]) {
   const incoming = paths.map((p) => p.trim()).filter(Boolean);
-  if (!incoming.length) return;
-  const tray = document.getElementById('attachment-tray');
+  if (!incoming.length || !compose) return;
   const wrap = document.getElementById('compose-wrap');
-  tray?.classList.add('is-loading');
-  wrap?.classList.add('has-attachments');
+  wrap?.classList.add('is-loading');
   try {
     for (const path of incoming) {
       try {
         const file = await ReadDroppedFile(path);
         if (!file) continue;
-        pendingAttachments.push({
+        compose.insertAttachment({
           name: file.name,
           path: file.path || undefined,
           type: file.mime || (file.is_image ? 'image/*' : 'text/plain'),
@@ -1070,9 +1072,8 @@ async function addDroppedPaths(paths: string[]) {
       }
     }
   } finally {
-    tray?.classList.remove('is-loading');
-    renderAttachments();
-    document.getElementById('compose-input')?.focus();
+    wrap?.classList.remove('is-loading');
+    compose.focus();
   }
 }
 
@@ -1124,7 +1125,7 @@ function collectTransferFiles(transfer: DataTransfer | null): File[] {
   return files;
 }
 
-async function sendText(text: string, visibleText = text, attachments: PendingAttachment[] = []) {
+async function sendText(text: string, visibleText = text, attachments: AttachmentData[] = []) {
   const input = getComposeInput();
   if (submitting || !input || !text.trim()) return;
   closeMessageMenu();
@@ -1137,7 +1138,7 @@ async function sendText(text: string, visibleText = text, attachments: PendingAt
   const thinkingTimer = window.setTimeout(() => appendProgressBubble('thinking'), 450);
   submitting = true;
   setSubmittingUI(true);
-  input.disabled = true;
+  setComposeDisabled(true);
   beginLiveStream();
   try {
     const res = await SendMessage(currentSessionID, text);
@@ -1160,23 +1161,18 @@ async function sendText(text: string, visibleText = text, attachments: PendingAt
     clearProgressBubble();
     submitting = false;
     setSubmittingUI(false);
-    input.disabled = false;
+    setComposeDisabled(false);
     input.focus();
   }
 }
 
 async function submitMessage() {
-  const input = getComposeInput();
-  const attachmentPrompt = buildAttachmentPrompt();
-  if (!input || (!input.value.trim() && !attachmentPrompt)) return;
-  const text = `${input.value.trim()}${attachmentPrompt}`.trim();
-  const visibleText = input.value.trim() || pendingAttachments.map((file) => file.name).join(', ');
-  const sentAttachments = pendingAttachments.map((attachment) => ({ ...attachment }));
-  input.value = '';
+  if (!compose || compose.isEmpty()) return;
+  const { visibleText, modelText, attachments } = compose.serialize();
+  if (!modelText) return;
+  compose.clear();
   resetComposeSize();
-  pendingAttachments = [];
-  renderAttachments();
-  await sendText(text, visibleText, sentAttachments);
+  await sendText(modelText, visibleText || attachments.map((a) => a.name).join(', '), attachments);
 }
 
 function hideSlashSuggest() {
@@ -1185,10 +1181,10 @@ function hideSlashSuggest() {
 }
 
 async function refreshSlashSuggest() {
-  const input = document.getElementById('compose-input') as HTMLTextAreaElement | null;
   const popover = document.getElementById('slash-popover');
-  if (!input || !popover) return;
-  const active = activeSlashAtChat(input.value, input.selectionStart || 0);
+  if (!compose || !popover) return;
+  const caret = compose.caretOffset();
+  const active = activeSlashAtChat(compose.textValue(), caret);
   if (!active) {
     hideSlashSuggest();
     return;
@@ -1202,9 +1198,8 @@ async function refreshSlashSuggest() {
     popover.querySelectorAll<HTMLButtonElement>('.slash-item').forEach((button) => {
       button.addEventListener('click', () => {
         const prefix = button.dataset.prefix || '';
-        input.value = input.value.slice(0, active.slashIndex) + prefix + input.value.slice(input.selectionStart || 0);
-        input.focus();
-        input.setSelectionRange(active.slashIndex + prefix.length, active.slashIndex + prefix.length);
+        compose?.replaceRange(active.slashIndex, caret, prefix);
+        compose?.focus();
         autosizeCompose();
         hideSlashSuggest();
       });
@@ -1237,11 +1232,10 @@ document.querySelector('#app')!.innerHTML = `
       <footer class="popup-compose">
         <div class="compose-wrap" id="compose-wrap">
           <div class="slash-popover" id="slash-popover"></div>
-          <div class="attachment-tray" id="attachment-tray" aria-live="polite"></div>
           <button type="button" class="compose-expand" id="compose-expand" aria-label="Perbesar input" title="Perbesar input" aria-pressed="false">${ICON_EXPAND}</button>
           <div class="compose-row">
             <button type="button" class="attach-btn" id="attach-btn" aria-label="Attach file" title="Attach file"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
-            <textarea id="compose-input" placeholder="Ask anything" autocomplete="off" rows="1"></textarea>
+            <div id="compose-input" class="compose-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Ask anything"></div>
             <button type="button" class="send-btn" id="send-btn" aria-label="Kirim">${ICON_SEND}</button>
           </div>
           <input type="file" id="attach-input" class="attach-input" multiple aria-hidden="true" tabindex="-1">
@@ -1290,22 +1284,23 @@ document.getElementById('attach-input')?.addEventListener('change', (event) => {
   if (input.files?.length) void addFiles(input.files);
   input.value = '';
 });
-document.getElementById('compose-input')?.addEventListener('input', () => { autosizeCompose(); void refreshSlashSuggest(); });
-document.getElementById('compose-input')?.addEventListener('keyup', () => void refreshSlashSuggest());
+const composeEl = getComposeInput();
+if (composeEl) {
+  compose = new ComposeBox(composeEl, {
+    onChange: () => { autosizeCompose(); void refreshSlashSuggest(); },
+    onSubmit: () => void submitMessage(),
+  });
+}
 document.getElementById('compose-expand')?.addEventListener('click', () => toggleComposeExpand());
-document.getElementById('compose-input')?.addEventListener('keydown', (event) => {
-  const keyEvent = event as KeyboardEvent;
-  if (keyEvent.key === 'Enter' && !keyEvent.shiftKey) {
-    event.preventDefault();
-    void submitMessage();
-  }
-});
-document.getElementById('compose-input')?.addEventListener('paste', (event) => {
+// File paste is handled here (ComposeBox lets file pastes through); plain-text
+// paste is normalised inside ComposeBox.
+composeEl?.addEventListener('paste', (event) => {
   const clipboard = (event as ClipboardEvent).clipboardData;
-  if ((clipboard?.files?.length || clipboard?.items?.length) && Array.from(clipboard.items || []).some((item) => item.kind === 'file')) {
+  const hasFile = Array.from(clipboard?.items || []).some((item) => item.kind === 'file');
+  if (hasFile) {
     event.preventDefault();
+    void addClipboardItems(clipboard);
   }
-  void addClipboardItems(clipboard);
 });
 document.addEventListener('click', (event) => {
   const target = event.target as HTMLElement | null;
@@ -1368,6 +1363,13 @@ try {
   // here as it is produced by the core, so deltas render incrementally instead
   // of bursting when SendMessage/RetryChatTurn resolves.
   EventsOn('sapaloq:stream', (event: StreamEvent) => {
+    // Background task completions arrive asynchronously (no active chat
+    // request), so they must be handled regardless of `submitting` — otherwise
+    // the completion trigger would be silently dropped while idle.
+    if (event.kind === 'task_update') {
+      renderTaskUpdate(event);
+      return;
+    }
     if (submitting) feedLiveEvent(event);
   });
   OnFileDrop((_x, _y, paths) => {

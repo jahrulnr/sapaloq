@@ -46,7 +46,8 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		OnStartup: app.startup,
+		OnStartup:  app.startup,
+		OnShutdown: app.shutdown,
 		OnDomReady: func(ctx context.Context) {
 			// Defer input-shape until window is realized & has correct size
 			scheduleInputShape(true)

@@ -37,6 +37,14 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	record.Answer = ""
 
 	var finalResult strings.Builder
+	// idleNudges counts consecutive turns where an executor role (task-runner)
+	// produced neither a tool call nor a terminal event. Such a turn is usually
+	// the model "announcing intent" (e.g. "I'll switch to system_exec") without
+	// acting. Treating that as completion ends the task prematurely (the
+	// observed "kepentok" bug), so instead we nudge it to act or finish — but
+	// only a bounded number of times so a stuck model can't loop forever.
+	idleNudges := 0
+	const maxIdleNudges = 2
 
 	for turn := 1; turn <= maxTurns; turn++ {
 		if ctx.Err() != nil {
@@ -112,9 +120,8 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 			return
 		}
 		if len(toolResults) == 0 {
-			// No tools called this turn → the planner/agent is finished.
-			// For a planner that wrote a plan.md, that plan is the authoritative
-			// result (not any trailing chatter); otherwise use the text.
+			// No tools called this turn. For a planner, that plan.md is the
+			// authoritative result; planner/scribe finish naturally here.
 			if record.Role == "planner" {
 				if plan := o.readPlanMarkdown(record.ID); plan != "" {
 					record.Result = plan
@@ -122,10 +129,34 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 					return
 				}
 			}
+			// Executors (task-runner) must signal completion explicitly via
+			// sapaloq_complete_task / sapaloq_fail_task. A tool-less turn is
+			// almost always the model narrating intent without acting — do NOT
+			// silently mark it done. Nudge it to either act or finish, bounded
+			// by maxIdleNudges so a stuck model still terminates.
+			if record.Role == "task-runner" && idleNudges < maxIdleNudges {
+				idleNudges++
+				nudge := "You did not call any tool this turn and have not finished. " +
+					"If the task is complete, call sapaloq_complete_task with a summary. " +
+					"If it cannot be done, call sapaloq_fail_task with a reason. " +
+					"Otherwise, actually invoke the tool you need (e.g. system_exec, " +
+					"terminal_run, workspace_create_file) — do not just describe what you will do."
+				record.appendTranscript("assistant", turnText.String())
+				record.appendTranscript("user", nudge)
+				messages = append(messages,
+					bridge.Message{Role: "assistant", Content: turnText.String()},
+					bridge.Message{Role: "user", Content: nudge},
+				)
+				images = nil
+				continue
+			}
 			record.Result = strings.TrimSpace(finalResult.String())
 			record.Status = "done"
 			return
 		}
+
+		// A productive turn (tools ran) resets the idle nudge counter.
+		idleNudges = 0
 
 		// Feed tool results back and continue. Also record the turn in the
 		// resumable transcript so a later clarification pause keeps full context.
@@ -176,15 +207,32 @@ func (o *Orchestrator) roleMaxTurns(role string) int {
 // behavior while letting config grant capabilities to named roles.
 func (o *Orchestrator) roleAllows(role, tool string) bool {
 	if roles := o.cfg.SubAgents.Roles; roles != nil {
-		if r, ok := roles[role]; ok && len(r.AllowedTools) > 0 {
+		if r, ok := roles[role]; ok && len(r.AllowedTools) > 0 && allowlistMatchesKnownTool(r.AllowedTools) {
 			return matchToolAllowlist(r.AllowedTools, tool)
 		}
 	}
-	// Fallback policy (unconfigured role): task-runner full, others read-only.
+	// Fallback policy (unconfigured role, OR a config allowlist that names only
+	// unknown/abstract tools so it would otherwise gate EVERY real tool off and
+	// silently brick the sub-agent): task-runner full, others read-only.
 	if role == "task-runner" {
 		return true
 	}
 	return !isMutatingTool(tool)
+}
+
+// allowlistMatchesKnownTool reports whether a configured allowlist matches at
+// least one tool the orchestrator actually implements. A list that names only
+// abstract/aspirational tools (e.g. the doc names "exec", "write_file",
+// "gnome_*") would otherwise deny every real tool at execution — a silent,
+// hard-to-debug failure. When nothing matches we ignore the (clearly wrong)
+// list and fall back to the static per-role policy instead.
+func allowlistMatchesKnownTool(allow []string) bool {
+	for name := range knownToolSet() {
+		if matchToolAllowlist(allow, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchToolAllowlist matches a tool name against an allowlist supporting exact
