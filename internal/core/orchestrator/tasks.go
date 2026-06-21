@@ -15,13 +15,13 @@ import (
 )
 
 type taskRecord struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"session_id,omitempty"`
-	Role      string    `json:"role"`
-	Status    string    `json:"status"`
-	Task      string    `json:"task"`
-	Result    string    `json:"result,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	ID        string `json:"id"`
+	SessionID string `json:"session_id,omitempty"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
+	Task      string `json:"task"`
+	Result    string `json:"result,omitempty"`
+	Error     string `json:"error,omitempty"`
 	// PlanTaskID references the planner task whose plan.md this agent executes
 	// (set when Ask spawns an agent after a plan). Empty for direct agents.
 	PlanTaskID string `json:"plan_task_id,omitempty"`
@@ -75,12 +75,13 @@ type askToolResult struct {
 
 func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, call parse.ToolCall) askToolResult {
 	var args struct {
-		Task    string `json:"task"`
-		TaskID  string `json:"task_id"`
-		Seconds int    `json:"seconds"`
-		Reason  string `json:"reason"`
-		Scope   string `json:"scope"`
-		Answer  string `json:"answer"`
+		Task       string `json:"task"`
+		TaskID     string `json:"task_id"`
+		PlanTaskID string `json:"plan_task_id"`
+		Seconds    int    `json:"seconds"`
+		Reason     string `json:"reason"`
+		Scope      string `json:"scope"`
+		Answer     string `json:"answer"`
 	}
 	_ = json.Unmarshal(call.Arguments, &args)
 	o.auditTool(sessionID, "ask", call)
@@ -102,9 +103,12 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			task = fallbackTask
 		}
 		task = carryImageAttachments(task, fallbackTask)
-		// If a planner just produced a plan in this session, hand its plan.md to
-		// the agent so it executes with goal + acceptance criteria, not blind.
-		planTaskID := o.latestPlanTaskID(sessionID)
+		planTaskID := strings.TrimSpace(args.PlanTaskID)
+		if planTaskID != "" {
+			if err := o.validatePlanForAgent(sessionID, planTaskID); err != nil {
+				return askToolResult{text: "Cannot use plan: " + err.Error(), handled: true}
+			}
+		}
 		id, err := o.spawnBackground(snap, sessionID, "task-runner", task, planTaskID)
 		if err != nil {
 			return askToolResult{text: "Failed to start agent: " + err.Error(), handled: true}
@@ -403,7 +407,7 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 	// sapaloq_write_plan_markdown (see handleSubAgentTool). We deliberately do
 	// NOT synthesize a plan.md from free-form planner text here: a planner that
 	// merely answered a question (without producing a real plan) must not leave
-	// a fake plan.md that latestPlanTaskID would later hand to an agent.
+	// a fake artifact that can pass explicit plan_task_id validation.
 }
 
 // publishTaskUpdate emits an EventTaskUpdate onto the bus when a background
@@ -457,38 +461,26 @@ func (o *Orchestrator) publishTaskUpdate(sessionID string, record taskRecord) {
 	o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
 }
 
-// latestPlanTaskID returns the most recent successful planner task for a
-// session, used to hand a plan to a freshly spawned agent.
-func (o *Orchestrator) latestPlanTaskID(sessionID string) string {
-	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+// validatePlanForAgent makes Plan → Agent handoff explicit and task-scoped.
+// Selecting a session's latest plan can attach stale, unrelated work.
+func (o *Orchestrator) validatePlanForAgent(sessionID, planTaskID string) error {
+	rec, err := o.readTask(planTaskID)
 	if err != nil {
-		return ""
+		return err
 	}
-	var bestID string
-	var bestTime time.Time
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		rec, readErr := o.readTask(entry.Name())
-		if readErr != nil || rec.Role != "planner" {
-			continue
-		}
-		if sessionID != "" && rec.SessionID != sessionID {
-			continue
-		}
-		// Only treat this planner task as a plan source if it actually produced
-		// a plan.md (via sapaloq_write_plan_markdown). A planner that merely
-		// answered a question leaves no plan.md and must not be handed off.
-		if _, statErr := os.Stat(filepath.Join(o.taskDir(rec.ID), "plan.md")); statErr != nil {
-			continue
-		}
-		if rec.UpdatedAt.After(bestTime) {
-			bestTime = rec.UpdatedAt
-			bestID = rec.ID
-		}
+	if rec.Role != "planner" {
+		return fmt.Errorf("task %q is not a planner task", planTaskID)
 	}
-	return bestID
+	if rec.Status != "done" {
+		return fmt.Errorf("plan %q is %s, not done", planTaskID, rec.Status)
+	}
+	if sessionID != "" && rec.SessionID != sessionID {
+		return fmt.Errorf("plan %q belongs to another session", planTaskID)
+	}
+	if _, err := os.Stat(filepath.Join(o.taskDir(planTaskID), "plan.md")); err != nil {
+		return fmt.Errorf("plan %q has no plan.md", planTaskID)
+	}
+	return nil
 }
 
 func (o *Orchestrator) taskDir(id string) string {

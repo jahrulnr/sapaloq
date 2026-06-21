@@ -1,14 +1,16 @@
 # SapaLOQ — Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-19 (execution modes: Ask → Plan → Agent)
+> Last updated: 2026-06-21 (runtime tool-policy enforcement + active config truth)
 
 ---
 
 ## Ringkasan
 
 - **Widget agent = orchestrator saja** — tidak melakukan pekerjaan berat; **delegasi** ke sub-agent.
-- **Config = `config.json`** — **tidak ada settings UI**; user ubah lewat chat (`/settings ...`) → sub-agent `settings` edit file.
+- **Config = `config.json`** — **tidak ada settings UI**. Runtime saat ini
+  mendukung deterministic `/settings patch <json>`; natural-language
+  `sub-agent:settings` masih target berikutnya.
 - **Storage/apps mapping** — indexed paths + intents; scribe sub-agent nulis ke file yang benar by mode/boundary.
 - **Mode-aware** — personal / hobby / work; memory namespace terpisah.
 - **Anti context poisoning** — task stack; tidak loncat task tanpa park/done/switch eksplisit.
@@ -40,7 +42,10 @@ Orchestrator: "Notifikasi read-aloud sudah off."
 
 ### Slash commands (orchestrator routes)
 
-MVP command surface hanya `/settings ...`. Semua intent lain tetap natural-language chat dan dirutekan ke cursor-bridge/orchestrator tanpa user-facing slash command tambahan.
+Current mutation surface: `/settings patch <json>` and `/settings show`.
+`/model`, `/thinking`, `/compaction`, and `/reset` are also implemented
+orchestrator commands. Natural-language settings delegation is not implemented
+yet.
 
 | Command | Sub-agent | Mutasi config |
 |---------|-----------|---------------|
@@ -134,8 +139,8 @@ Provider-bridge backends (OpenAI/Claude/Kimi/OpenRouter/TokenRouter/etc.) do not
 
 | SapaLOQ mode | Role | Declared tools profile | Policy |
 |--------------|------|------------------------|--------|
-| **Ask** | `orchestrator` | `sapaloq_spawn_*`, task status, brief memory/context, clarification, light `desktop_*` | Delegate and observe; no file mutation, no shell |
-| **Plan** | `planner` | read-only workspace/search/errors + `sapaloq_write_plan_markdown` | Markdown assessment only; no execution side effects |
+| **Ask** | `orchestrator` | spawn/status/clarification, assessment, web, light `desktop_*`, `system_exec` | Coordinate and explore; do not mutate task artifacts directly |
+| **Plan** | `planner` | read-only workspace/search/web, `system_exec`, `sapaloq_write_plan_markdown` | Explore thoroughly; terminal inspection is allowed, target-artifact mutation is not |
 | **Agent** | `task-runner` | workspace write tools, terminal/build/test, progress/complete, clarification | Execute approved/direct task under boundary guard |
 
 Recommended MVP profile names:
@@ -179,6 +184,11 @@ agent:
 ```
 
 Provider `declaredTools` should be generated from this role profile. Static per-provider `declaredTools` remains a compatibility fallback only.
+
+Runtime enforcement rule: reusable/shared tool implementations still pass
+through the active role allowlist before execution. `system_exec` is expected
+for Ask and Planner, but an undeclared/provider-poisoned `system_exec` call from
+Scribe is denied.
 
 ### Continuation runtime
 
@@ -310,6 +320,11 @@ Refactor config schema validation without touching Cursor worker memory.
 ```
 
 Direct agent (skip planner) — same `toolPolicy: full`, context packet dari Ask + context-scaler saja.
+
+Runtime handoff is explicit: `sapaloq_spawn_agent` accepts optional
+`plan_task_id`. The referenced task must be a completed Planner task in the
+same session and must contain a real `plan.md`. Without `plan_task_id`, Agent
+runs directly. The runtime never attaches the session's latest plan implicitly.
 
 ### Plan review
 

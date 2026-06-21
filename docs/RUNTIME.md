@@ -112,6 +112,13 @@ No Docker, no compose, no message queue for SapaLOQ itself.
 
 Memory: `engine: sqlite` only. Event wake: `events.bus` not external broker.
 
+The first-boot public example now contains only configuration read by the
+current runtime: runtime path, platform adapter, providers, command registry,
+continuation/compaction/completion, active sub-agent roles, storage, skills,
+prompts, feedback, vault, and event-bus socket/WAL. Roadmap-only knobs remain
+documented in their subsystem docs but are not copied into a live config where
+`/settings` could falsely report a successful no-op.
+
 ---
 
 ## Non-goals (runtime)
@@ -206,7 +213,12 @@ sapaloq-core doctor --json       # machine-readable exit payload
 | Socket | `sapaloq.sock` path writable |
 | LLM bridge | Cursor credentials via autoload (`process.env` → `.env` → `state.vscdb`) |
 
-Config **schema migration** is implemented: `Load` decodes to a raw map, runs an ordered upgrade chain (`internal/config/migrate.go`, `CurrentSchemaVersion` = `1.1.0`; lower → upgrade + persist, equal → no-op, higher → load as-is) before unmarshalling. Still planned (M1+): `os.json` regen checks, `companion.db` migrations, `local-default` node row.
+Config **schema migration** is implemented: `Load` decodes to a raw map, runs
+an ordered upgrade chain (`internal/config/migrate.go`,
+`CurrentSchemaVersion = 1.2.0`; lower → upgrade + persist, equal → no-op,
+higher → load as-is) before unmarshalling. The 1.2 migration aligns active
+`skills.dir`, `prompts.dir`, and `events.bus.walPath` names. Still planned:
+`os.json` regeneration checks and a unified SQL migration runner.
 
 ```bash
 sapaloq-core doctor              # current checks

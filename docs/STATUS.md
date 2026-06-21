@@ -13,20 +13,20 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | # | Subsystem | Status | Evidence / notes |
 |---|-----------|--------|------------------|
 | 1 | Execution modes Ask / Plan / Agent | ✅ | `internal/core/orchestrator/conversation.go` (`runConversation`), `tasks.go` (`handleAskTool`), roles `planner` / `task-runner` |
-| 2 | Sub-agent tool loop + per-role profiles | ✅ | `subagent.go` (`runSubAgentLoop`, `handleSubAgentTool`), `tools.go` (`toolsForRole`); `maxTurns` read from config (`roleMaxTurns`) |
+| 2 | Sub-agent tool loop + per-role profiles | ✅ | `subagent.go` (`runSubAgentLoop`, `handleSubAgentTool`), `tools.go` (`toolsForRole`); `maxTurns` read from config (`roleMaxTurns`). Role policy is checked before shared-tool dispatch, so undeclared/provider-poisoned calls cannot bypass the role allowlist |
 | 3 | Assessment tools (read/search/list_dir, web_search/fetch) | ✅ | `tools_workspace.go`, `tools_web.go`, dispatch in `tools_dispatch.go` |
 | 4 | Write/exec tools (write_file/create_file, terminal_run) | ✅ | `tools_workspace.go`; gated to `task-runner` in `subagent.go` |
 | 5 | In-place edit / delete / glob tools | ✅ | `tools_workspace.go` (`toolEditFile`, `toolDeleteFile`, `toolGlob`) — added 2026-06-20 |
 | 6 | `read_file` binary guard + line-range read | ✅ | `tools_workspace.go` (`toolReadFile`: NUL/non-printable sniff + `offset`/`limit` line range) — added 2026-06-20 |
-| 7 | Plan artifact + handoff | ✅ | `subagent.go` (`sapaloq_write_plan_markdown`, `readPlanMarkdown`, `buildSubAgentMessages`); `latestPlanTaskID` requires real `plan.md` |
-| 8 | Plan iteration (revise before finishing) | 🟡 | `write_plan_markdown` is non-terminal; planner can rewrite + read its own plan. No approval-gate UI; no post-handoff agent amend |
+| 7 | Plan artifact + handoff | ✅ | `subagent.go` (`sapaloq_write_plan_markdown`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment |
+| 8 | Plan iteration (revise before finishing) | 🟡 | `write_plan_markdown` is non-terminal; planner can rewrite + read its own plan. Ask prompt requires user review before passing `plan_task_id`, but no approval-gate UI/state machine yet; no post-handoff agent amend |
 | 9 | Clarification loop | ✅ | Two-way: `sapaloq_request_clarification` pauses, `sapaloq_answer_clarification` resumes the paused sub-agent loop (transcript replayed, answer nudge injected). `tasks.go`, `subagent.go`, `tools.go`, `session.go` |
 | 10 | Vault audit log | ✅ | `internal/vault`, wired via `Orchestrator.auditTool` (`chat.go`) at Ask + sub-agent chokepoints; cursor-bridge logs undeclared calls |
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go` |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor` |
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; markdown via `marked`+DOMPurify; wait countdown |
-| 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go` |
+| 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
 | 17 | Event bus (in-proc pub/sub) | ✅ | `internal/bus/bus.go`: topic-pattern routing (`*`/`**` via `matchTopic`/`SubscribeTopics`), JSON-lines WAL (`NewWithWAL`, non-blocking append goroutine, seq monotonic across boots), `Replay(since, fn)`, boot replay wired in `cmd/sapaloq-core/main.go` (`newEventBus`). `Subscribe` stays receive-all for the widget `watch`. **Completion trigger now wired end-to-end** (2026-06-21): sub-agent finish → `EventTaskUpdate` published to bus → widget `watchEvents` IPC subscriber → `task_update` chat bubble. Socket bus publish op still a follow-up |
 | 18 | Context-SOP: FTS index / prefetch / anti-deep-check / intent-router | 🟡 | `facts` + `facts_fts` (FTS5-probed, LIKE fallback) now live in the chat store (`store.go` migrate, `facts.go`): `AddFact`/`SearchFacts`/`RecentFacts`/`DeleteFact`. No prefetch/anti-deep-check/intent-router yet |
@@ -43,6 +43,21 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` — the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
 
 ---
+
+## Audit this session (2026-06-21) — architecture remediation
+
+- Completed a full docs/config/runtime audit and added
+  [REMEDIATION-PLAN.md](./REMEDIATION-PLAN.md). The audit preserves
+  `system_exec` in Ask and Plan as an intentional exploration capability.
+- Confirmed critical contract drift: the example config, JSON schema, and Go
+  config structs disagree; multiple documented orchestrator controls are not
+  consumed; and shared sub-agent tools are dispatched before role enforcement.
+- P0 fixes started: public config reduced to active runtime fields; schema
+  parity + load tests added; schema migration bumped to 1.2.0; nested
+  `/settings` paths now reject roadmap-only no-ops; and shared sub-agent calls
+  are role-gated before dispatch while preserving Planner `system_exec`.
+- Plan → Agent binding no longer guesses from the latest session plan. Agent
+  receives a plan only through an explicit validated `plan_task_id`.
 
 ## Implemented this session (2026-06-21) — thinking persistence + widget polish
 
@@ -115,7 +130,7 @@ Root cause of sub-agents stalling ("kepentok") with no continuation, plus the mi
 - **Markdown via library:** replaced the hand-rolled parser in the widget with `marked` + `DOMPurify` (GFM tables/headings now render). `cmd/sapaloq-widget/frontend/src/main.ts`, `style.css`.
 - **Wait countdown UX:** `waiting` status now carries `wait_seconds`; the widget shows a live countdown (`waiting · 10s, 9s, …`). `internal/bridge/events.go`, `tasks.go`, `main.ts`.
 - **Atomic task writes:** `writeFileAtomic` (temp + rename) fixes the `status.json` read/write race that made `sapaloq_wait` fail with "unexpected end of JSON input". `tasks.go`. Defensive retry in `readTask`.
-- **No fake plan.md:** planner no longer auto-writes `plan.md` from free-form text; only `sapaloq_write_plan_markdown` does. `latestPlanTaskID` requires a real `plan.md`. `tasks.go`.
+- **No fake plan.md:** planner no longer auto-writes `plan.md` from free-form text; only `sapaloq_write_plan_markdown` does. The current explicit `plan_task_id` validator requires a real `plan.md`. `tasks.go`.
 - **Tool audit:** every orchestrator-executed tool is appended to `vault/tool-calls.jsonl` (`reason: executed`). `chat.go`, `subagent.go`.
 - **Config consumed:** `subAgents.roles[].maxTurns` is now read (`roleMaxTurns`); `config.example.json` `allowedTools` aligned to real tool names. `internal/config/load.go`, `subagent.go`.
 - **Tool upgrade (cursor-style):** `read_file` gains binary detection + line-range (`offset`/`limit`); new `edit_file` (precise string replace), `delete_file`, `glob_file_search`. Plan made iterable. `tools_workspace.go`, `tools.go`, `subagent.go`.

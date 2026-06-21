@@ -273,6 +273,23 @@ func init() {
 		"required":["path"]
 	}`)
 
+	reg("sapaloq_spawn_plan", `{
+		"type":"object",
+		"properties":{
+			"task":{"type":"string","description":"The task to investigate and plan."}
+		},
+		"required":["task"]
+	}`)
+
+	reg("sapaloq_spawn_agent", `{
+		"type":"object",
+		"properties":{
+			"task":{"type":"string","description":"The task to execute."},
+			"plan_task_id":{"type":"string","description":"Optional explicit planner task id to execute after the user approves that plan. Omit for a direct Agent run."}
+		},
+		"required":["task"]
+	}`)
+
 	reg("sapaloq_write_plan_markdown", `{
 		"type":"object",
 		"properties":{

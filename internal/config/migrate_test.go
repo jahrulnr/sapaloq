@@ -124,3 +124,48 @@ func TestLoadMigratesAndPersists(t *testing.T) {
 		t.Fatalf("expected persisted schemaVersion %s, got %v", CurrentSchemaVersion, persisted["schemaVersion"])
 	}
 }
+
+func TestMigrate110AlignsActiveConfigNames(t *testing.T) {
+	raw := map[string]any{
+		"schemaVersion": "1.1.0",
+		"skills": map[string]any{
+			"directory":        "/tmp/skills",
+			"indexOnBoot":      true,
+			"allowAgentCreate": true,
+		},
+		"prompts": map[string]any{
+			"rolesPath":               "/tmp/roles",
+			"rolesOverlayPath":        "/tmp/roles.d",
+			"assembleOnSpawn":         true,
+			"maxRolePromptTokens":     2500,
+			"includeOverlayByDefault": true,
+		},
+		"events": map[string]any{
+			"busPath": "/tmp/events.jsonl",
+			"bus":     map[string]any{"socketPath": "/tmp/s.sock"},
+		},
+	}
+	out, changed, err := migrateRaw(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || out["schemaVersion"] != CurrentSchemaVersion {
+		t.Fatalf("migration did not reach current version: %#v", out)
+	}
+	skills := out["skills"].(map[string]any)
+	if skills["dir"] != "/tmp/skills" {
+		t.Fatalf("skills.dir not migrated: %#v", skills)
+	}
+	if _, exists := skills["directory"]; exists {
+		t.Fatalf("deprecated skills.directory retained: %#v", skills)
+	}
+	prompts := out["prompts"].(map[string]any)
+	if prompts["dir"] != "/tmp/roles" || prompts["enabled"] != true {
+		t.Fatalf("prompts not migrated: %#v", prompts)
+	}
+	events := out["events"].(map[string]any)
+	bus := events["bus"].(map[string]any)
+	if bus["walPath"] != "/tmp/events.jsonl" {
+		t.Fatalf("events WAL not migrated: %#v", events)
+	}
+}

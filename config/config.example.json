@@ -1,30 +1,10 @@
 {
-  "schemaVersion": "1.1.0",
-  "updatedAt": "2026-06-19T00:00:00Z",
-  "updatedBy": "orchestrator",
+  "schemaVersion": "1.2.0",
+  "updatedAt": "2026-06-21T00:00:00Z",
+  "updatedBy": "bootstrap",
   "runtime": {
-    "singleBinary": true,
-    "binaryName": "sapaloq-core",
-    "dataDir": "~/.config/sapaloq"
-  },
-  "driver": {
-    "mode": "auto",
-    "override": null,
-    "osJsonPath": "~/.config/sapaloq/os.json",
-    "backupDir": "~/.config/sapaloq/cache",
-    "rescanOnFingerprintMismatch": true,
-    "backupOnRescan": true,
-    "detectOrder": [
-      "gnome",
-      "kde",
-      "freedesktop",
-      "windows",
-      "headless"
-    ],
-    "capabilitiesRequired": [
-      "notify",
-      "notify.watch"
-    ]
+    "dataDir": "~/.config/sapaloq",
+    "binaryName": "sapaloq-core"
   },
   "platform": {
     "adapter": "auto",
@@ -36,7 +16,7 @@
     "allowFallback": true
   },
   "llmBridge": {
-    "providerKey": "tokenrouter",
+    "providerKey": "cursor",
     "providers": [
       {
         "key": "cursor",
@@ -57,82 +37,71 @@
         "contextWindow": 1000000
       },
       {
-        "key": "tokenrouter",
+        "key": "claude",
         "driver": "provider-bridge",
-        "endpoint": "https://api.tokenrouter.com/v1/chat/completions",
-        "model": "MiniMax-M3",
-        "credentialsEnv": "TOKENROUTER_API_KEY",
-        "parser": "openai",
-        "reasoningEffort": "medium"
-      },
-      {
-        "key": "blackbox",
-        "driver": "provider-bridge",
-        "endpoint": "https://api.blackbox.ai/chat/completions",
-        "model": "blackboxai/minimax/minimax-free",
-        "credentialsEnv": "BLACKBOX_API_KEY",
-        "parser": "openai",
-        "contextWindow": 131072
+        "endpoint": "https://api.anthropic.com/v1/messages",
+        "model": "claude-sonnet-4-5",
+        "credentialsEnv": "ANTHROPIC_API_KEY",
+        "parser": "claude",
+        "authScheme": "x-api-key",
+        "apiVersion": "2023-06-01",
+        "contextWindow": 200000
       }
-    ],
-    "coercion": {
-      "enabled": true,
-      "schemaPath": "~/.config/sapaloq/bridge/cursor-bridge.schema.json"
-    },
-    "fallback": {
-      "driver": "local-llama",
-      "on": [
-        "auth_error",
-        "offline"
-      ]
-    },
-    "communityBridge": {
-      "enabled": false
-    }
+    ]
   },
   "commands": {
-    "settings": {
-      "enabled": true,
-      "spawnDedicatedSubAgent": true,
-      "allowedPaths": [
-        "/notifications",
-        "/widget",
-        "/orchestrator/autoSpawn",
-        "/orchestrator/progressStreaming",
-        "/orchestrator/completion",
-        "/orchestrator/clarification",
-        "/orchestrator/spawnRouting",
-        "/orchestrator/subAgentControl",
-        "/context",
-        "/memory",
-        "/skills",
-        "/prompts",
-        "/learning",
-        "/feedback",
-        "/events",
-        "/nodes",
-        "/driver",
-        "/runtime",
-        "/storage",
-        "/apps"
-      ]
-    }
-  },
-  "notifications": {
-    "enabled": true,
-    "read": false,
-    "showPreview": true,
-    "dndRespect": true,
-    "rateLimitPerMinute": 6
-  },
-  "widget": {
-    "ringAnimations": true,
-    "soundEffects": false,
-    "mirrorSubAgentActivity": true
+    "triggerChars": [
+      "/"
+    ],
+    "registry": [
+      {
+        "id": "settings",
+        "prefix": "/settings",
+        "pattern": "/settings(?:\\s+|$)",
+        "label": "Settings",
+        "description": "Patch active config.json fields",
+        "category": "commands",
+        "enabled": true
+      },
+      {
+        "id": "compaction",
+        "prefix": "/compaction",
+        "pattern": "/compaction(?:\\s+|$)",
+        "label": "Compaction",
+        "description": "Compact active chat context",
+        "category": "commands",
+        "enabled": true
+      },
+      {
+        "id": "reset",
+        "prefix": "/reset",
+        "pattern": "/reset(?:\\s+|$)",
+        "label": "Reset",
+        "description": "Start a fresh active chat session",
+        "category": "commands",
+        "enabled": true
+      },
+      {
+        "id": "model",
+        "prefix": "/model",
+        "pattern": "/model(?:\\s+|$)",
+        "label": "Model",
+        "description": "Switch active provider",
+        "category": "commands",
+        "enabled": true
+      },
+      {
+        "id": "thinking",
+        "prefix": "/thinking",
+        "pattern": "/thinking(?:\\s+|$)",
+        "label": "Thinking",
+        "description": "Set reasoning level",
+        "category": "commands",
+        "enabled": true
+      }
+    ]
   },
   "orchestrator": {
-    "maxConcurrentSubAgents": 4,
-    "defaultMode": "auto",
     "continuation": {
       "maxInferenceTurns": 128,
       "maxToolCalls": 512,
@@ -147,419 +116,46 @@
       "preserveRecentFraction": 0.3,
       "resumeAfterCompaction": true
     },
-    "antiContextPoisoning": {
-      "enabled": true,
-      "requireExplicitTaskSwitch": true,
-      "blockNewTaskUntilParkOrDone": true,
-      "parkInactiveAfterMinutes": 30
-    },
-    "autoSpawn": {
-      "memoryJanitor": true,
-      "contextScaler": true,
-      "boundaryGuard": true
-    },
-    "progressStreaming": {
-      "enabled": true,
-      "mirrorToWidget": true,
-      "tailEventsOnAsk": 10,
-      "includeThinkingInMirror": true,
-      "includeTodosInMirror": true
-    },
     "completion": {
       "trigger": "both",
       "heartbeatIntervalSec": 60,
       "staleAfterSec": 120,
       "requireTerminalEvent": true,
       "notifyUserOnDone": false
-    },
-    "clarification": {
-      "enabled": true,
-      "autoAnswerMinConfidence": 0.75,
-      "orchestratorMaxAutoAnswers": 2,
-      "forwardToUserByDefault": false,
-      "userTimeoutSec": 300,
-      "defaultOnTimeout": "park",
-      "notifyUserOnForward": true,
-      "widgetQuickReplyOptions": true
-    },
-    "spawnRouting": {
-      "enabled": true,
-      "planScoreThreshold": 0.55,
-      "directAgentScoreThreshold": 0.7,
-      "autoApprovePlan": false,
-      "agentToolPolicy": "full"
-    },
-    "subAgentControl": {
-      "enabled": true,
-      "ackTimeoutSec": 10,
-      "stopGraceSec": 30,
-      "maxScheduledPerTask": 5,
-      "maxDelaySec": 604800,
-      "progressRetention": "archive",
-      "allowNaturalLanguageControl": true
     }
-  },
-  "context": {
-    "maxPromptTokens": 4000,
-    "prefetchConfidenceThreshold": 0.7,
-    "antiDeepCheck": {
-      "enabled": true,
-      "maxExploreFiles": 3,
-      "maxExploreToolCalls": 2,
-      "exploreBudgetSec": 30,
-      "reloadFromIndexOnCompaction": true
-    },
-    "ingress": {
-      "useIntentRouter": true,
-      "heuristicBeforeLlm": true,
-      "maxPrefetchFacts": 12
-    },
-    "dynamicPrompt": {
-      "enabled": true,
-      "slicesPath": "~/.config/sapaloq/prompt/slices",
-      "corePath": "~/.config/sapaloq/prompt/core.md"
-    }
-  },
-  "memory": {
-    "index": {
-      "dbPath": "~/.config/sapaloq/memory/companion.db",
-      "filesMirrorPath": "~/.config/sapaloq/memory/files",
-      "ftsEnabled": true,
-      "syncOnBoot": true,
-      "inotifySync": true
-    },
-    "hotCache": {
-      "enabled": true,
-      "ttlSec": 300,
-      "maxEntries": 2048,
-      "persistToSqlite": false
-    }
-  },
-  "nodes": {
-    "commSpecDirectory": "~/.config/sapaloq/nodes",
-    "defaultLocalNode": "local-default",
-    "requireTlsRemote": true,
-    "allowRemoteRoles": [
-      "scribe",
-      "research",
-      "planner",
-      "task-runner"
-    ],
-    "healthCheckIntervalSec": 60,
-    "fallbackToLocalOnRemoteFail": true,
-    "allowSharedMemoryRemote": false
-  },
-  "skills": {
-    "enabled": true,
-    "dir": "~/.config/sapaloq/skills",
-    "maxLoadPerTurn": 2,
-    "maxBodyLines": 40,
-    "indexOnBoot": true,
-    "allowAgentCreate": true
-  },
-  "learning": {
-    "enabled": true,
-    "queuePath": "~/.config/sapaloq/memory/learning-queue.jsonl",
-    "autoTunePrefetchRules": true,
-    "minSamplesForRuleTune": 3,
-    "compactFileLineThreshold": 300,
-    "buildOnSuccess": true,
-    "minRewardToBuild": 0.5,
-    "maxOverlayLines": 80,
-    "research": {
-      "enabled": true,
-      "maxSourcesPerTask": 3,
-      "cacheTtlHours": 168,
-      "requireSourceUrl": true,
-      "spawnOnNovelIntent": true,
-      "spawnOnRepeatedFailure": 2,
-      "rateLimitPerHour": 10
-    },
-    "telemetry": {
-      "logPrefetch": true,
-      "logDeepCheckOverrides": true
-    }
-  },
-  "prompts": {
-    "rolesPath": "~/.config/sapaloq/prompt/roles",
-    "rolesOverlayPath": "~/.config/sapaloq/prompt/roles.d",
-    "assembleOnSpawn": true,
-    "maxRolePromptTokens": 2500,
-    "includeOverlayByDefault": true
-  },
-  "vault": {
-    "maxLogBytes": 5242880,
-    "keepRotatedFiles": 3
-  },
-  "feedback": {
-    "explicitSignalsEnabled": true,
-    "implicitSignalsEnabled": true,
-    "maxPositiveSlicesPerTurn": 1,
-    "maxNegativeSlicesPerTurn": 1,
-    "positiveSlicesPath": "~/.config/sapaloq/prompt/positive",
-    "negativeSlicesPath": "~/.config/sapaloq/prompt/negative",
-    "banditTunePrefetch": true,
-    "penaltyRequiresStructuredExtract": true,
-    "reaskPenaltyWeight": -0.5,
-    "thumbsDownWeight": -1,
-    "thumbsUpWeight": 1
-  },
-  "events": {
-    "enabled": true,
-    "globalRateLimitPerMinute": 30,
-    "busPath": "~/.config/sapaloq/memory/events.jsonl",
-    "bus": {
-      "enabled": true,
-      "wakeViaBus": true,
-      "socketPath": "~/.config/sapaloq/run/sapaloq.sock",
-      "watcherBufferSize": 64,
-      "topicPrefix": "sapaloq.v1",
-      "dedupeEvents": true,
-      "replayOnBoot": true
-    },
-    "watchers": [
-      {
-        "id": "platform-notifications",
-        "enabled": true,
-        "source": "platform.notification",
-        "mode": "any",
-        "filters": {
-          "apps": [
-            "slack",
-            "thunderbird",
-            "discord"
-          ],
-          "ignoreSilent": true
-        },
-        "action": {
-          "type": "orchestrator",
-          "spawnSubAgent": "task-runner",
-          "template": "Notification from {{app}}: {{title}} — {{body}}. Summarize briefly.",
-          "priority": "normal"
-        }
-      },
-      {
-        "id": "daily-meds",
-        "enabled": true,
-        "source": "custom.reminder",
-        "mode": "personal",
-        "schedule": "0 14 * * *",
-        "payload": {
-          "text": "Minum obat"
-        },
-        "action": {
-          "type": "notify_user",
-          "priority": "high"
-        }
-      }
-    ]
-  },
-  "modes": {
-    "personal": {
-      "label": "Personal",
-      "storageRoot": "~/Documents/sapaloq/personal",
-      "memoryNamespace": "personal",
-      "allowCrossModeRead": false,
-      "allowedApps": [
-        "firefox",
-        "spotify"
-      ]
-    },
-    "hobby": {
-      "label": "Hobby",
-      "storageRoot": "~/Documents/sapaloq/hobby",
-      "memoryNamespace": "hobby",
-      "allowCrossModeRead": false,
-      "allowedApps": [
-        "blender",
-        "gimp"
-      ]
-    },
-    "work": {
-      "label": "Work",
-      "storageRoot": "~/Documents/sapaloq/work",
-      "memoryNamespace": "work",
-      "allowCrossModeRead": false,
-      "allowedApps": [
-        "cursor",
-        "code",
-        "terminal"
-      ]
-    }
-  },
-  "storage": {
-    "paths": [
-      {
-        "id": "personal-notes",
-        "path": "~/Documents/sapaloq/personal/notes.md",
-        "mode": "personal",
-        "kind": "notes",
-        "description": "Catatan pribadi harian"
-      },
-      {
-        "id": "work-inbox",
-        "path": "~/Documents/sapaloq/work/inbox.md",
-        "mode": "work",
-        "kind": "inbox",
-        "description": "Quick capture work"
-      },
-      {
-        "id": "hobby-journal",
-        "path": "~/Documents/sapaloq/hobby/journal.md",
-        "mode": "hobby",
-        "kind": "journal",
-        "description": "Hobby progress log"
-      }
-    ],
-    "intents": {
-      "catat": "personal-notes",
-      "catat ini": "personal-notes",
-      "work note": "work-inbox",
-      "hobby log": "hobby-journal"
-    }
-  },
-  "apps": {
-    "entries": [
-      {
-        "id": "cursor",
-        "name": "Cursor",
-        "desktopId": "cursor.desktop",
-        "mode": "work",
-        "launchCommand": "cursor"
-      },
-      {
-        "id": "firefox",
-        "name": "Firefox",
-        "desktopId": "firefox.desktop",
-        "mode": "any"
-      }
-    ]
   },
   "subAgents": {
     "roles": {
-      "orchestrator": {
-        "description": "Ask mode — widget coordinator; spawn routing; light read-only assessment; never blocks on long IO",
-        "allowedTools": [
-          "sapaloq_spawn_plan",
-          "sapaloq_spawn_agent",
-          "sapaloq_spawn_scribe",
-          "sapaloq_get_task_status",
-          "sapaloq_wait",
-          "sapaloq_answer_clarification",
-          "sapaloq_stop",
-          "workspace_read_file",
-          "workspace_search",
-          "workspace_list_dir",
-          "workspace_glob",
-          "web_search",
-          "web_fetch",
-          "desktop_notify",
-          "desktop_dnd_status",
-          "system_exec"
-        ],
-        "maxTurns": 3,
-        "canEditConfig": false,
-        "toolPolicy": "companion"
-      },
-      "settings": {
-        "description": "Mutates config.json from /settings natural language",
-        "allowedTools": [
-          "read_config",
-          "write_config",
-          "validate_config"
-        ],
-        "maxTurns": 5,
-        "canEditConfig": true
-      },
-      "scribe": {
-        "description": "Writes notes to storage.paths by boundary",
-        "allowedTools": [
-          "workspace_read_file",
-          "workspace_search",
-          "workspace_list_dir",
-          "workspace_glob",
-          "scribe_write_note",
-          "sapaloq_update_task_progress",
-          "sapaloq_complete_task",
-          "sapaloq_fail_task",
-          "sapaloq_request_clarification"
-        ],
-        "maxTurns": 8,
-        "canEditConfig": false
-      },
-      "memory-janitor": {
-        "description": "Reorganizes, dedupes, tags memory; drains learning queue; tunes prefetch",
-        "allowedTools": [
-          "read_memory",
-          "write_memory",
-          "read_index",
-          "write_index",
-          "embed",
-          "tag"
-        ],
-        "maxTurns": 20,
-        "canEditConfig": false
-      },
-      "intent-router": {
-        "description": "Classifies intent; spawn path scores (plan vs direct agent); prefetch from SQLite",
-        "allowedTools": [
-          "read_index",
-          "read_config",
-          "classify_intent",
-          "score_spawn_path"
-        ],
-        "maxTurns": 2,
-        "canEditConfig": false
-      },
-      "context-scaler": {
-        "description": "Builds minimal context packet; enforces anti-deep-check",
-        "allowedTools": [
-          "read_memory",
-          "read_index",
-          "read_task",
-          "summarize",
-          "assemble_prompt"
-        ],
-        "maxTurns": 5,
-        "canEditConfig": false
-      },
-      "boundary-guard": {
-        "description": "Detects mode/boundary violations before delegation",
-        "allowedTools": [
-          "read_config",
-          "read_task",
-          "read_memory"
-        ],
-        "maxTurns": 3,
-        "canEditConfig": false
-      },
       "planner": {
-        "description": "Plan mode — read-only by policy; produces Markdown plan.md before agent execution (iterable)",
+        "description": "Plan mode: explore, including system_exec, but do not mutate target artifacts",
         "allowedTools": [
           "workspace_read_file",
           "workspace_search",
           "workspace_list_dir",
           "workspace_glob",
+          "read_image",
           "web_search",
           "web_fetch",
+          "system_exec",
           "sapaloq_write_plan_markdown",
           "sapaloq_read_plan_markdown",
-          "sapaloq_request_clarification",
-          "system_exec"
+          "sapaloq_request_clarification"
         ],
         "maxTurns": 12,
         "canEditConfig": false,
         "toolPolicy": "read_only"
       },
       "task-runner": {
-        "description": "Agent mode — full tool access; executes Ask/Plan-designed task",
+        "description": "Agent mode: execute the task with full workspace and host tools",
         "allowedTools": [
           "workspace_read_file",
           "workspace_search",
           "workspace_list_dir",
           "workspace_glob",
+          "read_image",
           "web_search",
           "web_fetch",
+          "system_exec",
           "workspace_write_file",
           "workspace_create_file",
           "workspace_edit_file",
@@ -570,49 +166,87 @@
           "sapaloq_complete_task",
           "sapaloq_fail_task",
           "sapaloq_request_clarification",
-          "system_exec"
+          "desktop_notify"
         ],
         "maxTurns": 30,
         "canEditConfig": false,
         "toolPolicy": "full"
       },
-      "event-watcher": {
-        "description": "Subscribes GNOME/custom sources; appends to events.jsonl",
+      "scribe": {
+        "description": "Append notes only through scribe_write_note",
         "allowedTools": [
-          "gnome_subscribe",
-          "read_config",
-          "emit_event",
-          "schedule"
-        ],
-        "maxTurns": 0,
-        "canEditConfig": false
-      },
-      "learning-agent": {
-        "description": "Post-task prompt/skill builder; queues research; drains to index",
-        "allowedTools": [
-          "read_memory",
-          "write_memory",
-          "read_index",
-          "write_index",
-          "write_file",
-          "spawn",
-          "emit_progress"
-        ],
-        "maxTurns": 15,
-        "canEditConfig": false
-      },
-      "research": {
-        "description": "Bounded web research for best practices; async only",
-        "allowedTools": [
+          "workspace_read_file",
+          "workspace_search",
+          "workspace_list_dir",
+          "workspace_glob",
+          "read_image",
           "web_search",
           "web_fetch",
-          "read_index",
-          "write_index",
-          "emit_progress"
+          "scribe_write_note",
+          "sapaloq_update_task_progress",
+          "sapaloq_complete_task",
+          "sapaloq_fail_task",
+          "sapaloq_request_clarification"
         ],
         "maxTurns": 8,
         "canEditConfig": false
       }
+    }
+  },
+  "storage": {
+    "paths": [
+      {
+        "id": "personal-notes",
+        "path": "~/Documents/sapaloq/personal/notes.md",
+        "mode": "personal",
+        "kind": "notes",
+        "description": "Personal quick notes"
+      },
+      {
+        "id": "work-inbox",
+        "path": "~/Documents/sapaloq/work/inbox.md",
+        "mode": "work",
+        "kind": "inbox",
+        "description": "Work capture inbox"
+      },
+      {
+        "id": "hobby-journal",
+        "path": "~/Documents/sapaloq/hobby/journal.md",
+        "mode": "hobby",
+        "kind": "journal",
+        "description": "Hobby journal"
+      }
+    ],
+    "intents": {
+      "catat": "personal-notes",
+      "catat ini": "personal-notes",
+      "work note": "work-inbox",
+      "jurnal hobby": "hobby-journal"
+    }
+  },
+  "skills": {
+    "enabled": true,
+    "dir": "~/.config/sapaloq/skills",
+    "maxLoadPerTurn": 2,
+    "maxBodyLines": 40
+  },
+  "prompts": {
+    "enabled": true,
+    "dir": "~/.config/sapaloq/prompts"
+  },
+  "feedback": {
+    "explicitSignalsEnabled": true,
+    "maxNegativeSlicesPerTurn": 1
+  },
+  "vault": {
+    "maxLogBytes": 5242880,
+    "keepRotatedFiles": 3
+  },
+  "events": {
+    "bus": {
+      "socketPath": "~/.config/sapaloq/run/sapaloq.sock",
+      "walPath": "~/.config/sapaloq/memory/events.jsonl",
+      "replayOnBoot": true
     }
   }
 }

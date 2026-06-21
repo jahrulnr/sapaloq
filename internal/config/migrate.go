@@ -11,7 +11,7 @@ import (
 // matching upgrade step in migrationSteps so older configs are upgraded in
 // place. Old JSON formats are always preserved in code (the upgrade steps are
 // additive and idempotent) so a config written by any prior version still loads.
-const CurrentSchemaVersion = "1.1.0"
+const CurrentSchemaVersion = "1.2.0"
 
 // migrationStep upgrades a raw config map from one schema version to the next.
 // from is the version the step applies to; to is the version it produces. Steps
@@ -38,6 +38,53 @@ var migrationSteps = []migrationStep{
 		// PromptsConfig defaults itself in). Kept as an explicit step so the
 		// chain documents the transition and stays future-proof.
 	},
+	{
+		from: "1.1.0",
+		to:   "1.2.0",
+		apply: func(raw map[string]any) {
+			renameNestedKey(raw, "skills", "directory", "dir")
+			renameNestedKey(raw, "prompts", "rolesPath", "dir")
+			if prompts, ok := raw["prompts"].(map[string]any); ok {
+				if _, exists := prompts["enabled"]; !exists {
+					prompts["enabled"] = true
+				}
+				delete(prompts, "rolesOverlayPath")
+				delete(prompts, "assembleOnSpawn")
+				delete(prompts, "maxRolePromptTokens")
+				delete(prompts, "includeOverlayByDefault")
+			}
+			if skills, ok := raw["skills"].(map[string]any); ok {
+				delete(skills, "indexOnBoot")
+				delete(skills, "allowAgentCreate")
+			}
+			if events, ok := raw["events"].(map[string]any); ok {
+				if oldPath, ok := events["busPath"]; ok {
+					bus, _ := events["bus"].(map[string]any)
+					if bus == nil {
+						bus = map[string]any{}
+						events["bus"] = bus
+					}
+					if _, exists := bus["walPath"]; !exists {
+						bus["walPath"] = oldPath
+					}
+					delete(events, "busPath")
+				}
+			}
+		},
+	},
+}
+
+func renameNestedKey(raw map[string]any, block, oldKey, newKey string) {
+	nested, ok := raw[block].(map[string]any)
+	if !ok {
+		return
+	}
+	if old, exists := nested[oldKey]; exists {
+		if _, already := nested[newKey]; !already {
+			nested[newKey] = old
+		}
+		delete(nested, oldKey)
+	}
 }
 
 // migrateRaw upgrades raw to CurrentSchemaVersion when its schemaVersion is

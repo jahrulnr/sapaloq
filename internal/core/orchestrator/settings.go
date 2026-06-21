@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,22 +13,13 @@ import (
 )
 
 var defaultAllowedPaths = []string{
-	"/notifications",
-	"/widget",
-	"/orchestrator",
-	"/context",
-	"/memory",
-	"/skills",
-	"/prompts",
-	"/learning",
-	"/feedback",
-	"/events",
-	"/nodes",
-	"/driver",
-	"/runtime",
+	"/orchestrator/continuation",
+	"/orchestrator/compaction",
+	"/orchestrator/completion",
+	"/subAgents",
+	"/feedback/explicitSignalsEnabled",
+	"/feedback/maxNegativeSlicesPerTurn",
 	"/storage",
-	"/apps",
-	"/commands",
 }
 
 func (o *Orchestrator) handleSettings(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, message string) bool {
@@ -66,20 +58,30 @@ func (o *Orchestrator) handleSettingsPatch(ctx context.Context, out chan<- bridg
 		ev.Error = err.Error()
 		return o.emit(ctx, out, ev)
 	}
+	reloaded, err := config.ValidateRaw(raw)
+	if err != nil {
+		ev := bridge.NewEvent(bridge.EventError)
+		ev.SessionID = sessionID
+		ev.Error = "invalid config patch: " + err.Error()
+		return o.emit(ctx, out, ev)
+	}
 	if err := config.SaveRaw(o.cfgPath, raw, "sub-agent:settings"); err != nil {
 		ev := bridge.NewEvent(bridge.EventError)
 		ev.SessionID = sessionID
 		ev.Error = err.Error()
 		return o.emit(ctx, out, ev)
 	}
-	reloaded, err := config.ReloadFromRaw(o.cfgPath)
-	if err != nil {
+	if err := o.applyConfig(reloaded); err != nil {
 		ev := bridge.NewEvent(bridge.EventError)
 		ev.SessionID = sessionID
 		ev.Error = err.Error()
 		return o.emit(ctx, out, ev)
 	}
-	o.cfg = reloaded
+	if info, _ := os.Stat(o.cfgPath); info != nil {
+		o.mu.Lock()
+		o.cfgModTime = info.ModTime()
+		o.mu.Unlock()
+	}
 	ev := bridge.NewEvent(bridge.EventResponseDelta)
 	ev.SessionID = sessionID
 	ev.Delta = fmt.Sprintf("config.json updated (%d top-level keys patched).", len(patch))

@@ -1,7 +1,6 @@
 package e2e_test
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -100,18 +99,20 @@ func TestE2ESlashSuggest(t *testing.T) {
 
 func TestE2ESettingsPatchViaIPC(t *testing.T) {
 	h := startInProcessCore(t)
-	if err := config.SaveRaw(h.ConfigPath, map[string]any{
-		"schemaVersion": "1.0.0",
-		"notifications": map[string]any{"enabled": true, "read": false},
-		"runtime":       map[string]any{"dataDir": filepath.Dir(h.ConfigPath)},
-		"events":        map[string]any{"bus": map[string]any{"socketPath": h.SocketPath}},
-	}, "e2e-setup"); err != nil {
+	raw, err := config.LoadRaw(h.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw["orchestrator"] = map[string]any{
+		"completion": map[string]any{"notifyUserOnDone": false},
+	}
+	if err := config.SaveRaw(h.ConfigPath, raw, "e2e-setup"); err != nil {
 		t.Fatal(err)
 	}
 
 	responses := ipcRoundTrip(t, h.SocketPath, ipc.Request{
 		Op:        "chat_send",
-		Message:   `/settings patch {"notifications":{"read":true}}`,
+		Message:   `/settings patch {"orchestrator":{"completion":{"notifyUserOnDone":true}}}`,
 		SessionID: "e2e-settings",
 	}, true)
 
@@ -127,13 +128,17 @@ func TestE2ESettingsPatchViaIPC(t *testing.T) {
 		t.Fatalf("missing response (seen=%v)", seen)
 	}
 
-	raw, err := config.LoadRaw(h.ConfigPath)
+	raw, err = config.LoadRaw(h.ConfigPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	notifications, ok := raw["notifications"].(map[string]any)
-	if !ok || notifications["read"] != true {
-		t.Fatalf("notifications = %#v", raw["notifications"])
+	orchestratorCfg, ok := raw["orchestrator"].(map[string]any)
+	if !ok {
+		t.Fatalf("orchestrator = %#v", raw["orchestrator"])
+	}
+	completion, ok := orchestratorCfg["completion"].(map[string]any)
+	if !ok || completion["notifyUserOnDone"] != true {
+		t.Fatalf("completion = %#v", orchestratorCfg["completion"])
 	}
 }
 

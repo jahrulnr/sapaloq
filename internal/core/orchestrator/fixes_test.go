@@ -13,10 +13,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/vault"
 )
 
-// TestLatestPlanTaskIDRequiresPlanMd verifies fix #2: a planner task that only
-// answered a question (no plan.md) must NOT be handed off as a plan, while a
-// planner task that actually produced plan.md is selected.
-func TestLatestPlanTaskIDRequiresPlanMd(t *testing.T) {
+func TestValidatePlanForAgentRequiresExplicitValidPlan(t *testing.T) {
 	o := &Orchestrator{memoryDir: t.TempDir()}
 
 	// Planner A: answered only, no plan.md.
@@ -25,8 +22,8 @@ func TestLatestPlanTaskIDRequiresPlanMd(t *testing.T) {
 		t.Fatalf("write a: %v", err)
 	}
 
-	if got := o.latestPlanTaskID("s1"); got != "" {
-		t.Fatalf("expected no plan task (no plan.md), got %q", got)
+	if err := o.validatePlanForAgent("s1", "task-a"); err == nil || !strings.Contains(err.Error(), "no plan.md") {
+		t.Fatalf("expected no-plan error, got %v", err)
 	}
 
 	// Planner B: real plan with plan.md.
@@ -38,8 +35,11 @@ func TestLatestPlanTaskIDRequiresPlanMd(t *testing.T) {
 		t.Fatalf("write plan.md: %v", err)
 	}
 
-	if got := o.latestPlanTaskID("s1"); got != "task-b" {
-		t.Fatalf("expected task-b (has plan.md), got %q", got)
+	if err := o.validatePlanForAgent("s1", "task-b"); err != nil {
+		t.Fatalf("valid explicit plan rejected: %v", err)
+	}
+	if err := o.validatePlanForAgent("other-session", "task-b"); err == nil || !strings.Contains(err.Error(), "another session") {
+		t.Fatalf("cross-session plan should be rejected, got %v", err)
 	}
 }
 

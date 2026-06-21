@@ -327,16 +327,18 @@ type subToolResult struct {
 // assessment tools plus plan/lifecycle/clarification tools.
 func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecord, result *strings.Builder, call parse.ToolCall) subToolResult {
 	o.auditTool(record.SessionID, "subagent:"+record.Role, call)
+	// Enforce role policy before dispatching shared tools. Shared means the
+	// implementation is reusable across roles, not that every role may invoke
+	// every shared tool. This is especially important for undeclared/provider-
+	// poisoned calls that were not present in the role's offered tool surface.
+	if !o.roleAllows(record.Role, call.Name) {
+		return subToolResult{text: fmt.Sprintf("Error: %s is not allowed for role %s.", call.Name, record.Role)}
+	}
 	// Shared read-only assessment + web tools.
 	if text, ok := runSharedTool(ctx, call); ok {
 		return subToolResult{text: text}
 	}
 	args := parseToolArgs(call.Arguments)
-	// Generic, config-driven tool gate. Mutating/role-restricted tools are
-	// denied unless the role's allowedTools (or fallback policy) grants them.
-	if !o.roleAllows(record.Role, call.Name) {
-		return subToolResult{text: fmt.Sprintf("Error: %s is not allowed for role %s.", call.Name, record.Role)}
-	}
 	switch call.Name {
 	case "workspace_write_file":
 		return subToolResult{text: toolWriteFile(args, false)}

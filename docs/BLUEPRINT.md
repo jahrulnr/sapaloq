@@ -1,7 +1,7 @@
 # SapaLOQ — Development Blueprint (Proposal)
 
 > **Unified synthesis** of all SapaLOQ architecture docs. Single book for implementers, reviewers, and future contributors.
-> Last updated: 2026-06-19 · Status: **M0** (architecture documented, implementation pending)
+> Last updated: 2026-06-21 · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
 
 ---
 
@@ -509,7 +509,9 @@ Refactor config schema validation without touching Cursor worker memory.
 | `autoApprovePlan: true`                | Low-risk patterns only (configurable allowlist — TBD)   |
 
 
-Planner **never** spawns agent — orchestrator only.
+Planner **never** spawns agent — orchestrator only. The runtime binds a plan
+through an explicit validated `plan_task_id`; it never guesses from the latest
+planner directory in the session.
 
 ### task-runner spawn payload (post-plan or direct)
 
@@ -1655,8 +1657,10 @@ No "Redis failed so events broken" cascade.
 ### Philosophy
 
 - **No settings UI** — all mutations via orchestrator chat + `/settings` sub-agent.
-- **Schema-validated** — [config.schema.json](../schema/config.schema.json) is contract.
-- **Agent-editable paths** — `commands.settings.allowedPaths` JSON pointer prefixes.
+- **Schema-shaped** — [config.schema.json](../schema/config.schema.json) and
+  the bootstrap example are parity-tested.
+- **Agent-editable paths** — current `/settings patch` accepts only runtime
+  fields that are actually consumed; roadmap-only paths are rejected.
 - **Secrets never in config** — use `credentialsEnv` for LLM tokens.
 
 Example bootstrap: [config.example.json](../config/config.example.json) (repo).
@@ -1666,18 +1670,19 @@ Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 
 | Section                                                          | Purpose                                                                                         |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `runtime`, `driver`                                              | Single binary, os.json paths, detect order                                                      |
-| `llmBridge`                                                      | Brain driver, parsers, coercion, fallback — secrets via env only                                |
-| `notifications`, `widget`                                        | TTS read, ring mirror prefs                                                                     |
-| `orchestrator`                                                   | Concurrency, anti-poisoning, spawnRouting, progress, completion, clarification, subAgentControl |
-| `context`, `memory`, `skills`, `prompts`, `learning`, `feedback` | Ingress, SQLite, skills, **replaceable on-disk role prompts** (see [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md)), auto-learning, slices |
-| `events`                                                         | Bus + watchers[]                                                                                |
-| `modes`, `storage`, `apps`                                       | Boundary roots, path intents, app index                                                         |
-| `nodes`, `subAgents`, `commands`                                 | Remote registry, role templates, `/settings` allowedPaths                                       |
+| `runtime`, `platform`                                            | Data directory + active env-driven desktop adapter                                              |
+| `llmBridge`                                                      | Active provider registry; secrets via env only                                                   |
+| `orchestrator`                                                   | Continuation, compaction, completion notification                                                |
+| `skills`, `prompts`, `feedback`                                  | Bounded skill injection, replaceable role prompts, explicit negative guidance                    |
+| `events.bus`                                                     | Socket path, JSONL WAL path, replay flag                                                         |
+| `storage`, `subAgents`, `commands`                               | Scribe destinations, active role profiles, slash registry                                       |
 | `vault`                                                          | Tool-call audit log rotation/retention (`maxLogBytes`, `keepRotatedFiles`) — see [RUNTIME.md](./RUNTIME.md#rotation--retention) |
 
 
-**Required:** `schemaVersion`, `notifications`, `modes`, `storage`. Full schema: [config.schema.json](../schema/config.schema.json).
+Roadmap-only domains such as task-stack policy, context ingress, learning,
+remote execution, event watchers, and `os.json` remain design contracts but are
+intentionally absent from the first-boot example until their runtime consumers
+exist.
 
 ### Key defaults (decisions already made)
 
@@ -1699,46 +1704,40 @@ Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 
 ### `/settings` allowed paths (default)
 
-```json
-[
-  "/notifications", "/widget",
-  "/orchestrator/autoSpawn", "/orchestrator/progressStreaming",
-  "/orchestrator/completion", "/orchestrator/clarification",
-  "/orchestrator/spawnRouting", "/orchestrator/subAgentControl",
-  "/context", "/memory", "/skills", "/prompts", "/learning",
-  "/feedback", "/events", "/events/bus", "/nodes", "/driver",
-  "/runtime", "/storage", "/apps"
-]
-```
+Hot-reloadable prefixes currently include continuation/compaction/completion,
+sub-agent profiles, storage, and the two implemented feedback fields. Other
+active startup config remains manually editable and takes effect on restart.
+Nested leaf paths are validated; a patch to a roadmap-only field such as
+`orchestrator.spawnRouting.autoApprovePlan` fails instead of reporting success.
 
 **Not** in default allowed paths: raw credential injection, `llmBridge.credentialsEnv` value.
 
 ### Example settings mutation
 
 ```
-User: /settings set notifications.read false
-→ spawn settings sub-agent
-→ patch { "notifications": { "read": false } }
-→ validate against schema
+User: /settings patch {"orchestrator":{"completion":{"notifyUserOnDone":true}}}
+→ validate active nested path
+→ reload through the full config loader
 → write config.json with updatedBy: sub-agent:settings
 ```
 
 ### platform section (via driver + os.json)
 
-Platform adapter selection lives in `driver.*` + generated `os.json`, not duplicated in config:
+Current runtime adapter selection lives in `platform.*`:
 
 ```json
 {
-  "driver": {
-    "mode": "auto",
-    "override": null,
-    "detectOrder": ["gnome", "kde", "freedesktop", "windows", "headless"],
-    "capabilitiesRequired": ["notify", "notify.watch"]
+  "platform": {
+    "adapter": "auto",
+    "detectOrder": ["gnome", "freedesktop", "headless"],
+    "allowFallback": true
   }
 }
 ```
 
-Separate `platform` block in older drafts superseded by DRIVER.md — use `driver` + `os.json`.
+The fuller `driver.*` + generated `os.json` fingerprint/cache flow remains the
+target in [DRIVER.md](./DRIVER.md); it is not implemented by the current direct
+environment detector.
 
 ---
 

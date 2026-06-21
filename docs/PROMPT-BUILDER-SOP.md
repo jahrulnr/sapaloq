@@ -143,6 +143,10 @@ Role system-prompts are **not** hardcoded Go strings anymore — they are editab
 }
 ```
 
+For Agent execution, a plan is attached only when the orchestrator passes an
+explicit, validated `plan_task_id`. "Newest plan in this chat" is not a valid
+binding because it can be stale or unrelated.
+
 ### Assembly formula (pre-spawn)
 
 ```text

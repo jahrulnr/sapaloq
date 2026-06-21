@@ -47,15 +47,31 @@ func SaveRaw(path string, raw map[string]any, updatedBy string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func ApplyPatch(raw map[string]any, patch map[string]any, allowedPrefixes []string) error {
+	if err := validatePatchPaths("", patch, allowedPrefixes); err != nil {
+		return err
+	}
 	for key, value := range patch {
-		path := "/" + key
-		if !pathAllowed(path, allowedPrefixes) {
-			return fmt.Errorf("patch path %q is not allowed", path)
-		}
 		if existing, ok := raw[key]; ok {
 			if existingMap, ok := existing.(map[string]any); ok {
 				if patchMap, ok := value.(map[string]any); ok {
@@ -66,6 +82,22 @@ func ApplyPatch(raw map[string]any, patch map[string]any, allowedPrefixes []stri
 			}
 		}
 		raw[key] = value
+	}
+	return nil
+}
+
+func validatePatchPaths(parent string, patch map[string]any, allowed []string) error {
+	for key, value := range patch {
+		path := parent + "/" + key
+		if nested, ok := value.(map[string]any); ok && len(nested) > 0 {
+			if err := validatePatchPaths(path, nested, allowed); err != nil {
+				return err
+			}
+			continue
+		}
+		if !pathAllowed(path, allowed) {
+			return fmt.Errorf("patch path %q is not allowed or not active", path)
+		}
 	}
 	return nil
 }
@@ -112,16 +144,5 @@ func structToMap(cfg Config) (map[string]any, error) {
 }
 
 func ReloadFromRaw(path string) (Config, error) {
-	cfg := DefaultConfig()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return cfg, err
-	}
-	if err := json.Unmarshal(b, &cfg); err != nil {
-		return Config{}, err
-	}
-	cfg.Runtime.DataDir = ExpandPath(defaultIfEmpty(cfg.Runtime.DataDir, defaultDataDir))
-	cfg.Events.Bus.SocketPath = ExpandPath(defaultIfEmpty(cfg.Events.Bus.SocketPath, "~/.config/sapaloq/run/sapaloq.sock"))
-	cfg.Commands = cfg.Commands.WithDefaults()
-	return cfg, nil
+	return Load(path)
 }

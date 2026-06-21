@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
@@ -62,6 +63,26 @@ func TestSystemExecInAllModeProfiles(t *testing.T) {
 		if containsTool(profile, "system_read_file") {
 			t.Fatalf("%s profile still contains removed system_read_file: %v", mode, profile)
 		}
+	}
+}
+
+func TestSubAgentSharedToolStillHonorsRolePolicy(t *testing.T) {
+	o := &Orchestrator{cfg: config.Config{SubAgents: config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{
+		"planner": {AllowedTools: []string{"system_exec"}},
+		"scribe":  {AllowedTools: []string{"scribe_write_note"}},
+	}}}}
+	call := parse.ToolCall{Name: "system_exec", Arguments: []byte(`{"command":"printf allowed"}`)}
+
+	planner := &taskRecord{ID: "plan", Role: "planner"}
+	got := o.handleSubAgentTool(context.Background(), planner, &strings.Builder{}, call)
+	if !strings.Contains(got.text, "allowed") {
+		t.Fatalf("planner system_exec should run for exploration, got %q", got.text)
+	}
+
+	scribe := &taskRecord{ID: "scribe", Role: "scribe"}
+	got = o.handleSubAgentTool(context.Background(), scribe, &strings.Builder{}, call)
+	if !strings.Contains(got.text, "not allowed for role scribe") {
+		t.Fatalf("scribe poisoned system_exec should be denied, got %q", got.text)
 	}
 }
 

@@ -563,12 +563,35 @@ func Load(path string) (Config, error) {
 			b = upgraded
 			// Persist the upgraded config so the bump happens once. Best-effort:
 			// a read-only config dir must not fail Load.
-			_ = SaveRaw(path, migrated, "schema-migration")
+			updatedBy := strings.TrimSpace(stringField(migrated, "updatedBy"))
+			if updatedBy == "" {
+				updatedBy = "schema-migration"
+			}
+			_ = SaveRaw(path, migrated, updatedBy)
 		}
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return Config{}, err
 	}
+	return normalizeAndValidate(cfg)
+}
+
+// ValidateRaw binds a candidate raw config through the same defaults and
+// validation path as Load, without writing it. Settings mutations use this
+// before persistence so an invalid patch cannot corrupt the live config.
+func ValidateRaw(raw map[string]any) (Config, error) {
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg := DefaultConfig()
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return Config{}, err
+	}
+	return normalizeAndValidate(cfg)
+}
+
+func normalizeAndValidate(cfg Config) (Config, error) {
 	cfg.Runtime.DataDir = ExpandPath(defaultIfEmpty(cfg.Runtime.DataDir, defaultDataDir))
 	cfg.Events.Bus.SocketPath = ExpandPath(defaultIfEmpty(cfg.Events.Bus.SocketPath, "~/.config/sapaloq/run/sapaloq.sock"))
 	cfg.Commands = cfg.Commands.WithDefaults()
