@@ -667,6 +667,9 @@ function appendThinkingBubble(text: string, groupID = currentUserGroup) {
 
 function renderTurn(turn: ChatTurn) {
   if (!turn.content) return;
+  // "tool" turns ([Tool results]…) are persisted only so they count toward
+  // context usage — they are internal and must never surface as a chat bubble.
+  if (turn.role === 'tool') return;
   if (turn.role === 'thinking') {
     appendThinkingBubble(turn.content);
     return;
@@ -676,7 +679,7 @@ function renderTurn(turn: ChatTurn) {
     currentUserGroup++;
     appendMessage('message--user', parsed.text || parsed.attachments.map((item) => item.name).join(', '), currentUserGroup, turn.id, parsed.attachments);
   } else if (turn.role === 'error') appendMessage('message--error', turn.content, currentUserGroup, turn.id);
-  else appendMessage('message--assistant', turn.content, currentUserGroup, turn.id);
+  else if (turn.role === 'assistant') appendMessage('message--assistant', turn.content, currentUserGroup, turn.id);
 }
 
 async function restoreChatHistory() {
@@ -1324,14 +1327,35 @@ const popup = document.getElementById('popup');
 
 // Highlight helpers shared by native (OnFileDrop) and HTML drag paths.
 let dragDepth = 0;
+// Safety-net: a drag that merely passes *over* SapaLOQ and is dropped on another
+// app often gives us no terminating event (no drop here, an unreliable final
+// dragleave, and no dragend for external sources). We therefore (re)arm a timer
+// on every dragover; if no further dragover fires the drag has left our window,
+// so we force-clear the overlay. dragover fires continuously (~tens of ms) while
+// a drag hovers, so this only trips once the pointer is truly gone.
+let dragIdleTimer: ReturnType<typeof setTimeout> | null = null;
+function clearDragIdleTimer() {
+  if (dragIdleTimer !== null) {
+    clearTimeout(dragIdleTimer);
+    dragIdleTimer = null;
+  }
+}
+function armDragIdleTimer() {
+  clearDragIdleTimer();
+  dragIdleTimer = setTimeout(() => hideDragOverlay(true), 220);
+}
 function showDragOverlay() {
   dragDepth++;
   popup?.classList.add('is-dragging-file');
+  armDragIdleTimer();
 }
 function hideDragOverlay(force = false) {
   if (force) dragDepth = 0;
   else dragDepth = Math.max(0, dragDepth - 1);
-  if (dragDepth === 0) popup?.classList.remove('is-dragging-file');
+  if (dragDepth === 0) {
+    clearDragIdleTimer();
+    popup?.classList.remove('is-dragging-file');
+  }
 }
 
 // Native file drop (Wails). On WebKitGTK the webview drag events are disabled
@@ -1368,6 +1392,7 @@ popup?.addEventListener('dragenter', (event) => {
 popup?.addEventListener('dragover', (event) => {
   event.preventDefault();
   if (!popup.classList.contains('is-dragging-file')) showDragOverlay();
+  else armDragIdleTimer();
 });
 popup?.addEventListener('dragleave', (event) => {
   // Only count leaves that actually exit the popup rect, not child crossings.
@@ -1386,11 +1411,10 @@ popup?.addEventListener('drop', (event) => {
 // Document-level fallback so the overlay still shows when the popup is
 // collapsed (pointer-events:none on #popup blocks its own dragover).
 document.addEventListener('dragover', (event) => {
-  if (popup?.classList.contains('is-dragging-file')) return;
-  if (document.getElementById('popup')) {
-    event.preventDefault();
-    showDragOverlay();
-  }
+  if (!document.getElementById('popup')) return;
+  event.preventDefault();
+  if (popup?.classList.contains('is-dragging-file')) armDragIdleTimer();
+  else showDragOverlay();
 });
 document.addEventListener('drop', (event) => {
   if (!popup?.classList.contains('is-dragging-file')) return;
@@ -1400,6 +1424,18 @@ document.addEventListener('drop', (event) => {
   const files = collectTransferFiles(transfer);
   if (files.length) void addFiles(files);
 });
+// Force-clear when the drag leaves the window entirely (dropped on another app
+// or escaped past the edge). A leave to a null relatedTarget, or to coordinates
+// at/outside the viewport bounds, means the pointer is no longer over us.
+document.addEventListener('dragleave', (event) => {
+  const drag = event as DragEvent;
+  const outside = drag.relatedTarget === null
+    || drag.clientX <= 0 || drag.clientY <= 0
+    || drag.clientX >= window.innerWidth || drag.clientY >= window.innerHeight;
+  if (outside) hideDragOverlay(true);
+});
+// dragend fires on in-webview drag sources regardless of where the drop landed.
+window.addEventListener('dragend', () => hideDragOverlay(true));
 
 void restoreChatHistory();
 void ContextUsage().then((usage) => renderUsage(usage as ChatUsage)).catch(() => undefined);
