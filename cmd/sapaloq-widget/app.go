@@ -33,12 +33,21 @@ func (a *App) startup(ctx context.Context) {
 		a.socketPath = p
 	}
 	// Subscribe to the core event bus so asynchronous background-task pushes
-	// (EventTaskUpdate — the completion trigger) reach the chat even when no
-	// request is in flight. Only task_update is forwarded here; live chat
-	// deltas already arrive via the chat_send/chat_retry request streams.
+	// reach the chat even when no request is in flight. Two kinds matter here:
+	//   - EventTaskUpdate: the per-task lifecycle card (progress/terminal).
+	//   - EventResponseDelta: the SPOKEN completion the orchestrator injects on
+	//     a terminal transition. Without forwarding it, a sub-agent that
+	//     finishes/fails AFTER the chat turn already closed only shows a passive
+	//     card and the conversation looks stalled ("saya tunggu…" with no
+	//     follow-up). Forwarding it lets the failure/success auto-follow into
+	//     the chat as a real assistant bubble.
+	// Live chat deltas for an in-flight turn still arrive via the
+	// chat_send/chat_retry request streams; the frontend de-dupes by only
+	// treating these as new bubbles when idle.
 	a.stopWatch = make(chan struct{})
 	go watchEvents(a.socketPath, a.stopWatch, func(event bridge.StreamEvent) {
-		if event.Kind == bridge.EventTaskUpdate {
+		switch event.Kind {
+		case bridge.EventTaskUpdate, bridge.EventResponseDelta:
 			runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
 		}
 	})

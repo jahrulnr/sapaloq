@@ -106,6 +106,13 @@ event-driven loop — a completion arriving after `sapaloq_wait` has already
 returned is still surfaced in chat, not just as a silently-updated card. It is
 idempotent per task id and gated by `completion.speakOnTerminal`.
 
+The widget's `watch` callback (`cmd/sapaloq-widget/app.go`) forwards **both**
+`task_update` (rendered as a per-task card) **and** `response_delta` (the spoken
+completion) to the UI. When a `response_delta` arrives while idle (no chat turn
+in flight), the frontend renders it as a new assistant bubble — so a sub-agent
+failure/success that lands after the chat turn closed auto-follows into the
+conversation instead of only updating a card.
+
 ---
 
 ## Topics

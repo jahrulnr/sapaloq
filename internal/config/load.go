@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/credentials"
 )
@@ -327,6 +328,27 @@ type LLMBridge struct {
 	// successful image turn). Persisted so a model proven text-only is never
 	// re-probed across restarts. Auto-managed; rarely set by hand.
 	SupportsImages *bool `json:"supportsImages,omitempty"`
+	// RequestTimeoutSec bounds a single inference request (one model turn). A
+	// long sub-agent step (e.g. generating a large file) can exceed the old
+	// hardcoded 120s and surface as "context deadline exceeded", so this is
+	// configurable per provider. 0 → DefaultRequestTimeoutSec.
+	RequestTimeoutSec int `json:"requestTimeoutSec,omitempty"`
+}
+
+// DefaultRequestTimeoutSec is the per-inference-request timeout when a provider
+// entry doesn't set one. Generous because sub-agent task-runners are
+// deliberately long-running (high maxTurns, big file writes); the old 120s
+// default truncated legitimate long generations.
+const DefaultRequestTimeoutSec = 600
+
+// RequestTimeout returns the resolved per-request timeout as a duration,
+// falling back to DefaultRequestTimeoutSec when unset/invalid.
+func (b LLMBridge) RequestTimeout() time.Duration {
+	secs := b.RequestTimeoutSec
+	if secs <= 0 {
+		secs = DefaultRequestTimeoutSec
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // LLMBridgeRoot is the top-level llmBridge config block — registry of

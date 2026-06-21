@@ -56,6 +56,12 @@
         "supportsImages": {
           "type": "boolean",
           "description": "Runtime-managed vision capability cache for this provider/model."
+        },
+        "requestTimeoutSec": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 600,
+          "description": "Per-inference-request timeout in seconds. Long sub-agent steps (big file writes) can exceed the old 120s and surface as 'context deadline exceeded'. 0 → 600."
         }
       }
     }

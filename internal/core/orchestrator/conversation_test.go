@@ -229,6 +229,58 @@ func TestWaitForTaskChangeUsesBackendSignal(t *testing.T) {
 	}
 }
 
+// TestWaitIgnoresNonTerminalProgress proves the "blocking progress" fix: a bare
+// progress update (UpdatedAt advances, status stays in_progress — e.g. the agent
+// calling sapaloq_update_task_progress) must NOT break the wait. Otherwise the
+// orchestrator returns "changed to in_progress", re-waits, and the chat freezes
+// in a wait→progress→wait loop. The wait should run out its (short) window and
+// report no meaningful change.
+func TestWaitIgnoresNonTerminalProgress(t *testing.T) {
+	orch := &Orchestrator{memoryDir: t.TempDir()}
+	now := time.Now().UTC()
+	if err := orch.writeTask(taskRecord{ID: "task-prog", Status: "in_progress", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	// Emit several progress bumps with the SAME status during the wait window.
+	go func() {
+		for i := 0; i < 3; i++ {
+			time.Sleep(15 * time.Millisecond)
+			_ = orch.writeTask(taskRecord{ID: "task-prog", Status: "in_progress", CreatedAt: now, UpdatedAt: time.Now().UTC()})
+		}
+	}()
+	record, changed, err := orch.waitForTaskChange(context.Background(), "task-prog", 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatalf("wait broke on a non-terminal progress update; want changed=false (record=%#v)", record)
+	}
+	if record.Status != "in_progress" {
+		t.Fatalf("status = %q, want in_progress", record.Status)
+	}
+}
+
+// TestWaitReturnsOnStatusTransition confirms a genuine non-terminal status
+// transition (pending → in_progress) still ends the wait promptly.
+func TestWaitReturnsOnStatusTransition(t *testing.T) {
+	orch := &Orchestrator{memoryDir: t.TempDir()}
+	now := time.Now().UTC()
+	if err := orch.writeTask(taskRecord{ID: "task-trans", Status: "pending", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(25 * time.Millisecond)
+		_ = orch.writeTask(taskRecord{ID: "task-trans", Status: "in_progress", CreatedAt: now, UpdatedAt: time.Now().UTC()})
+	}()
+	record, changed, err := orch.waitForTaskChange(context.Background(), "task-trans", 10, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || record.Status != "in_progress" {
+		t.Fatalf("status transition did not end the wait: changed=%v record=%#v", changed, record)
+	}
+}
+
 func TestCompactConversationPreservesGoalAndRecentMessages(t *testing.T) {
 	messages := []bridge.Message{{Role: "system", Content: "system"}}
 	for i := 0; i < 12; i++ {

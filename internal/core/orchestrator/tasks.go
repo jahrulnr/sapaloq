@@ -722,7 +722,15 @@ func (o *Orchestrator) waitForTaskChange(ctx context.Context, taskID string, pol
 		if readErr != nil {
 			return record, false, readErr
 		}
-		if next.UpdatedAt.After(record.UpdatedAt) || next.Status != record.Status {
+		// Only a MEANINGFUL change ends the wait: the task reached a terminal
+		// state, or its status transitioned to a different non-terminal state.
+		// A bare UpdatedAt bump with the SAME status (e.g. the agent calling
+		// sapaloq_update_task_progress) must NOT break the wait — otherwise the
+		// orchestrator returns "changed to in_progress", tends to re-wait, and
+		// the chat freezes in a wait→progress→wait loop (the "blocking
+		// progress" symptom). Such progress is surfaced live via the watch
+		// stream as a task card, not by waking the conversational loop.
+		if taskTerminal(next.Status) || next.Status != record.Status {
 			return next, true, nil
 		}
 		record = next

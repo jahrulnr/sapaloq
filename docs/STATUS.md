@@ -44,6 +44,58 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Implemented this session (2026-06-21) — error auto-follows to chat + configurable inference timeout
+
+Two issues seen when a sub-agent failed: the orchestrator looked "silent" (only
+a passive task card, no chat follow-up), and the failure itself was an opaque
+"context deadline exceeded".
+
+- **Spoken completion now auto-follows into the chat live.** The orchestrator
+  already persisted + republished the terminal outcome as a `response_delta` on
+  the bus, but the widget's `watch` callback only forwarded `EventTaskUpdate`,
+  so the spoken failure/success was dropped live (it only appeared as a card,
+  and in chat history on reload). `cmd/sapaloq-widget/app.go` now also forwards
+  `EventResponseDelta`; `frontend/src/main.ts` renders an idle `response_delta`
+  (no turn in flight) as a new assistant bubble. So a sub-agent that finishes or
+  fails AFTER the chat turn closed now speaks into the conversation, not just a
+  card.
+- **Inference request timeout is configurable; default raised 120s → 600s.**
+  Both bridge wires had a hardcoded 120s per-request timeout that truncated long
+  sub-agent steps (e.g. generating a large file) into "context deadline
+  exceeded". New `llmBridge.providers[].requestTimeoutSec` (default 600) flows
+  through `LLMBridge.RequestTimeout()` into the **provider bridge**
+  (`WireOptions` → `buildHTTPRequest`, used by tokenrouter/OpenAI/Claude/Kimi)
+  **and** the cursor bridge (`StreamOptions`/`AgentStreamOptions`).
+- **Deadline errors are now actionable in BOTH bridges.** `explainStreamError`
+  (`internal/bridges/provider/bridge.go` + `internal/bridges/cursor/bridge.go`)
+  maps "context deadline exceeded" to "inference request timed out after Ns
+  (set …requestTimeoutSec higher …)".
+- **Tests:** `internal/config/timeout_test.go` (default/override, guards >120s),
+  `internal/bridges/cursor/timeout_test.go` and
+  `internal/bridges/provider/timeout_test.go` (error wrap, entry→timeout).
+
+---
+
+## Implemented this session (2026-06-21) — fire-and-forget delegation (no chat freeze)
+
+Follow-up to the completion fix: delegation no longer blocks the chat.
+
+- **`waitForTaskChange` ignores non-terminal progress** (`tasks.go`). It used to
+  return on any `UpdatedAt` bump, so an agent calling `sapaloq_update_task_progress`
+  woke the orchestrator with "changed to in_progress", which tended to re-wait —
+  freezing the ring at "working" in a wait→progress→wait loop. It now ends only
+  on a terminal state or a real status *transition*; pure progress is surfaced
+  live as a task card via the watch stream instead.
+- **Prompt now fire-and-forget** (`internal/prompts/defaults/ask.md`). After a
+  spawn the orchestrator replies briefly and ends its turn; `sapaloq_wait` is
+  demoted to opt-in (only when the user explicitly asks to block), since
+  terminal completions are spoken automatically. Unmodified user prompts upgrade
+  via the prompt manifest.
+- **Tests:** `TestWaitIgnoresNonTerminalProgress`, `TestWaitReturnsOnStatusTransition`
+  (`conversation_test.go`).
+
+---
+
 ## Implemented this session (2026-06-21) — worker health + event-driven completion that speaks
 
 Fixes the "after delegating to planner/agent we never know if it finished"

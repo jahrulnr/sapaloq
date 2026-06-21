@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
@@ -108,6 +109,7 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 		DeclaredTools:   declaredTools,
 		SessionID:       req.SessionID,
 		ContextWindow:   contextWindow,
+		Timeout:         b.entry.RequestTimeout(),
 	}
 }
 
@@ -136,7 +138,7 @@ func (b *Bridge) runStream(ctx context.Context, opts WireOptions, req bridge.Req
 	if err != nil && err != errStreamStopped {
 		eev := bridge.NewEvent(bridge.EventError)
 		eev.SessionID = req.SessionID
-		eev.Error = err.Error()
+		eev.Error = b.explainStreamError(err)
 		sendStreamEvent(ctx, &mu, out, eev)
 	}
 	// Drain any text buffered by the splitter (e.g. a dangling partial tag).
@@ -146,6 +148,21 @@ func (b *Bridge) runStream(ctx context.Context, opts WireOptions, req bridge.Req
 		}
 	}
 	finish()
+}
+
+// explainStreamError turns an opaque transport failure into an actionable
+// message. A bare "context deadline exceeded" tells the user nothing; this maps
+// it to the real cause (the per-request timeout) and the knob to raise it.
+func (b *Bridge) explainStreamError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "deadline exceeded") {
+		secs := int(b.entry.RequestTimeout() / time.Second)
+		return fmt.Sprintf("inference request timed out after %ds (set llmBridge.providers[].requestTimeoutSec higher for long sub-agent steps): %s", secs, msg)
+	}
+	return msg
 }
 
 // handleWireEvent fans a single WireEvent out into one or more StreamEvents.

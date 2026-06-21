@@ -24,6 +24,7 @@
         "endpoint": "https://api2.cursor.sh",
         "model": "default",
         "credentialsEnv": "SAPALOQ_CURSOR_TOKEN",
+        "requestTimeoutSec": 600,
         "declaredTools": []
       },
       {

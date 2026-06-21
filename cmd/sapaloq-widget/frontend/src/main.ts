@@ -1399,6 +1399,17 @@ try {
       renderTaskUpdate(event);
       return;
     }
+    // The orchestrator SPEAKS a sub-agent's terminal outcome as a single
+    // response_delta on the event bus. When this arrives while idle (no chat
+    // turn in flight), the in-flight live renderer is gone, so render it as a
+    // new assistant bubble — this is the failure/success auto-following into
+    // the chat instead of only showing a passive task card. While a turn is in
+    // flight, normal request-stream deltas drive the live renderer as before.
+    if (event.kind === 'response_delta' && !submitting) {
+      const text = (event.delta || '').trim();
+      if (text) appendMessage('message--assistant', text);
+      return;
+    }
     if (submitting) feedLiveEvent(event);
   });
   OnFileDrop((_x, _y, paths) => {
