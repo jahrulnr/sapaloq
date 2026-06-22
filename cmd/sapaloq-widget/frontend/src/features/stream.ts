@@ -243,6 +243,22 @@ export function renderTaskUpdate(event: StreamEvent) {
   const terminal = new Set(['done', 'failed', 'stopped']);
   if (previousStatus && terminal.has(previousStatus) && !terminal.has(status)) return;
   const role = event.task_role || 'task';
+
+  // Record the latest status and recompute the orb's busy ring FIRST, before any
+  // early return. A terminal transition (done/failed/stopped) must always clear
+  // the busy flag — even if its summary happens to be empty — otherwise the orb
+  // stays stuck pulsing ("responding") after the sub-agent has finished. The
+  // bubble rendering below needs a summary; the ring state must not depend on it.
+  if (taskID) taskStatuses.set(taskID, status);
+  if (status === 'pending' || status === 'in_progress') {
+    setRingState('delegating');
+  } else if (status === 'awaiting_clarification') {
+    setRingState('needs-input');
+  } else {
+    const active = [...taskStatuses.values()].some((value) => value === 'pending' || value === 'in_progress' || value === 'stopping');
+    if (!active) setRingState('idle');
+  }
+
   const summary = (event.summary || '').trim();
   if (!summary) return;
 
@@ -250,7 +266,7 @@ export function renderTaskUpdate(event: StreamEvent) {
   switch (status) {
     case 'done': prefix = `✅ ${role} selesai`; break;
     case 'failed': prefix = `⚠️ ${role} gagal`; break;
-    case 'awaiting_clarification': prefix = `❓ ${role} butuh keputusan`; setRingState('needs-input'); break;
+    case 'awaiting_clarification': prefix = `❓ ${role} butuh keputusan`; break;
     case 'pending': prefix = `🕓 ${role} dijadwalkan`; break;
     case 'in_progress': prefix = `⏳ ${role} sedang bekerja`; break;
     case 'stopping': prefix = `⏹️ ${role} sedang dihentikan`; break;
@@ -271,11 +287,6 @@ export function renderTaskUpdate(event: StreamEvent) {
     item.replaceChildren(renderMarkdown(text));
     scrollMessagesToBottom();
   }
-  if (taskID) taskStatuses.set(taskID, status);
-  if (status === 'pending' || status === 'in_progress') {
-    setRingState('delegating');
-  } else if (status !== 'awaiting_clarification') {
-    const active = [...taskStatuses.values()].some((value) => value === 'pending' || value === 'in_progress' || value === 'stopping');
-    if (!active) setRingState('idle');
-  }
+  // Status + ring state were already updated at the top of this function so a
+  // terminal transition clears the busy ring regardless of summary presence.
 }

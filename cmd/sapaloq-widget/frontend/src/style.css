@@ -376,6 +376,41 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .message ul, .message ol { margin: 0.2em 0; padding-left: 1.25em; }
 .message li + li { margin-top: 0.2em; }
 
+/* GFM task lists (`- [ ]` / `- [x]`). `marked` emits a native
+   `<input type=checkbox disabled>` (no wrapper class), which WebKitGTK renders
+   as an opaque black box that swallowed the item text. Drop the list bullet,
+   lay the row out as a flex line, and replace the native control with a small
+   custom glyph so the checklist reads cleanly. Targeted via :has() so it only
+   affects list items that actually contain a checkbox. */
+.message li:has(> input[type='checkbox']) {
+  list-style: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45em;
+}
+.message input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 0.95em;
+  height: 0.95em;
+  margin: 0.2em 0 0;
+  border: 1.5px solid oklch(100% 0 0 / 0.32);
+  border-radius: 4px;
+  background: oklch(0% 0 0 / 0.18);
+  cursor: default;
+}
+.message input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  /* checkmark drawn with two gradients so no extra markup is needed */
+  background-image: linear-gradient(45deg, transparent 46%, oklch(18% 0.02 250) 46% 54%, transparent 54%),
+                    linear-gradient(-45deg, transparent 46%, oklch(18% 0.02 250) 46% 54%, transparent 54%);
+  background-size: 0.5em 0.5em, 0.5em 0.5em;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
 /* Block markdown */
 .message .md-heading { margin: 0.5em 0 0.3em; line-height: 1.25; font-weight: 820; letter-spacing: -0.01em; }
 .message .md-heading:first-child { margin-top: 0; }
