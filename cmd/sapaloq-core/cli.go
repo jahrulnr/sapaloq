@@ -34,6 +34,7 @@ Commands:
   service start       Start the service (manual)
   service stop        Stop the service (manual)
   service status      systemctl --user status passthrough
+  version             Print the build version (also --version, -V)
   help                Show this help
 
 Environment:

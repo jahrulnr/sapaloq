@@ -1,37 +1,49 @@
 #!/usr/bin/env bash
 #
-# SapaLOQ installer.
+# SapaLOQ installer (prebuilt release).
 #
-# Builds the binaries, installs them into a user-local bin dir (default
-# ~/.local/bin), seeds a default config under ~/.config/sapaloq (never
-# overwriting an existing one), and — unless --no-service is given — registers
-# and starts the systemd --user service via `sapaloq-core service install`.
+# Downloads a prebuilt release artifact from GitHub, installs the binaries into
+# a user-local bin dir (default ~/.local/bin), seeds a default config under
+# ~/.config/sapaloq (never overwriting an existing one), and — unless
+# --no-service is given — registers and starts the systemd --user service via
+# `sapaloq-core service install`.
+#
+# It does NOT clone the repo or build anything: only curl, tar and (for the
+# service) systemd --user are required. To build from source instead, use
+# `make install` from a checkout.
 #
 # Usage:
+#   curl -fsSL https://raw.githubusercontent.com/jahrulnr/sapaloq/main/install.sh | bash
 #   ./install.sh [options]
 #
 # Options:
+#   --version TAG       Install a specific release (e.g. v0.1.0). Default: latest.
+#   --bin-dir DIR       Install binaries into DIR (default: ~/.local/bin).
 #   --no-service        Install binaries only; skip systemd --user setup.
 #   --no-autostart      Skip the widget desktop autostart (no launch on login).
-#   --bin-dir DIR       Install binaries into DIR (default: ~/.local/bin).
+#   --no-verify         Skip the sha256 checksum verification (not recommended).
 #   --uninstall         Remove the service, autostart entry and binaries.
 #                       Config and data under ~/.config/sapaloq are KEPT.
 #   -h, --help          Show this help.
 #
+# Environment:
+#   SAPALOQ_REPO        Override GitHub repo slug (default: jahrulnr/sapaloq).
+#   SAPALOQ_VERSION     Same as --version.
+#
 set -euo pipefail
 
 # --- config --------------------------------------------------------------
+REPO="${SAPALOQ_REPO:-jahrulnr/sapaloq}"
 BIN_DIR="${HOME}/.local/bin"
 DATA_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/sapaloq"
+VERSION="${SAPALOQ_VERSION:-}"
 INSTALL_SERVICE=1
 INSTALL_AUTOSTART=1
+DO_VERIFY=1
 DO_UNINSTALL=0
 
 CORE_BIN="sapaloq-core"
 WIDGET_BIN="sapaloq-widget"
-
-# Resolve repo root (the dir containing this script).
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 # --- helpers -------------------------------------------------------------
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
@@ -39,17 +51,22 @@ warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
-	sed -n '3,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '3,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 	exit 0
 }
+
+need() { command -v "$1" >/dev/null 2>&1 || die "required tool not found: $1"; }
 
 # --- arg parsing ---------------------------------------------------------
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-		--no-service)   INSTALL_SERVICE=0; shift ;;
-		--no-autostart) INSTALL_AUTOSTART=0; shift ;;
+		--version)      VERSION="${2:?--version needs a tag}"; shift 2 ;;
+		--version=*)    VERSION="${1#*=}"; shift ;;
 		--bin-dir)      BIN_DIR="${2:?--bin-dir needs a path}"; shift 2 ;;
 		--bin-dir=*)    BIN_DIR="${1#*=}"; shift ;;
+		--no-service)   INSTALL_SERVICE=0; shift ;;
+		--no-autostart) INSTALL_AUTOSTART=0; shift ;;
+		--no-verify)    DO_VERIFY=0; shift ;;
 		--uninstall)    DO_UNINSTALL=1; shift ;;
 		-h|--help)      usage ;;
 		*) die "unknown option: $1 (try --help)" ;;
@@ -59,7 +76,7 @@ done
 # --- uninstall path ------------------------------------------------------
 uninstall() {
 	log "Uninstalling SapaLOQ"
-	if command -v "${BIN_DIR}/${CORE_BIN}" >/dev/null 2>&1 || [[ -x "${BIN_DIR}/${CORE_BIN}" ]]; then
+	if [[ -x "${BIN_DIR}/${CORE_BIN}" ]]; then
 		"${BIN_DIR}/${CORE_BIN}" service uninstall || warn "service uninstall reported an issue (continuing)"
 	else
 		warn "${CORE_BIN} not found in ${BIN_DIR}; skipping service uninstall"
@@ -82,48 +99,91 @@ uninstall() {
 [[ "${DO_UNINSTALL}" -eq 1 ]] && uninstall
 
 # --- prerequisites -------------------------------------------------------
-command -v go >/dev/null 2>&1 || die "Go toolchain not found. Install Go and retry."
+need curl
+need tar
 
-log "Installing SapaLOQ from ${SCRIPT_DIR}"
-mkdir -p "${BIN_DIR}"
+# --- platform detection --------------------------------------------------
+os="$(uname -s)"
+arch="$(uname -m)"
+case "${os}" in
+	Linux) os="linux" ;;
+	*) die "unsupported OS '${os}'. Prebuilt artifacts are Linux-only; build from source with 'make install'." ;;
+esac
+case "${arch}" in
+	x86_64|amd64) arch="amd64" ;;
+	*) die "unsupported architecture '${arch}'. No prebuilt artifact yet; build from source with 'make install'." ;;
+esac
 
-# --- build + install core ------------------------------------------------
-log "Building ${CORE_BIN}"
-( cd "${SCRIPT_DIR}" && go build -o "${BIN_DIR}/${CORE_BIN}" ./cmd/sapaloq-core )
-log "installed ${BIN_DIR}/${CORE_BIN}"
+# --- resolve version (default: latest release) ---------------------------
+if [[ -z "${VERSION}" ]]; then
+	log "Resolving latest release of ${REPO}"
+	VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+		| grep -m1 '"tag_name"' | sed -E 's/.*"tag_name" *: *"([^"]+)".*/\1/')"
+	[[ -n "${VERSION}" ]] || die "could not determine the latest release tag (set --version explicitly)."
+fi
+log "Installing SapaLOQ ${VERSION} (${os}/${arch})"
 
-# --- build + install widget (optional) -----------------------------------
-if command -v wails >/dev/null 2>&1; then
-	log "Building ${WIDGET_BIN} (wails)"
-	GO_TAGS="${GO_TAGS:-webkit2_41}"
-	if ( cd "${SCRIPT_DIR}/cmd/sapaloq-widget" && wails build -tags "${GO_TAGS}" ); then
-		WIDGET_OUT="${SCRIPT_DIR}/cmd/sapaloq-widget/build/bin/${WIDGET_BIN}"
-		if [[ -f "${WIDGET_OUT}" ]]; then
-			install -m 0755 "${WIDGET_OUT}" "${BIN_DIR}/${WIDGET_BIN}"
-			log "installed ${BIN_DIR}/${WIDGET_BIN}"
+# --- download + verify ---------------------------------------------------
+PKG="sapaloq_${VERSION}_${os}_${arch}"
+TARBALL="${PKG}.tar.gz"
+BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
+
+log "Downloading ${TARBALL}"
+curl -fsSL -o "${TMP}/${TARBALL}" "${BASE_URL}/${TARBALL}" \
+	|| die "download failed: ${BASE_URL}/${TARBALL}"
+
+if [[ "${DO_VERIFY}" -eq 1 ]]; then
+	if curl -fsSL -o "${TMP}/checksums.txt" "${BASE_URL}/checksums.txt"; then
+		log "Verifying checksum"
+		expected="$(grep " ${TARBALL}\$" "${TMP}/checksums.txt" | awk '{print $1}')"
+		[[ -n "${expected}" ]] || die "checksum for ${TARBALL} not found in checksums.txt"
+		if command -v sha256sum >/dev/null 2>&1; then
+			actual="$(sha256sum "${TMP}/${TARBALL}" | awk '{print $1}')"
+		elif command -v shasum >/dev/null 2>&1; then
+			actual="$(shasum -a 256 "${TMP}/${TARBALL}" | awk '{print $1}')"
 		else
-			warn "wails build finished but ${WIDGET_OUT} was not found; skipping widget install"
+			die "no sha256 tool (sha256sum/shasum) found; re-run with --no-verify to skip."
 		fi
+		[[ "${expected}" == "${actual}" ]] || die "checksum mismatch (expected ${expected}, got ${actual})"
+		log "checksum ok"
 	else
-		warn "wails build failed; skipping widget (core is installed and usable)"
+		warn "checksums.txt not available; skipping verification"
 	fi
 else
-	warn "wails not found; skipping the GUI widget. Install wails + libwebkit2gtk to build it:"
-	warn "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"
+	warn "checksum verification skipped (--no-verify)"
 fi
+
+log "Extracting"
+tar -C "${TMP}" -xzf "${TMP}/${TARBALL}"
+SRC="${TMP}/${PKG}"
+[[ -d "${SRC}" ]] || die "unexpected archive layout: ${SRC} missing"
+
+# --- install binaries ----------------------------------------------------
+mkdir -p "${BIN_DIR}"
+for bin in "${CORE_BIN}" "${WIDGET_BIN}"; do
+	if [[ -f "${SRC}/${bin}" ]]; then
+		install -m 0755 "${SRC}/${bin}" "${BIN_DIR}/${bin}"
+		log "installed ${BIN_DIR}/${bin}"
+	else
+		warn "${bin} not in archive; skipping"
+	fi
+done
 
 # --- seed config + runtime dirs -----------------------------------------
 mkdir -p "${DATA_DIR}" "${DATA_DIR}/memory" "${DATA_DIR}/state" "${DATA_DIR}/run" "${DATA_DIR}/vault"
 
 CONFIG_FILE="${DATA_DIR}/config.json"
-EXAMPLE_CONFIG="${SCRIPT_DIR}/config/config.example.json"
+EXAMPLE_CONFIG="${SRC}/config.example.json"
 if [[ -f "${CONFIG_FILE}" ]]; then
 	log "config exists, leaving it untouched: ${CONFIG_FILE}"
 elif [[ -f "${EXAMPLE_CONFIG}" ]]; then
 	cp "${EXAMPLE_CONFIG}" "${CONFIG_FILE}"
 	log "seeded default config: ${CONFIG_FILE}"
 else
-	warn "no example config found at ${EXAMPLE_CONFIG}; start by running 'sapaloq-core doctor'"
+	warn "no example config in archive; start by running 'sapaloq-core doctor'"
 fi
 
 # --- PATH hint -----------------------------------------------------------
@@ -154,7 +214,7 @@ else
 fi
 
 echo
-log "SapaLOQ installed."
+log "SapaLOQ ${VERSION} installed."
 echo "    core:   ${BIN_DIR}/${CORE_BIN}"
 if [[ -x "${BIN_DIR}/${WIDGET_BIN}" ]]; then
 	echo "    widget: ${BIN_DIR}/${WIDGET_BIN}"

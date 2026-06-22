@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help run test e2e mock widget-install widget-dev widget-build core core-run chat doctor vault-list sync-cursor-schema
+.PHONY: help run test e2e mock widget-install widget-dev widget-build core core-run chat doctor vault-list sync-cursor-schema install uninstall
 
 GO_TAGS ?= webkit2_41
 WIDGET_DIR := cmd/sapaloq-widget
@@ -8,6 +8,19 @@ MOCK_DIR := cmd/sapaloq-mock
 CORE_FLAGS ?=
 CORE := go run ./cmd/sapaloq-core $(CORE_FLAGS)
 CHAT_MSG ?= halo
+
+# --- local install (build from source) -----------------------------------
+# `make install` builds the binaries from this checkout and installs them into
+# BIN_DIR, seeds a default config (never overwriting an existing one) and — by
+# default — registers the systemd --user service. This is the DEVELOPMENT path;
+# end users should use install.sh (downloads a prebuilt release).
+BIN_DIR ?= $(HOME)/.local/bin
+DATA_DIR ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME),$(HOME)/.config)/sapaloq
+INSTALL_SERVICE ?= 1
+INSTALL_AUTOSTART ?= 1
+CORE_BIN := sapaloq-core
+WIDGET_BIN := sapaloq-widget
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 help:
 	@echo "SapaLOQ — common targets"
@@ -24,6 +37,9 @@ help:
 	@echo "  make widget-dev       — wails dev (Ubuntu: -tags $(GO_TAGS))"
 	@echo "  make widget-build     — wails production build"
 	@echo "  make sync-cursor-schema — sync cursor-bridge schema embed"
+	@echo "  make install          — build from source + install to BIN_DIR ($(BIN_DIR)) + systemd service"
+	@echo "                          vars: BIN_DIR, GO_TAGS, INSTALL_SERVICE=0, INSTALL_AUTOSTART=0"
+	@echo "  make uninstall        — remove service + binaries (config/data kept)"
 
 run:
 	@set -euo pipefail; \
@@ -119,3 +135,66 @@ widget-dev:
 
 widget-build:
 	cd $(WIDGET_DIR) && wails build -tags $(GO_TAGS)
+
+install:
+	@set -euo pipefail; \
+	echo "==> Installing SapaLOQ ($(VERSION)) from source to $(BIN_DIR)"; \
+	mkdir -p "$(BIN_DIR)"; \
+	echo "==> Building $(CORE_BIN)"; \
+	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o "$(BIN_DIR)/$(CORE_BIN)" ./cmd/sapaloq-core; \
+	echo "    installed $(BIN_DIR)/$(CORE_BIN)"; \
+	if command -v wails >/dev/null 2>&1; then \
+		echo "==> Building $(WIDGET_BIN) (wails)"; \
+		if ( cd "$(WIDGET_DIR)" && wails build -tags "$(GO_TAGS)" ); then \
+			out="$(WIDGET_DIR)/build/bin/$(WIDGET_BIN)"; \
+			if [[ -f "$$out" ]]; then \
+				install -m 0755 "$$out" "$(BIN_DIR)/$(WIDGET_BIN)"; \
+				echo "    installed $(BIN_DIR)/$(WIDGET_BIN)"; \
+			else \
+				echo "[warn] wails build finished but $$out missing; skipping widget" >&2; \
+			fi; \
+		else \
+			echo "[warn] wails build failed; skipping widget (core is installed)" >&2; \
+		fi; \
+	else \
+		echo "[warn] wails not found; skipping GUI widget. Install: go install github.com/wailsapp/wails/v2/cmd/wails@latest" >&2; \
+	fi; \
+	mkdir -p "$(DATA_DIR)" "$(DATA_DIR)/memory" "$(DATA_DIR)/state" "$(DATA_DIR)/run" "$(DATA_DIR)/vault"; \
+	cfg="$(DATA_DIR)/config.json"; \
+	if [[ -f "$$cfg" ]]; then \
+		echo "    config exists, leaving it untouched: $$cfg"; \
+	elif [[ -f config/config.example.json ]]; then \
+		cp config/config.example.json "$$cfg"; \
+		echo "    seeded default config: $$cfg"; \
+	else \
+		echo "[warn] no config/config.example.json; run 'sapaloq-core doctor'" >&2; \
+	fi; \
+	case ":$$PATH:" in *":$(BIN_DIR):"*) : ;; *) echo "[warn] $(BIN_DIR) is not on PATH; add: export PATH=\"$(BIN_DIR):\$$PATH\"" >&2 ;; esac; \
+	if [[ "$(INSTALL_SERVICE)" == "1" ]]; then \
+		if command -v systemctl >/dev/null 2>&1; then \
+			echo "==> Registering systemd --user service"; \
+			if [[ "$(INSTALL_AUTOSTART)" == "0" ]]; then \
+				SAPALOQ_SKIP_WIDGET_AUTOSTART=1 "$(BIN_DIR)/$(CORE_BIN)" service install; \
+			else \
+				"$(BIN_DIR)/$(CORE_BIN)" service install; \
+			fi; \
+		else \
+			echo "[warn] systemctl not found; skipping service install. Run: $(CORE_BIN) run" >&2; \
+		fi; \
+	else \
+		echo "==> Skipping service install (INSTALL_SERVICE=0). Later: $(CORE_BIN) service install"; \
+	fi; \
+	echo "==> SapaLOQ installed."
+
+uninstall:
+	@set -euo pipefail; \
+	echo "==> Uninstalling SapaLOQ"; \
+	if [[ -x "$(BIN_DIR)/$(CORE_BIN)" ]]; then \
+		"$(BIN_DIR)/$(CORE_BIN)" service uninstall || echo "[warn] service uninstall reported an issue (continuing)" >&2; \
+	else \
+		echo "[warn] $(CORE_BIN) not found in $(BIN_DIR); skipping service uninstall" >&2; \
+	fi; \
+	for bin in "$(CORE_BIN)" "$(WIDGET_BIN)"; do \
+		if [[ -e "$(BIN_DIR)/$$bin" ]]; then rm -f "$(BIN_DIR)/$$bin"; echo "    removed $(BIN_DIR)/$$bin"; fi; \
+	done; \
+	echo "==> Done. Config and data kept at: $(DATA_DIR)"
