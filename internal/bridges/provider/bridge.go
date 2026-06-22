@@ -131,8 +131,14 @@ func (b *Bridge) runStream(ctx context.Context, opts WireOptions, req bridge.Req
 	// splitter separates inline <think>...</think> reasoning from the visible
 	// answer for providers that stream reasoning in the content channel.
 	var splitter thinkSplitter
+	// leak reassembles a tool call that the model emitted inline in the content
+	// channel split across many deltas (a single delta never holds a balanced
+	// {...} for a big argument like a whole file, so per-delta scanning loses
+	// it). Restricted to declared tool names to avoid misreading JSON inside
+	// file content as a call.
+	leak := newLeakScanner(opts.DeclaredTools)
 	handler := func(ev WireEvent) bool {
-		return b.handleWireEvent(ctx, &mu, out, req.SessionID, ev, &splitter)
+		return b.handleWireEvent(ctx, &mu, out, req.SessionID, ev, &splitter, leak)
 	}
 
 	err := Stream(ctx, opts, handler)
@@ -145,6 +151,14 @@ func (b *Bridge) runStream(ctx context.Context, opts WireOptions, req bridge.Req
 	// Drain any text buffered by the splitter (e.g. a dangling partial tag).
 	for _, seg := range splitter.flush() {
 		if !b.emitSegment(ctx, &mu, out, req.SessionID, seg) {
+			break
+		}
+	}
+	// Final leak pass: a tool call whose closing brace arrived in the very last
+	// content delta is only complete now. Emit any still-pending reassembled
+	// calls before we close the stream.
+	for _, tc := range leak.flush() {
+		if !b.emitToolCall(ctx, &mu, out, req.SessionID, tc) {
 			break
 		}
 	}
@@ -172,7 +186,7 @@ func (b *Bridge) explainStreamError(err error) string {
 
 // handleWireEvent fans a single WireEvent out into one or more StreamEvents.
 // Returns false when the runtime has hung up so the wire layer should stop.
-func (b *Bridge) handleWireEvent(ctx context.Context, mu *sync.Mutex, out chan<- bridge.StreamEvent, sessionID string, ev WireEvent, splitter *thinkSplitter) bool {
+func (b *Bridge) handleWireEvent(ctx context.Context, mu *sync.Mutex, out chan<- bridge.StreamEvent, sessionID string, ev WireEvent, splitter *thinkSplitter, leak *leakScanner) bool {
 	// Native reasoning (reasoning_content) is already classified as thinking.
 	if ev.Thinking != "" && !b.emitThinking(ctx, mu, out, sessionID, ev.Thinking) {
 		return false
@@ -182,6 +196,15 @@ func (b *Bridge) handleWireEvent(ctx context.Context, mu *sync.Mutex, out chan<-
 		for _, seg := range splitter.push(ev.Text) {
 			if !b.emitSegment(ctx, mu, out, sessionID, seg) {
 				return false
+			}
+			// Feed only the visible (non-thinking) text into the leak scanner;
+			// a reassembled inline tool call is emitted as a real tool call.
+			if !seg.thinking {
+				for _, tc := range leak.feed(seg.text) {
+					if !b.emitToolCall(ctx, mu, out, sessionID, tc) {
+						return false
+					}
+				}
 			}
 		}
 	}
@@ -212,23 +235,70 @@ func (b *Bridge) emitThinking(ctx context.Context, mu *sync.Mutex, out chan<- br
 	return sendStreamEvent(ctx, mu, out, ev)
 }
 
-// emitText pushes one EventResponseDelta frame and surfaces any inline JSON
-// tool call as EventToolLeak.
+// emitText pushes one EventResponseDelta frame. Inline tool-call reassembly is
+// handled separately by the per-stream leakScanner (which accumulates content
+// across deltas), because a single delta never holds a complete tool-call JSON
+// for a large argument.
 func (b *Bridge) emitText(ctx context.Context, mu *sync.Mutex, out chan<- bridge.StreamEvent, sessionID, delta string) bool {
 	ev := bridge.NewEvent(bridge.EventResponseDelta)
 	ev.SessionID = sessionID
 	ev.Delta = delta
-	if !sendStreamEvent(ctx, mu, out, ev) {
-		return false
+	return sendStreamEvent(ctx, mu, out, ev)
+}
+
+// leakScanner reassembles tool calls that a model emits inline in its content
+// channel, accumulating text across streamed deltas and scanning the buffer for
+// complete {"name":...,"arguments":{...}} objects. It is restricted to declared
+// tool names so JSON inside file content is not misread as a call. State is the
+// growing buffer plus a frontier offset past the last fully-scanned region, so
+// each feed only scans the new tail (no O(n²) rescans, no duplicate emits).
+type leakScanner struct {
+	buf     strings.Builder
+	scanned int // bytes [0:scanned) already searched for COMPLETE objects
+	known   func(string) bool
+}
+
+// newLeakScanner builds a scanner that only accepts the given tool names. When
+// the list is empty the scanner is disabled (nil known would accept anything,
+// which risks false positives, so we require an explicit declared-tools list).
+func newLeakScanner(declared []string) *leakScanner {
+	if len(declared) == 0 {
+		return &leakScanner{known: func(string) bool { return false }}
 	}
-	if tc, ok := leakpkg.ParseToolCallLeak(delta); ok {
-		lev := bridge.NewEvent(bridge.EventToolLeak)
-		lev.SessionID = sessionID
-		lev.Leak = delta
-		lev.ToolCall = &tc
-		return sendStreamEvent(ctx, mu, out, lev)
+	set := make(map[string]struct{}, len(declared))
+	for _, n := range declared {
+		set[n] = struct{}{}
 	}
-	return true
+	return &leakScanner{known: func(n string) bool { _, ok := set[n]; return ok }}
+}
+
+// feed appends a content fragment and returns any tool calls that became
+// complete. It advances the scan frontier past each emitted object and, when no
+// object completes, up to the last point that cannot start a future match.
+func (s *leakScanner) feed(text string) []parse.ToolCall {
+	if text != "" {
+		s.buf.WriteString(text)
+	}
+	var calls []parse.ToolCall
+	for {
+		full := s.buf.String()
+		tc, next, ok := leakpkg.ParseToolCallLeakFrom(full, s.scanned, s.known)
+		if !ok {
+			// `next` is the scan frontier: either EOF (nothing pending) or the
+			// index of a '{' that begins a still-incomplete object. Keep it so
+			// the next feed resumes from there.
+			s.scanned = next
+			return calls
+		}
+		calls = append(calls, tc)
+		s.scanned = next
+	}
+}
+
+// flush is called once the stream ends; the final delta may have closed an
+// object, so do one last scan. (feed already handles the common case.)
+func (s *leakScanner) flush() []parse.ToolCall {
+	return s.feed("")
 }
 
 // emitToolCall pushes one EventToolCall frame.

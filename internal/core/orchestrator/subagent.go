@@ -16,19 +16,25 @@ import (
 // loop forever. Generous because real tasks chain several read/edit/run steps.
 const subAgentMaxTurns = 24
 
-// runSubAgentLoop drives a sub-agent (planner or task-runner) as a multi-turn
-// tool loop: the model can call assessment/plan/exec tools, receive results,
-// and continue until it completes/fails the task or the budget runs out. This
-// is what makes Plan and Agent actually able to read, search, web-research,
-// write, and run — instead of emitting one blind blob of text.
+// runSubAgentLoop drives a sub-agent (planner / task-runner / scribe) on the
+// SAME inference engine as chat (runTurnLoop). Planner and Agent are therefore
+// just chat with a different system prompt + tool set + output sink: they reuse
+// the chat loop's budgets, loop-detection, compaction and clean stream/error
+// handling instead of a separate, perennially-buggy copy. This adapter only
+// supplies the role-specific pieces:
+//   - tools:        o.toolsForRole(record.Role)
+//   - dispatch:     handleSubAgentTool (terminal tools mutate record + stop)
+//   - sink:         progress JSONL + worker heartbeat (so a live stream never
+//                   looks stalled to the watchdog — the recurring stall bug)
+//   - finish:       planner/scribe finish on a tool-less turn; an executor must
+//                   call a terminal tool (the shared no-progress guard bounds a
+//                   model that only narrates intent)
 //
 // record is mutated in place (Status/Result/Error/Question); the caller
 // persists the final state.
 func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapshot, sessionID string, record *taskRecord) {
-	tools := o.toolsForRole(record.Role)
 	messages := o.buildSubAgentMessages(record)
 	subSession := sessionID + ":" + record.ID
-	maxTurns := o.roleMaxTurns(record.Role)
 
 	// The persisted transcript + answer have been folded into `messages` by
 	// buildSubAgentMessages. Clear the consumed Answer so it isn't replayed
@@ -36,226 +42,99 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	// appends to it (preserving full context across multiple clarifications).
 	record.Answer = ""
 
+	// finalResult accumulates the model's free-form text so a terminal tool
+	// with no explicit summary (and a planner's natural finish) still has a
+	// result to fall back on.
 	var finalResult strings.Builder
-	// idleNudges counts consecutive turns where an executor role (task-runner)
-	// produced neither a tool call nor a terminal event. Such a turn is usually
-	// the model "announcing intent" (e.g. "I'll switch to exec") without
-	// acting. Treating that as completion ends the task prematurely (the
-	// observed "kepentok" bug), so instead we nudge it to act or finish — but
-	// only a bounded number of times so a stuck model can't loop forever.
-	idleNudges := 0
-	const maxIdleNudges = 2
 
-	// streamRetries counts consecutive turns whose stream failed transiently —
-	// the upstream connected then went silent / truncated mid-response (an
-	// EventError, or an empty turn that produced no text AND no tool). That is
-	// a transport fault, not the model "narrating intent", so we re-issue the
-	// SAME turn instead of burning an idle nudge. Bounded so a persistently
-	// broken provider still terminates the task with a clear error.
-	streamRetries := 0
-	const maxStreamRetries = 2
+	cfg := turnConfig{
+		sessionID:         subSession,
+		tools:             o.toolsForRole(record.Role),
+		sink:              &subagentSink{o: o, taskID: record.ID},
+		finishOnNoTool:    record.Role != "task-runner",
+		maxInferenceTurns: o.roleMaxTurns(record.Role),
+		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
+			o.publishTaskActivity(sessionID, *record, "Menjalankan `"+call.Name+"`.")
+			res := o.handleSubAgentTool(ctx, record, &finalResult, call)
+			text := ""
+			if res.text != "" {
+				text = fmt.Sprintf("[%s] %s", call.Name, res.text)
+			}
+			// A terminal tool (complete/fail) ends the run. A clarification
+			// request is non-terminal in the dispatcher but must also stop the
+			// loop so the task can pause and be resumed with the user's answer.
+			stop := res.terminal || record.Status == "awaiting_clarification"
+			return turnOutcome{text: text, handled: res.text != "", stop: stop}
+		},
+	}
 
-	for turn := 1; turn <= maxTurns; turn++ {
-		if ctx.Err() != nil {
+	all, err := o.runTurnLoop(ctx, snap, record.Task, messages, cfg)
+	finalText := strings.TrimSpace(all.String())
+	if finalText == "" {
+		finalText = strings.TrimSpace(finalResult.String())
+	}
+
+	// Cancellation: the watchdog or a user stop cancelled the context.
+	if ctx.Err() != nil {
+		if record.Status != "failed" {
 			record.Status = "stopped"
-			return
 		}
-		// Heartbeat at the top of every turn so the health watchdog can tell a
-		// genuinely-working agent (advancing turns) from a wedged goroutine.
-		o.workers.heartbeat(record.ID, fmt.Sprintf("inference turn %d/%d", turn, maxTurns))
-		cleanMessages, images := extractImages(messages)
-		stream, err := snap.br.Complete(ctx, bridge.Request{
-			SessionID:     subSession,
-			Model:         snap.entry.Model,
-			Messages:      cleanMessages,
-			DeclaredTools: tools,
-			Images:        images,
-		})
-		if err != nil {
-			if ctx.Err() != nil {
-				record.Status = "stopped"
-			} else {
-				record.Status = "failed"
-				record.Error = err.Error()
-				o.workerLogError(record.ID, "inference error: "+err.Error())
-			}
-			return
-		}
+		return
+	}
 
-		var turnText strings.Builder
-		var toolResults []string
-		terminal := false
-		streamErr := ""
-		var lastBeat time.Time
-		// beat refreshes liveness while events are flowing. The watchdog's
-		// stall window is short relative to the whole-request timeout, so a
-		// long-but-alive stream (lots of thinking/response deltas before any
-		// tool call) must keep the heartbeat warm or it is falsely failed.
-		// Throttled to once per heartbeat-ish interval to avoid disk churn.
-		beat := func(phase string) {
-			now := time.Now()
-			if now.Sub(lastBeat) < 5*time.Second {
-				return
-			}
-			lastBeat = now
-			o.workers.heartbeat(record.ID, phase)
+	// A terminal tool (sapaloq_complete_task / sapaloq_fail_task) already set
+	// Status + Result/Error; just backfill an empty result from the text.
+	if record.Status == "done" || record.Status == "failed" {
+		if record.Result == "" && record.Error == "" {
+			record.Result = finalText
 		}
-		for ev := range stream {
-			if ev.SessionID == "" {
-				ev.SessionID = record.ID
-			}
-			// Bridge EventDone ends one inference response, not the background
-			// task. Persisting it as "done" made progress JSONL falsely look
-			// terminal multiple times. Task lifecycle is recorded separately as
-			// EventTaskUpdate.
-			if ev.Kind != bridge.EventDone {
-				_ = o.progress.Append(record.ID, ev)
-			}
-			switch ev.Kind {
-			case bridge.EventThinkingDelta:
-				beat(fmt.Sprintf("thinking turn %d/%d", turn, maxTurns))
-			case bridge.EventResponseDelta:
-				turnText.WriteString(ev.Delta)
-				finalResult.WriteString(ev.Delta)
-				beat(fmt.Sprintf("responding turn %d/%d", turn, maxTurns))
-			case bridge.EventError:
-				record.Error = ev.Error
-				streamErr = ev.Error
-			case bridge.EventToolCall:
-				if ev.ToolCall == nil {
-					continue
-				}
-				o.workers.heartbeat(record.ID, "tool: "+ev.ToolCall.Name)
-				o.publishTaskActivity(sessionID, *record, "Menjalankan `"+ev.ToolCall.Name+"`.")
-				res := o.handleSubAgentTool(ctx, record, &finalResult, *ev.ToolCall)
-				if res.text != "" {
-					toolResults = append(toolResults, fmt.Sprintf("[%s] %s", ev.ToolCall.Name, res.text))
-				}
-				terminal = terminal || res.terminal
-			}
-		}
+		return
+	}
 
-		// Transient stream fault: the upstream connected then errored or went
-		// silent mid-response. This is the SSE-hang / truncation class of bug
-		// (e.g. a turn that emits "You're right, let me actually" then the
-		// stream dies). Such a turn yields no tool result and no terminal
-		// signal; re-issue the SAME turn rather than treating it as the model
-		// idling. Bounded by maxStreamRetries.
-		streamTruncated := streamErr != "" ||
-			(len(toolResults) == 0 && !terminal &&
-				record.Status != "awaiting_clarification" &&
-				strings.TrimSpace(turnText.String()) == "")
-		if streamTruncated && streamRetries < maxStreamRetries {
-			streamRetries++
-			faultDetail := streamErr
-			if faultDetail == "" {
-				faultDetail = "empty/truncated stream"
-			}
-			o.workerLogError(record.ID, fmt.Sprintf(
-				"transient stream fault on turn %d (retry %d/%d): %s",
-				turn, streamRetries, maxStreamRetries, faultDetail))
-			o.workers.heartbeat(record.ID, fmt.Sprintf("retry turn %d/%d", streamRetries, maxStreamRetries))
-			// Clear the soft error so it doesn't poison the next iteration's
-			// post-loop checks; do NOT mutate messages so the turn replays
-			// identically.
-			record.Error = ""
-			images = nil
-			continue
-		}
-		// A clean turn resets the transient-fault budget.
-		streamRetries = 0
+	// Clarification pause: persist the transcript so sapaloq_answer_clarification
+	// can resume with full context.
+	if record.Status == "awaiting_clarification" {
+		record.appendTranscript("assistant", finalText)
+		record.Result = finalText
+		_ = o.writeTask(*record)
+		return
+	}
 
-		if record.Error != "" && len(toolResults) == 0 {
-			record.Status = "failed"
-			record.Result = strings.TrimSpace(finalResult.String())
-			return
-		}
-		if terminal {
-			// complete/fail tool already set Status/Result/Error.
-			if record.Result == "" {
-				record.Result = strings.TrimSpace(finalResult.String())
-			}
-			return
-		}
-		if record.Status == "awaiting_clarification" {
-			// Pause the loop and persist the transcript so the task can be
-			// resumed (sapaloq_answer_clarification) with its accumulated
-			// context rather than re-spawned from scratch.
-			record.appendTranscript("assistant", turnText.String())
-			if len(toolResults) > 0 {
-				record.appendTranscript("user", "[Tool results]\n"+strings.Join(toolResults, "\n\n"))
-			}
-			record.Result = strings.TrimSpace(finalResult.String())
-			_ = o.writeTask(*record)
-			return
-		}
-		if len(toolResults) == 0 {
-			// No tools called this turn. For a planner, that plan.md is the
-			// authoritative result; planner/scribe finish naturally here.
-			if record.Role == "planner" {
-				if plan := o.readPlanMarkdown(record.ID); plan != "" {
-					record.Result = plan
-					record.Status = "done"
-					return
-				}
-			}
-			// Executors (task-runner) must signal completion explicitly via
-			// sapaloq_complete_task / sapaloq_fail_task. A tool-less turn is
-			// almost always the model narrating intent without acting — do NOT
-			// silently mark it done. Nudge it to either act or finish, bounded
-			// by maxIdleNudges so a stuck model still terminates.
-			if record.Role == "task-runner" && idleNudges < maxIdleNudges {
-				idleNudges++
-				nudge := "You did not call any tool this turn and have not finished. " +
-					"If the task is complete, call sapaloq_complete_task with a summary. " +
-					"If it cannot be done, call sapaloq_fail_task with a reason. " +
-					"Otherwise, actually invoke the tool you need (e.g. exec, " +
-					"create_file, edit_file) — do not just describe what you will do."
-				record.appendTranscript("assistant", turnText.String())
-				record.appendTranscript("user", nudge)
-				messages = append(messages,
-					bridge.Message{Role: "assistant", Content: turnText.String()},
-					bridge.Message{Role: "user", Content: nudge},
-				)
-				images = nil
-				continue
-			}
-			record.Result = strings.TrimSpace(finalResult.String())
-			if record.Role == "task-runner" {
-				record.Error = fmt.Sprintf("executor stopped without calling sapaloq_complete_task or sapaloq_fail_task after %d idle nudges", idleNudges)
-				record.Status = "failed"
-				return
-			}
+	// The shared loop returned without a terminal tool. Resolve the outcome by
+	// role: a planner's plan.md is its authoritative result; otherwise an error
+	// from the loop (budget/loop-guard/stream) fails the task with that reason.
+	record.Result = finalText
+	if record.Role == "planner" {
+		if plan := o.readPlanMarkdown(record.ID); plan != "" {
+			record.Result = plan
 			record.Status = "done"
 			return
 		}
-
-		// A productive turn (tools ran) resets the idle nudge counter.
-		idleNudges = 0
-
-		// Feed tool results back and continue. Also record the turn in the
-		// resumable transcript so a later clarification pause keeps full context.
-		toolResultsMsg := "[Tool results]\n" + strings.Join(toolResults, "\n\n")
-		record.appendTranscript("assistant", turnText.String())
-		record.appendTranscript("user", toolResultsMsg)
-		messages = append(messages,
-			bridge.Message{Role: "assistant", Content: turnText.String()},
-			bridge.Message{Role: "user", Content: toolResultsMsg + "\nContinue the task using these results. When finished, call sapaloq_complete_task (agent) or output the final plan (planner)."},
-		)
-		images = nil
 	}
-
-	// Budget exhausted.
-	record.Result = strings.TrimSpace(finalResult.String())
-	if record.Status == "in_progress" {
-		record.Error = fmt.Sprintf("sub-agent stopped after %d turns without completing", maxTurns)
+	if err != nil {
 		record.Status = "failed"
+		if record.Error == "" {
+			record.Error = err.Error()
+		}
+		o.workerLogError(record.ID, "sub-agent loop ended: "+record.Error)
+		return
 	}
+	// No tools, no terminal signal, no error: an executor that never signalled
+	// completion is a failure; a non-executor (planner without a plan) is done.
+	if record.Role == "task-runner" {
+		record.Status = "failed"
+		record.Error = "executor stopped without calling sapaloq_complete_task or sapaloq_fail_task"
+		return
+	}
+	record.Status = "done"
 }
 
 // roleMaxTurns resolves the tool-loop budget for a sub-agent role, preferring
 // the per-role maxTurns from config.json and falling back to subAgentMaxTurns.
-// The value is clamped to a sane range so a bad config can't hang or starve.
+// Only a sane floor is enforced (a config of 0/negative must not starve the
+// run to nothing); there is intentionally NO upper clamp, so an operator can
+// give a role as much room as they want — the wall-time budget is the single
+// final safety net, not an arbitrary turn ceiling.
 func (o *Orchestrator) roleMaxTurns(role string) int {
 	turns := subAgentMaxTurns
 	if roles := o.cfg.SubAgents.Roles; roles != nil {
@@ -265,9 +144,6 @@ func (o *Orchestrator) roleMaxTurns(role string) int {
 	}
 	if turns < 1 {
 		turns = 1
-	}
-	if turns > 60 {
-		turns = 60
 	}
 	return turns
 }

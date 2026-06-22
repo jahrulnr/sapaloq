@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -187,7 +188,7 @@ func runSSE(ctx context.Context, opts WireOptions, body []byte, onLine func([]by
 	debug.Debugf("provider-bridge: POST %s parser=%s auth=%s model=%s messages=%d bytes=%d",
 		opts.Endpoint, opts.Parser, opts.Auth, opts.Model, len(opts.Messages), len(body))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := streamHTTPClient(opts.IdleTimeout).Do(req)
 	if err != nil {
 		return err
 	}
@@ -198,6 +199,29 @@ func runSSE(ctx context.Context, opts WireOptions, body []byte, onLine func([]by
 	}
 	reader := newSSEReader(resp.Body)
 	return pumpSSE(ctx, reader, resp.Body, opts.IdleTimeout, onLine)
+}
+
+// streamHTTPClient returns an HTTP client bounded for streaming. The idle
+// timeout in pumpSSE only starts AFTER the response headers arrive, so it can't
+// catch an upstream that accepts the TCP/TLS connection then stalls before
+// sending the first byte (a common overloaded-gateway failure that otherwise
+// hangs up to the whole-request timeout with no progress). We therefore bound
+// the connect + TLS + time-to-first-byte (response header) phases to the same
+// idle window so a pre-stream hang is surfaced just as fast as a mid-stream one.
+// idle <= 0 falls back to the default client (no extra bounds).
+func streamHTTPClient(idle time.Duration) *http.Client {
+	if idle <= 0 {
+		return http.DefaultClient
+	}
+	tr := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: idle, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   idle,
+		ResponseHeaderTimeout: idle,
+		ExpectContinueTimeout: time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+	return &http.Client{Transport: tr}
 }
 
 // sseLine is one result from the background reader goroutine.
@@ -258,8 +282,15 @@ func pumpSSE(ctx context.Context, reader *sseReader, body io.Closer, idleTimeout
 			_ = body.Close()
 			return errStreamIdle
 		case ln := <-lines:
-			resetIdle()
+			// Reset the idle timer ONLY on a meaningful (non-empty) line. SSE
+			// servers and proxies emit blank-line keep-alives between events;
+			// sseReader.ReadLine returns ("", nil) for those. Resetting on a
+			// blank line would let a stream that delivers nothing but newlines
+			// keep the connection "alive" forever — the model never responds yet
+			// the idle timeout never fires (the observed "listening but
+			// receiving nothing" stall). Only real payload counts as progress.
 			if len(ln.data) > 0 {
+				resetIdle()
 				if err := onLine(ln.data); err != nil {
 					if err == errStreamStopped {
 						return nil

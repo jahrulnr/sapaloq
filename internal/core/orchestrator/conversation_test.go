@@ -115,6 +115,45 @@ func TestRunConversationContinuesAfterToolResult(t *testing.T) {
 	}
 }
 
+// TestRunConversationInjectsUsageReadout verifies the continuation message sent
+// back to the model carries a lightweight, informational usage readout (turn +
+// tool-calls so far) so the model has self-awareness to pace its own work.
+func TestRunConversationInjectsUsageReadout(t *testing.T) {
+	fake := &sequenceBridge{}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	if err := orch.writeTask(taskRecord{ID: "task-test", Status: "done", Result: "result"}); err != nil {
+		t.Fatal(err)
+	}
+	snap := providerSnapshot{
+		cfg:   config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    fake,
+	}
+	out := make(chan bridge.StreamEvent, 16)
+	go func() {
+		for range out {
+		}
+	}()
+	_, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "status"}}, nil)
+	close(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The 2nd request's last message is the continuation we built after turn 1
+	// (which made exactly one tool call).
+	got := fake.requests[1].Messages[len(fake.requests[1].Messages)-1].Content
+	if !strings.Contains(got, "[Usage]") {
+		t.Fatalf("continuation missing usage readout: %q", got)
+	}
+	if !strings.Contains(got, "tool-calls so far 1") {
+		t.Fatalf("usage readout should report 1 tool call so far: %q", got)
+	}
+}
+
 type longSequenceBridge struct {
 	requests int
 	tools    int

@@ -1,7 +1,7 @@
 # SapaLOQ — Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-21 (worker health + spoken event-driven completion)
+> Last updated: 2026-06-22 (structural worker liveness + no-limit budgets; wall-time is the only final cap)
 
 ---
 
@@ -194,11 +194,36 @@ Scribe is denied.
 
 Ask-mode tool continuation is budgeted across several independent limits instead of a fixed small loop:
 
-- `orchestrator.continuation.maxInferenceTurns` (default `128`)
-- `maxToolCalls` (default `512`)
-- `maxWallTimeMinutes` (default `30`)
-- `maxNoProgressTurns` and `maxIdenticalToolCalls` (default `5`)
-- `maxWaitSeconds` (default `120`)
+- `orchestrator.continuation.maxInferenceTurns` (code default `128`)
+- `maxToolCalls` (code default `512`)
+- `maxWallTimeMinutes` (code default `30`)
+- `maxNoProgressTurns` and `maxIdenticalToolCalls` (code default `5`)
+- `maxWaitSeconds` (code default `120`)
+
+> **Philosophy (per AGENTS.md golden rule #5 — "do not invent restrictions the
+> product contract does not require").** These count-based guards exist only to
+> stop a *genuinely* wedged run; they are NOT meant to cage a working model.
+> Narrating/"thinking out loud" before acting, and re-running a build/app while
+> debugging, are healthy behaviors — not failures. The shipped runtime config
+> therefore sets the count guards (`maxInferenceTurns`, `maxToolCalls`,
+> `maxNoProgressTurns`, `maxIdenticalToolCalls`, and per-role `subAgents.roles[].maxTurns`)
+> to effectively-unlimited values, leaving **`maxWallTimeMinutes` as the single
+> final safety net** against a process that hangs forever (e.g. a stuck
+> provider). `roleMaxTurns` enforces only a floor (≥1), no upper clamp, so an
+> operator can grant any role as much room as they want. Each continuation also
+> carries a one-line informational `[Usage] turn N · tool-calls so far M` readout
+> so the model can pace itself without being throttled.
+
+**Transient transport retry.** A turn that fails with a transient transport
+error — slow provider TTFB (`timeout awaiting response headers`), a reset/closed
+connection, a premature EOF, or a `5xx`/`429` response — is **retried in place**
+(same turn, same messages) with a short exponential backoff, up to
+`maxTransportRetries` (4) consecutive attempts; the counter resets after any
+turn that completes cleanly. A provider that stays down still surfaces the error
+instead of retrying forever, and the wall-time budget is the final cap.
+Deterministic failures (auth, malformed request, context overflow) are **not**
+retried here — context overflow has its own compaction-and-retry path.
+`conversation.go` (`looksLikeTransientTransport`).
 
 `sapaloq_wait` blocks in the backend until the selected task changes state or the wait window expires. Waiting emits a `status=waiting` event but does not spend inference turns. `sapaloq_stop` accepts `scope=generation|task|all`; the widget stop button uses `generation`, so background tasks are not killed accidentally.
 

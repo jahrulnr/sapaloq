@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,53 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 )
+
+// TestStreamTTFBTimeoutFires proves the time-to-first-byte guard: a server that
+// accepts the TCP connection but NEVER sends response headers (a common
+// overloaded-gateway failure) must be abandoned within the idle window. Before
+// the guard, the SSE idle timer hadn't started yet (it only arms after headers
+// arrive), so this hung up to the 600s whole-request timeout with no heartbeat —
+// long enough for the worker watchdog to force-fail a healthy sub-agent.
+func TestStreamTTFBTimeoutFires(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	// Accept connections and hold them open without ever replying.
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Keep the conn referenced but silent; closed when listener closes.
+			_ = c
+		}
+	}()
+
+	opts := WireOptions{
+		Parser:      ParserOpenAI,
+		Auth:        AuthBearer,
+		Endpoint:    "http://" + ln.Addr().String() + "/v1/chat/completions",
+		Token:       "sk-test",
+		Model:       "gpt-4o-mini",
+		Messages:    []bridge.Message{{Role: "user", Content: "hi"}},
+		Timeout:     30 * time.Second,
+		IdleTimeout: 400 * time.Millisecond,
+	}
+
+	start := time.Now()
+	err = streamOpenAI(context.Background(), opts, func(ev WireEvent) bool { return true })
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("a server that never sends headers must error, got nil")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("TTFB timeout took too long (idle guard not applied): %v", elapsed)
+	}
+}
 
 // TestStreamIdleTimeoutFires proves the bug fix: a server that accepts the SSE
 // connection, sends one chunk, then goes silent must be abandoned within the
@@ -64,6 +112,64 @@ func TestStreamIdleTimeoutFires(t *testing.T) {
 	// The first chunk should still have been delivered before the hang.
 	if len(got) == 0 || got[0].Text == "" {
 		t.Fatalf("expected the pre-hang text chunk to be delivered, got %#v", got)
+	}
+}
+
+// TestStreamIdleTimeoutFiresOnKeepAliveOnly proves the keep-alive fix: a server
+// that, after one real chunk, sends ONLY blank-line keep-alives (no model data)
+// must still trip the idle timeout. Before the fix every blank line reset the
+// idle timer, so a stream that delivered nothing but newlines stayed "alive"
+// forever — the exact "listening but receiving nothing from the model" stall.
+func TestStreamIdleTimeoutFiresOnKeepAliveOnly(t *testing.T) {
+	stop := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte(`data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}` + "\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		// Now spam blank-line keep-alives only — no model data ever again.
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				_, err := w.Write([]byte("\n"))
+				if err != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+		}
+	}))
+	defer server.Close()
+	defer close(stop)
+
+	opts := WireOptions{
+		Parser:      ParserOpenAI,
+		Auth:        AuthBearer,
+		Endpoint:    server.URL,
+		Token:       "sk-test",
+		Model:       "gpt-4o-mini",
+		Messages:    []bridge.Message{{Role: "user", Content: "hi"}},
+		Timeout:     30 * time.Second,
+		IdleTimeout: 400 * time.Millisecond,
+	}
+
+	start := time.Now()
+	err := streamOpenAI(context.Background(), opts, func(ev WireEvent) bool { return true })
+	elapsed := time.Since(start)
+
+	if err == nil || !strings.Contains(err.Error(), "SSE idle timeout") {
+		t.Fatalf("keep-alive-only stream must trip idle timeout, got: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("idle timeout took too long despite keep-alives: %v", elapsed)
 	}
 }
 

@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-21
+> Last updated: 2026-06-22
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -75,6 +75,74 @@ jalanap").
 - **Verify:** `go build/vet/test ./...` + `-race` orchestrator green; widget
   `tsc --noEmit` green. Widget binary must be rebuilt (`make run` / `make
   widget-build`) for the `app.go` + `main.ts` changes to take effect.
+
+---
+
+## Implemented this session (2026-06-22) — stop caging the model: structural liveness + no-limit budgets
+
+The recurring "worker stalled / task failed" pain was traced to two separate
+mistakes, both now corrected:
+
+- **Real fix — structural worker liveness.** Sub-agent heartbeat used to be
+  event-driven (emitted from inside the inference loop), so a legitimate long
+  synchronous tool/stream produced no heartbeat and the watchdog false-killed a
+  *healthy* worker. Liveness is now a ticker in `runBackgroundTask` tied to the
+  goroutine's life; `subagentSink.beat` only annotates phase (`workers.setPhase`),
+  never the heartbeat. The watchdog now only catches a genuinely wedged goroutine.
+  `tasks.go`, `worker.go`, `turnloop.go`, `subagent.go`.
+- **Reverted bad guard — narration is NOT a failure.** A short-lived
+  `maxToollessTurns` guard failed a run when the model "narrated without calling
+  a tool". That penalised healthy thinking-before-acting (frontier models do this
+  too). Removed entirely; a tool-less turn just gets a plain, non-coercive
+  continuation reminder. `conversation.go`, `subagent_stream_retry_test.go`.
+- **No-limit budgets (AGENTS.md golden rule #5).** Premature count caps were
+  themselves the bug source. The shipped runtime config now sets
+  `continuation.{maxInferenceTurns,maxToolCalls,maxNoProgressTurns,maxIdenticalToolCalls}`
+  and `subAgents.roles.task-runner.maxTurns` to effectively-unlimited values;
+  `maxWallTimeMinutes` (180) is the single final safety net. `roleMaxTurns` lost
+  its upper clamp (floor-only). `subagent.go`, `fixes_test.go`, `config.json`.
+- **Informational usage readout.** Each continuation carries a one-line
+  `[Usage] turn N · tool-calls so far M` so the model can self-pace without being
+  throttled. `conversation.go`, `conversation_test.go`.
+- **SSE robustness (earlier in arc).** `pumpSSE` only resets the idle timer on
+  real data (not blank keep-alives); `runSSE` uses a client with dial/TLS/header
+  timeouts so a slow TTFB is bounded too. `internal/bridges/provider/wire.go`.
+- **Why a run still ended at "30 turns" before this change:** `task-1782110368069272648`
+  was productive (wrote a real 19 KB `index.html`) but spent 3 turns because the
+  model wrote the big file via `exec`+heredoc which truncated at 502 bytes, then
+  recovered with `python3 -c`. Not a stall, not a weak model — just an arbitrary
+  turn cap that has now been lifted.
+- **Transient transport retry (was: timeout → instant fail, no retry).**
+  `task-1782112420468169101` failed with `Post .../v1/chat/completions:
+  net/http: timeout awaiting response headers` — one slow provider request
+  killed the whole task because only image-rejection and context-overflow had
+  retry paths. Added a third `EventError` branch: a transient transport error
+  (timeout / reset / EOF / `5xx` / `429`) retries the same turn with exponential
+  backoff (`transportRetryBaseBackoff`, capped 5s) up to `maxTransportRetries=4`,
+  resetting the counter after a clean turn. Deterministic errors (auth, bad
+  request, context overflow) are not retried here. `conversation.go`
+  (`looksLikeTransientTransport`), `subagent_stream_retry_test.go`
+  (`TestTaskRunnerRetriesTransientThenSurfaces`, `TestTaskRunnerRecoversFromTransientError`).
+- **Inline tool-call reassembly — the real "files never written" root cause.**
+  `task-1782117165538175015` failed after 39 turns: the model wrote a real
+  diagnosis ("tool invocations were not emitted when file content contained
+  patterns the parser interpreted as tool-call syntax"), and the progress log
+  proved it — of 7 parsed calls, all were *small* (`mkdir` ×5, `update_progress`,
+  `fail_task`); not one carried HTML/CSS/JS. Cause: MiniMax emits big tool calls
+  inline in the **content** channel, streamed across many deltas, and
+  `emitText`→`ParseToolCallLeak` scanned **one delta at a time** — a balanced
+  `{...}` for a large argument never appears in a single delta, so the call was
+  lost as text. Fix: a per-stream `leakScanner` (`bridge.go`) accumulates content
+  and scans the buffer from a moving frontier, emitting each reassembled call as
+  a real `EventToolCall`. `scanOneJSONObject` is now **string-aware** (braces
+  inside a JSON string value no longer close the object early — essential for
+  file bodies), and matches are **gated to `DeclaredTools`** to avoid misreading
+  JSON inside file content. `leak.go` (`ParseToolCallLeakFrom`), `bridge.go`
+  (`leakScanner`), `handlers.go` flow; tests `leak_test.go`
+  (`...ReassemblesAcrossFragments`, `...IgnoresUnknownNames`),
+  `leak_scanner_test.go`.
+- **Verify:** `go build/vet/test ./...` green (22 pkgs). Config hot-reloads via
+  `StartConfigWatcher`; new tasks pick up the budgets without a restart.
 
 ---
 

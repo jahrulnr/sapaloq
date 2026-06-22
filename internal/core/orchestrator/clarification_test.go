@@ -1,125 +1,112 @@
 package orchestrator
 
 import (
-	"strings"
+	"context"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/config"
 )
 
-// TestClarificationResumeReconstruction verifies that a task paused on a
-// clarification can be answered: buildSubAgentMessages replays the persisted
-// transcript and appends the answer nudge.
-func TestClarificationResumeReconstruction(t *testing.T) {
-	o := &Orchestrator{memoryDir: t.TempDir()}
-	rec := &taskRecord{
-		ID:     "task-clar-1",
-		Role:   "task-runner",
-		Status: "awaiting_clarification",
-		Task:   "implement the feature",
-		Transcript: []taskTurn{
-			{Role: "assistant", Content: "I inspected the repo."},
-			{Role: "user", Content: "[Tool results]\nfound main.go"},
-		},
-		Answer: "use the v2 API",
-	}
+// countingBridge records how many Complete() calls it received, so a test can
+// assert whether the orchestrator's clarification resolver actually ran an
+// inference (auto-answer attempt) or was correctly gated/skipped. It always
+// finishes a turn with no tool call (a "not confident" orchestrator), so the
+// resume path is never triggered and the test stays deterministic.
+type countingBridge struct{ calls int }
 
-	msgs := o.buildSubAgentMessages(rec)
-	joined := ""
-	for _, m := range msgs {
-		joined += m.Role + ":" + m.Content + "\n"
-	}
-	if !strings.Contains(joined, "I inspected the repo.") {
-		t.Fatalf("transcript not replayed into messages:\n%s", joined)
-	}
-	if !strings.Contains(joined, "found main.go") {
-		t.Fatalf("tool results turn not replayed:\n%s", joined)
-	}
-	if !strings.Contains(joined, "use the v2 API") {
-		t.Fatalf("answer nudge missing:\n%s", joined)
-	}
-	if !strings.Contains(joined, "implement the feature") {
-		t.Fatalf("original task missing:\n%s", joined)
+func (b *countingBridge) ID() string              { return "counting" }
+func (b *countingBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *countingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	out := make(chan bridge.StreamEvent, 2)
+	go func() {
+		defer close(out)
+		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "I am not sure; the user should decide."}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+func newClarifyOrchestrator(t *testing.T, br bridge.Bridge) *Orchestrator {
+	t.Helper()
+	dir := t.TempDir()
+	return &Orchestrator{
+		memoryDir: dir,
+		cfg:       config.Config{},
+		bridge:    br,
+		entry:     config.LLMBridge{Key: "k", Model: "m"},
+		workers:   newWorkerRegistry(filepath.Join(dir, "workers")),
+		progress:  ProgressWriter{Dir: filepath.Join(dir, "progress")},
 	}
 }
 
-// TestAnswerClarificationFlipsStatus verifies the persisted-state transition the
-// answer handler performs (without spawning a real loop): paused → in_progress,
-// answer set, question cleared, transcript preserved.
-func TestAnswerClarificationFlipsStatus(t *testing.T) {
-	o := &Orchestrator{memoryDir: t.TempDir()}
-	rec := taskRecord{
-		ID:         "task-clar-2",
-		SessionID:  "s1",
-		Role:       "task-runner",
-		Status:     "awaiting_clarification",
-		Question:   "Which API version?",
-		Transcript: []taskTurn{{Role: "assistant", Content: "prior context"}},
-		CreatedAt:  time.Now().UTC(),
-		UpdatedAt:  time.Now().UTC(),
+// waitForCalls polls until the async resolver has invoked the bridge at least n
+// times, or fails after a short timeout.
+func waitForCalls(t *testing.T, br *countingBridge, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if br.calls >= n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	if err := o.writeTask(rec); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	t.Fatalf("resolver did not run: bridge calls = %d, want >= %d", br.calls, n)
+}
 
-	// latestAwaitingTaskID should find it.
-	if got := o.latestAwaitingTaskID("s1"); got != "task-clar-2" {
-		t.Fatalf("latestAwaitingTaskID = %q, want task-clar-2", got)
-	}
+// TestClarificationResolverRunsThenDefersToUser proves the event-driven
+// clarification loop: the orchestrator reuses the chat engine to TRY to answer a
+// sub-agent's question itself. Here it is "not confident" (no tool call), so it
+// correctly defers to the user — the task is NOT resumed, and nothing blocks.
+func TestClarificationResolverRunsThenDefersToUser(t *testing.T) {
+	br := &countingBridge{}
+	o := newClarifyOrchestrator(t, br)
+	rec := taskRecord{ID: "task-clarify", Role: "task-runner", Status: "awaiting_clarification", Task: "build a site", Question: "Dark or light theme?"}
 
-	// Apply the same mutation the handler does.
-	loaded, err := o.readTask("task-clar-2")
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if loaded.Status != "awaiting_clarification" {
-		t.Fatalf("precondition: status=%s", loaded.Status)
-	}
-	loaded.Answer = "v2"
-	loaded.Question = ""
-	loaded.Status = "in_progress"
-	if err := o.writeTask(loaded); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	o.resolveClarification("s1", rec)
+	waitForCalls(t, br, 1)
 
-	after, err := o.readTask("task-clar-2")
-	if err != nil {
-		t.Fatalf("reread: %v", err)
-	}
-	if after.Status != "in_progress" {
-		t.Fatalf("status not flipped: %s", after.Status)
-	}
-	if after.Answer != "v2" {
-		t.Fatalf("answer not set: %q", after.Answer)
-	}
-	if after.Question != "" {
-		t.Fatalf("question not cleared: %q", after.Question)
-	}
-	if len(after.Transcript) != 1 || after.Transcript[0].Content != "prior context" {
-		t.Fatalf("transcript not preserved: %+v", after.Transcript)
-	}
-
-	// No awaiting task remains.
-	if got := o.latestAwaitingTaskID("s1"); got != "" {
-		t.Fatalf("expected no awaiting task after answer, got %q", got)
+	// The resolver consulted the model exactly once for this attempt.
+	if br.calls != 1 {
+		t.Fatalf("bridge calls = %d, want exactly 1", br.calls)
 	}
 }
 
-// TestAppendTranscriptCaps verifies per-turn content capping and empty skip.
-func TestAppendTranscriptCaps(t *testing.T) {
-	rec := &taskRecord{}
-	rec.appendTranscript("user", "   ") // empty after trim → skipped
-	if len(rec.Transcript) != 0 {
-		t.Fatalf("empty content should be skipped")
+// TestClarificationAutoAnswerBudget proves the orchestrator stops auto-answering
+// a single task after maxAutoClarifyAnswers attempts and escalates to the user,
+// preventing an auto-answer ↔ re-ask ping-pong loop.
+func TestClarificationAutoAnswerBudget(t *testing.T) {
+	br := &countingBridge{}
+	o := newClarifyOrchestrator(t, br)
+	rec := taskRecord{ID: "task-budget", Role: "task-runner", Status: "awaiting_clarification", Task: "do it", Question: "Which one?"}
+
+	// First maxAutoClarifyAnswers calls each trigger a resolver run.
+	for i := 0; i < maxAutoClarifyAnswers; i++ {
+		o.resolveClarification("s1", rec)
 	}
-	big := strings.Repeat("x", maxTranscriptTurnBytes+500)
-	rec.appendTranscript("assistant", big)
-	if len(rec.Transcript) != 1 {
-		t.Fatalf("expected 1 turn")
+	waitForCalls(t, br, maxAutoClarifyAnswers)
+
+	// The next call must be gated (budget spent) — no additional inference.
+	o.resolveClarification("s1", rec)
+	time.Sleep(50 * time.Millisecond)
+	if br.calls != maxAutoClarifyAnswers {
+		t.Fatalf("auto-answer budget not enforced: bridge calls = %d, want %d", br.calls, maxAutoClarifyAnswers)
 	}
-	if len(rec.Transcript[0].Content) > maxTranscriptTurnBytes+len("…[truncated]") {
-		t.Fatalf("content not capped: %d", len(rec.Transcript[0].Content))
-	}
-	if !strings.HasSuffix(rec.Transcript[0].Content, "[truncated]") {
-		t.Fatalf("expected truncation marker")
+}
+
+// TestClarificationResolverIgnoresNonAwaiting confirms the resolver is a no-op
+// for a task that is not actually awaiting a decision (defensive guard).
+func TestClarificationResolverIgnoresNonAwaiting(t *testing.T) {
+	br := &countingBridge{}
+	o := newClarifyOrchestrator(t, br)
+	rec := taskRecord{ID: "task-done", Role: "task-runner", Status: "done", Task: "x", Question: ""}
+
+	o.resolveClarification("s1", rec)
+	time.Sleep(50 * time.Millisecond)
+	if br.calls != 0 {
+		t.Fatalf("resolver ran for a non-awaiting task: bridge calls = %d, want 0", br.calls)
 	}
 }

@@ -18,10 +18,43 @@ import (
 var inlineImageRE = regexp.MustCompile(`!\[([^\]]*)\]\((data:(image/[^;,]+)(?:;base64)?,[^)]+)\)`)
 var attachmentMetaRE = regexp.MustCompile(`<!--sapaloq-attachment:[A-Za-z0-9+/=]+-->`)
 
-// runConversation drives one Ask turn. If thinkingOut is non-nil, reasoning
-// (EventThinkingDelta) text is accumulated into it so the caller can persist it
-// as a show-only "thinking" turn — separate from the assistant answer (`all`).
+// transportRetryBaseBackoff is the per-attempt backoff unit for retrying a turn
+// after a transient transport error (attempt N waits N×base, capped at 5s). It
+// is a package var only so tests can zero it to run instantly.
+var transportRetryBaseBackoff = 750 * time.Millisecond
+
+// runConversation drives one Ask (chat) turn. If thinkingOut is non-nil,
+// reasoning (EventThinkingDelta) text is accumulated into it so the caller can
+// persist it as a show-only "thinking" turn — separate from the assistant
+// answer (`all`). It is a thin wrapper that configures the SHARED engine
+// (runTurnLoop) for the chat role: the full Ask tool surface, a live channel
+// sink, no heartbeat, and natural finish on a tool-less turn.
 func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, messages []bridge.Message, thinkingOut *strings.Builder) (strings.Builder, error) {
+	cfg := turnConfig{
+		sessionID:       sessionID,
+		tools:           askTools,
+		sink:            chatSink{o: o, out: out},
+		finishOnNoTool:  true,
+		thinkingOut:     thinkingOut,
+		recordToolTurns: true,
+		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
+			res := o.handleAskTool(ctx, snap, out, sessionID, fallbackTask, call)
+			return turnOutcome{text: res.text, handled: res.handled, stop: res.stop}
+		},
+	}
+	return o.runTurnLoop(ctx, snap, fallbackTask, messages, cfg)
+}
+
+// runTurnLoop is the single multi-turn inference engine behind both chat and
+// every sub-agent role. The variable parts (tool surface, per-call dispatch,
+// output sink, finish policy, heartbeat) are supplied via turnConfig; the
+// resilience logic (wall-time/turn/tool budgets, identical-tool and no-progress
+// loop detection, proactive + overflow-triggered compaction, vision downgrade,
+// clean stream/error handling) is shared so a fix lands once for everyone.
+func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, fallbackTask string, messages []bridge.Message, cfg turnConfig) (strings.Builder, error) {
+	sessionID := cfg.sessionID
+	out := cfg.sink
+	thinkingOut := cfg.thinkingOut
 	var all strings.Builder
 	cleanMessages, images := extractImages(messages)
 	// One-shot: once we've dropped images and retried text-only we never
@@ -45,47 +78,64 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 	identicalToolCalls := 0
 	toolCalls := 0
 	lastCompactedMessageCount := 0
+
 	// Bounds how many times an upstream context-overflow 400 can trigger a
 	// forced compaction + retry, so a conversation that can't shrink enough
 	// surfaces the error instead of looping forever.
 	forcedCompactions := 0
 	const maxForcedCompactions = 3
 
-	for inferenceTurn := 1; inferenceTurn <= budget.MaxInferenceTurns; inferenceTurn++ {
+	// Bounds consecutive retries of a turn on a transient transport error (slow
+	// provider TTFB, dropped connection, 5xx/429). Reset to 0 once any turn
+	// completes without a transport error, so a long run that hits the
+	// occasional blip keeps going, while a provider that is genuinely down still
+	// surfaces the error instead of retrying forever.
+	transportRetries := 0
+	const maxTransportRetries = 4
+
+	maxInferenceTurns := budget.MaxInferenceTurns
+	if cfg.maxInferenceTurns > 0 {
+		maxInferenceTurns = cfg.maxInferenceTurns
+	}
+
+	for inferenceTurn := 1; inferenceTurn <= maxInferenceTurns; inferenceTurn++ {
 		if err := runCtx.Err(); err != nil {
-			o.emit(context.Background(), out, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			if ctx.Err() != nil {
 				return all, nil
 			}
 			return all, fmt.Errorf("continuation wall-time budget exhausted after %d minutes", budget.MaxWallTimeMinutes)
 		}
+		// Heartbeat at the top of every turn so the health watchdog can tell a
+		// genuinely-working agent (advancing turns) from a wedged goroutine.
+		out.beat(fmt.Sprintf("inference turn %d/%d", inferenceTurn, maxInferenceTurns))
 		if shouldCompactConversation(cleanMessages, snap.entry.ContextWindow, runtimeCfg.Compaction.BackgroundThreshold) &&
 			len(cleanMessages) > lastCompactedMessageCount+2 {
 			blocking := conversationTokenRatio(cleanMessages, snap.entry.ContextWindow) >= runtimeCfg.Compaction.BlockingThreshold
 			if blocking {
-				o.emit(runCtx, out, statusEvent(sessionID, "compacting"))
+				out.emit(runCtx, statusEvent(sessionID, "compacting"))
 			}
 			cleanMessages = compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
 			lastCompactedMessageCount = len(cleanMessages)
 			if blocking {
-				o.emit(runCtx, out, statusEvent(sessionID, "working"))
+				out.emit(runCtx, statusEvent(sessionID, "working"))
 			}
 			if !runtimeCfg.Compaction.ResumeAfterCompaction {
 				return all, fmt.Errorf("continuation paused after compaction by configuration")
 			}
 		}
 
-		o.emit(runCtx, out, statusEvent(sessionID, "working"))
+		out.emit(runCtx, statusEvent(sessionID, "working"))
 		stream, err := snap.br.Complete(runCtx, bridge.Request{
 			SessionID:     sessionID,
 			Messages:      cleanMessages,
 			Model:         snap.entry.Model,
-			DeclaredTools: askTools,
+			DeclaredTools: cfg.tools,
 			Images:        images,
 		})
 		if err != nil {
 			if runCtx.Err() != nil && ctx.Err() != nil {
-				o.emit(context.Background(), out, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+				out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 				return all, nil
 			}
 			return all, err
@@ -96,6 +146,7 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 		hadError := false
 		retryTextOnly := false
 		retryCompacted := false
+		retryTransport := false
 		lastErr := ""
 		for ev := range stream {
 			if ev.SessionID == "" {
@@ -105,10 +156,12 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 			case bridge.EventResponseDelta:
 				response.WriteString(ev.Delta)
 				all.WriteString(ev.Delta)
-				o.emit(runCtx, out, ev)
+				out.beat(fmt.Sprintf("responding turn %d/%d", inferenceTurn, maxInferenceTurns))
+				out.emit(runCtx, ev)
 			case bridge.EventToolCall:
-				o.emit(runCtx, out, ev)
+				out.emit(runCtx, ev)
 				if ev.ToolCall != nil {
+					out.beat("tool: " + ev.ToolCall.Name)
 					toolCalls++
 					if toolCalls > budget.MaxToolCalls {
 						return all, fmt.Errorf("tool-call budget exhausted after %d calls", budget.MaxToolCalls)
@@ -123,7 +176,7 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 					if identicalToolCalls > budget.MaxIdenticalToolCalls {
 						return all, fmt.Errorf("loop detected: identical tool call repeated %d times", identicalToolCalls)
 					}
-					result := o.handleAskTool(runCtx, snap, out, sessionID, fallbackTask, *ev.ToolCall)
+					result := cfg.dispatch(runCtx, *ev.ToolCall)
 					if result.handled {
 						toolResults = append(toolResults, result.text)
 					}
@@ -131,7 +184,7 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 				}
 			case bridge.EventError:
 				if runCtx.Err() != nil {
-					o.emit(context.Background(), out, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+					out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 					if ctx.Err() != nil {
 						return all, nil
 					}
@@ -146,7 +199,7 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 					o.setVisionSupport(snap.entry.Key, snap.entry.Model, false)
 					o.persistVisionSupport(snap.entry.Key, snap.entry.Model, false)
 					retryTextOnly = true
-					o.emit(runCtx, out, statusEvent(sessionID, "model can't see images — retrying without the attachment"))
+					out.emit(runCtx, statusEvent(sessionID, "model can't see images — retrying without the attachment"))
 					break
 				}
 				// A context/token-overflow 400 means our (guessed) context window
@@ -155,23 +208,33 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 				// the only reliable signal.
 				if looksLikeContextOverflow(ev.Error) && forcedCompactions < maxForcedCompactions {
 					retryCompacted = true
-					o.emit(runCtx, out, statusEvent(sessionID, "context too large — compacting and retrying"))
+					out.emit(runCtx, statusEvent(sessionID, "context too large — compacting and retrying"))
+					break
+				}
+				// A transient transport hiccup (slow TTFB, reset, 5xx/429) is
+				// worth retrying the same turn with a short backoff instead of
+				// failing the whole task on one flaky request. Bounded by
+				// maxTransportRetries; the wall-time budget is the final cap.
+				if looksLikeTransientTransport(ev.Error) && transportRetries < maxTransportRetries {
+					retryTransport = true
+					out.emit(runCtx, statusEvent(sessionID, fmt.Sprintf("provider error — retrying (%d/%d)", transportRetries+1, maxTransportRetries)))
 					break
 				}
 				hadError = true
-				o.emit(runCtx, out, ev)
+				out.emit(runCtx, ev)
 			case bridge.EventThinkingDelta:
 				// Accumulate reasoning so it can be persisted as a show-only
 				// "thinking" turn (survives restart), then forward it live.
 				if thinkingOut != nil {
 					thinkingOut.WriteString(ev.Delta)
 				}
-				o.emit(runCtx, out, ev)
+				out.beat(fmt.Sprintf("thinking turn %d/%d", inferenceTurn, maxInferenceTurns))
+				out.emit(runCtx, ev)
 			case bridge.EventDone:
 				// A bridge-level done ends one inference turn. The orchestrator
 				// emits one final done after all tool continuations.
 			default:
-				o.emit(runCtx, out, ev)
+				out.emit(runCtx, ev)
 			}
 		}
 		if retryTextOnly {
@@ -205,10 +268,36 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 			if len(images) > 0 && (visionDowngraded || !o.visionAllowed(snap.entry.Key, snap.entry.Model)) {
 				images = nil
 			}
-			o.emit(runCtx, out, statusEvent(sessionID, "working"))
+			out.emit(runCtx, statusEvent(sessionID, "working"))
 			inferenceTurn--
 			continue
 		}
+		if retryTransport {
+			// Drain the broken stream, wait a short exponential backoff (capped),
+			// then re-run this same turn. The accumulated text from the aborted
+			// turn is discarded by reusing cleanMessages unchanged.
+			for range stream {
+			}
+			transportRetries++
+			backoff := time.Duration(transportRetries) * transportRetryBaseBackoff
+			if backoff > 5*time.Second {
+				backoff = 5 * time.Second
+			}
+			select {
+			case <-runCtx.Done():
+				out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+				if ctx.Err() != nil {
+					return all, nil
+				}
+				return all, fmt.Errorf("continuation wall-time budget exhausted after %d minutes", budget.MaxWallTimeMinutes)
+			case <-time.After(backoff):
+			}
+			inferenceTurn--
+			continue
+		}
+		// A turn that finished without a transport error clears the retry
+		// budget, so an occasional blip during a long run doesn't accumulate.
+		transportRetries = 0
 		if hadError {
 			return all, nil
 		}
@@ -216,10 +305,24 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 			o.setVisionSupport(snap.entry.Key, snap.entry.Model, true)
 			o.persistVisionSupport(snap.entry.Key, snap.entry.Model, true)
 		}
-		if stop || len(toolResults) == 0 {
-			o.emit(runCtx, out, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+		// An explicit stop (sapaloq_stop / terminal tool) always ends the run.
+		// A tool-less turn ends it only for roles that finish naturally (chat,
+		// planner); an executor must signal completion via a terminal tool, so
+		// it keeps looping (bounded by the budgets + loop guards below) until it
+		// does. Narrating without acting is allowed — the budgets, not a
+		// bespoke narration guard, bound a misbehaving model.
+		if stop || (cfg.finishOnNoTool && len(toolResults) == 0) {
+			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return all, nil
 		}
+		// NOTE: we intentionally do NOT fail a turn just because the model
+		// narrated without calling a tool. Thinking/narrating before acting is
+		// healthy model behavior (the same way any capable model reasons before
+		// it acts) — penalising it cuts the model off before it gets to act.
+		// A model that truly spins forever is still bounded by the real safety
+		// nets: maxInferenceTurns (per-role turn cap), the wall-time budget,
+		// MaxToolCalls, and the no-progress hash guard right below (which fires
+		// only on genuinely identical, zero-progress turns).
 		outcome := fmt.Sprintf("%x", sha256.Sum256([]byte(response.String()+"\x00"+strings.Join(toolResults, "\x00"))))
 		if outcome == lastOutcome {
 			noProgressTurns++
@@ -230,20 +333,44 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 		if noProgressTurns >= budget.MaxNoProgressTurns {
 			return all, fmt.Errorf("loop detected: no observable progress for %d inference turns", noProgressTurns)
 		}
-		toolResultsBody := "[Tool results]\n" + strings.Join(toolResults, "\n\n")
+		// Build the continuation prompt. A tool-less turn for a non-finishing
+		// role (executor narrating intent without acting) gets an explicit nudge
+		// to either act or signal completion; a normal tool turn gets the
+		// standard "continue using these results" follow-up.
+		var toolResultsBody string
+		if len(toolResults) == 0 {
+			// Plain, non-coercive continuation for a turn that produced no tool
+			// call. The model may simply be thinking before it acts — so we just
+			// remind it of the available moves without threatening or rushing it.
+			toolResultsBody = "You did not call any tool this turn and have not finished. " +
+				"When you are ready, invoke the tool you need (e.g. exec, create_file, " +
+				"edit_file), or call sapaloq_complete_task with a summary if the task is " +
+				"done, or sapaloq_fail_task with a reason if it cannot be done."
+		} else {
+			toolResultsBody = "[Tool results]\n" + strings.Join(toolResults, "\n\n")
+		}
 		// Persist tool results as a "tool" turn so they count toward context
 		// usage and auto-compaction. These messages ARE sent to the model (they
 		// are appended to cleanMessages below and replayed via contextMessages,
 		// which maps role "tool" → "assistant"), so leaving them unrecorded made
 		// ContextUsage under-count and auto-compact trigger too late. Use the
 		// outer ctx (not the cancelable runCtx) so a wall-time timeout does not
-		// drop the audit/accounting record.
-		if o.chat != nil {
+		// drop the audit/accounting record. Chat-only (recordToolTurns).
+		if cfg.recordToolTurns && o.chat != nil && len(toolResults) > 0 {
 			_ = o.chat.AppendTurn(ctx, sessionID, "tool", toolResultsBody, estimateTextTokens(toolResultsBody))
 		}
+		continuation := toolResultsBody
+		if len(toolResults) > 0 {
+			continuation += "\nContinue the original request using these results. Do not repeat the tool call unless another tool action is required."
+		}
+		// Inject a small, honest usage readout so the model has lightweight
+		// self-awareness of how much work it has done so far. This is purely
+		// informational — the budgets are set generously so they don't cage the
+		// model; this just helps it pace itself. Cheap to render, ~1 line.
+		continuation += fmt.Sprintf("\n\n[Usage] turn %d · tool-calls so far %d", inferenceTurn, toolCalls)
 		cleanMessages = append(cleanMessages,
 			bridge.Message{Role: "assistant", Content: response.String()},
-			bridge.Message{Role: "user", Content: toolResultsBody + "\nContinue the original request using these results. Do not repeat the tool call unless another tool action is required."},
+			bridge.Message{Role: "user", Content: continuation},
 		)
 		// Re-extract images from the freshly appended tool-results message so a
 		// read_image tool call (which returns inline-image markdown) becomes real
@@ -256,7 +383,7 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 			images = nil
 		}
 	}
-	return all, fmt.Errorf("inference-turn budget exhausted after %d turns", budget.MaxInferenceTurns)
+	return all, fmt.Errorf("inference-turn budget exhausted after %d turns", maxInferenceTurns)
 }
 
 func toolCallSignature(call parse.ToolCall) string {
@@ -506,6 +633,36 @@ func looksLikeContextOverflow(message string) bool {
 		"context length", "context_length", "maximum context", "context window",
 		"too many tokens", "tokens exceed", "exceed the", "reduce the length",
 		"string too long", "maximum_tokens", "max_tokens",
+	} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeTransientTransport reports whether an upstream error is a transient
+// network/transport hiccup (a slow or flaky provider) that is worth retrying
+// the same turn for, rather than a deterministic failure (auth, malformed
+// request, context overflow) where retrying would just fail again. We retry on
+// timeouts, dropped/reset connections, premature EOFs, and 5xx/429 responses —
+// the classic "try again in a moment" class. Context-overflow is intentionally
+// excluded here because it has its own dedicated compaction-and-retry path.
+func looksLikeTransientTransport(message string) bool {
+	lower := strings.ToLower(message)
+	if looksLikeContextOverflow(lower) {
+		return false
+	}
+	for _, kw := range []string{
+		"timeout", "timed out", "deadline exceeded",
+		"awaiting response headers", "awaiting headers",
+		"connection reset", "connection refused", "broken pipe",
+		"eof", "unexpected eof", "connection closed", "reset by peer",
+		"no such host", "network is unreachable", "i/o timeout",
+		"temporary failure", "tls handshake",
+		"status 500", "status 502", "status 503", "status 504", "status 429",
+		"500 ", "502 ", "503 ", "504 ", "429 ",
+		"bad gateway", "service unavailable", "gateway timeout", "too many requests",
 	} {
 		if strings.Contains(lower, kw) {
 			return true

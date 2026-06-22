@@ -96,6 +96,26 @@ func (r *workerRegistry) heartbeat(id, phase string) {
 	r.persist(snap)
 }
 
+// setPhase updates only the human-readable phase label for observability. It
+// does NOT advance the heartbeat — liveness is owned by the structural ticker
+// in runBackgroundTask so a long but legitimate operation (a slow tool, slow
+// stream) never looks stalled. No-op for unknown ids.
+func (r *workerRegistry) setPhase(id, phase string) {
+	if r == nil || id == "" || phase == "" {
+		return
+	}
+	r.mu.Lock()
+	h := r.workers[id]
+	if h == nil {
+		r.mu.Unlock()
+		return
+	}
+	h.Phase = phase
+	snap := *h
+	r.mu.Unlock()
+	r.persist(snap)
+}
+
 // deregister removes a worker once its goroutine exits, recording the final
 // status in the persisted snapshot for post-mortem inspection.
 func (r *workerRegistry) deregister(id, finalStatus string) {

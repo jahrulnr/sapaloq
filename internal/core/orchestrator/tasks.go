@@ -393,6 +393,33 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 		}
 		o.taskMu.Unlock()
 	}()
+
+	// Structural liveness: heartbeat for as long as THIS goroutine is alive,
+	// independent of stream/tool activity. Previously the heartbeat was driven
+	// from inside the inference loop (on each delta/tool), so any synchronous
+	// operation that blocks the goroutine without emitting events — a long
+	// `exec`, a slow time-to-first-byte, a silent stream — produced no
+	// heartbeat and the watchdog force-killed a worker that was actually fine.
+	// That was the recurring "worker stalled: no heartbeat" bug. Now the
+	// watchdog only fires when the goroutine itself is genuinely dead/wedged.
+	{
+		interval := time.Duration(o.cfg.Orchestrator.WithDefaults().Completion.HeartbeatIntervalSec) * time.Second / 2
+		if interval <= 0 {
+			interval = 15 * time.Second
+		}
+		hb := time.NewTicker(interval)
+		defer hb.Stop()
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-hb.C:
+					o.workers.heartbeat(record.ID, "")
+				}
+			}
+		}()
+	}
 	record.Status = "in_progress"
 	record.UpdatedAt = time.Now().UTC()
 	_ = o.writeTask(record)
@@ -448,6 +475,13 @@ func (o *Orchestrator) publishTaskUpdate(sessionID string, record taskRecord) {
 	// into the conversation so a finish that lands after sapaloq_wait returns is
 	// surfaced as a real chat message, not just a card. Idempotent per task id.
 	o.speakTaskCompletion(sessionID, record)
+	// Event-driven clarification: when a sub-agent pauses for a decision, let
+	// the orchestrator try to answer it itself (reusing the chat engine) and
+	// resume the task — otherwise the spoken question waits for the user. The
+	// worker goroutine has already exited cleanly, so this never blocks.
+	if record.Status == "awaiting_clarification" {
+		o.resolveClarification(sessionID, record)
+	}
 }
 
 func (o *Orchestrator) publishTaskActivity(sessionID string, record taskRecord, summary string) {

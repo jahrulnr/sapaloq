@@ -46,34 +46,53 @@ func HasReasoningLeak(text string) bool {
 // models emit in their content when tool calling is unsupported. Returns the
 // first well-formed {"name":..., "arguments":{...}} object it finds, or
 // (parse.ToolCall{}, false) when none is present. Source is "openai_inline".
-func ParseToolCallLeak(text string) (parse.ToolCall, bool) {
-	for _, candidate := range scanJSONObjects(text) {
-		if !looksLikeToolJSON(candidate) {
-			continue
-		}
-		name, args, ok := decodeLooseToolJSON(candidate)
-		if !ok {
-			continue
-		}
-		return parse.ToolCall{Name: name, Arguments: args, Source: "openai_inline"}, true
-	}
-	return parse.ToolCall{}, false
+//
+// NOTE: this scans `text` as a single string, so it only reassembles a tool
+// call that is fully present in `text`. During streaming a large inline call is
+// split across many content deltas, so callers must accumulate the content and
+// scan the buffer (see ParseToolCallLeakFrom) — scanning one delta at a time
+// never sees a balanced {...} for a big argument (e.g. a whole HTML file) and
+// silently loses it. `known`, when non-nil, restricts matches to recognised
+// tool names so a JSON blob inside file content (that merely has name+arguments
+// fields) is not misread as a tool call.
+func ParseToolCallLeak(text string, known func(string) bool) (parse.ToolCall, bool) {
+	tc, _, ok := ParseToolCallLeakFrom(text, 0, known)
+	return tc, ok
 }
 
-// scanJSONObjects walks `text` and returns each balanced top-level {...}
-// substring. Used by ParseToolCallLeak.
-func scanJSONObjects(text string) []string {
-	out := make([]string, 0, 4)
-	for i := 0; i < len(text); i++ {
+// ParseToolCallLeakFrom is the incremental form: it scans `text` starting at
+// byte offset `from` and, on a match, also returns the offset just past the
+// matched object so a streaming caller can advance and avoid O(n²) rescans and
+// duplicate emits. When nothing matches it returns the offset up to which the
+// buffer has been fully scanned for *complete* objects (so the caller can keep
+// the unscanned tail for the next delta).
+func ParseToolCallLeakFrom(text string, from int, known func(string) bool) (parse.ToolCall, int, bool) {
+	if from < 0 {
+		from = 0
+	}
+	for i := from; i < len(text); i++ {
 		if text[i] != '{' {
 			continue
 		}
-		if obj, ok := scanOneJSONObject(text, i); ok {
-			out = append(out, obj.text)
-			i = obj.end
+		obj, ok := scanOneJSONObject(text, i)
+		if !ok {
+			// Unbalanced from here to EOF: a larger object is still being
+			// streamed. Report the scan frontier as this '{' so the caller
+			// keeps the partial object for the next delta.
+			return parse.ToolCall{}, i, false
 		}
+		if !looksLikeToolJSON(obj.text) {
+			i = obj.end
+			continue
+		}
+		name, args, decOK := decodeLooseToolJSON(obj.text)
+		if !decOK || (known != nil && !known(name)) {
+			i = obj.end
+			continue
+		}
+		return parse.ToolCall{Name: name, Arguments: args, Source: "openai_inline"}, obj.end + 1, true
 	}
-	return out
+	return parse.ToolCall{}, len(text), false
 }
 
 type scannedObject struct {
@@ -82,11 +101,33 @@ type scannedObject struct {
 }
 
 // scanOneJSONObject returns the balanced {...} substring starting at index
-// `start` and the index of the closing brace.
+// `start` and the index of the closing brace. It is STRING-AWARE: braces that
+// appear inside a JSON string literal (and escaped quotes within it) are
+// ignored, so a tool argument whose value is a file body containing `{`/`}`
+// (HTML/CSS/JS) does not cause the object to close early. Without this, content
+// braces miscount depth, the scan ends mid-object, and the (now invalid) JSON
+// is rejected — silently dropping the tool call. This was the root cause of the
+// "big tool call lost" bug.
 func scanOneJSONObject(text string, start int) (scannedObject, bool) {
 	depth := 0
+	inString := false
+	escaped := false
 	for j := start; j < len(text); j++ {
-		switch text[j] {
+		c := text[j]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
 		case '{':
 			depth++
 		case '}':

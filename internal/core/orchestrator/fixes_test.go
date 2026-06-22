@@ -106,8 +106,9 @@ func TestPlanWriteIsIterable(t *testing.T) {
 	}
 }
 
-// TestRoleMaxTurns verifies fix #4: per-role maxTurns is read from config with
-// a safe fallback and clamping.
+// TestRoleMaxTurns verifies per-role maxTurns is read from config with a safe
+// fallback and a floor — but NO upper clamp, so an operator can grant a role as
+// much room as they want (the wall-time budget is the only final safety net).
 func TestRoleMaxTurns(t *testing.T) {
 	o := &Orchestrator{}
 	if got := o.roleMaxTurns("planner"); got != subAgentMaxTurns {
@@ -116,14 +117,14 @@ func TestRoleMaxTurns(t *testing.T) {
 
 	o.cfg.SubAgents = config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{
 		"planner":     {MaxTurns: 12},
-		"task-runner": {MaxTurns: 999}, // clamped to 60
+		"task-runner": {MaxTurns: 999}, // honored as-is — no upper clamp
 		"weird":       {MaxTurns: -5},  // invalid (<=0) → fallback to default
 	}}
 	if got := o.roleMaxTurns("planner"); got != 12 {
 		t.Fatalf("planner: got %d want 12", got)
 	}
-	if got := o.roleMaxTurns("task-runner"); got != 60 {
-		t.Fatalf("task-runner clamp: got %d want 60", got)
+	if got := o.roleMaxTurns("task-runner"); got != 999 {
+		t.Fatalf("task-runner should be honored without clamp: got %d want 999", got)
 	}
 	if got := o.roleMaxTurns("weird"); got != subAgentMaxTurns {
 		t.Fatalf("weird invalid maxTurns should fall back: got %d want %d", got, subAgentMaxTurns)

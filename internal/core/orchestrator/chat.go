@@ -46,6 +46,10 @@ type Orchestrator struct {
 	sessionTasks map[string]map[string]struct{}
 	spokenMu     sync.Mutex
 	spokenTasks  map[string]struct{}
+	// autoClarifyCount bounds orchestrator self-answers per task so an
+	// auto-answer ↔ re-ask loop with a confused sub-agent can't run forever.
+	// Guarded by spokenMu (same terminal-path lock).
+	autoClarifyCount map[string]int
 	visionMu     sync.RWMutex
 	vision       map[string]bool
 	skillsMu     sync.RWMutex
