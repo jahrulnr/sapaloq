@@ -23,6 +23,15 @@
    is a product value (see `docs/LIMITATIONS.md`).
 4. **Never put real secrets in `config/config.example.json`** — it's a public
    template copied on first boot.
+5. **Contract first, security later.** Make the feature behave according to its
+   documented contract and user expectations before adding security hardening.
+   Premature restrictions, sandboxing, allowlists, and policy layers add
+   complexity and frequently create silent workflow bugs. First build the
+   simplest bugless end-to-end path; once it works and is covered by functional
+   tests, add security incrementally with regression tests proving the original
+   contract still works. Do not invent restrictions that the product contract
+   does not require. This rule does not permit real-secret exposure, destructive
+   behavior, or bypassing an explicit security requirement from the user/spec.
 
 ---
 

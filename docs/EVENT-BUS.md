@@ -2,7 +2,7 @@
 
 > **Internal pub/sub** inside `sapaloq-core` — goroutine + channel + route watcher.
 > Bukan service terpisah. Bukan Redis / Rabbit / MQTT.
-> Last updated: 2026-06-19
+> Last updated: 2026-06-21
 
 Related: [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md)
 
@@ -90,6 +90,28 @@ Publish never blocks on slow consumer — drop + log.
 Ops: `publish`, `watch`, `unwatch`, `event`, `ping`.
 
 Orchestrator uses in-proc channel — **no socket hop**.
+
+The widget `watch` stream is live-first but not live-only. After the subscribe
+ack, the IPC server rehydrates recent `EventTaskUpdate` snapshots from
+`memory/tasks/*/status.json`, then streams bus events. This closes the race
+where task completion happened before the widget connected or while it was
+reconnecting. Provider-level `EventDone` is not a task lifecycle event.
+
+On a **terminal** task transition (done/failed/awaiting/stopped) the
+orchestrator does two things: it publishes the `task_update` card event **and**
+`speakTaskCompletion` (`completion.go`) injects a durable assistant turn into the
+task's session and republishes it as a `response_delta` on
+`sapaloq.v1.chat.response`. That republish is the "speak" trigger that closes the
+event-driven loop — a completion arriving after `sapaloq_wait` has already
+returned is still surfaced in chat, not just as a silently-updated card. It is
+idempotent per task id and gated by `completion.speakOnTerminal`.
+
+The widget's `watch` callback (`cmd/sapaloq-widget/app.go`) forwards **both**
+`task_update` (rendered as a per-task card) **and** `response_delta` (the spoken
+completion) to the UI. When a `response_delta` arrives while idle (no chat turn
+in flight), the frontend renders it as a new assistant bubble — so a sub-agent
+failure/success that lands after the chat turn closed auto-follows into the
+conversation instead of only updating a card.
 
 ---
 

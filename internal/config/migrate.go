@@ -11,7 +11,7 @@ import (
 // matching upgrade step in migrationSteps so older configs are upgraded in
 // place. Old JSON formats are always preserved in code (the upgrade steps are
 // additive and idempotent) so a config written by any prior version still loads.
-const CurrentSchemaVersion = "1.1.0"
+const CurrentSchemaVersion = "1.3.0"
 
 // migrationStep upgrades a raw config map from one schema version to the next.
 // from is the version the step applies to; to is the version it produces. Steps
@@ -38,6 +38,106 @@ var migrationSteps = []migrationStep{
 		// PromptsConfig defaults itself in). Kept as an explicit step so the
 		// chain documents the transition and stays future-proof.
 	},
+	{
+		from: "1.1.0",
+		to:   "1.2.0",
+		apply: func(raw map[string]any) {
+			renameNestedKey(raw, "skills", "directory", "dir")
+			renameNestedKey(raw, "prompts", "rolesPath", "dir")
+			if prompts, ok := raw["prompts"].(map[string]any); ok {
+				if _, exists := prompts["enabled"]; !exists {
+					prompts["enabled"] = true
+				}
+				delete(prompts, "rolesOverlayPath")
+				delete(prompts, "assembleOnSpawn")
+				delete(prompts, "maxRolePromptTokens")
+				delete(prompts, "includeOverlayByDefault")
+			}
+			if skills, ok := raw["skills"].(map[string]any); ok {
+				delete(skills, "indexOnBoot")
+				delete(skills, "allowAgentCreate")
+			}
+			if events, ok := raw["events"].(map[string]any); ok {
+				if oldPath, ok := events["busPath"]; ok {
+					bus, _ := events["bus"].(map[string]any)
+					if bus == nil {
+						bus = map[string]any{}
+						events["bus"] = bus
+					}
+					if _, exists := bus["walPath"]; !exists {
+						bus["walPath"] = oldPath
+					}
+					delete(events, "busPath")
+				}
+			}
+		},
+	},
+	{
+		from: "1.2.0",
+		to:   "1.3.0",
+		apply: func(raw map[string]any) {
+			// Tool surface flattened: drop the workspace_/system_/terminal_
+			// prefixes (a feature-not-security design). Rewrite any role
+			// allowedTools so configs written before the rename keep working.
+			renames := map[string]string{
+				"workspace_read_file":   "read_file",
+				"workspace_write_file":  "write_file",
+				"workspace_create_file": "create_file",
+				"workspace_edit_file":   "edit_file",
+				"workspace_delete_file": "delete_file",
+				"workspace_search":      "search",
+				"workspace_list_dir":    "list_dir",
+				"workspace_glob":        "glob",
+				"system_exec":           "exec",
+				"terminal_run":          "exec",
+			}
+			subAgents, ok := raw["subAgents"].(map[string]any)
+			if !ok {
+				return
+			}
+			roles, ok := subAgents["roles"].(map[string]any)
+			if !ok {
+				return
+			}
+			for _, r := range roles {
+				role, ok := r.(map[string]any)
+				if !ok {
+					continue
+				}
+				list, ok := role["allowedTools"].([]any)
+				if !ok {
+					continue
+				}
+				seen := map[string]bool{}
+				var out []any
+				for _, item := range list {
+					name, _ := item.(string)
+					if repl, found := renames[name]; found {
+						name = repl
+					}
+					if name == "" || seen[name] {
+						continue
+					}
+					seen[name] = true
+					out = append(out, name)
+				}
+				role["allowedTools"] = out
+			}
+		},
+	},
+}
+
+func renameNestedKey(raw map[string]any, block, oldKey, newKey string) {
+	nested, ok := raw[block].(map[string]any)
+	if !ok {
+		return
+	}
+	if old, exists := nested[oldKey]; exists {
+		if _, already := nested[newKey]; !already {
+			nested[newKey] = old
+		}
+		delete(nested, oldKey)
+	}
 }
 
 // migrateRaw upgrades raw to CurrentSchemaVersion when its schemaVersion is

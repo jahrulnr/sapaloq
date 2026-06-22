@@ -16,19 +16,25 @@ import (
 // loop forever. Generous because real tasks chain several read/edit/run steps.
 const subAgentMaxTurns = 24
 
-// runSubAgentLoop drives a sub-agent (planner or task-runner) as a multi-turn
-// tool loop: the model can call assessment/plan/exec tools, receive results,
-// and continue until it completes/fails the task or the budget runs out. This
-// is what makes Plan and Agent actually able to read, search, web-research,
-// write, and run — instead of emitting one blind blob of text.
+// runSubAgentLoop drives a sub-agent (planner / task-runner / scribe) on the
+// SAME inference engine as chat (runTurnLoop). Planner and Agent are therefore
+// just chat with a different system prompt + tool set + output sink: they reuse
+// the chat loop's budgets, loop-detection, compaction and clean stream/error
+// handling instead of a separate, perennially-buggy copy. This adapter only
+// supplies the role-specific pieces:
+//   - tools:        o.toolsForRole(record.Role)
+//   - dispatch:     handleSubAgentTool (terminal tools mutate record + stop)
+//   - sink:         progress JSONL + worker heartbeat (so a live stream never
+//                   looks stalled to the watchdog — the recurring stall bug)
+//   - finish:       planner/scribe finish on a tool-less turn; an executor must
+//                   call a terminal tool (the shared no-progress guard bounds a
+//                   model that only narrates intent)
 //
 // record is mutated in place (Status/Result/Error/Question); the caller
 // persists the final state.
 func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapshot, sessionID string, record *taskRecord) {
-	tools := o.toolsForRole(record.Role)
 	messages := o.buildSubAgentMessages(record)
 	subSession := sessionID + ":" + record.ID
-	maxTurns := o.roleMaxTurns(record.Role)
 
 	// The persisted transcript + answer have been folded into `messages` by
 	// buildSubAgentMessages. Clear the consumed Answer so it isn't replayed
@@ -36,120 +42,99 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	// appends to it (preserving full context across multiple clarifications).
 	record.Answer = ""
 
+	// finalResult accumulates the model's free-form text so a terminal tool
+	// with no explicit summary (and a planner's natural finish) still has a
+	// result to fall back on.
 	var finalResult strings.Builder
 
-	for turn := 1; turn <= maxTurns; turn++ {
-		if ctx.Err() != nil {
+	cfg := turnConfig{
+		sessionID:         subSession,
+		tools:             o.toolsForRole(record.Role),
+		sink:              &subagentSink{o: o, taskID: record.ID},
+		finishOnNoTool:    record.Role != "task-runner",
+		maxInferenceTurns: o.roleMaxTurns(record.Role),
+		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
+			o.publishTaskActivity(sessionID, *record, "Menjalankan `"+call.Name+"`.")
+			res := o.handleSubAgentTool(ctx, record, &finalResult, call)
+			text := ""
+			if res.text != "" {
+				text = fmt.Sprintf("[%s] %s", call.Name, res.text)
+			}
+			// A terminal tool (complete/fail) ends the run. A clarification
+			// request is non-terminal in the dispatcher but must also stop the
+			// loop so the task can pause and be resumed with the user's answer.
+			stop := res.terminal || record.Status == "awaiting_clarification"
+			return turnOutcome{text: text, handled: res.text != "", stop: stop}
+		},
+	}
+
+	all, err := o.runTurnLoop(ctx, snap, record.Task, messages, cfg)
+	finalText := strings.TrimSpace(all.String())
+	if finalText == "" {
+		finalText = strings.TrimSpace(finalResult.String())
+	}
+
+	// Cancellation: the watchdog or a user stop cancelled the context.
+	if ctx.Err() != nil {
+		if record.Status != "failed" {
 			record.Status = "stopped"
-			return
 		}
-		cleanMessages, images := extractImages(messages)
-		stream, err := snap.br.Complete(ctx, bridge.Request{
-			SessionID:     subSession,
-			Model:         snap.entry.Model,
-			Messages:      cleanMessages,
-			DeclaredTools: tools,
-			Images:        images,
-		})
-		if err != nil {
-			if ctx.Err() != nil {
-				record.Status = "stopped"
-			} else {
-				record.Status = "failed"
-				record.Error = err.Error()
-			}
-			return
-		}
+		return
+	}
 
-		var turnText strings.Builder
-		var toolResults []string
-		terminal := false
-		for ev := range stream {
-			if ev.SessionID == "" {
-				ev.SessionID = record.ID
-			}
-			_ = o.progress.Append(record.ID, ev)
-			switch ev.Kind {
-			case bridge.EventResponseDelta:
-				turnText.WriteString(ev.Delta)
-				finalResult.WriteString(ev.Delta)
-			case bridge.EventError:
-				record.Error = ev.Error
-			case bridge.EventToolCall:
-				if ev.ToolCall == nil {
-					continue
-				}
-				res := o.handleSubAgentTool(ctx, record, &finalResult, *ev.ToolCall)
-				if res.text != "" {
-					toolResults = append(toolResults, fmt.Sprintf("[%s] %s", ev.ToolCall.Name, res.text))
-				}
-				terminal = terminal || res.terminal
-			}
+	// A terminal tool (sapaloq_complete_task / sapaloq_fail_task) already set
+	// Status + Result/Error; just backfill an empty result from the text.
+	if record.Status == "done" || record.Status == "failed" {
+		if record.Result == "" && record.Error == "" {
+			record.Result = finalText
 		}
+		return
+	}
 
-		if record.Error != "" && len(toolResults) == 0 {
-			record.Status = "failed"
-			record.Result = strings.TrimSpace(finalResult.String())
-			return
-		}
-		if terminal {
-			// complete/fail tool already set Status/Result/Error.
-			if record.Result == "" {
-				record.Result = strings.TrimSpace(finalResult.String())
-			}
-			return
-		}
-		if record.Status == "awaiting_clarification" {
-			// Pause the loop and persist the transcript so the task can be
-			// resumed (sapaloq_answer_clarification) with its accumulated
-			// context rather than re-spawned from scratch.
-			record.appendTranscript("assistant", turnText.String())
-			if len(toolResults) > 0 {
-				record.appendTranscript("user", "[Tool results]\n"+strings.Join(toolResults, "\n\n"))
-			}
-			record.Result = strings.TrimSpace(finalResult.String())
-			_ = o.writeTask(*record)
-			return
-		}
-		if len(toolResults) == 0 {
-			// No tools called this turn → the planner/agent is finished.
-			// For a planner that wrote a plan.md, that plan is the authoritative
-			// result (not any trailing chatter); otherwise use the text.
-			if record.Role == "planner" {
-				if plan := o.readPlanMarkdown(record.ID); plan != "" {
-					record.Result = plan
-					record.Status = "done"
-					return
-				}
-			}
-			record.Result = strings.TrimSpace(finalResult.String())
+	// Clarification pause: persist the transcript so sapaloq_answer_clarification
+	// can resume with full context.
+	if record.Status == "awaiting_clarification" {
+		record.appendTranscript("assistant", finalText)
+		record.Result = finalText
+		_ = o.writeTask(*record)
+		return
+	}
+
+	// The shared loop returned without a terminal tool. Resolve the outcome by
+	// role: a planner's plan.md is its authoritative result; otherwise an error
+	// from the loop (budget/loop-guard/stream) fails the task with that reason.
+	record.Result = finalText
+	if record.Role == "planner" {
+		if plan := o.readPlanMarkdown(record.ID); plan != "" {
+			record.Result = plan
 			record.Status = "done"
 			return
 		}
-
-		// Feed tool results back and continue. Also record the turn in the
-		// resumable transcript so a later clarification pause keeps full context.
-		toolResultsMsg := "[Tool results]\n" + strings.Join(toolResults, "\n\n")
-		record.appendTranscript("assistant", turnText.String())
-		record.appendTranscript("user", toolResultsMsg)
-		messages = append(messages,
-			bridge.Message{Role: "assistant", Content: turnText.String()},
-			bridge.Message{Role: "user", Content: toolResultsMsg + "\nContinue the task using these results. When finished, call sapaloq_complete_task (agent) or output the final plan (planner)."},
-		)
-		images = nil
 	}
-
-	// Budget exhausted.
-	record.Result = strings.TrimSpace(finalResult.String())
-	if record.Status == "in_progress" {
-		record.Error = fmt.Sprintf("sub-agent stopped after %d turns without completing", maxTurns)
+	if err != nil {
 		record.Status = "failed"
+		if record.Error == "" {
+			record.Error = err.Error()
+		}
+		o.workerLogError(record.ID, "sub-agent loop ended: "+record.Error)
+		return
 	}
+	// No tools, no terminal signal, no error: an executor that never signalled
+	// completion is a failure; a non-executor (planner without a plan) is done.
+	if record.Role == "task-runner" {
+		record.Status = "failed"
+		record.Error = "executor stopped without calling sapaloq_complete_task or sapaloq_fail_task"
+		return
+	}
+	record.Status = "done"
 }
 
 // roleMaxTurns resolves the tool-loop budget for a sub-agent role, preferring
 // the per-role maxTurns from config.json and falling back to subAgentMaxTurns.
-// The value is clamped to a sane range so a bad config can't hang or starve.
+// Only a sane floor is enforced (a config of 0/negative must not starve the
+// run to nothing); there is intentionally NO upper clamp, so an operator can
+// give a role as much room as they want — the wall-time budget is the single
+// final safety net, not an arbitrary turn ceiling.
 func (o *Orchestrator) roleMaxTurns(role string) int {
 	turns := subAgentMaxTurns
 	if roles := o.cfg.SubAgents.Roles; roles != nil {
@@ -159,9 +144,6 @@ func (o *Orchestrator) roleMaxTurns(role string) int {
 	}
 	if turns < 1 {
 		turns = 1
-	}
-	if turns > 60 {
-		turns = 60
 	}
 	return turns
 }
@@ -176,15 +158,32 @@ func (o *Orchestrator) roleMaxTurns(role string) int {
 // behavior while letting config grant capabilities to named roles.
 func (o *Orchestrator) roleAllows(role, tool string) bool {
 	if roles := o.cfg.SubAgents.Roles; roles != nil {
-		if r, ok := roles[role]; ok && len(r.AllowedTools) > 0 {
+		if r, ok := roles[role]; ok && len(r.AllowedTools) > 0 && allowlistMatchesKnownTool(r.AllowedTools) {
 			return matchToolAllowlist(r.AllowedTools, tool)
 		}
 	}
-	// Fallback policy (unconfigured role): task-runner full, others read-only.
+	// Fallback policy (unconfigured role, OR a config allowlist that names only
+	// unknown/abstract tools so it would otherwise gate EVERY real tool off and
+	// silently brick the sub-agent): task-runner full, others read-only.
 	if role == "task-runner" {
 		return true
 	}
 	return !isMutatingTool(tool)
+}
+
+// allowlistMatchesKnownTool reports whether a configured allowlist matches at
+// least one tool the orchestrator actually implements. A list that names only
+// abstract/aspirational tools (e.g. the doc names "exec", "write_file",
+// "gnome_*") would otherwise deny every real tool at execution — a silent,
+// hard-to-debug failure. When nothing matches we ignore the (clearly wrong)
+// list and fall back to the static per-role policy instead.
+func allowlistMatchesKnownTool(allow []string) bool {
+	for name := range knownToolSet() {
+		if matchToolAllowlist(allow, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchToolAllowlist matches a tool name against an allowlist supporting exact
@@ -205,8 +204,7 @@ func matchToolAllowlist(allow []string, tool string) bool {
 // are denied to read-only roles under the fallback policy.
 func isMutatingTool(tool string) bool {
 	switch tool {
-	case "workspace_write_file", "workspace_create_file", "workspace_edit_file",
-		"workspace_delete_file", "terminal_run":
+	case "write_file", "create_file", "edit_file", "delete_file":
 		return true
 	}
 	return false
@@ -279,27 +277,29 @@ type subToolResult struct {
 // assessment tools plus plan/lifecycle/clarification tools.
 func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecord, result *strings.Builder, call parse.ToolCall) subToolResult {
 	o.auditTool(record.SessionID, "subagent:"+record.Role, call)
+	// Enforce role policy before dispatching shared tools. Shared means the
+	// implementation is reusable across roles, not that every role may invoke
+	// every shared tool. This is especially important for undeclared/provider-
+	// poisoned calls that were not present in the role's offered tool surface.
+	if !o.roleAllows(record.Role, call.Name) {
+		return subToolResult{text: fmt.Sprintf("Error: %s is not allowed for role %s.", call.Name, record.Role)}
+	}
 	// Shared read-only assessment + web tools.
 	if text, ok := runSharedTool(ctx, call); ok {
 		return subToolResult{text: text}
 	}
 	args := parseToolArgs(call.Arguments)
-	// Generic, config-driven tool gate. Mutating/role-restricted tools are
-	// denied unless the role's allowedTools (or fallback policy) grants them.
-	if !o.roleAllows(record.Role, call.Name) {
-		return subToolResult{text: fmt.Sprintf("Error: %s is not allowed for role %s.", call.Name, record.Role)}
-	}
 	switch call.Name {
-	case "workspace_write_file":
+	case "write_file":
 		return subToolResult{text: toolWriteFile(args, false)}
-	case "workspace_create_file":
+	case "create_file":
 		return subToolResult{text: toolWriteFile(args, true)}
-	case "workspace_edit_file":
+	case "edit_file":
 		return subToolResult{text: toolEditFile(args)}
-	case "workspace_delete_file":
+	case "delete_file":
 		return subToolResult{text: toolDeleteFile(args)}
-	case "terminal_run":
-		return subToolResult{text: toolTerminalRun(ctx, args)}
+	case "exec":
+		return subToolResult{text: toolExec(ctx, args)}
 	case "scribe_write_note":
 		return subToolResult{text: o.toolScribeWriteNote(args)}
 	case "desktop_notify":

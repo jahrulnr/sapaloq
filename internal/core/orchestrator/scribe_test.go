@@ -13,27 +13,25 @@ import (
 func TestRoleAllowsFallbackPolicy(t *testing.T) {
 	o := &Orchestrator{} // no SubAgents config → fallback policy
 	// task-runner: full access.
-	if !o.roleAllows("task-runner", "workspace_edit_file") {
+	if !o.roleAllows("task-runner", "edit_file") {
 		t.Fatalf("task-runner should be allowed to edit")
 	}
-	if !o.roleAllows("task-runner", "terminal_run") {
+	if !o.roleAllows("task-runner", "exec") {
 		t.Fatalf("task-runner should be allowed to run commands")
 	}
-	// planner (read-only): mutating tools denied, read tools allowed.
-	if o.roleAllows("planner", "workspace_write_file") {
+	// planner (read-only): mutating tools denied, read/exec tools allowed
+	// (exec is exploration, not mutation, so Ask/Plan keep it).
+	if o.roleAllows("planner", "write_file") {
 		t.Fatalf("planner must NOT be allowed to write")
 	}
-	if o.roleAllows("planner", "terminal_run") {
-		t.Fatalf("planner must NOT be allowed to run commands")
-	}
-	if !o.roleAllows("planner", "workspace_read_file") {
+	if !o.roleAllows("planner", "read_file") {
 		t.Fatalf("planner should be allowed to read")
 	}
 }
 
 func TestRoleAllowsConfigAllowlistWithWildcard(t *testing.T) {
 	o := &Orchestrator{cfg: config.Config{SubAgents: config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{
-		"scribe": {AllowedTools: []string{"workspace_read_file", "scribe_write_note", "sapaloq_*"}},
+		"scribe": {AllowedTools: []string{"read_file", "scribe_write_note", "sapaloq_*"}},
 	}}}}
 	if !o.roleAllows("scribe", "scribe_write_note") {
 		t.Fatalf("scribe should be allowed scribe_write_note")
@@ -43,18 +41,18 @@ func TestRoleAllowsConfigAllowlistWithWildcard(t *testing.T) {
 	}
 	// Not in allowlist → denied, even though it's a mutating tool the fallback
 	// would also deny; the point is the config list is authoritative.
-	if o.roleAllows("scribe", "workspace_write_file") {
-		t.Fatalf("scribe must NOT be allowed workspace_write_file")
+	if o.roleAllows("scribe", "write_file") {
+		t.Fatalf("scribe must NOT be allowed write_file")
 	}
 }
 
 func TestToolsForRoleHonorsConfig(t *testing.T) {
 	o := &Orchestrator{cfg: config.Config{SubAgents: config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{
-		"scribe": {AllowedTools: []string{"workspace_read_file", "scribe_write_note"}},
+		"scribe": {AllowedTools: []string{"read_file", "scribe_write_note"}},
 	}}}}
 	got := o.toolsForRole("scribe")
 	sort.Strings(got)
-	want := []string{"scribe_write_note", "workspace_read_file"}
+	want := []string{"read_file", "scribe_write_note"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("toolsForRole(scribe)=%v want %v", got, want)
 	}

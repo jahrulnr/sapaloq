@@ -13,10 +13,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/vault"
 )
 
-// TestLatestPlanTaskIDRequiresPlanMd verifies fix #2: a planner task that only
-// answered a question (no plan.md) must NOT be handed off as a plan, while a
-// planner task that actually produced plan.md is selected.
-func TestLatestPlanTaskIDRequiresPlanMd(t *testing.T) {
+func TestValidatePlanForAgentRequiresExplicitValidPlan(t *testing.T) {
 	o := &Orchestrator{memoryDir: t.TempDir()}
 
 	// Planner A: answered only, no plan.md.
@@ -25,8 +22,8 @@ func TestLatestPlanTaskIDRequiresPlanMd(t *testing.T) {
 		t.Fatalf("write a: %v", err)
 	}
 
-	if got := o.latestPlanTaskID("s1"); got != "" {
-		t.Fatalf("expected no plan task (no plan.md), got %q", got)
+	if err := o.validatePlanForAgent("s1", "task-a"); err == nil || !strings.Contains(err.Error(), "no plan.md") {
+		t.Fatalf("expected no-plan error, got %v", err)
 	}
 
 	// Planner B: real plan with plan.md.
@@ -38,8 +35,11 @@ func TestLatestPlanTaskIDRequiresPlanMd(t *testing.T) {
 		t.Fatalf("write plan.md: %v", err)
 	}
 
-	if got := o.latestPlanTaskID("s1"); got != "task-b" {
-		t.Fatalf("expected task-b (has plan.md), got %q", got)
+	if err := o.validatePlanForAgent("s1", "task-b"); err != nil {
+		t.Fatalf("valid explicit plan rejected: %v", err)
+	}
+	if err := o.validatePlanForAgent("other-session", "task-b"); err == nil || !strings.Contains(err.Error(), "another session") {
+		t.Fatalf("cross-session plan should be rejected, got %v", err)
 	}
 }
 
@@ -55,7 +55,7 @@ func TestAuditToolWritesVault(t *testing.T) {
 	o := &Orchestrator{vault: w, entry: config.LLMBridge{Key: "tokenrouter"}}
 
 	args, _ := json.Marshal(map[string]string{"path": "README.md"})
-	o.auditTool("sess-1", "subagent:planner", parse.ToolCall{Name: "workspace_read_file", Arguments: args})
+	o.auditTool("sess-1", "subagent:planner", parse.ToolCall{Name: "read_file", Arguments: args})
 
 	entries, err := vault.ReadEntries(path, 10)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestAuditToolWritesVault(t *testing.T) {
 		t.Fatalf("expected 1 vault entry, got %d", len(entries))
 	}
 	e := entries[0]
-	if e.ResolvedName != "workspace_read_file" || e.Reason != "executed" || e.Source != "subagent:planner" || e.Provider != "tokenrouter" {
+	if e.ResolvedName != "read_file" || e.Reason != "executed" || e.Source != "subagent:planner" || e.Provider != "tokenrouter" {
 		t.Fatalf("unexpected entry: %+v", e)
 	}
 
@@ -106,8 +106,9 @@ func TestPlanWriteIsIterable(t *testing.T) {
 	}
 }
 
-// TestRoleMaxTurns verifies fix #4: per-role maxTurns is read from config with
-// a safe fallback and clamping.
+// TestRoleMaxTurns verifies per-role maxTurns is read from config with a safe
+// fallback and a floor — but NO upper clamp, so an operator can grant a role as
+// much room as they want (the wall-time budget is the only final safety net).
 func TestRoleMaxTurns(t *testing.T) {
 	o := &Orchestrator{}
 	if got := o.roleMaxTurns("planner"); got != subAgentMaxTurns {
@@ -116,14 +117,14 @@ func TestRoleMaxTurns(t *testing.T) {
 
 	o.cfg.SubAgents = config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{
 		"planner":     {MaxTurns: 12},
-		"task-runner": {MaxTurns: 999}, // clamped to 60
+		"task-runner": {MaxTurns: 999}, // honored as-is — no upper clamp
 		"weird":       {MaxTurns: -5},  // invalid (<=0) → fallback to default
 	}}
 	if got := o.roleMaxTurns("planner"); got != 12 {
 		t.Fatalf("planner: got %d want 12", got)
 	}
-	if got := o.roleMaxTurns("task-runner"); got != 60 {
-		t.Fatalf("task-runner clamp: got %d want 60", got)
+	if got := o.roleMaxTurns("task-runner"); got != 999 {
+		t.Fatalf("task-runner should be honored without clamp: got %d want 999", got)
 	}
 	if got := o.roleMaxTurns("weird"); got != subAgentMaxTurns {
 		t.Fatalf("weird invalid maxTurns should fall back: got %d want %d", got, subAgentMaxTurns)

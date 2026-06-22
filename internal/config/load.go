@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/credentials"
 )
@@ -320,6 +321,65 @@ type LLMBridge struct {
 	// conversation exceeds this. Defaults to 1,000,000 (matches Claude
 	// Sonnet 4, Gemini 2.5 Pro, GPT-5 family).
 	ContextWindow int `json:"contextWindow,omitempty"`
+	// SupportsImages is a tri-state vision-capability cache. nil means
+	// "unknown — try sending images and learn from the response"; a non-nil
+	// value records what the orchestrator discovered at runtime (false after
+	// the upstream rejected an image request with a 400, true after a
+	// successful image turn). Persisted so a model proven text-only is never
+	// re-probed across restarts. Auto-managed; rarely set by hand.
+	SupportsImages *bool `json:"supportsImages,omitempty"`
+	// RequestTimeoutSec bounds a single inference request (one model turn). A
+	// long sub-agent step (e.g. generating a large file) can exceed the old
+	// hardcoded 120s and surface as "context deadline exceeded", so this is
+	// configurable per provider. 0 → DefaultRequestTimeoutSec.
+	RequestTimeoutSec int `json:"requestTimeoutSec,omitempty"`
+	// StreamIdleTimeoutSec bounds the gap between two consecutive SSE events
+	// once a stream is open. RequestTimeoutSec is a generous *whole-request*
+	// cap (600s) so a long generation is not truncated; but if the upstream
+	// accepts the connection and then goes silent mid-stream, the request-level
+	// cap is far too long — the worker health watchdog (StaleAfterSec, default
+	// 180s) fires first and the sub-agent's work is lost. This per-event idle
+	// cap detects a wedged/hung stream quickly and surfaces an actionable error
+	// so the sub-agent loop can retry the turn. 0 → DefaultStreamIdleTimeoutSec.
+	StreamIdleTimeoutSec int `json:"streamIdleTimeoutSec,omitempty"`
+}
+
+// DefaultRequestTimeoutSec is the per-inference-request timeout when a provider
+// entry doesn't set one. Generous because sub-agent task-runners are
+// deliberately long-running (high maxTurns, big file writes); the old 120s
+// default truncated legitimate long generations.
+const DefaultRequestTimeoutSec = 600
+
+// DefaultStreamIdleTimeoutSec is the max silence between two SSE events before
+// the stream is considered hung. It must be comfortably below the worker stall
+// window (Completion.StaleAfterSec, default 180s) so a hung stream is caught and
+// retried by the sub-agent loop before the watchdog force-fails the worker.
+const DefaultStreamIdleTimeoutSec = 60
+
+// RequestTimeout returns the resolved per-request timeout as a duration,
+// falling back to DefaultRequestTimeoutSec when unset/invalid.
+func (b LLMBridge) RequestTimeout() time.Duration {
+	secs := b.RequestTimeoutSec
+	if secs <= 0 {
+		secs = DefaultRequestTimeoutSec
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// StreamIdleTimeout returns the resolved per-event idle timeout for an open
+// stream, falling back to DefaultStreamIdleTimeoutSec when unset/invalid. The
+// value is clamped to never exceed the whole-request timeout (an idle cap
+// longer than the hard cap would be meaningless).
+func (b LLMBridge) StreamIdleTimeout() time.Duration {
+	secs := b.StreamIdleTimeoutSec
+	if secs <= 0 {
+		secs = DefaultStreamIdleTimeoutSec
+	}
+	idle := time.Duration(secs) * time.Second
+	if req := b.RequestTimeout(); idle > req {
+		idle = req
+	}
+	return idle
 }
 
 // LLMBridgeRoot is the top-level llmBridge config block — registry of
@@ -414,6 +474,47 @@ type BusConfig struct {
 type OrchestratorConfig struct {
 	Continuation ContinuationConfig `json:"continuation"`
 	Compaction   CompactionConfig   `json:"compaction"`
+	Completion   CompletionConfig   `json:"completion"`
+}
+
+// CompletionConfig controls how a finished background sub-agent is surfaced
+// back to the chat / widget (the "completion trigger"). NotifyUserOnDone, when
+// true, pushes a chat bubble on every terminal transition; when false only
+// failures and clarifications are surfaced (success stays quiet unless the user
+// asked to be told).
+type CompletionConfig struct {
+	Trigger              string `json:"trigger,omitempty"`
+	HeartbeatIntervalSec int    `json:"heartbeatIntervalSec,omitempty"`
+	StaleAfterSec        int    `json:"staleAfterSec,omitempty"`
+	RequireTerminalEvent bool   `json:"requireTerminalEvent,omitempty"`
+	NotifyUserOnDone     bool   `json:"notifyUserOnDone,omitempty"`
+	// SpeakOnTerminal, when true, injects a spoken assistant turn into the
+	// task's session on every terminal transition (done/failed/awaiting),
+	// closing the event-driven loop so a completion that lands AFTER
+	// sapaloq_wait returns is still surfaced in chat (not just as a card).
+	SpeakOnTerminal bool `json:"speakOnTerminal,omitempty"`
+	// WorkerErrorLog enables a per-worker error-only log at
+	// memory/workers/<task-id>/error.log for debugging without trawling the
+	// verbose progress JSONL.
+	WorkerErrorLog bool `json:"workerErrorLog,omitempty"`
+}
+
+// WithDefaults fills zero-valued completion knobs with sane defaults. The
+// heartbeat/stall pair drives the worker health watchdog; SpeakOnTerminal and
+// WorkerErrorLog default ON because they are the fix for the "we never know if
+// the agent finished" bug and are cheap.
+func (c CompletionConfig) WithDefaults() CompletionConfig {
+	if c.HeartbeatIntervalSec <= 0 {
+		c.HeartbeatIntervalSec = 15
+	}
+	if c.StaleAfterSec <= 0 {
+		c.StaleAfterSec = 180
+	}
+	// A stall window must comfortably exceed one heartbeat interval.
+	if c.StaleAfterSec < c.HeartbeatIntervalSec*2 {
+		c.StaleAfterSec = c.HeartbeatIntervalSec * 2
+	}
+	return c
 }
 
 type ContinuationConfig struct {
@@ -441,6 +542,12 @@ func DefaultOrchestratorConfig() OrchestratorConfig {
 			MaxNoProgressTurns:    5,
 			MaxIdenticalToolCalls: 5,
 			MaxWaitSeconds:        120,
+		},
+		Completion: CompletionConfig{
+			HeartbeatIntervalSec: 15,
+			StaleAfterSec:        180,
+			SpeakOnTerminal:      true,
+			WorkerErrorLog:       true,
 		},
 		Compaction: CompactionConfig{
 			BackgroundThreshold:    0.70,
@@ -483,6 +590,7 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 	if c.Compaction.PreserveRecentFraction <= 0 || c.Compaction.PreserveRecentFraction >= 1 {
 		c.Compaction.PreserveRecentFraction = defaults.Compaction.PreserveRecentFraction
 	}
+	c.Completion = c.Completion.WithDefaults()
 	return c
 }
 
@@ -542,12 +650,35 @@ func Load(path string) (Config, error) {
 			b = upgraded
 			// Persist the upgraded config so the bump happens once. Best-effort:
 			// a read-only config dir must not fail Load.
-			_ = SaveRaw(path, migrated, "schema-migration")
+			updatedBy := strings.TrimSpace(stringField(migrated, "updatedBy"))
+			if updatedBy == "" {
+				updatedBy = "schema-migration"
+			}
+			_ = SaveRaw(path, migrated, updatedBy)
 		}
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return Config{}, err
 	}
+	return normalizeAndValidate(cfg)
+}
+
+// ValidateRaw binds a candidate raw config through the same defaults and
+// validation path as Load, without writing it. Settings mutations use this
+// before persistence so an invalid patch cannot corrupt the live config.
+func ValidateRaw(raw map[string]any) (Config, error) {
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg := DefaultConfig()
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return Config{}, err
+	}
+	return normalizeAndValidate(cfg)
+}
+
+func normalizeAndValidate(cfg Config) (Config, error) {
 	cfg.Runtime.DataDir = ExpandPath(defaultIfEmpty(cfg.Runtime.DataDir, defaultDataDir))
 	cfg.Events.Bus.SocketPath = ExpandPath(defaultIfEmpty(cfg.Events.Bus.SocketPath, "~/.config/sapaloq/run/sapaloq.sock"))
 	cfg.Commands = cfg.Commands.WithDefaults()

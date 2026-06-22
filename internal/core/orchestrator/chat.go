@@ -33,6 +33,8 @@ type Orchestrator struct {
 	chat         *chatstore.Store
 	vault        *vault.Writer
 	memoryDir    string
+	workersDir   string
+	workers      *workerRegistry
 	mu           sync.RWMutex
 	cfgModTime   time.Time
 	activeMu     sync.Mutex
@@ -42,6 +44,12 @@ type Orchestrator struct {
 	taskCancels  map[string]context.CancelFunc
 	taskSignals  map[string]chan struct{}
 	sessionTasks map[string]map[string]struct{}
+	spokenMu     sync.Mutex
+	spokenTasks  map[string]struct{}
+	// autoClarifyCount bounds orchestrator self-answers per task so an
+	// auto-answer ↔ re-ask loop with a confused sub-agent can't run forever.
+	// Guarded by spokenMu (same terminal-path lock).
+	autoClarifyCount map[string]int
 	visionMu     sync.RWMutex
 	vision       map[string]bool
 	skillsMu     sync.RWMutex
@@ -108,6 +116,8 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		chat:         chatStore,
 		vault:        vaultWriter,
 		memoryDir:    dirs.MemoryDir,
+		workersDir:   dirs.WorkersDir,
+		workers:      newWorkerRegistry(dirs.WorkersDir),
 		cfgModTime:   modTime,
 		active:       make(map[string]*activeRun),
 		taskCancels:  make(map[string]context.CancelFunc),
@@ -118,12 +128,20 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		desktop:      desktop,
 		prompts:      promptMgr,
 	}
+	// Seed the in-memory vision cache from config so a model previously proven
+	// text-only (supportsImages:false) is skipped before we ever send an image
+	// again — and a known-good one (true) isn't needlessly re-probed.
+	o.seedVisionFromConfig(cfg)
 	// Best-effort: index skill bodies into facts (kind="skill") so the
 	// secondary FTS match in skillsBlock can find them. Never fatal.
 	o.indexSkills(context.Background())
 	// Ensure the local-default execution node exists so spawns always have a
 	// routable in-proc target. Best-effort.
 	o.bootstrapLocalDefaultNode(context.Background())
+	// A process restart loses in-memory worker goroutines. Persisted tasks that
+	// still claim pending/in_progress/stopping would otherwise leave the user
+	// staring at a task that can never advance.
+	o.recoverOrphanedTasks()
 	return o, nil
 }
 

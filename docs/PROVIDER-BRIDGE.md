@@ -1,7 +1,7 @@
 # SapaLOQ — Provider Bridge (OpenAI / Claude / Kimi)
 
 > **Multi-model LLM bridge** — speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
-> Last updated: 2026-06-19
+> Last updated: 2026-06-22 (inline tool-call reassembly across content deltas; labeled `[Tool: name]` / bare `name {args}` recovery; raw control-char tolerance for multi-line args)
 
 Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -312,12 +312,64 @@ Upstream SSE line
                       └─ Bridge.handleWireEvent
                            ├─ EventThinkingDelta
                            ├─ EventResponseDelta
-                           │    └─ ParseToolCallLeak → EventToolLeak
+                           │    └─ leakScanner.feed → EventToolCall (reassembled)
                            └─ EventToolCall
                                 └─ EventDone
 ```
 
-Inline JSON tool calls (e.g. when a model without tool support emits `{"name":"...","arguments":{...}}` in its content) are detected by `ParseToolCallLeak` and surfaced as `EventToolLeak`. The vault writer appends them for review.
+**Inline tool-call reassembly (`leakScanner`).** Some models (notably MiniMax)
+emit a tool call inline in the *content* channel — `{"name":"...","arguments":{...}}`
+— instead of the native `tool_calls` field. When the argument is large (e.g. a
+whole HTML/CSS/JS file body), the JSON is streamed split across **many** content
+deltas, so scanning one delta at a time never sees a balanced `{...}` and the
+call is silently lost (this caused multi-turn task failures where only small
+calls like `mkdir` got through). The per-stream `leakScanner` (`bridge.go`) fixes
+this: it **accumulates** the visible content across deltas and scans the buffer
+from a moving frontier for complete objects, emitting each reassembled call as a
+real `EventToolCall`. Two safeguards:
+
+- **String-aware brace matching** (`scanOneJSONObject` in `leak.go`): braces and
+  escaped quotes *inside* a JSON string value are ignored, so file content with
+  unbalanced `{`/`}` doesn't close the object early.
+- **Declared-tool gating**: a reassembled object is only accepted if its `name`
+  is in the request's `DeclaredTools`, so a JSON blob inside file content that
+  merely has `name`+`arguments` fields is not misread as a call. An empty
+  declared list disables the scanner entirely.
+
+**Labeled / bare inline forms.** Besides the `{"name":...,"arguments":{...}}`
+envelope, the scanner also recovers the two *labeled* shapes a model may emit
+inline (the role prompts instruct calls as `read_file {"path":"..."}`,
+`exec {"command":"..."}`), where the trailing `{...}` is the **arguments** body,
+not an envelope:
+
+- **Bracketed** — `[Tool: <name>]\n{args}`. Accepted even without a declared
+  list (the label is unambiguous), but still gated by `DeclaredTools` when one
+  is set. This was the orch-chat leak: `[Tool: exec]\n{"command":"ls ..."}`
+  surfaced as a `response_delta` because no parser recognised it.
+- **Bare** — `<name> {args}` where `<name>` is a snake_case token. Accepted
+  **only** when `<name>` is in `DeclaredTools`, so prose like `the object {...}`
+  is never misread; a name that is only a suffix of a longer word (`prefixexec`)
+  is rejected too.
+
+Both reuse the string-aware brace matcher and the moving-frontier streaming
+logic, so a labeled call whose large args object (or the label itself) is split
+across deltas is still reassembled into a single `EventToolCall`.
+
+**Raw control-char tolerance.** A model that writes a multi-line argument inline
+(e.g. an `exec` heredoc whose body is a whole HTML file) embeds **real newline
+bytes** inside the JSON string value. Per the JSON spec a literal control byte
+(U+0000–U+001F) in a string is invalid, so `encoding/json` would reject the whole
+call and it was silently lost — the tool then saw empty args, returned "command
+is required", and the model wrongly concluded its content had been
+"stripped/filtered" (and burned turns on base64/chunking workarounds). The
+reassembler and `parseToolArgs` now run the candidate through
+`parse.RepairControlCharsInJSON`, which escapes raw control bytes **inside string
+literals** (`\n`, `\r`, `\t`, `\u00XX`) while leaving structure untouched — a
+no-op for already-valid JSON. So a multi-line inline call is recognised and its
+stored `Arguments` are valid JSON that downstream unmarshalling accepts.
+
+(The old `EventToolLeak` event type remains defined but is no longer emitted by
+this path; the orchestrator only ever consumed `EventToolCall`.)
 
 ---
 

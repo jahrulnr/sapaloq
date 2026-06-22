@@ -18,6 +18,10 @@ export function OpenAttachment(arg1) {
   return window['go']['main']['App']['OpenAttachment'](arg1);
 }
 
+export function OpenExternal(arg1) {
+  return window['go']['main']['App']['OpenExternal'](arg1);
+}
+
 export function PingCore() {
   return window['go']['main']['App']['PingCore']();
 }

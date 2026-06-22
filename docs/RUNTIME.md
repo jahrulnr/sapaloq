@@ -37,6 +37,8 @@ sapaloq-core (one binary)
 |-------|------|------|
 | SQLite | `~/.config/sapaloq/memory/companion.db` | Facts, FTS, skills index, dedupe |
 | jsonl | `events.jsonl`, `progress/*.jsonl` | WAL, audit, replay on boot |
+| Worker health | `memory/workers/<task-id>/health.json` | Live per-worker PID/phase/heartbeat snapshot (observability) |
+| Worker errors | `memory/workers/<task-id>/error.log` | Errors-only trail per sub-agent (debugging) |
 | Files | `config.json`, `skills/`, `prompt/` | Agent-editable, git-friendly |
 | In-memory | goroutine LRU | Session hot cache — **lost on restart OK** |
 
@@ -111,6 +113,13 @@ No Docker, no compose, no message queue for SapaLOQ itself.
 `runtime.singleBinary: true` (always — informational lock in schema).
 
 Memory: `engine: sqlite` only. Event wake: `events.bus` not external broker.
+
+The first-boot public example now contains only configuration read by the
+current runtime: runtime path, platform adapter, providers, command registry,
+continuation/compaction/completion, active sub-agent roles, storage, skills,
+prompts, feedback, vault, and event-bus socket/WAL. Roadmap-only knobs remain
+documented in their subsystem docs but are not copied into a live config where
+`/settings` could falsely report a successful no-op.
 
 ---
 
@@ -206,7 +215,12 @@ sapaloq-core doctor --json       # machine-readable exit payload
 | Socket | `sapaloq.sock` path writable |
 | LLM bridge | Cursor credentials via autoload (`process.env` → `.env` → `state.vscdb`) |
 
-Config **schema migration** is implemented: `Load` decodes to a raw map, runs an ordered upgrade chain (`internal/config/migrate.go`, `CurrentSchemaVersion` = `1.1.0`; lower → upgrade + persist, equal → no-op, higher → load as-is) before unmarshalling. Still planned (M1+): `os.json` regen checks, `companion.db` migrations, `local-default` node row.
+Config **schema migration** is implemented: `Load` decodes to a raw map, runs
+an ordered upgrade chain (`internal/config/migrate.go`,
+`CurrentSchemaVersion = 1.2.0`; lower → upgrade + persist, equal → no-op,
+higher → load as-is) before unmarshalling. The 1.2 migration aligns active
+`skills.dir`, `prompts.dir`, and `events.bus.walPath` names. Still planned:
+`os.json` regeneration checks and a unified SQL migration runner.
 
 ```bash
 sapaloq-core doctor              # current checks

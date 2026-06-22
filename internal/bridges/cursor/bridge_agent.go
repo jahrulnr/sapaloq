@@ -84,6 +84,7 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 		Token:       creds.AccessToken,
 		Body:        body,
 		InsecureTLS: os.Getenv("SAPALOQ_WIRE_INSECURE_TLS") == "1",
+		Timeout:     b.timeout,
 	}, func(decoded []wire.AgentDecoded, raw []byte) {
 		frameCount++
 		_ = raw // exposed for future exec-handshake use
@@ -109,7 +110,7 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 		debug.Debugf("cursor-bridge: agent stream error: %v", err)
 		errEv := bridge.NewEvent(bridge.EventError)
 		errEv.SessionID = req.SessionID
-		errEv.Error = err.Error()
+		errEv.Error = b.explainStreamError(err)
 		send(ctx, out, errEv)
 		return
 	}

@@ -20,6 +20,7 @@ import (
 type App struct {
 	ctx        context.Context
 	socketPath string
+	stopWatch  chan struct{}
 }
 
 func NewApp() *App {
@@ -30,6 +31,45 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if p := os.Getenv("SAPALOQ_SOCKET"); p != "" {
 		a.socketPath = p
+	}
+	// Subscribe to the core event bus so asynchronous background-task pushes
+	// reach the chat even when no request is in flight. Two kinds matter here:
+	//   - EventTaskUpdate: the per-task lifecycle card (progress/terminal).
+	//   - EventResponseDelta: the SPOKEN completion the orchestrator injects on
+	//     a terminal transition. Without forwarding it, a sub-agent that
+	//     finishes/fails AFTER the chat turn already closed only shows a passive
+	//     card and the conversation looks stalled ("saya tunggu…" with no
+	//     follow-up). Forwarding it lets the failure/success auto-follow into
+	//     the chat as a real assistant bubble.
+	// Live chat deltas for an in-flight turn still arrive via the
+	// chat_send/chat_retry request streams; the frontend de-dupes by only
+	// treating these as new bubbles when idle.
+	a.stopWatch = make(chan struct{})
+	go watchEvents(a.socketPath, a.stopWatch, func(event bridge.StreamEvent) {
+		switch event.Kind {
+		case bridge.EventTaskUpdate:
+			runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+		case bridge.EventResponseDelta:
+			// CRITICAL: only forward SPOKEN-COMPLETION deltas (those stamped
+			// with a TaskID) from the watch stream. A live chat turn's
+			// response_delta is ALSO published on the bus, and it already
+			// reaches the webview via the per-request SendMessage/RetryChatTurn
+			// stream below. Forwarding the bus copy too delivered every live
+			// delta TWICE to the single `sapaloq:stream` listener, so the live
+			// renderer fed each character twice — the "MantMantap, agent lagi
+			// jalanap" interleave / duplicated bubble. Task-stamped completions
+			// have no per-request stream, so they must come through here.
+			if event.TaskID != "" {
+				runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+			}
+		}
+	})
+}
+
+func (a *App) shutdown(ctx context.Context) {
+	if a.stopWatch != nil {
+		close(a.stopWatch)
+		a.stopWatch = nil
 	}
 }
 
@@ -177,6 +217,39 @@ func (a *App) OpenAttachment(path string) error {
 		command = exec.Command("xdg-open", target)
 	}
 	return command.Start()
+}
+
+// OpenExternal opens a link target chosen from a rendered chat message. WebKitGTK
+// ignores target=_blank/window.open, so the frontend routes anchor clicks here.
+// Two shapes are accepted, everything else is rejected so a malicious message
+// can't run arbitrary commands:
+//   - http(s) URLs           -> opened in the default browser
+//   - absolute paths / file: -> revealed in the file manager (via OpenAttachment)
+func (a *App) OpenExternal(target string) error {
+	t := strings.TrimSpace(target)
+	if t == "" {
+		return errors.New("empty target")
+	}
+	lower := strings.ToLower(t)
+	switch {
+	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"):
+		var command *exec.Cmd
+		switch {
+		case commandExists("xdg-open"):
+			command = exec.Command("xdg-open", t)
+		case commandExists("gio"):
+			command = exec.Command("gio", "open", t)
+		default:
+			return errors.New("no URL opener available")
+		}
+		return command.Start()
+	case strings.HasPrefix(lower, "file://"):
+		return a.OpenAttachment(strings.TrimPrefix(t, "file://"))
+	case filepath.IsAbs(t):
+		return a.OpenAttachment(t)
+	default:
+		return errors.New("unsupported link target")
+	}
 }
 
 func commandExists(name string) bool {

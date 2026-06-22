@@ -11,6 +11,8 @@ export function DeleteChatTurn(arg1:string,arg2:number):Promise<void>;
 
 export function OpenAttachment(arg1:string):Promise<void>;
 
+export function OpenExternal(arg1:string):Promise<void>;
+
 export function PingCore():Promise<main.pingResult>;
 
 export function ReadDroppedFile(arg1:string):Promise<main.droppedFile>;

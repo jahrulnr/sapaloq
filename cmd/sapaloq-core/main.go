@@ -86,6 +86,7 @@ func main() {
 		entry, _ := cfg.LLMBridge.ActiveProvider()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		orch.StartConfigWatcher(ctx)
+		orch.StartWorkerWatchdog(ctx)
 		startNotifyWatch(ctx, orch)
 		defer stop()
 		fmt.Printf("sapaloq-core listening on %s%s\n", dirs.SocketPath, envDebugHint())

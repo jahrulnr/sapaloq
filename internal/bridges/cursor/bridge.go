@@ -26,6 +26,10 @@ type Bridge struct {
 	runtime config.RuntimeConfig
 	schema  Schema
 	vault   *vault.Writer
+	// timeout bounds a single inference request; resolved from the provider
+	// entry (config) so a long sub-agent step isn't truncated at the old
+	// hardcoded 120s wire default.
+	timeout time.Duration
 }
 
 // New returns a fresh Bridge. The entry supplies the bridge configuration
@@ -44,7 +48,7 @@ func New(entry config.LLMBridge, runtime config.RuntimeConfig) (*Bridge, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &Bridge{entry: entry, runtime: runtime, schema: schema, vault: v}, nil
+	return &Bridge{entry: entry, runtime: runtime, schema: schema, vault: v, timeout: entry.RequestTimeout()}, nil
 }
 
 func (b *Bridge) ID() string { return "cursor-bridge" }
@@ -122,6 +126,7 @@ func (b *Bridge) streamLive(ctx context.Context, req bridge.Request, out chan<- 
 		Messages:    messages,
 		GhostMode:   creds.GhostMode,
 		InsecureTLS: os.Getenv("SAPALOQ_WIRE_INSECURE_TLS") == "1",
+		Timeout:     b.timeout,
 	}, func(part wire.ExtractedPart) {
 		frameCount++
 		debug.Verbosef("cursor-bridge: frame=%d thinking=%d text=%d tool=%v decode_err=%q",
@@ -157,7 +162,7 @@ func (b *Bridge) streamLive(ctx context.Context, req bridge.Request, out chan<- 
 		debug.Debugf("cursor-bridge: stream error: %v", err)
 		errEv := bridge.NewEvent(bridge.EventError)
 		errEv.SessionID = req.SessionID
-		errEv.Error = err.Error()
+		errEv.Error = b.explainStreamError(err)
 		send(ctx, out, errEv)
 		return
 	}
@@ -165,6 +170,24 @@ func (b *Bridge) streamLive(ctx context.Context, req bridge.Request, out chan<- 
 	done := bridge.NewEvent(bridge.EventDone)
 	done.SessionID = req.SessionID
 	send(ctx, out, done)
+}
+
+// explainStreamError turns an opaque transport failure into an actionable
+// message. A bare "context deadline exceeded" tells the user nothing; this maps
+// it to the real cause (the per-request timeout) and the knob to raise it.
+func (b *Bridge) explainStreamError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "deadline exceeded") {
+		secs := int(b.timeout / time.Second)
+		if secs <= 0 {
+			secs = config.DefaultRequestTimeoutSec
+		}
+		return fmt.Sprintf("inference request timed out after %ds (set llmBridge.providers[].requestTimeoutSec higher for long sub-agent steps): %s", secs, msg)
+	}
+	return msg
 }
 
 func (b *Bridge) streamMock(ctx context.Context, req bridge.Request, out chan<- bridge.StreamEvent) {

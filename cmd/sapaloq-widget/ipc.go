@@ -264,6 +264,58 @@ func roundTrip(socketPath string, req ipcRequest) ([]ipcResponse, error) {
 	return roundTripWithEvent(socketPath, req, nil)
 }
 
+// watchEvents opens a long-lived `watch` subscription to the core event bus and
+// invokes onEvent for every pushed StreamEvent. It blocks, reconnecting with a
+// short backoff if the connection drops, until stop is closed. This is the
+// async channel that carries background sub-agent completion (EventTaskUpdate)
+// to the widget without an active chat request.
+func watchEvents(socketPath string, stop <-chan struct{}, onEvent func(bridge.StreamEvent)) {
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+		if err != nil {
+			select {
+			case <-stop:
+				return
+			case <-time.After(2 * time.Second):
+				continue
+			}
+		}
+		func() {
+			defer conn.Close()
+			b, _ := json.Marshal(ipcRequest{Op: "watch"})
+			if _, werr := conn.Write(append(b, '\n')); werr != nil {
+				return
+			}
+			sc := bufio.NewScanner(conn)
+			sc.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
+			for sc.Scan() {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				var res ipcResponse
+				if jerr := json.Unmarshal(sc.Bytes(), &res); jerr != nil {
+					continue
+				}
+				if res.Op == "event" && res.Event != nil && onEvent != nil {
+					onEvent(*res.Event)
+				}
+			}
+		}()
+		select {
+		case <-stop:
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
+}
+
 func roundTripWithEvent(socketPath string, req ipcRequest, onResponse func(ipcResponse)) ([]ipcResponse, error) {
 	conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
 	if err != nil {

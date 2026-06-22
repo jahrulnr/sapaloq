@@ -70,10 +70,16 @@ func TestSettingsPatchWritesConfig(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.json")
 	cfg := config.DefaultConfig()
 	cfg.Runtime.DataDir = dir
-	raw := map[string]any{
-		"schemaVersion": "1.0.0",
-		"notifications": map[string]any{"enabled": true, "read": false},
-		"runtime":       map[string]any{"dataDir": dir},
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(encoded, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["orchestrator"] = map[string]any{
+		"completion": map[string]any{"notifyUserOnDone": false},
 	}
 	if err := config.SaveRaw(cfgPath, raw, "test"); err != nil {
 		t.Fatal(err)
@@ -92,7 +98,7 @@ func TestSettingsPatchWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream, err := orch.SendChat(context.Background(), "test", `/settings patch {"notifications":{"read":true}}`)
+	stream, err := orch.SendChat(context.Background(), "test", `/settings patch {"orchestrator":{"completion":{"notifyUserOnDone":true}}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,9 +118,13 @@ func TestSettingsPatchWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	notifications, ok := updated["notifications"].(map[string]any)
-	if !ok || notifications["read"] != true {
-		b, _ := json.Marshal(updated["notifications"])
-		t.Fatalf("notifications = %s", b)
+	orchestratorCfg, ok := updated["orchestrator"].(map[string]any)
+	if !ok {
+		t.Fatalf("orchestrator = %#v", updated["orchestrator"])
+	}
+	completion, ok := orchestratorCfg["completion"].(map[string]any)
+	if !ok || completion["notifyUserOnDone"] != true {
+		b, _ := json.Marshal(orchestratorCfg["completion"])
+		t.Fatalf("completion = %s", b)
 	}
 }

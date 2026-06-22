@@ -1,20 +1,24 @@
 # SapaLOQ — Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-19 (execution modes: Ask → Plan → Agent)
+> Last updated: 2026-06-22 (structural worker liveness + no-limit budgets; wall-time is the only final cap)
 
 ---
 
 ## Ringkasan
 
 - **Widget agent = orchestrator saja** — tidak melakukan pekerjaan berat; **delegasi** ke sub-agent.
-- **Config = `config.json`** — **tidak ada settings UI**; user ubah lewat chat (`/settings ...`) → sub-agent `settings` edit file.
+- **Config = `config.json`** — **tidak ada settings UI**. Runtime saat ini
+  mendukung deterministic `/settings patch <json>`; natural-language
+  `sub-agent:settings` masih target berikutnya.
 - **Storage/apps mapping** — indexed paths + intents; scribe sub-agent nulis ke file yang benar by mode/boundary.
 - **Mode-aware** — personal / hobby / work; memory namespace terpisah.
 - **Anti context poisoning** — task stack; tidak loncat task tanpa park/done/switch eksplisit.
 - **Anti-blocker** — orchestrator never awaits sub-agent; sub-agent agresif & parallel where safe.
 - **Progress streaming** — orchestrator **watch live** sub-agent: thinking, response, toolcall, todo, status.
-- **Completion triggers** — in-proc event bus wake (ms) + jsonl WAL; heartbeat hanya watchdog.
+- **Completion triggers** — in-proc event bus wake (ms) + jsonl WAL; heartbeat watchdog force-fails stalled workers. On every terminal transition the orchestrator **speaks** the outcome into chat (durable assistant turn + `response_delta` republish), so a finish that lands after `sapaloq_wait` returns is surfaced as a real message — not just a card (`internal/core/orchestrator/completion.go`).
+- **Fire-and-forget delegation** — after spawning a sub-agent the orchestrator replies briefly and ENDS its turn; it does **not** `sapaloq_wait` to watch (that freezes the chat for no benefit now that completion is spoken automatically). `sapaloq_wait` is opt-in (only when the user explicitly asks to block). `waitForTaskChange` ends only on a terminal state or a real status *transition* — a bare progress update (same status) no longer breaks the wait, so there is no wait→progress→wait freeze loop (`tasks.go`, prompt `internal/prompts/defaults/ask.md`).
+- **Worker health** — each background sub-agent is a tracked worker (`workerRegistry`, `worker.go`): id, role, session, PID, phase, heartbeat. Live snapshot at `memory/workers/<id>/health.json`; errors-only trail at `memory/workers/<id>/error.log`. The watchdog (`StartWorkerWatchdog`, interval `completion.heartbeatIntervalSec`, stall `completion.staleAfterSec`) fails any worker that stops heartbeating.
 - **Event watchers** — GNOME notification + custom (reminder, email, …) → orchestrator react.
 - **Context ingress** — intent-router + SQLite prefetch + dynamic prompt before spawn ([CONTEXT-SOP.md](./CONTEXT-SOP.md)).
 - **Role system-prompt** — setiap spawn sub-agent dapat `systemPrompt` per role ([PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md)).
@@ -40,7 +44,10 @@ Orchestrator: "Notifikasi read-aloud sudah off."
 
 ### Slash commands (orchestrator routes)
 
-MVP command surface hanya `/settings ...`. Semua intent lain tetap natural-language chat dan dirutekan ke cursor-bridge/orchestrator tanpa user-facing slash command tambahan.
+Current mutation surface: `/settings patch <json>` and `/settings show`.
+`/model`, `/thinking`, `/compaction`, and `/reset` are also implemented
+orchestrator commands. Natural-language settings delegation is not implemented
+yet.
 
 | Command | Sub-agent | Mutasi config |
 |---------|-----------|---------------|
@@ -134,9 +141,9 @@ Provider-bridge backends (OpenAI/Claude/Kimi/OpenRouter/TokenRouter/etc.) do not
 
 | SapaLOQ mode | Role | Declared tools profile | Policy |
 |--------------|------|------------------------|--------|
-| **Ask** | `orchestrator` | `sapaloq_spawn_*`, task status, brief memory/context, clarification, light `desktop_*` | Delegate and observe; no file mutation, no shell |
-| **Plan** | `planner` | read-only workspace/search/errors + `sapaloq_write_plan_markdown` | Markdown assessment only; no execution side effects |
-| **Agent** | `task-runner` | workspace write tools, terminal/build/test, progress/complete, clarification | Execute approved/direct task under boundary guard |
+| **Ask** | `orchestrator` | spawn/status/clarification, assessment, web, light `desktop_*`, `exec` | Coordinate and explore; do not mutate task artifacts directly |
+| **Plan** | `planner` | read-only file/search/web, `exec`, `sapaloq_write_plan_markdown` | Explore thoroughly; terminal inspection is allowed, target-artifact mutation is not |
+| **Agent** | `task-runner` | file write tools, exec/build/test, progress/complete, clarification | Execute approved/direct task |
 
 Recommended MVP profile names:
 
@@ -156,9 +163,9 @@ ask:
 plan:
   sapaloq_read_context_packet
   sapaloq_read_memory_brief
-  workspace_search
-  workspace_read_file
-  workspace_list_errors
+  search
+  read_file
+  exec
   sapaloq_write_plan_markdown
   sapaloq_request_clarification
 
@@ -168,27 +175,55 @@ agent:
   sapaloq_update_task_progress
   sapaloq_complete_task
   sapaloq_fail_task
-  workspace_search
-  workspace_read_file
-  workspace_edit_file
-  workspace_create_file
-  terminal_run
-  tests_run
-  build_run
+  search
+  read_file
+  edit_file
+  create_file
+  exec
   sapaloq_request_clarification
 ```
 
 Provider `declaredTools` should be generated from this role profile. Static per-provider `declaredTools` remains a compatibility fallback only.
 
+Runtime enforcement rule: reusable/shared tool implementations still pass
+through the active role allowlist before execution. `exec` is expected
+for Ask and Planner, but an undeclared/provider-poisoned `exec` call from
+Scribe is denied.
+
 ### Continuation runtime
 
 Ask-mode tool continuation is budgeted across several independent limits instead of a fixed small loop:
 
-- `orchestrator.continuation.maxInferenceTurns` (default `128`)
-- `maxToolCalls` (default `512`)
-- `maxWallTimeMinutes` (default `30`)
-- `maxNoProgressTurns` and `maxIdenticalToolCalls` (default `5`)
-- `maxWaitSeconds` (default `120`)
+- `orchestrator.continuation.maxInferenceTurns` (code default `128`)
+- `maxToolCalls` (code default `512`)
+- `maxWallTimeMinutes` (code default `30`)
+- `maxNoProgressTurns` and `maxIdenticalToolCalls` (code default `5`)
+- `maxWaitSeconds` (code default `120`)
+
+> **Philosophy (per AGENTS.md golden rule #5 — "do not invent restrictions the
+> product contract does not require").** These count-based guards exist only to
+> stop a *genuinely* wedged run; they are NOT meant to cage a working model.
+> Narrating/"thinking out loud" before acting, and re-running a build/app while
+> debugging, are healthy behaviors — not failures. The shipped runtime config
+> therefore sets the count guards (`maxInferenceTurns`, `maxToolCalls`,
+> `maxNoProgressTurns`, `maxIdenticalToolCalls`, and per-role `subAgents.roles[].maxTurns`)
+> to effectively-unlimited values, leaving **`maxWallTimeMinutes` as the single
+> final safety net** against a process that hangs forever (e.g. a stuck
+> provider). `roleMaxTurns` enforces only a floor (≥1), no upper clamp, so an
+> operator can grant any role as much room as they want. Each continuation also
+> carries a one-line informational `[Usage] turn N · tool-calls so far M` readout
+> so the model can pace itself without being throttled.
+
+**Transient transport retry.** A turn that fails with a transient transport
+error — slow provider TTFB (`timeout awaiting response headers`), a reset/closed
+connection, a premature EOF, or a `5xx`/`429` response — is **retried in place**
+(same turn, same messages) with a short exponential backoff, up to
+`maxTransportRetries` (4) consecutive attempts; the counter resets after any
+turn that completes cleanly. A provider that stays down still surfaces the error
+instead of retrying forever, and the wall-time budget is the final cap.
+Deterministic failures (auth, malformed request, context overflow) are **not**
+retried here — context overflow has its own compaction-and-retry path.
+`conversation.go` (`looksLikeTransientTransport`).
 
 `sapaloq_wait` blocks in the backend until the selected task changes state or the wait window expires. Waiting emits a `status=waiting` event but does not spend inference turns. `sapaloq_stop` accepts `scope=generation|task|all`; the widget stop button uses `generation`, so background tasks are not killed accidentally.
 
@@ -310,6 +345,11 @@ Refactor config schema validation without touching Cursor worker memory.
 ```
 
 Direct agent (skip planner) — same `toolPolicy: full`, context packet dari Ask + context-scaler saja.
+
+Runtime handoff is explicit: `sapaloq_spawn_agent` accepts optional
+`plan_task_id`. The referenced task must be a completed Planner task in the
+same session and must contain a real `plan.md`. Without `plan_task_id`, Agent
+runs directly. The runtime never attaches the session's latest plan implicitly.
 
 ### Plan review
 
@@ -681,7 +721,11 @@ Orchestrator: "Task proposal masih jalan. Park dulu, switch ke work bugfix, atau
 
 ## Progress streaming (orchestrator watches sub-agents)
 
-Orchestrator **tidak menunggu** sub-agent selesai, tapi **streaming melihat progress** — termasuk state terakhir: thinking, response, toolcall, todo, in_progress, done.
+Orchestrator **tidak menunggu** sub-agent selesai, tapi **streaming melihat
+progress** — termasuk state terakhir: thinking, response, toolcall, todo,
+in_progress, done. Lifecycle task (`pending`, `in_progress`, terminal state)
+berbeda dari lifecycle satu inference response. Provider `done` hanya menutup
+satu turn dan tidak boleh dianggap task selesai.
 
 ### Progress event schema
 
@@ -779,6 +823,12 @@ Orchestrator holds **slim snapshot** per active sub-agent (bukan full stream):
 ```
 
 User bisa tanya: *"scribe lagi ngapain?"* → orchestrator baca snapshot + optional tail N events — **tanpa** inject full sub-agent history ke prompt (anti poisoning).
+
+`memory/tasks/<taskId>/status.json` adalah snapshot lifecycle durable. IPC
+`watch` mengirim snapshot task terbaru setelah handshake, lalu meneruskan event
+live. Karena itu widget yang baru start/reconnect tetap menerima kepastian
+status walaupun event bus in-memory terlewat. Widget meng-update satu card per
+`task_id`, bukan menambah bubble baru untuk setiap perubahan.
 
 Config: `orchestrator.progressStreaming` (see config.schema.json).
 
@@ -941,7 +991,8 @@ Orchestrator perlu **tahu kapan sub-agent selesai** untuk: update widget, notify
 
 ### Primary: event trigger
 
-Sub-agent **wajib** emit terminal event sebelum exit:
+Sub-agent executor **wajib** memanggil `sapaloq_complete_task` atau
+`sapaloq_fail_task` sebelum exit:
 
 ```json
 {
@@ -971,11 +1022,18 @@ Orchestrator **subscribe** via in-proc bus — lihat [EVENT-BUS.md](./EVENT-BUS.
 2. **jsonl WAL** — async append (audit/replay)
 3. **Unix socket** — sub-agent child → same binary
 
-Boot replay: tail `events.jsonl` if `replayOnBoot` — then live bus only.
+Untuk widget, reconnect catch-up dibaca dari
+`memory/tasks/*/status.json`; event bus tetap dipakai untuk update live.
+`notifyUserOnDone` hanya boleh mengatur notifikasi desktop opsional, bukan
+menyembunyikan status lifecycle dari chat.
 
 ### Fallback: heartbeat (watchdog only)
 
-Kalau sapaloq-core crash / sub-agent hang tanpa terminal event:
+Kalau sapaloq-core restart, worker goroutine lama sudah tidak ada. Task durable
+yang masih `pending`, `in_progress`, atau `stopping` dipindahkan ke `failed`
+dengan alasan orphaned; task tidak boleh diam-diam tetap aktif. Executor yang
+kehabisan idle nudge/turn tanpa terminal tool juga berakhir `failed`, bukan
+`done`.
 
 | Config | Default | Behavior |
 |--------|---------|----------|
@@ -1097,7 +1155,7 @@ Agent bisa tambah watcher via `/settings` → sub-agent:settings patch `events.w
 | Parallel when safe | memory-janitor + scribe concurrent if different namespaces |
 | Widget responsive | ring shows sub-agent count + **last progress event**; chat never frozen |
 | Progress without blocking | tail jsonl / inotify; orchestrator never joins sub-agent process |
-| Completion without blocking | event trigger primary; heartbeat only for stale detection |
+| Completion without blocking | event trigger primary (terminal transition → spoken assistant turn + bus republish); heartbeat watchdog fails stalled workers |
 | Aggressive workers | sub-agent task-runner high maxTurns; orchestrator doesn't wait |
 
 Event flow:

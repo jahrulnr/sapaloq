@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,13 +16,13 @@ import (
 )
 
 type taskRecord struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"session_id,omitempty"`
-	Role      string    `json:"role"`
-	Status    string    `json:"status"`
-	Task      string    `json:"task"`
-	Result    string    `json:"result,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	ID        string `json:"id"`
+	SessionID string `json:"session_id,omitempty"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
+	Task      string `json:"task"`
+	Result    string `json:"result,omitempty"`
+	Error     string `json:"error,omitempty"`
 	// PlanTaskID references the planner task whose plan.md this agent executes
 	// (set when Ask spawns an agent after a plan). Empty for direct agents.
 	PlanTaskID string `json:"plan_task_id,omitempty"`
@@ -75,14 +76,19 @@ type askToolResult struct {
 
 func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, call parse.ToolCall) askToolResult {
 	var args struct {
-		Task    string `json:"task"`
-		TaskID  string `json:"task_id"`
-		Seconds int    `json:"seconds"`
-		Reason  string `json:"reason"`
-		Scope   string `json:"scope"`
-		Answer  string `json:"answer"`
+		Task       string `json:"task"`
+		TaskID     string `json:"task_id"`
+		PlanTaskID string `json:"plan_task_id"`
+		Seconds    int    `json:"seconds"`
+		Reason     string `json:"reason"`
+		Scope      string `json:"scope"`
+		Answer     string `json:"answer"`
 	}
-	_ = json.Unmarshal(call.Arguments, &args)
+	if err := json.Unmarshal(call.Arguments, &args); err != nil {
+		// Tolerate raw control bytes in multi-line string values (see
+		// parseToolArgs); repair and retry so arguments aren't silently lost.
+		_ = json.Unmarshal(parse.RepairControlCharsInJSON(call.Arguments), &args)
+	}
 	o.auditTool(sessionID, "ask", call)
 	switch call.Name {
 	case "sapaloq_spawn_plan":
@@ -102,9 +108,12 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			task = fallbackTask
 		}
 		task = carryImageAttachments(task, fallbackTask)
-		// If a planner just produced a plan in this session, hand its plan.md to
-		// the agent so it executes with goal + acceptance criteria, not blind.
-		planTaskID := o.latestPlanTaskID(sessionID)
+		planTaskID := strings.TrimSpace(args.PlanTaskID)
+		if planTaskID != "" {
+			if err := o.validatePlanForAgent(sessionID, planTaskID); err != nil {
+				return askToolResult{text: "Cannot use plan: " + err.Error(), handled: true}
+			}
+		}
 		id, err := o.spawnBackground(snap, sessionID, "task-runner", task, planTaskID)
 		if err != nil {
 			return askToolResult{text: "Failed to start agent: " + err.Error(), handled: true}
@@ -160,7 +169,14 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		}
 		o.emit(ctx, out, statusEvent(sessionID, "working"))
 		if !changed {
-			return askToolResult{text: fmt.Sprintf("Task `%s` is still %s after the backend wait window.", record.ID, record.Status), handled: true}
+			// IMPORTANT: do NOT imply you will keep watching. This generation is
+			// about to end; the task keeps running in the background and its
+			// completion is delivered asynchronously (the orchestrator speaks it
+			// into chat on the terminal transition). Tell the user it will be
+			// surfaced automatically instead of promising to "wait a bit more".
+			return askToolResult{text: fmt.Sprintf(
+				"Task `%s` masih %s setelah jendela tunggu. Tidak perlu menunggu — aku akan otomatis mengabari di chat begitu task selesai/gagal/butuh keputusan (kamu juga bisa cek `sapaloq_get_task_status`).",
+				record.ID, record.Status), handled: true}
 		}
 		response := fmt.Sprintf("Task `%s` changed to **%s**.", record.ID, record.Status)
 		if record.Question != "" {
@@ -293,6 +309,7 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 	if err := o.writeTask(record); err != nil {
 		return "", err
 	}
+	o.publishTaskUpdate(sessionID, record)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	o.taskMu.Lock()
 	if o.taskCancels == nil {
@@ -364,7 +381,12 @@ func (o *Orchestrator) latestAwaitingTaskID(sessionID string) string {
 
 func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.CancelFunc, snap providerSnapshot, sessionID string, record taskRecord) {
 	defer cancel()
+	// Register this worker in the live roster so its health (PID, phase,
+	// heartbeat) is observable and the watchdog can detect a stall. The final
+	// status is recorded on deregister for post-mortem inspection.
+	o.workers.register(record.ID, record.Role, sessionID, record.Node)
 	defer func() {
+		o.workers.deregister(record.ID, record.Status)
 		o.taskMu.Lock()
 		delete(o.taskCancels, record.ID)
 		if tasks := o.sessionTasks[sessionID]; tasks != nil {
@@ -375,9 +397,37 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 		}
 		o.taskMu.Unlock()
 	}()
+
+	// Structural liveness: heartbeat for as long as THIS goroutine is alive,
+	// independent of stream/tool activity. Previously the heartbeat was driven
+	// from inside the inference loop (on each delta/tool), so any synchronous
+	// operation that blocks the goroutine without emitting events — a long
+	// `exec`, a slow time-to-first-byte, a silent stream — produced no
+	// heartbeat and the watchdog force-killed a worker that was actually fine.
+	// That was the recurring "worker stalled: no heartbeat" bug. Now the
+	// watchdog only fires when the goroutine itself is genuinely dead/wedged.
+	{
+		interval := time.Duration(o.cfg.Orchestrator.WithDefaults().Completion.HeartbeatIntervalSec) * time.Second / 2
+		if interval <= 0 {
+			interval = 15 * time.Second
+		}
+		hb := time.NewTicker(interval)
+		defer hb.Stop()
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-hb.C:
+					o.workers.heartbeat(record.ID, "")
+				}
+			}
+		}()
+	}
 	record.Status = "in_progress"
 	record.UpdatedAt = time.Now().UTC()
 	_ = o.writeTask(record)
+	o.publishTaskUpdate(sessionID, record)
 
 	o.runSubAgentLoop(ctx, snap, sessionID, &record)
 
@@ -386,53 +436,195 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 		record.Status = "stopped"
 	} else if record.Status == "in_progress" {
 		// Loop ended without an explicit complete/fail tool call: treat the
-		// accumulated result as the outcome.
-		if record.Error != "" {
+		// accumulated result as the outcome for non-executor roles only.
+		if record.Error != "" || record.Role == "task-runner" {
+			if record.Error == "" {
+				record.Error = "executor exited without an explicit terminal tool"
+			}
 			record.Status = "failed"
 		} else {
 			record.Status = "done"
 		}
 	}
+	o.workers.heartbeat(record.ID, "finalizing")
+	if record.Status == "failed" && record.Error != "" {
+		o.workerLogError(record.ID, "task failed: "+record.Error)
+	}
 	_ = o.writeTask(record)
+	// Completion trigger: push the terminal/notable state to the widget via the
+	// event bus (the `watch` op streams it). This is what lets the chat surface
+	// "task done/failed/needs-clarification" without the user polling — the
+	// "speak"-style trigger the realtime flow expects.
+	o.publishTaskUpdate(sessionID, record)
 	// NOTE: plan.md is written ONLY when the planner explicitly calls
 	// sapaloq_write_plan_markdown (see handleSubAgentTool). We deliberately do
 	// NOT synthesize a plan.md from free-form planner text here: a planner that
 	// merely answered a question (without producing a real plan) must not leave
-	// a fake plan.md that latestPlanTaskID would later hand to an agent.
+	// a fake artifact that can pass explicit plan_task_id validation.
 }
 
-// latestPlanTaskID returns the most recent successful planner task for a
-// session, used to hand a plan to a freshly spawned agent.
-func (o *Orchestrator) latestPlanTaskID(sessionID string) string {
+// publishTaskUpdate emits durable lifecycle visibility for every background
+// sub-agent state. Chat visibility is unconditional: notifyUserOnDone may
+// govern desktop notifications later, but it must never hide task certainty.
+func (o *Orchestrator) publishTaskUpdate(sessionID string, record taskRecord) {
+	ev := taskUpdateEvent(sessionID, record)
+	if ev.Kind == "" {
+		return
+	}
+	_ = o.progress.Append(record.ID, ev)
+	if o.bus != nil {
+		o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
+	}
+	// Event-driven completion: on a terminal transition, also SPEAK the outcome
+	// into the conversation so a finish that lands after sapaloq_wait returns is
+	// surfaced as a real chat message, not just a card. Idempotent per task id.
+	o.speakTaskCompletion(sessionID, record)
+	// Event-driven clarification: when a sub-agent pauses for a decision, let
+	// the orchestrator try to answer it itself (reusing the chat engine) and
+	// resume the task — otherwise the spoken question waits for the user. The
+	// worker goroutine has already exited cleanly, so this never blocks.
+	if record.Status == "awaiting_clarification" {
+		o.resolveClarification(sessionID, record)
+	}
+}
+
+func (o *Orchestrator) publishTaskActivity(sessionID string, record taskRecord, summary string) {
+	record.Status = "in_progress"
+	record.UpdatedAt = time.Now().UTC()
+	ev := taskUpdateEvent(sessionID, record)
+	ev.Summary = summary
+	_ = o.progress.Append(record.ID, ev)
+	if o.bus != nil {
+		o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
+	}
+}
+
+// RecentTaskUpdates returns the latest durable task states for widget catch-up.
+// It makes reconnect/startup independent from whether the UI happened to be
+// subscribed at the exact instant an in-memory bus event was published.
+func (o *Orchestrator) RecentTaskUpdates(limit int) []bridge.StreamEvent {
+	if limit <= 0 {
+		limit = 20
+	}
 	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
 	if err != nil {
-		return ""
+		return nil
 	}
-	var bestID string
-	var bestTime time.Time
+	records := make([]taskRecord, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		rec, readErr := o.readTask(entry.Name())
-		if readErr != nil || rec.Role != "planner" {
-			continue
-		}
-		if sessionID != "" && rec.SessionID != sessionID {
-			continue
-		}
-		// Only treat this planner task as a plan source if it actually produced
-		// a plan.md (via sapaloq_write_plan_markdown). A planner that merely
-		// answered a question leaves no plan.md and must not be handed off.
-		if _, statErr := os.Stat(filepath.Join(o.taskDir(rec.ID), "plan.md")); statErr != nil {
-			continue
-		}
-		if rec.UpdatedAt.After(bestTime) {
-			bestTime = rec.UpdatedAt
-			bestID = rec.ID
+		record, readErr := o.readTask(entry.Name())
+		if readErr == nil {
+			records = append(records, record)
 		}
 	}
-	return bestID
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].UpdatedAt.After(records[j].UpdatedAt)
+	})
+	if len(records) > limit {
+		records = records[:limit]
+	}
+	out := make([]bridge.StreamEvent, 0, len(records))
+	for i := len(records) - 1; i >= 0; i-- {
+		record := records[i]
+		ev := taskUpdateEvent(record.SessionID, record)
+		if ev.Kind != "" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func (o *Orchestrator) recoverOrphanedTasks() {
+	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		record, readErr := o.readTask(entry.Name())
+		if readErr != nil {
+			continue
+		}
+		switch record.Status {
+		case "pending", "in_progress", "stopping":
+			record.Status = "failed"
+			record.Error = "task orphaned by core restart; no worker is attached"
+			record.UpdatedAt = time.Now().UTC()
+			_ = o.writeTask(record)
+			o.publishTaskUpdate(record.SessionID, record)
+		}
+	}
+}
+
+func taskUpdateEvent(sessionID string, record taskRecord) bridge.StreamEvent {
+	var summary string
+	switch record.Status {
+	case "pending":
+		summary = "Task dijadwalkan dan menunggu worker."
+	case "in_progress":
+		summary = "Sub-agent sedang mengerjakan task."
+	case "done":
+		summary = strings.TrimSpace(record.Result)
+		if summary == "" {
+			summary = "Task selesai."
+		}
+	case "failed":
+		summary = "Task gagal"
+		if e := strings.TrimSpace(record.Error); e != "" {
+			summary += ": " + e
+		}
+	case "awaiting_clarification":
+		summary = "Sub-agent butuh keputusan"
+		if q := strings.TrimSpace(record.Question); q != "" {
+			summary += ": " + q
+		}
+	case "stopping":
+		summary = "Task sedang dihentikan."
+	case "stopped":
+		summary = "Task dihentikan."
+	default:
+		return bridge.StreamEvent{}
+	}
+	if len(summary) > maxTranscriptTurnBytes {
+		summary = summary[:maxTranscriptTurnBytes] + "…"
+	}
+	ev := bridge.NewEvent(bridge.EventTaskUpdate)
+	ev.SessionID = sessionID
+	ev.TaskID = record.ID
+	ev.TaskRole = record.Role
+	ev.TaskStatus = record.Status
+	ev.Summary = summary
+	if !record.UpdatedAt.IsZero() {
+		ev.At = record.UpdatedAt
+	}
+	return ev
+}
+
+// validatePlanForAgent makes Plan → Agent handoff explicit and task-scoped.
+// Selecting a session's latest plan can attach stale, unrelated work.
+func (o *Orchestrator) validatePlanForAgent(sessionID, planTaskID string) error {
+	rec, err := o.readTask(planTaskID)
+	if err != nil {
+		return err
+	}
+	if rec.Role != "planner" {
+		return fmt.Errorf("task %q is not a planner task", planTaskID)
+	}
+	if rec.Status != "done" {
+		return fmt.Errorf("plan %q is %s, not done", planTaskID, rec.Status)
+	}
+	if sessionID != "" && rec.SessionID != sessionID {
+		return fmt.Errorf("plan %q belongs to another session", planTaskID)
+	}
+	if _, err := os.Stat(filepath.Join(o.taskDir(planTaskID), "plan.md")); err != nil {
+		return fmt.Errorf("plan %q has no plan.md", planTaskID)
+	}
+	return nil
 }
 
 func (o *Orchestrator) taskDir(id string) string {
@@ -568,7 +760,15 @@ func (o *Orchestrator) waitForTaskChange(ctx context.Context, taskID string, pol
 		if readErr != nil {
 			return record, false, readErr
 		}
-		if next.UpdatedAt.After(record.UpdatedAt) || next.Status != record.Status {
+		// Only a MEANINGFUL change ends the wait: the task reached a terminal
+		// state, or its status transitioned to a different non-terminal state.
+		// A bare UpdatedAt bump with the SAME status (e.g. the agent calling
+		// sapaloq_update_task_progress) must NOT break the wait — otherwise the
+		// orchestrator returns "changed to in_progress", tends to re-wait, and
+		// the chat freezes in a wait→progress→wait loop (the "blocking
+		// progress" symptom). Such progress is surfaced live via the watch
+		// stream as a task card, not by waking the conversational loop.
+		if taskTerminal(next.Status) || next.Status != record.Status {
 			return next, true, nil
 		}
 		record = next

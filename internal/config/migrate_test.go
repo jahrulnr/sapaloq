@@ -124,3 +124,102 @@ func TestLoadMigratesAndPersists(t *testing.T) {
 		t.Fatalf("expected persisted schemaVersion %s, got %v", CurrentSchemaVersion, persisted["schemaVersion"])
 	}
 }
+
+func TestMigrate110AlignsActiveConfigNames(t *testing.T) {
+	raw := map[string]any{
+		"schemaVersion": "1.1.0",
+		"skills": map[string]any{
+			"directory":        "/tmp/skills",
+			"indexOnBoot":      true,
+			"allowAgentCreate": true,
+		},
+		"prompts": map[string]any{
+			"rolesPath":               "/tmp/roles",
+			"rolesOverlayPath":        "/tmp/roles.d",
+			"assembleOnSpawn":         true,
+			"maxRolePromptTokens":     2500,
+			"includeOverlayByDefault": true,
+		},
+		"events": map[string]any{
+			"busPath": "/tmp/events.jsonl",
+			"bus":     map[string]any{"socketPath": "/tmp/s.sock"},
+		},
+	}
+	out, changed, err := migrateRaw(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || out["schemaVersion"] != CurrentSchemaVersion {
+		t.Fatalf("migration did not reach current version: %#v", out)
+	}
+	skills := out["skills"].(map[string]any)
+	if skills["dir"] != "/tmp/skills" {
+		t.Fatalf("skills.dir not migrated: %#v", skills)
+	}
+	if _, exists := skills["directory"]; exists {
+		t.Fatalf("deprecated skills.directory retained: %#v", skills)
+	}
+	prompts := out["prompts"].(map[string]any)
+	if prompts["dir"] != "/tmp/roles" || prompts["enabled"] != true {
+		t.Fatalf("prompts not migrated: %#v", prompts)
+	}
+	events := out["events"].(map[string]any)
+	bus := events["bus"].(map[string]any)
+	if bus["walPath"] != "/tmp/events.jsonl" {
+		t.Fatalf("events WAL not migrated: %#v", events)
+	}
+}
+
+func TestMigrate120FlattensToolNames(t *testing.T) {
+	raw := map[string]any{
+		"schemaVersion": "1.2.0",
+		"subAgents": map[string]any{
+			"roles": map[string]any{
+				"task-runner": map[string]any{
+					"allowedTools": []any{
+						"workspace_read_file", "workspace_edit_file",
+						"workspace_write_file", "workspace_create_file",
+						"workspace_delete_file", "workspace_search",
+						"workspace_list_dir", "workspace_glob",
+						"system_exec", "terminal_run", "scribe_write_note",
+					},
+				},
+			},
+		},
+	}
+	out, changed, err := migrateRaw(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || out["schemaVersion"] != CurrentSchemaVersion {
+		t.Fatalf("migration did not reach current version: %#v", out)
+	}
+	roles := out["subAgents"].(map[string]any)["roles"].(map[string]any)
+	list := roles["task-runner"].(map[string]any)["allowedTools"].([]any)
+	got := map[string]bool{}
+	for _, v := range list {
+		got[v.(string)] = true
+	}
+	wantPresent := []string{"read_file", "edit_file", "write_file", "create_file",
+		"delete_file", "search", "list_dir", "glob", "exec", "scribe_write_note"}
+	for _, w := range wantPresent {
+		if !got[w] {
+			t.Fatalf("expected %q after flatten, got %v", w, list)
+		}
+	}
+	for _, old := range []string{"workspace_read_file", "system_exec", "terminal_run"} {
+		if got[old] {
+			t.Fatalf("legacy tool name %q retained: %v", old, list)
+		}
+	}
+	// system_exec and terminal_run both map to exec → must be de-duplicated.
+	count := 0
+	for _, v := range list {
+		if v.(string) == "exec" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("exec should appear exactly once after dedup, got %d in %v", count, list)
+	}
+}

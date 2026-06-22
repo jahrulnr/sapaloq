@@ -193,6 +193,20 @@ func (s *Server) handleWatch(ctx context.Context, conn net.Conn) {
 	events, cancel := s.orch.Bus().Subscribe(64)
 	defer cancel()
 	write(conn, Response{OK: true, Op: "watch", Message: "subscribed"})
+	// Durable catch-up: a widget may start late or reconnect after the in-memory
+	// bus push. Rehydrate recent task states from status.json before streaming
+	// live events. The frontend updates one card per task id, so overlap with a
+	// queued live event is harmless.
+	for _, event := range s.orch.RecentTaskUpdates(20) {
+		ev := event
+		write(conn, Response{
+			OK:        true,
+			Op:        "event",
+			SessionID: ev.SessionID,
+			Event:     &ev,
+			RingState: string(orchestrator.RingStateFor(ev.Kind)),
+		})
+	}
 	for {
 		select {
 		case <-ctx.Done():

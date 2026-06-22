@@ -2,7 +2,7 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop — bukan repo coding.
-> Last updated: 2026-06-19
+> Last updated: 2026-06-21
 
 Related: [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [VISION.md](./VISION.md) · [config.schema.json](../schema/config.schema.json)
 
@@ -33,6 +33,9 @@ SapaLOQ harus **prefetch context yang tepat dalam <2 detik** sebelum sub-agent j
 5. **Auto-learning** — memory-janitor + learning queue; kinerja membaik over time.
 6. **Compaction-safe** — durable state di index + files; transcript bukan source of truth.
 7. **Feedback shaping** — reward/penalty → `do_not_repeat` + positive/negative slices ([FEEDBACK-SOP.md](./FEEDBACK-SOP.md)).
+8. **Lifecycle certainty is durable** — task status comes from
+   `memory/tasks/<taskId>/status.json`; a missed live event or core restart must
+   produce a visible snapshot/failure, never an indefinitely silent task.
 
 ---
 

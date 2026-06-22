@@ -2,7 +2,7 @@
 
 > **Brain bridge drivers** — connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-06-19
+> Last updated: 2026-06-22 (provider bridge recovers labeled `[Tool: name]` / bare `name {args}` inline tool calls — see PROVIDER-BRIDGE.md)
 
 Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -19,6 +19,18 @@ SapaLOQ punya **dua registry driver** terpisah — jangan dicampur:
 | -------------- | ------------------- | ---------------------------------- | ---------------------------------------------------------------- |
 | **Platform**   | `internal/drivers/` | `os.json` + detect                 | `gnome`, `kde`, `windows`                                        |
 | **LLM bridge** | `internal/bridges/` | `config.json` → `llmBridge.driver` | `cursor-bridge`, `openai-compat`, `claude-compat`, `local-llama` |
+
+### Per-request timeout
+
+Each provider entry bounds a single inference request via
+`llmBridge.providers[].requestTimeoutSec` (default **600s**, resolved by
+`config.LLMBridge.RequestTimeout()`). It applies to **both** bridge families:
+the provider-bridge (`WireOptions.Timeout` → `buildHTTPRequest`
+`context.WithTimeout`) used by tokenrouter/OpenAI/Claude/Kimi, and the
+cursor-bridge (`StreamOptions`/`AgentStreamOptions`). The old hardcoded 120s
+wire default truncated long sub-agent steps (large file generation) into a bare
+"context deadline exceeded"; **both** bridges now rewrite that error to name the
+timeout and the knob to raise it (`explainStreamError`).
 
 
 ```

@@ -15,22 +15,13 @@ import (
 // and run web research before deciding or planning.
 
 var readOnlyAssessmentTools = []string{
-	"workspace_read_file",
-	"workspace_search",
-	"workspace_list_dir",
-	"workspace_glob",
+	"read_file",
+	"search",
+	"list_dir",
+	"glob",
+	"read_image",
 	"web_search",
 	"web_fetch",
-}
-
-// unrestrictedSystemTools give the model FULL host access (run any command
-// anywhere) — deliberately NOT sandboxed to the workspace root. Per the user's
-// design this is available in EVERY mode (Ask, planner, agent), because
-// spawning a plan/agent is overkill for many host-inspection tasks. A single
-// `system_exec` is enough: cat/sed/head/tail/rg cover any host file read, so a
-// separate `system_read_file` would be redundant surface.
-var unrestrictedSystemTools = []string{
-	"system_exec",
 }
 
 // desktopTools: host-desktop integration (notifications / DND). Gated by the
@@ -41,9 +32,9 @@ var desktopTools = []string{
 }
 
 // askTools: orchestrator coordinates and may assess lightly before delegating.
-// It also gets the unrestricted system_* tools so simple host tasks (e.g. "read
-// /etc/hosts", "run `id`") don't require spawning a plan/agent.
-var askTools = append(append(append([]string{
+// It also gets exec so simple host tasks (e.g. "read /etc/hosts", "run `id`")
+// don't require spawning a plan/agent.
+var askTools = append(append([]string{
 	"sapaloq_spawn_plan",
 	"sapaloq_spawn_agent",
 	"sapaloq_spawn_scribe",
@@ -51,11 +42,12 @@ var askTools = append(append(append([]string{
 	"sapaloq_wait",
 	"sapaloq_answer_clarification",
 	"sapaloq_stop",
-}, readOnlyAssessmentTools...), desktopTools...), unrestrictedSystemTools...)
+	"exec",
+}, readOnlyAssessmentTools...), desktopTools...)
 
 // scribeTools: a named sub-agent that captures notes into the user's storage by
 // boundary. It is read-only on the project (assessment tools) and may only
-// persist via scribe_write_note (NOT general workspace writes).
+// persist via scribe_write_note (NOT general file writes).
 var scribeTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"scribe_write_note",
 	"sapaloq_update_task_progress",
@@ -64,22 +56,22 @@ var scribeTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"sapaloq_request_clarification",
 )
 
-// planTools: planner. Assessment + the unrestricted system_* tools (so it can
-// investigate the host while planning) + write/read its own plan markdown.
-var planTools = append(append(append([]string{}, readOnlyAssessmentTools...), unrestrictedSystemTools...),
+// planTools: planner. Assessment + exec (so it can investigate the host while
+// planning) + write/read its own plan markdown.
+var planTools = append(append([]string{}, readOnlyAssessmentTools...),
+	"exec",
 	"sapaloq_write_plan_markdown",
 	"sapaloq_read_plan_markdown",
 	"sapaloq_request_clarification",
 )
 
-// agentTools: full executor. Assessment + unrestricted host access +
-// write/edit/delete/exec + lifecycle.
-var agentTools = append(append(append([]string{}, readOnlyAssessmentTools...), unrestrictedSystemTools...),
-	"workspace_write_file",
-	"workspace_create_file",
-	"workspace_edit_file",
-	"workspace_delete_file",
-	"terminal_run",
+// agentTools: full executor. Assessment + exec + write/edit/delete + lifecycle.
+var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
+	"exec",
+	"write_file",
+	"create_file",
+	"edit_file",
+	"delete_file",
 	"sapaloq_read_plan_markdown",
 	"sapaloq_update_task_progress",
 	"sapaloq_complete_task",
@@ -138,7 +130,7 @@ func (o *Orchestrator) toolsForRole(role string) []string {
 // names the orchestrator actually implements.
 func knownToolSet() map[string]struct{} {
 	set := map[string]struct{}{}
-	for _, profile := range [][]string{askTools, planTools, agentTools, scribeTools, desktopTools, unrestrictedSystemTools} {
+	for _, profile := range [][]string{askTools, planTools, agentTools, scribeTools, desktopTools} {
 		for _, name := range profile {
 			set[name] = struct{}{}
 		}
@@ -153,10 +145,10 @@ func init() {
 		provider.RegisterToolSchema(name, json.RawMessage(schema))
 	}
 
-	reg("workspace_read_file", `{
+	reg("read_file", `{
 		"type":"object",
 		"properties":{
-			"path":{"type":"string","description":"Relative path within the workspace root to read."},
+			"path":{"type":"string","description":"Path to read (absolute, ~-relative, or relative to CWD). Any host path is allowed."},
 			"offset":{"type":"integer","description":"Optional 1-based start line. With limit, returns only that line window (numbered)."},
 			"limit":{"type":"integer","description":"Optional max lines to read from offset (default 200 when offset/limit used)."},
 			"max_bytes":{"type":"integer","description":"Optional cap on bytes read (default 65536). Binary files are refused."}
@@ -164,19 +156,20 @@ func init() {
 		"required":["path"]
 	}`)
 
-	reg("workspace_glob", `{
+	reg("glob", `{
 		"type":"object",
 		"properties":{
+			"path":{"type":"string","description":"Root directory to search (default CWD). Any host path is allowed."},
 			"pattern":{"type":"string","description":"Glob pattern, e.g. *.go or **/*.ts (supports ** for recursive)."},
 			"max_results":{"type":"integer","description":"Max paths to return (default 40)."}
 		},
 		"required":["pattern"]
 	}`)
 
-	reg("workspace_edit_file", `{
+	reg("edit_file", `{
 		"type":"object",
 		"properties":{
-			"path":{"type":"string","description":"Relative path within the workspace root to edit in place."},
+			"path":{"type":"string","description":"Path to edit in place (absolute, ~-relative, or relative to CWD). Any host path is allowed."},
 			"old_string":{"type":"string","description":"Exact text to replace (include surrounding context to make it unique)."},
 			"new_string":{"type":"string","description":"Replacement text."},
 			"replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring a unique match."}
@@ -184,17 +177,18 @@ func init() {
 		"required":["path","old_string","new_string"]
 	}`)
 
-	reg("workspace_delete_file", `{
+	reg("delete_file", `{
 		"type":"object",
 		"properties":{
-			"path":{"type":"string","description":"Relative path within the workspace root to delete (files only)."}
+			"path":{"type":"string","description":"Path to delete (files only; absolute, ~-relative, or relative to CWD). Any host path is allowed."}
 		},
 		"required":["path"]
 	}`)
 
-	reg("workspace_search", `{
+	reg("search", `{
 		"type":"object",
 		"properties":{
+			"path":{"type":"string","description":"Root directory to search (default CWD). Any host path is allowed."},
 			"pattern":{"type":"string","description":"Regular expression to search for in file contents."},
 			"glob":{"type":"string","description":"Optional filename glob filter, e.g. *.go."},
 			"max_results":{"type":"integer","description":"Max matching lines to return (default 40)."}
@@ -202,10 +196,10 @@ func init() {
 		"required":["pattern"]
 	}`)
 
-	reg("workspace_list_dir", `{
+	reg("list_dir", `{
 		"type":"object",
 		"properties":{
-			"path":{"type":"string","description":"Relative directory path within the workspace root (default \".\")."}
+			"path":{"type":"string","description":"Directory path to list (default \".\"; absolute, ~-relative, or relative to CWD). Any host path is allowed."}
 		}
 	}`)
 
@@ -226,41 +220,58 @@ func init() {
 		"required":["url"]
 	}`)
 
-	reg("workspace_write_file", `{
+	reg("write_file", `{
 		"type":"object",
 		"properties":{
-			"path":{"type":"string","description":"Relative path within the workspace root to overwrite."},
+			"path":{"type":"string","description":"Path to overwrite (absolute, ~-relative, or relative to CWD). Any host path is allowed. Parent dirs are created."},
 			"content":{"type":"string","description":"Full file content to write."}
 		},
 		"required":["path","content"]
 	}`)
 
-	reg("workspace_create_file", `{
+	reg("create_file", `{
 		"type":"object",
 		"properties":{
-			"path":{"type":"string","description":"Relative path within the workspace root to create (must not exist)."},
+			"path":{"type":"string","description":"Path to create (must not exist; absolute, ~-relative, or relative to CWD). Any host path is allowed. Parent dirs are created."},
 			"content":{"type":"string","description":"Full file content to write."}
 		},
 		"required":["path","content"]
 	}`)
 
-	reg("terminal_run", `{
+	reg("exec", `{
 		"type":"object",
 		"properties":{
-			"command":{"type":"string","description":"Shell command to run inside the workspace root."},
-			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
-		},
-		"required":["command"]
-	}`)
-
-	reg("system_exec", `{
-		"type":"object",
-		"properties":{
-			"command":{"type":"string","description":"Any shell command to run on the host with full, unrestricted access. NOT pinned to the workspace root. Use this to read host files too (e.g. cat/sed -n/head/tail/rg). NOTE: commands run via 'bash -lc', so syntax is POSIX/Unix (Linux & macOS); macOS BSD tools differ slightly from GNU (e.g. sed -i, date), and on Windows hosts a bash shell may be unavailable — prefer portable invocations or check the OS first."},
+			"command":{"type":"string","description":"Any shell command to run on the host with full access. Use this to read host files too (e.g. cat/sed -n/head/tail/rg). NOTE: commands run via 'bash -lc', so syntax is POSIX/Unix (Linux & macOS); macOS BSD tools differ slightly from GNU (e.g. sed -i, date), and on Windows hosts a bash shell may be unavailable — prefer portable invocations or check the OS first."},
 			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded). Defaults to the process CWD."},
 			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
 		},
 		"required":["command"]
+	}`)
+
+	reg("read_image", `{
+		"type":"object",
+		"properties":{
+			"path":{"type":"string","description":"Path to an image file on the host (absolute, ~-relative, or relative to CWD). Loads the actual image into your vision so you can SEE it — use this for local image files (png, jpeg, gif, webp). Do NOT use read_file/exec to read image bytes as text; use this instead. Requires a vision-capable model."},
+			"max_bytes":{"type":"integer","description":"Optional cap on bytes read (default 10485760 / 10 MiB; larger files are refused)."}
+		},
+		"required":["path"]
+	}`)
+
+	reg("sapaloq_spawn_plan", `{
+		"type":"object",
+		"properties":{
+			"task":{"type":"string","description":"The task to investigate and plan."}
+		},
+		"required":["task"]
+	}`)
+
+	reg("sapaloq_spawn_agent", `{
+		"type":"object",
+		"properties":{
+			"task":{"type":"string","description":"The task to execute."},
+			"plan_task_id":{"type":"string","description":"Optional explicit planner task id to execute after the user approves that plan. Omit for a direct Agent run."}
+		},
+		"required":["task"]
 	}`)
 
 	reg("sapaloq_write_plan_markdown", `{

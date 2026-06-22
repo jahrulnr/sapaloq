@@ -52,6 +52,16 @@
           "minimum": 0,
           "default": 1000000,
           "description": "Maximum input tokens per turn. Defaults to 1,000,000."
+        },
+        "supportsImages": {
+          "type": "boolean",
+          "description": "Runtime-managed vision capability cache for this provider/model."
+        },
+        "requestTimeoutSec": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 600,
+          "description": "Per-inference-request timeout in seconds. Long sub-agent steps (big file writes) can exceed the old 120s and surface as 'context deadline exceeded'. 0 → 600."
         }
       }
     }
@@ -60,7 +70,7 @@
     "schemaVersion": {
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "default": "1.0.0"
+      "default": "1.3.0"
     },
     "updatedAt": { "type": "string", "format": "date-time" },
     "updatedBy": {
@@ -129,6 +139,25 @@
           },
           "default": ["notify", "notify.watch"]
         }
+      }
+    },
+
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Active runtime desktop adapter selection. The broader driver/os.json contract remains roadmap work.",
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "default": "auto",
+          "description": "auto or a registered adapter id such as gnome, freedesktop, or headless"
+        },
+        "detectOrder": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["gnome", "freedesktop", "headless"]
+        },
+        "allowFallback": { "type": "boolean", "default": true }
       }
     },
 
@@ -227,6 +256,28 @@
           "enum": ["personal", "hobby", "work", "auto"],
           "default": "auto"
         },
+        "continuation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxInferenceTurns": { "type": "integer", "minimum": 1, "default": 128 },
+            "maxToolCalls": { "type": "integer", "minimum": 1, "default": 512 },
+            "maxWallTimeMinutes": { "type": "integer", "minimum": 1, "default": 30 },
+            "maxNoProgressTurns": { "type": "integer", "minimum": 1, "default": 5 },
+            "maxIdenticalToolCalls": { "type": "integer", "minimum": 1, "default": 5 },
+            "maxWaitSeconds": { "type": "integer", "minimum": 1, "default": 120 }
+          }
+        },
+        "compaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backgroundThreshold": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.7 },
+            "blockingThreshold": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.88 },
+            "preserveRecentFraction": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.3 },
+            "resumeAfterCompaction": { "type": "boolean", "default": true }
+          }
+        },
         "antiContextPoisoning": {
           "type": "object",
           "properties": {
@@ -277,9 +328,11 @@
               "default": 60,
               "description": "Watchdog when wakeViaBus; not primary event path"
             },
-            "staleAfterSec": { "type": "integer", "minimum": 30, "default": 120 },
+            "staleAfterSec": { "type": "integer", "minimum": 30, "default": 180, "description": "Worker health watchdog: a worker with no heartbeat for this long is marked failed (stalled)." },
             "requireTerminalEvent": { "type": "boolean", "default": true },
-            "notifyUserOnDone": { "type": "boolean", "default": false }
+            "notifyUserOnDone": { "type": "boolean", "default": false },
+            "speakOnTerminal": { "type": "boolean", "default": true, "description": "Inject a spoken assistant turn into the task session on done/failed/awaiting so a completion landing AFTER sapaloq_wait is still surfaced in chat (not just a card)." },
+            "workerErrorLog": { "type": "boolean", "default": true, "description": "Write a per-worker error-only log at memory/workers/<task-id>/error.log for debugging." }
           }
         },
         "clarification": {
@@ -497,12 +550,13 @@
 
     "skills": {
       "type": "object",
+      "additionalProperties": false,
       "description": "SapaLOQ-local skills registry (indexed, not full dump)",
       "properties": {
-        "directory": { "type": "string", "default": "~/.config/sapaloq/skills" },
+        "enabled": { "type": "boolean", "default": true },
+        "dir": { "type": "string", "default": "~/.config/sapaloq/skills" },
         "maxLoadPerTurn": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
-        "indexOnBoot": { "type": "boolean", "default": true },
-        "allowAgentCreate": { "type": "boolean", "default": true }
+        "maxBodyLines": { "type": "integer", "minimum": 5, "maximum": 200, "default": 40 }
       }
     },
 
@@ -560,17 +614,21 @@
 
     "prompts": {
       "type": "object",
-      "description": "Role templates and post-task overlay paths for system-prompt assembly",
+      "additionalProperties": false,
+      "description": "Replaceable role prompts materialized from embedded defaults",
       "properties": {
-        "rolesPath": { "type": "string", "default": "~/.config/sapaloq/prompt/roles" },
-        "rolesOverlayPath": {
-          "type": "string",
-          "default": "~/.config/sapaloq/prompt/roles.d",
-          "description": "Auto-generated overlays from learning-agent"
-        },
-        "assembleOnSpawn": { "type": "boolean", "default": true },
-        "maxRolePromptTokens": { "type": "integer", "minimum": 500, "default": 2500 },
-        "includeOverlayByDefault": { "type": "boolean", "default": true }
+        "enabled": { "type": "boolean", "default": true },
+        "dir": { "type": "string", "default": "~/.config/sapaloq/prompts" }
+      }
+    },
+
+    "vault": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Rotating structured tool-call audit log",
+      "properties": {
+        "maxLogBytes": { "type": "integer", "minimum": 1, "default": 5242880 },
+        "keepRotatedFiles": { "type": "integer", "minimum": 1, "default": 3 }
       }
     },
 
@@ -631,6 +689,10 @@
             "socketPath": {
               "type": "string",
               "default": "~/.config/sapaloq/run/sapaloq.sock"
+            },
+            "walPath": {
+              "type": "string",
+              "default": "~/.config/sapaloq/memory/events.jsonl"
             },
             "watcherBufferSize": {
               "type": "integer",
