@@ -43,6 +43,36 @@ func TestLeakScannerReassemblesFragmentedInlineCall(t *testing.T) {
 	}
 }
 
+// TestLeakScannerReassemblesLabeledInlineCall is the bridge-level regression for
+// the orch-chat leak where the model emitted `[Tool: exec]\n{"command":...}` in
+// its content channel and it surfaced as a response_delta instead of a tool
+// call. The scanner must recover the bracketed-label form, streamed across many
+// tiny deltas (the way the real SSE stream split it).
+func TestLeakScannerReassemblesLabeledInlineCall(t *testing.T) {
+	full := "Sip, lagi kukerjain di background.\n[Tool: exec]\n{\"command\":\"ls -lah /tmp/profile/\"}"
+
+	s := newLeakScanner([]string{"exec", "create_file"})
+	var got []parse.ToolCall
+	for i := 0; i < len(full); i += 4 { // tiny fragments, like SSE
+		end := i + 4
+		if end > len(full) {
+			end = len(full)
+		}
+		got = append(got, s.feed(full[i:end])...)
+	}
+	got = append(got, s.flush()...)
+
+	if len(got) != 1 {
+		t.Fatalf("want exactly 1 reassembled labeled tool call, got %d (%v)", len(got), got)
+	}
+	if got[0].Name != "exec" {
+		t.Fatalf("name=%q want exec", got[0].Name)
+	}
+	if !strings.Contains(string(got[0].Arguments), "ls -lah /tmp/profile/") {
+		t.Fatalf("reassembled args lost the command: %q", string(got[0].Arguments))
+	}
+}
+
 // TestLeakScannerIgnoresUndeclaredAndDisabled verifies the false-positive guard
 // (only declared tool names match) and that an empty declared list disables the
 // scanner entirely (so it never invents calls from arbitrary JSON).

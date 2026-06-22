@@ -1,7 +1,7 @@
 # SapaLOQ — Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-22 (structural worker liveness + no-limit budgets; wall-time is the only final cap)
+> Last updated: 2026-06-22 (structural worker liveness + no-limit budgets; wall-time is the only final cap; scrub echoed `[Tool results]`/`[Usage]` labels from visible output)
 
 ---
 
@@ -213,6 +213,17 @@ Ask-mode tool continuation is budgeted across several independent limits instead
 > operator can grant any role as much room as they want. Each continuation also
 > carries a one-line informational `[Usage] turn N · tool-calls so far M` readout
 > so the model can pace itself without being throttled.
+
+**Scaffolding-label scrubbing (visible output).** Tool output is fed back into
+the conversation prefixed with a literal `[Tool results]` line plus the `[Usage]`
+readout above. Some models mimic that transcript framing and begin their *visible*
+answer by echoing the label (e.g. `[Tool Results]\nPantesan…`). A turn-scoped
+`responseScrubber` (`internal/core/orchestrator/response_scrub.go`) strips such a
+label when it appears at the **start** of a turn's response — buffering only the
+small leading region (so a label split across SSE deltas is still caught) and then
+passing the rest through untouched. The anchor is start-of-turn only, so a `[`
+appearing later in the answer is never altered; the cleaned text is what both the
+UI stream and the persisted assistant turn receive.
 
 **Transient transport retry.** A turn that fails with a transient transport
 error — slow provider TTFB (`timeout awaiting response headers`), a reset/closed

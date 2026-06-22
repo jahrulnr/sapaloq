@@ -1,7 +1,7 @@
 # SapaLOQ — Provider Bridge (OpenAI / Claude / Kimi)
 
 > **Multi-model LLM bridge** — speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
-> Last updated: 2026-06-22 (inline tool-call reassembly across content deltas)
+> Last updated: 2026-06-22 (inline tool-call reassembly across content deltas; labeled `[Tool: name]` / bare `name {args}` recovery)
 
 Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -335,6 +335,25 @@ real `EventToolCall`. Two safeguards:
   is in the request's `DeclaredTools`, so a JSON blob inside file content that
   merely has `name`+`arguments` fields is not misread as a call. An empty
   declared list disables the scanner entirely.
+
+**Labeled / bare inline forms.** Besides the `{"name":...,"arguments":{...}}`
+envelope, the scanner also recovers the two *labeled* shapes a model may emit
+inline (the role prompts instruct calls as `read_file {"path":"..."}`,
+`exec {"command":"..."}`), where the trailing `{...}` is the **arguments** body,
+not an envelope:
+
+- **Bracketed** — `[Tool: <name>]\n{args}`. Accepted even without a declared
+  list (the label is unambiguous), but still gated by `DeclaredTools` when one
+  is set. This was the orch-chat leak: `[Tool: exec]\n{"command":"ls ..."}`
+  surfaced as a `response_delta` because no parser recognised it.
+- **Bare** — `<name> {args}` where `<name>` is a snake_case token. Accepted
+  **only** when `<name>` is in `DeclaredTools`, so prose like `the object {...}`
+  is never misread; a name that is only a suffix of a longer word (`prefixexec`)
+  is rejected too.
+
+Both reuse the string-aware brace matcher and the moving-frontier streaming
+logic, so a labeled call whose large args object (or the label itself) is split
+across deltas is still reassembled into a single `EventToolCall`.
 
 (The old `EventToolLeak` event type remains defined but is no longer emitted by
 this path; the orchestrator only ever consumed `EventToolCall`.)

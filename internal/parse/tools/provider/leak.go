@@ -74,6 +74,22 @@ func ParseToolCallLeakFrom(text string, from int, known func(string) bool) (pars
 		if text[i] != '{' {
 			continue
 		}
+		// A label/name immediately preceding this '{' lets the model use the
+		// "labeled" tool-call forms it is actually instructed to emit (see the
+		// role prompts): a bracketed `[Tool: <name>]\n{args}` or a bare
+		// `<name> {args}`. In both cases the trailing {...} is the *arguments*
+		// object, not a {"name":...,"arguments":{...}} envelope. We look back
+		// from this '{' for such a label; on a match the '{' is the args body.
+		if label, labelStart, hasLabel := toolLabelBefore(text, i, known); hasLabel {
+			obj, ok := scanOneJSONObject(text, i)
+			if !ok {
+				// args object still streaming — keep the partial from the
+				// label so the next delta can complete it.
+				return parse.ToolCall{}, labelStart, false
+			}
+			args := normalizeArgs(obj.text)
+			return parse.ToolCall{Name: label, Arguments: args, Source: "openai_inline"}, obj.end + 1, true
+		}
 		obj, ok := scanOneJSONObject(text, i)
 		if !ok {
 			// Unbalanced from here to EOF: a larger object is still being
@@ -92,7 +108,115 @@ func ParseToolCallLeakFrom(text string, from int, known func(string) bool) (pars
 		}
 		return parse.ToolCall{Name: name, Arguments: args, Source: "openai_inline"}, obj.end + 1, true
 	}
+	// No complete object matched. If the buffer ends with a partial bracketed
+	// label (an unclosed `[...` whose '{' has not arrived yet), back the scan
+	// frontier off to that '[' so the label is retained for the next delta —
+	// otherwise we'd advance past it and never recognise the call once its
+	// args object finally streams in.
+	if open := strings.LastIndexByte(text, '['); open >= from && !strings.ContainsAny(text[open:], "{]") {
+		return parse.ToolCall{}, open, false
+	}
 	return parse.ToolCall{}, len(text), false
+}
+
+// toolLabelBefore inspects the bytes immediately preceding the args-object '{'
+// at index `brace` for one of the labeled tool-call forms the model is told to
+// emit. It recognises:
+//
+//	[Tool: <name>]   (bracketed label, optional whitespace before the '{')
+//	<name>           (a bare known tool-name token, whitespace before the '{')
+//
+// On a match it returns the tool name and the index where the label begins (so
+// a streaming caller can retain the whole label+partial-args for the next
+// delta). The bare form requires `known` to confirm the token is a real tool
+// name — otherwise any `word {` in prose would be misread. The bracketed form
+// is unambiguous enough to accept without `known`, but still honours it when
+// provided.
+func toolLabelBefore(text string, brace int, known func(string) bool) (name string, start int, ok bool) {
+	// Skip whitespace between the label and the '{'.
+	j := brace - 1
+	for j >= 0 && isASCIISpace(text[j]) {
+		j--
+	}
+	if j < 0 {
+		return "", 0, false
+	}
+	// Bracketed form: ...[Tool: NAME]{
+	if text[j] == ']' {
+		open := strings.LastIndexByte(text[:j], '[')
+		if open < 0 {
+			return "", 0, false
+		}
+		inner := strings.TrimSpace(text[open+1 : j])
+		low := strings.ToLower(inner)
+		if !strings.HasPrefix(low, "tool:") {
+			return "", 0, false
+		}
+		n := strings.TrimSpace(inner[len("tool:"):])
+		if n == "" || !isToolNameToken(n) {
+			return "", 0, false
+		}
+		if known != nil && !known(n) {
+			return "", 0, false
+		}
+		return n, open, true
+	}
+	// Bare form: ...NAME{ — walk back over a single tool-name token.
+	end := j + 1
+	k := j
+	for k >= 0 && isToolNameByte(text[k]) {
+		k--
+	}
+	tokStart := k + 1
+	if tokStart >= end {
+		return "", 0, false
+	}
+	// The token must be a standalone word: preceded by start-of-buffer or a
+	// non-identifier byte (whitespace, punctuation). This stops matching the
+	// tail of a longer word like "notexec {".
+	if tokStart > 0 && isToolNameByte(text[tokStart-1]) {
+		return "", 0, false
+	}
+	n := text[tokStart:end]
+	if known == nil || !known(n) {
+		return "", 0, false
+	}
+	return n, tokStart, true
+}
+
+// normalizeArgs trims an args object to its canonical bytes. The object came
+// from the string-aware scanOneJSONObject, so it is already balanced; we keep
+// the raw (trimmed) bytes whether or not json.Valid accepts them so a slightly
+// malformed body is still surfaced as a tool call rather than silently dropped.
+func normalizeArgs(s string) json.RawMessage {
+	return json.RawMessage(strings.TrimSpace(s))
+}
+
+func isASCIISpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+// isToolNameByte reports whether b is a valid character inside a tool-name
+// token (letters, digits, underscore — matching the snake_case tool ids used
+// throughout SapaLOQ such as read_file, web_search, sapaloq_complete_task).
+func isToolNameByte(b byte) bool {
+	return b == '_' ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
+}
+
+// isToolNameToken reports whether s is composed entirely of tool-name bytes.
+func isToolNameToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !isToolNameByte(s[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 type scannedObject struct {

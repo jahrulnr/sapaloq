@@ -2,7 +2,7 @@
 
 > **Brain bridge drivers** — connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-06-21 (per-request timeout configurable)
+> Last updated: 2026-06-22 (provider bridge recovers labeled `[Tool: name]` / bare `name {args}` inline tool calls — see PROVIDER-BRIDGE.md)
 
 Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 

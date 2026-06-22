@@ -78,6 +78,53 @@ jalanap").
 
 ---
 
+## Fixed this session (2026-06-22) — echoed `[Tool Results]` / `[Usage]` scaffolding labels leaked into the visible answer
+
+- **Bug.** A model began its visible reply with the literal scaffolding label
+  `[Tool Results]` followed by the real prose (orch-chat `…683.jsonl` line 84:
+  `[Tool Results]\nPantesan kelihatan "kosongan" ya…`). The user saw the
+  internal label. Root cause: the orchestrator feeds tool output back into the
+  conversation prefixed with `"[Tool results]\n"` (`conversation.go:350`) and a
+  `"[Usage] turn N · tool-calls so far M"` line; the model mimics that framing
+  and echoes the label at the start of its answer. There was no sanitizer on the
+  visible-response path (deltas are forwarded verbatim, incrementally).
+- **Fix.** Added a turn-scoped `responseScrubber`
+  (`internal/core/orchestrator/response_scrub.go`) wired into the
+  `EventResponseDelta` path in `conversation.go`. It strips a leading
+  `[Tool results]` / `[Tool result]` (optionally + newline) or `[Usage] …` line
+  when it appears at the **start** of a turn's visible output, buffering only the
+  small leading region so a label split across SSE deltas is still caught, then
+  passing the rest through unchanged. The anchor is start-of-turn only (a `[`
+  later in the answer is untouched); both the live UI stream and the persisted
+  assistant turn get the cleaned text. Unit tests (`response_scrub_test.go`)
+  cover mixed-case/lowercase labels, 1-byte-fragment splits, `[Usage]` lines,
+  no-label pass-through, and non-label leading brackets. Docs: `ORCHESTRATOR.md`.
+
+---
+
+## Fixed this session (2026-06-22) — inline `[Tool: name]` / bare `name {args}` tool calls leaked into chat
+
+- **Bug.** A model emitted its tool call inline in the *content* channel as
+  `[Tool: exec]\n{"command":"ls -lah /tmp/profile/"}` (orch-chat
+  `…683.jsonl` lines 27-29). It surfaced as visible `response_delta` text
+  instead of an `EventToolCall`, so the orchestrator never ran the tool. Root
+  cause: the inline-call reassembler (`internal/parse/tools/provider/leak.go`)
+  only recognised the `{"name":...,"arguments":{...}}` envelope, not the
+  *labeled* forms the role prompts actually instruct (`exec {…}`,
+  `read_file {…}`).
+- **Fix.** `ParseToolCallLeakFrom` now also recovers two labeled shapes whose
+  trailing `{…}` is the **arguments** body: bracketed `[Tool: <name>]\n{args}`
+  (accepted even without a declared list; still gated when one is set) and bare
+  `<name> {args}` (accepted **only** for declared tool names, with a
+  word-boundary check so `prefixexec {` and prose `the object {…}` are not
+  misread). Both reuse the string-aware brace matcher + moving-frontier
+  streaming logic, so a labeled call split across SSE deltas (label or large
+  args) is still reassembled into a single `EventToolCall`. Unit + bridge-level
+  regression tests added (`leak_test.go`, `leak_scanner_test.go`). Docs:
+  `PROVIDER-BRIDGE.md`, `BRIDGE.md`.
+
+---
+
 ## Implemented this session (2026-06-22) — stop caging the model: structural liveness + no-limit budgets
 
 The recurring "worker stalled / task failed" pain was traced to two separate
