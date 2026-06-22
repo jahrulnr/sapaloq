@@ -196,6 +196,11 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			return all, err
 		}
 		var response strings.Builder
+		// ctFilter strips any "[Called tools: …]" note the model echoes back
+		// into its visible text (it learns the shape from the in-transcript
+		// record calledToolsNote injects). The echo is not a real tool call and
+		// must not reach the user or the persisted assistant message.
+		var ctFilter calledToolsFilter
 		var toolResults []string
 		var pendingTools []scheduledTool
 		stop := false
@@ -227,9 +232,18 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			switch ev.Kind {
 			case bridge.EventResponseDelta:
 				resetIdle()
-				response.WriteString(ev.Delta)
-				all.WriteString(ev.Delta)
 				out.beat(fmt.Sprintf("responding turn %d/%s", inferenceTurn, turnBudgetLabel))
+				// Drop any echoed "[Called tools: …]" note before it is
+				// streamed or persisted. The filter may withhold a trailing
+				// fragment (the marker can split across deltas), so an empty
+				// result here just means "still deciding" — flushed on done.
+				clean := ctFilter.feed(ev.Delta)
+				if clean == "" {
+					continue
+				}
+				response.WriteString(clean)
+				all.WriteString(clean)
+				ev.Delta = clean
 				out.emit(runCtx, ev)
 			case bridge.EventToolCall:
 				resetIdle()
@@ -328,6 +342,15 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 		}
 		cancelAttempt()
+		// The stream for this attempt has ended (done, channel close, or
+		// cancellation). Release any text the calledToolsFilter was withholding
+		// as a possible "[Called tools: …]" marker that turned out to be
+		// ordinary text; an unterminated marker body is intentionally dropped.
+		if tail := ctFilter.flush(); tail != "" {
+			response.WriteString(tail)
+			all.WriteString(tail)
+			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: tail, At: time.Now().UTC()})
+		}
 		if len(pendingTools) > 0 && !retryTextOnly && !retryCompacted && !retryTransport && !hadError {
 			results, batchStop := o.executeToolBatch(runCtx, runID, sessionID, pendingTools)
 			toolResults = append(toolResults, results...)

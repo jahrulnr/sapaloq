@@ -44,6 +44,24 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Implemented this session (2026-06-23) — suppress echoed [Called tools: …] leak
+
+- **Stopped the `[Called tools: …]` note leaking into the response stream.**
+  Root cause: `calledToolsNote` (anti double-spawn) injects a
+  `"[Called tools: name, …]"` line into the assistant *transcript* so the model
+  has in-context proof it called a tool. Some models then *imitate* that line on
+  a later turn and emit `[Called tools: write_file …, write_file …]` as plain
+  prose — not a real tool call (no JSON args, so the leak-scanner can't recover
+  it), which streamed straight to the user and the progress `.jsonl`.
+- **Fix.** New stateful `calledToolsFilter` (`called_tools_filter.go`) sits at
+  the single `EventResponseDelta` funnel in `conversation.go`: it withholds a
+  trailing fragment that could still grow into the marker (it splits across
+  deltas — observed `"…paralel.[Called tools:"` / `" write_file …"` / `"]"`),
+  drops the whole `[Called tools: …]` span once complete, and flushes any
+  withheld ordinary text when the attempt's stream ends. The genuine transcript
+  note (`calledToolsNote`) is untouched — only the model's *echo* is stripped.
+  `called_tools_filter.go` (+ `_test.go`), `conversation.go`.
+
 ## Implemented this session (2026-06-23) — docs: context window vs output cap
 
 - **Documented the two token knobs in `docs/PROVIDER-BRIDGE.md`.** Expanded the

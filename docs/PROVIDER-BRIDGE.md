@@ -1,7 +1,7 @@
 # SapaLOQ — Provider Bridge (OpenAI / Claude / Kimi)
 
 > **Multi-model LLM bridge** — speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
-> Last updated: 2026-06-23 (documented `contextWindow` (input) vs `maxTokens` (output) knobs + 1M/128k example)
+> Last updated: 2026-06-23 (documented `contextWindow` (input) vs `maxTokens` (output) knobs + 1M/128k example; clarified `[Called tools: …]` is a suppressed orchestrator note, not a recoverable inline call)
 
 Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -392,6 +392,16 @@ not an envelope:
 Both reuse the string-aware brace matcher and the moving-frontier streaming
 logic, so a labeled call whose large args object (or the label itself) is split
 across deltas is still reassembled into a single `EventToolCall`.
+
+**Not the same as `[Called tools: …]`.** Do not confuse the recoverable forms
+above with a `[Called tools: name, …]` line. The latter is **not** a tool call
+the model is trying to make — it is an *internal* transcript note the
+orchestrator itself appends (`calledToolsNote`, the anti double-spawn record),
+which some models then echo back as prose. It carries no args object, so this
+scanner correctly ignores it; instead the orchestrator's `calledToolsFilter`
+(`internal/core/orchestrator/called_tools_filter.go`) strips that echo from the
+visible `response_delta` stream so it never reaches the user or the persisted
+assistant message.
 
 **Raw control-char tolerance.** A model that writes a multi-line argument inline
 (e.g. an `exec` heredoc whose body is a whole HTML file) embeds **real newline
