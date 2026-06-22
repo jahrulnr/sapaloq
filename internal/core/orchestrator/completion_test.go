@@ -164,6 +164,116 @@ func TestRunBackgroundTaskSpeaksCompletion(t *testing.T) {
 	}
 }
 
+// TestCompletionAnnouncementAuthoredByLLM proves the redundancy fix: when a
+// provider is available the spoken completion is AUTHORED BY THE ORCHESTRATOR
+// (its own words), not a verbatim copy of the sub-agent's raw result. The card
+// stays a terse status line; this bubble carries the natural summary.
+func TestCompletionAnnouncementAuthoredByLLM(t *testing.T) {
+	store, err := chatstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	sessionID, err := store.ActiveSession(ctx, "k", "m")
+	if err != nil {
+		t.Fatalf("active session: %v", err)
+	}
+
+	const rawResult = "RAW-SUBAGENT-DUMP-12345 lots of file listings and structure"
+	const authored = "Sub-agent-nya udah kelar, hasilnya website portfolio jadi di /tmp/profile."
+	// The announcer turn: the orchestrator talks (no tool call), just narrates.
+	fake := &scriptedBridge{turns: [][]bridge.StreamEvent{
+		{{Kind: bridge.EventResponseDelta, Delta: authored}},
+	}}
+
+	b := bus.New()
+	events, cancel := b.Subscribe(8)
+	defer cancel()
+	o := &Orchestrator{chat: store, bus: b, cfg: speakEnabledCfg(), bridge: fake}
+
+	record := taskRecord{ID: "task-llm-1", SessionID: sessionID, Role: "task-runner", Status: "done", Result: rawResult}
+	o.publishTaskUpdate(sessionID, record)
+
+	// The persisted assistant turn must be the LLM's wording, not the raw dump.
+	turns, err := store.ActiveTurns(ctx, sessionID, true)
+	if err != nil {
+		t.Fatalf("active turns: %v", err)
+	}
+	var spoken string
+	for _, tn := range turns {
+		if tn.Role == "assistant" {
+			spoken = tn.Content
+		}
+	}
+	if !strings.Contains(spoken, authored) {
+		t.Fatalf("assistant turn should contain the LLM-authored text; got %q", spoken)
+	}
+	if strings.Contains(spoken, rawResult) {
+		t.Fatalf("assistant turn must NOT copy-paste the raw sub-agent result; got %q", spoken)
+	}
+
+	// The republished response event must carry the authored text + task id.
+	sawAuthored := false
+	for drained := false; !drained; {
+		select {
+		case ev := <-events:
+			if ev.Data.Kind == bridge.EventResponseDelta && ev.Data.TaskID == "task-llm-1" && strings.Contains(ev.Data.Delta, authored) {
+				sawAuthored = true
+			}
+		default:
+			drained = true
+		}
+	}
+	if !sawAuthored {
+		t.Fatalf("authored completion was not republished as a task-tagged response event")
+	}
+}
+
+// TestCompletionFallsBackToTemplateWithoutProvider ensures that with no bridge
+// configured (headless), a completion is still surfaced via the plain template
+// instead of being silently dropped.
+func TestCompletionFallsBackToTemplateWithoutProvider(t *testing.T) {
+	store, err := chatstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	sessionID, _ := store.ActiveSession(ctx, "k", "m")
+	o := &Orchestrator{chat: store, bus: bus.New(), cfg: speakEnabledCfg()} // bridge == nil
+
+	o.publishTaskUpdate(sessionID, taskRecord{ID: "task-fallback-1", SessionID: sessionID, Role: "task-runner", Status: "done", Result: "ok"})
+
+	turns, _ := store.ActiveTurns(ctx, sessionID, true)
+	spoke := false
+	for _, tn := range turns {
+		if tn.Role == "assistant" && strings.Contains(tn.Content, "task-fallback-1") && strings.Contains(tn.Content, "selesai") {
+			spoke = true
+		}
+	}
+	if !spoke {
+		t.Fatalf("without a provider the template fallback must still speak the completion")
+	}
+}
+
+// TestTaskUpdateEventDoneIsStatusOnly locks in that the task CARD is a status
+// timeline: a done update must NOT embed the (potentially huge) raw result —
+// that summary belongs only to the orchestrator-authored bubble.
+func TestTaskUpdateEventDoneIsStatusOnly(t *testing.T) {
+	const rawResult = "VERY LONG RESULT DUMP that must never appear on the status card"
+	ev := taskUpdateEvent("sess-1", taskRecord{ID: "task-card-1", Role: "task-runner", Status: "done", Result: rawResult})
+	if ev.Kind == "" {
+		t.Fatalf("expected a task_update event")
+	}
+	if strings.Contains(ev.Summary, rawResult) {
+		t.Fatalf("done card must be status-only; summary leaked the raw result: %q", ev.Summary)
+	}
+	if strings.TrimSpace(ev.Summary) == "" {
+		t.Fatalf("done card should still carry a short status label")
+	}
+}
+
 // TestSpeakDisabledByDefaultConfig confirms a zero-value config does NOT speak
 // (opt-in), so existing tests/behavior are unaffected.
 func TestSpeakDisabledForZeroConfig(t *testing.T) {

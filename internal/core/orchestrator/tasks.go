@@ -615,10 +615,11 @@ func taskUpdateEvent(sessionID string, record taskRecord) bridge.StreamEvent {
 	case "in_progress":
 		summary = "Sub-agent sedang mengerjakan task."
 	case "done":
-		summary = strings.TrimSpace(record.Result)
-		if summary == "" {
-			summary = "Task selesai."
-		}
+		// The card is a STATUS timeline, not a result dump. The full summary is
+		// authored by the orchestrator and surfaced as a chat bubble
+		// (speakTaskCompletion) — duplicating record.Result here produced two
+		// identical, redundant summaries (card + bubble). Keep this terse.
+		summary = "Selesai."
 	case "failed":
 		summary = "Task gagal"
 		if e := strings.TrimSpace(record.Error); e != "" {

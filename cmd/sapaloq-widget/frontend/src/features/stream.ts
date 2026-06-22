@@ -265,9 +265,13 @@ export function renderTaskUpdate(event: StreamEvent) {
     if (terminal.has(status)) void refreshRuntimeStatus();
   }
 
-  const summary = (event.summary || '').trim();
-  if (!summary) return;
-
+  // The card is a STATUS TIMELINE, not a result dump. It shows a one-line
+  // status label, plus a short activity hint while the task is running (e.g.
+  // "Menjalankan `exec`."). The full, human-readable summary is authored by the
+  // orchestrator and shown as its own chat bubble (response_delta tagged with
+  // task_id) — rendering record.Result here too produced two identical,
+  // redundant summaries. So for terminal states we deliberately drop the
+  // summary body and keep only the status line.
   let prefix = '';
   switch (status) {
     case 'done': prefix = `✅ ${role} selesai`; break;
@@ -279,7 +283,20 @@ export function renderTaskUpdate(event: StreamEvent) {
     case 'stopped': prefix = `⏹️ ${role} dihentikan`; break;
     default: prefix = `${role}`; break;
   }
-  const text = `**${prefix}**\n\n${summary}`;
+
+  const summary = (event.summary || '').trim();
+  const isTerminal = terminal.has(status) || status === 'awaiting_clarification';
+  // A short activity hint is useful WHILE running; a terminal card needs only
+  // its status line (the summary lives in the orchestrator's bubble). The
+  // failed/clarification status already carry their reason in `prefix`-adjacent
+  // summary, so keep a one-liner there; done/stopped show status only.
+  let activity = '';
+  if (!isTerminal && summary && summary.length <= 120) {
+    activity = summary;
+  } else if (status === 'failed' || status === 'awaiting_clarification') {
+    activity = summary && summary.length <= 200 ? summary : '';
+  }
+  const text = activity ? `**${prefix}**\n\n${activity}` : `**${prefix}**`;
   let item = taskID ? taskBubbles.get(taskID) : undefined;
   if (!item || !item.isConnected) {
     item = appendMessage('message--task', text);
