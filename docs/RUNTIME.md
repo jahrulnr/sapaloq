@@ -37,8 +37,8 @@ sapaloq-core (one binary)
 |-------|------|------|
 | SQLite | `~/.config/sapaloq/memory/companion.db` | Facts, FTS, skills index, dedupe |
 | jsonl | `events.jsonl`, `progress/*.jsonl` | WAL, audit, replay on boot |
-| Worker health | `memory/workers/<task-id>/health.json` | Live per-worker PID/phase/heartbeat snapshot (observability) |
-| Worker errors | `memory/workers/<task-id>/error.log` | Errors-only trail per sub-agent (debugging) |
+| Worker health | `state/workers/<task-id>/health.json` | Live per-worker PID/phase/heartbeat snapshot (observability) |
+| Worker errors | `state/workers/<task-id>/error.log` | Errors-only trail per sub-agent (debugging) |
 | Files | `config.json`, `skills/`, `prompt/` | Agent-editable, git-friendly |
 | In-memory | goroutine LRU | Session hot cache — **lost on restart OK** |
 
@@ -211,7 +211,7 @@ sapaloq-core doctor --json       # machine-readable exit payload
 | Check | Pass criteria |
 |-------|---------------|
 | `config.json` | Loads; commands registry valid |
-| Runtime dirs | `run/`, `memory/`, `vault/` writable |
+| Runtime dirs | `run/`, `memory/`, `state/`, `vault/` writable |
 | Socket | `sapaloq.sock` path writable |
 | LLM bridge | Cursor credentials via autoload (`process.env` → `.env` → `state.vscdb`) |
 

@@ -34,7 +34,7 @@ SapaLOQ harus **prefetch context yang tepat dalam <2 detik** sebelum sub-agent j
 6. **Compaction-safe** — durable state di index + files; transcript bukan source of truth.
 7. **Feedback shaping** — reward/penalty → `do_not_repeat` + positive/negative slices ([FEEDBACK-SOP.md](./FEEDBACK-SOP.md)).
 8. **Lifecycle certainty is durable** — task status comes from
-   `memory/tasks/<taskId>/status.json`; a missed live event or core restart must
+   `state/tasks/<taskId>/status.json`; a missed live event or core restart must
    produce a visible snapshot/failure, never an indefinitely silent task.
 
 ---

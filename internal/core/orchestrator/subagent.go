@@ -318,7 +318,7 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		// Non-terminal: the planner may revise the plan (read it back, rewrite)
 		// before finishing. The loop ends naturally when the planner stops
 		// calling tools. The path is surfaced so the model knows where it lives.
-		return subToolResult{text: fmt.Sprintf("Plan saved to memory/tasks/%s/plan.md. You may refine it (read it back with sapaloq_read_plan_markdown and rewrite) or stop to finalize.", record.ID)}
+		return subToolResult{text: fmt.Sprintf("Plan saved to state/tasks/%s/plan.md. You may refine it (read it back with sapaloq_read_plan_markdown and rewrite) or stop to finalize.", record.ID)}
 	case "sapaloq_read_plan_markdown":
 		// Planner reads its OWN plan (to iterate); agent reads the handed-off
 		// plan it must execute.

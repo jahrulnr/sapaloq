@@ -247,7 +247,7 @@
   "events": {
     "bus": {
       "socketPath": "~/.config/sapaloq/run/sapaloq.sock",
-      "walPath": "~/.config/sapaloq/memory/events.jsonl",
+      "walPath": "~/.config/sapaloq/state/events.jsonl",
       "replayOnBoot": true
     }
   }

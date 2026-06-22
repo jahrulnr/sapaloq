@@ -465,7 +465,7 @@ Config thresholds:
 
 ### Plan artifact
 
-Planner writes `memory/tasks/<taskId>/plan.md`. This follows Cursor/Copilot Plan mode: the plan is a user-readable Markdown artifact, not an opaque JSON blob.
+Planner writes `state/tasks/<taskId>/plan.md`. This follows Cursor/Copilot Plan mode: the plan is a user-readable Markdown artifact, not an opaque JSON blob.
 
 ```markdown
 ---
@@ -523,7 +523,7 @@ planner directory in the session.
   "contextPacket": {
     "taskId": "task-001",
     "planId": "plan-001",
-    "planPath": "~/.config/sapaloq/memory/tasks/task-001/plan.md",
+    "planPath": "~/.config/sapaloq/state/tasks/task-001/plan.md",
     "userSnippet": "..."
   },
   "systemPrompt": "<assembled from roles/task-runner.md + overlays>",
@@ -620,7 +620,7 @@ Every role template **must** include "When unclear" section — see [PROMPT-BUIL
 
 ### Progress streaming
 
-Append-only: `memory/progress/<subAgentId>.jsonl`
+Append-only: `state/progress/<subAgentId>.jsonl`
 
 Orchestrator tails stream (inotify / bus topic) — holds **slim snapshot** per active sub-agent, not full history.
 
@@ -772,7 +772,7 @@ Optional markdown mirror: `memory/files/{namespace}/YYYY-MM-DD-{slug}-{kind}.md`
 
 ### Task stack anti-poisoning
 
-Task stack persisted under `memory/tasks/`:
+Task stack persisted under `state/tasks/`:
 
 ```json
 {
@@ -1799,7 +1799,7 @@ Path: `~/.config/sapaloq/bridge/handoff/<uuid>.json`
   "attachments": [],
   "planRef": {
     "planId": "plan-001",
-    "summaryPath": "~/.config/sapaloq/memory/tasks/task-001/plan.md"
+    "summaryPath": "~/.config/sapaloq/state/tasks/task-001/plan.md"
   },
   "mode": "work",
   "source": "sapaloq",
@@ -2034,7 +2034,7 @@ Boot replay: tail WAL if `events.bus.replayOnBoot` — then live bus only. Detai
 
 ## Appendix B — Progress event types
 
-File: `~/.config/sapaloq/memory/progress/{subAgentId}.jsonl`
+File: `~/.config/sapaloq/state/progress/{subAgentId}.jsonl`
 
 One JSON object per line. Common envelope:
 

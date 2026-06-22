@@ -62,6 +62,15 @@ func (o *Orchestrator) applyConfig(next config.Config) error {
 	o.entry = entry
 	o.bridge = br
 	o.progress = ProgressWriter{Dir: dirs.ProgressDir}
+	// Repoint runtime-state dirs unconditionally: they track DataDir and must
+	// stay consistent even when the memory DB itself did not change. Previously
+	// workersDir/workers were left dangling on reload — a latent bug.
+	o.stateDir = dirs.StateDir
+	o.tasksDir = dirs.TasksDir
+	if dirs.WorkersDir != o.workersDir {
+		o.workersDir = dirs.WorkersDir
+		o.workers = newWorkerRegistry(dirs.WorkersDir)
+	}
 	if nextChat != nil {
 		o.chat = nextChat
 		o.memoryDir = dirs.MemoryDir

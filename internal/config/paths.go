@@ -35,27 +35,39 @@ func RuntimeDirs(cfg Config) RuntimeDirsInfo {
 		DataDir:     dataDir,
 		RunDir:      filepath.Join(dataDir, "run"),
 		MemoryDir:   filepath.Join(dataDir, "memory"),
-		ProgressDir: filepath.Join(dataDir, "memory", "progress"),
-		WorkersDir:  filepath.Join(dataDir, "memory", "workers"),
+		StateDir:    filepath.Join(dataDir, "state"),
+		TasksDir:    filepath.Join(dataDir, "state", "tasks"),
+		ProgressDir: filepath.Join(dataDir, "state", "progress"),
+		WorkersDir:  filepath.Join(dataDir, "state", "workers"),
 		VaultDir:    filepath.Join(dataDir, "vault"),
 		SocketPath:  ExpandPath(cfg.Events.Bus.SocketPath),
 	}
 }
 
 type RuntimeDirsInfo struct {
-	DataDir     string
-	RunDir      string
-	MemoryDir   string
+	DataDir string
+	RunDir  string
+	// MemoryDir holds ONLY durable memory: companion.db (chat history, facts,
+	// context snapshots, feedback). Transient orchestration artifacts live under
+	// StateDir, never here.
+	MemoryDir string
+	// StateDir holds transient runtime/orchestration state: per-task status,
+	// per-worker health/error logs, progress streams and the event-bus WAL.
+	// Safe to wipe between runs; not durable memory.
+	StateDir string
+	// TasksDir holds per-task records (status.json, plan.md). One subdir per
+	// task id. Lives under StateDir.
+	TasksDir    string
 	ProgressDir string
 	// WorkersDir holds per-worker observability artifacts: error logs and the
-	// worker-registry snapshot. One subdir per task id.
+	// worker-registry snapshot. One subdir per task id. Lives under StateDir.
 	WorkersDir string
 	VaultDir   string
 	SocketPath string
 }
 
 func EnsureRuntimeDirs(dirs RuntimeDirsInfo) error {
-	for _, dir := range []string{dirs.DataDir, dirs.RunDir, dirs.MemoryDir, dirs.ProgressDir, dirs.WorkersDir, dirs.VaultDir} {
+	for _, dir := range []string{dirs.DataDir, dirs.RunDir, dirs.MemoryDir, dirs.StateDir, dirs.TasksDir, dirs.ProgressDir, dirs.WorkersDir, dirs.VaultDir} {
 		if dir == "" {
 			continue
 		}

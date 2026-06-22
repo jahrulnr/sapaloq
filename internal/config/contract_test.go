@@ -50,7 +50,7 @@ func TestPublicExampleLoadsActiveRuntimeFields(t *testing.T) {
 	if cfg.Vault.MaxLogBytes != 5<<20 || cfg.Vault.KeepRotatedFiles != 3 {
 		t.Fatalf("vault config not loaded: %+v", cfg.Vault)
 	}
-	if !strings.HasSuffix(cfg.Events.Bus.WALPath, "/.config/sapaloq/memory/events.jsonl") {
+	if !strings.HasSuffix(cfg.Events.Bus.WALPath, "/.config/sapaloq/state/events.jsonl") {
 		t.Fatalf("event WAL path not loaded: %+v", cfg.Events.Bus)
 	}
 	planner, ok := cfg.SubAgents.Roles["planner"]

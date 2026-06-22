@@ -18,7 +18,7 @@
 - **Progress streaming** — orchestrator **watch live** sub-agent: thinking, response, toolcall, todo, status.
 - **Completion triggers** — in-proc event bus wake (ms) + jsonl WAL; heartbeat watchdog force-fails stalled workers. On every terminal transition the orchestrator **speaks** the outcome into chat (durable assistant turn + `response_delta` republish), so a finish that lands after `sapaloq_wait` returns is surfaced as a real message — not just a card (`internal/core/orchestrator/completion.go`).
 - **Fire-and-forget delegation** — after spawning a sub-agent the orchestrator replies briefly and ENDS its turn; it does **not** `sapaloq_wait` to watch (that freezes the chat for no benefit now that completion is spoken automatically). `sapaloq_wait` is opt-in (only when the user explicitly asks to block). `waitForTaskChange` ends only on a terminal state or a real status *transition* — a bare progress update (same status) no longer breaks the wait, so there is no wait→progress→wait freeze loop (`tasks.go`, prompt `internal/prompts/defaults/ask.md`).
-- **Worker health** — each background sub-agent is a tracked worker (`workerRegistry`, `worker.go`): id, role, session, PID, phase, heartbeat. Live snapshot at `memory/workers/<id>/health.json`; errors-only trail at `memory/workers/<id>/error.log`. The watchdog (`StartWorkerWatchdog`, interval `completion.heartbeatIntervalSec`, stall `completion.staleAfterSec`) fails any worker that stops heartbeating.
+- **Worker health** — each background sub-agent is a tracked worker (`workerRegistry`, `worker.go`): id, role, session, PID, phase, heartbeat. Live snapshot at `state/workers/<id>/health.json`; errors-only trail at `state/workers/<id>/error.log`. The watchdog (`StartWorkerWatchdog`, interval `completion.heartbeatIntervalSec`, stall `completion.staleAfterSec`) fails any worker that stops heartbeating.
 - **Event watchers** — GNOME notification + custom (reminder, email, …) → orchestrator react.
 - **Context ingress** — intent-router + SQLite prefetch + dynamic prompt before spawn ([CONTEXT-SOP.md](./CONTEXT-SOP.md)).
 - **Role system-prompt** — setiap spawn sub-agent dapat `systemPrompt` per role ([PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md)).
@@ -293,7 +293,7 @@ Config: `orchestrator.spawnRouting` (see `config.schema.json`).
 
 ### Plan artifact → Agent packet
 
-Planner menulis Markdown artifact ke `memory/tasks/<taskId>/plan.md` (or scribe path by policy). Ini sengaja mengikuti Cursor/Copilot Plan mode: plan adalah dokumen Markdown yang bisa dibaca user, direview, dan dicentang saat Agent eksekusi.
+Planner menulis Markdown artifact ke `state/tasks/<taskId>/plan.md` (or scribe path by policy). Ini sengaja mengikuti Cursor/Copilot Plan mode: plan adalah dokumen Markdown yang bisa dibaca user, direview, dan dicentang saat Agent eksekusi.
 
 ```markdown
 ---
@@ -338,7 +338,7 @@ Refactor config schema validation without touching Cursor worker memory.
   "contextPacket": {
     "taskId": "task-001",
     "planId": "plan-001",
-    "planPath": "~/.config/sapaloq/memory/tasks/task-001/plan.md",
+    "planPath": "~/.config/sapaloq/state/tasks/task-001/plan.md",
     "userSnippet": "..."
   }
 }
@@ -665,7 +665,7 @@ Orchestrator **prompt** excludes full transcript; widget panel still shows scrol
 | Store | Path | Content |
 |-------|------|---------|
 | Chat transcript | `~/.config/sapaloq/widget/chat.jsonl` | User + orchestrator visible replies only |
-| Sub-agent detail | `memory/progress/<subAgentId>.jsonl` | thinking, tools — via `/tasks` drill-down |
+| Sub-agent detail | `state/progress/<subAgentId>.jsonl` | thinking, tools — via `/tasks` drill-down |
 
 Widget appends via IPC per turn — **not** injected into orchestrator context. Tail cap: `widget.chatHistoryMaxLines` (default 500).
 
@@ -732,7 +732,7 @@ satu turn dan tidak boleh dianggap task selesai.
 Setiap sub-agent append ke stream:
 
 ```text
-~/.config/sapaloq/memory/progress/<subAgentId>.jsonl
+~/.config/sapaloq/state/progress/<subAgentId>.jsonl
 ```
 
 Satu baris = satu event:
@@ -824,7 +824,7 @@ Orchestrator holds **slim snapshot** per active sub-agent (bukan full stream):
 
 User bisa tanya: *"scribe lagi ngapain?"* → orchestrator baca snapshot + optional tail N events — **tanpa** inject full sub-agent history ke prompt (anti poisoning).
 
-`memory/tasks/<taskId>/status.json` adalah snapshot lifecycle durable. IPC
+`state/tasks/<taskId>/status.json` adalah snapshot lifecycle durable. IPC
 `watch` mengirim snapshot task terbaru setelah handshake, lalu meneruskan event
 live. Karena itu widget yang baru start/reconnect tetap menerima kepastian
 status walaupun event bus in-memory terlewat. Widget meng-update satu card per
@@ -1002,7 +1002,7 @@ Sub-agent executor **wajib** memanggil `sapaloq_complete_task` atau
 }
 ```
 
-Bus internal (`~/.config/sapaloq/memory/events.jsonl`) juga dapat:
+Bus internal (`~/.config/sapaloq/state/events.jsonl`) juga dapat:
 
 ```json
 {
@@ -1023,7 +1023,7 @@ Orchestrator **subscribe** via in-proc bus — lihat [EVENT-BUS.md](./EVENT-BUS.
 3. **Unix socket** — sub-agent child → same binary
 
 Untuk widget, reconnect catch-up dibaca dari
-`memory/tasks/*/status.json`; event bus tetap dipakai untuk update live.
+`state/tasks/*/status.json`; event bus tetap dipakai untuk update live.
 `notifyUserOnDone` hanya boleh mengatur notifikasi desktop opsional, bukan
 menyembunyikan status lifecycle dari chat.
 
@@ -1066,7 +1066,7 @@ Orchestrator **watching** sumber event di luar chat — proactive companion.
 ### Event bus (unified)
 
 ```text
-~/.config/sapaloq/memory/events.jsonl
+~/.config/sapaloq/state/events.jsonl
 ```
 
 Semua sumber → satu append-only bus:
