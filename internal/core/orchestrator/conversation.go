@@ -23,6 +23,12 @@ var attachmentMetaRE = regexp.MustCompile(`<!--sapaloq-attachment:[A-Za-z0-9+/=]
 // is a package var only so tests can zero it to run instantly.
 var transportRetryBaseBackoff = 750 * time.Millisecond
 
+// idleWindowUnit is the multiplier applied to MaxWallTimeMinutes to form the
+// inactivity (idle) deadline. It is the real minute in production and a package
+// var only so tests can shrink it (e.g. to a few ms) to exercise the idle
+// timeout deterministically without waiting whole minutes.
+var idleWindowUnit = time.Minute
+
 // runConversation drives one Ask (chat) turn. If thinkingOut is non-nil,
 // reasoning (EventThinkingDelta) text is accumulated into it so the caller can
 // persist it as a show-only "thinking" turn — separate from the assistant
@@ -83,8 +89,22 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	}
 	runtimeCfg := snap.cfg.Orchestrator.WithDefaults()
 	budget := runtimeCfg.Continuation
-	runCtx, cancel := context.WithTimeout(ctx, time.Duration(budget.MaxWallTimeMinutes)*time.Minute)
+	// Wall-time is an INACTIVITY (idle) deadline, not a total-runtime cap. A
+	// productive agent that keeps streaming output / making tool calls must be
+	// allowed to work as long as it is making progress — capping total runtime
+	// would kill a healthy long task (e.g. scaffolding a large app) mid-work,
+	// which is exactly the wrong thing to punish. Instead we cancel only when
+	// the run goes SILENT for MaxWallTimeMinutes (a stuck network / dead stream
+	// / wedged turn). The timer is reset on every observable progress event
+	// (turn start + each delta/tool-call), mirroring the heartbeat the stall
+	// watchdog uses. Per-request network hangs remain covered by the provider
+	// bridge's own RequestTimeout.
+	idleWindow := time.Duration(budget.MaxWallTimeMinutes) * idleWindowUnit
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	idleTimer := time.AfterFunc(idleWindow, cancel)
+	defer idleTimer.Stop()
+	resetIdle := func() { idleTimer.Reset(idleWindow) }
 	lastOutcome := ""
 	noProgressTurns := 0
 	lastToolSignature := ""
@@ -106,25 +126,37 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	transportRetries := 0
 	const maxTransportRetries = 4
 
+	// maxInferenceTurns: a positive value caps the loop; a NEGATIVE value means
+	// UNLIMITED — the loop is then bounded only by the real anomaly guards
+	// (wall-time, no-progress, identical-tool, tool-call budgets). cfg overrides
+	// the config default when set to any non-zero value (so an explicit -1 from a
+	// role survives instead of falling back to the bounded config default).
 	maxInferenceTurns := budget.MaxInferenceTurns
-	if cfg.maxInferenceTurns > 0 {
+	if cfg.maxInferenceTurns != 0 {
 		maxInferenceTurns = cfg.maxInferenceTurns
 	}
+	unlimitedTurns := maxInferenceTurns < 0
+	turnBudgetLabel := fmt.Sprintf("%d", maxInferenceTurns)
+	if unlimitedTurns {
+		turnBudgetLabel = "∞"
+	}
 
-	for inferenceTurn := 1; inferenceTurn <= maxInferenceTurns; inferenceTurn++ {
+	for inferenceTurn := 1; unlimitedTurns || inferenceTurn <= maxInferenceTurns; inferenceTurn++ {
 		if err := runCtx.Err(); err != nil {
 			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			if ctx.Err() != nil {
 				return all, nil
 			}
-			return all, fmt.Errorf("continuation wall-time budget exhausted after %d minutes", budget.MaxWallTimeMinutes)
+			return all, fmt.Errorf("run stalled: no activity for %d minutes", budget.MaxWallTimeMinutes)
 		}
 		if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
 			cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
 		}
 		// Heartbeat at the top of every turn so the health watchdog can tell a
 		// genuinely-working agent (advancing turns) from a wedged goroutine.
-		out.beat(fmt.Sprintf("inference turn %d/%d", inferenceTurn, maxInferenceTurns))
+		// Advancing a turn is progress — reset the inactivity deadline.
+		resetIdle()
+		out.beat(fmt.Sprintf("inference turn %d/%s", inferenceTurn, turnBudgetLabel))
 		if shouldCompactConversation(cleanMessages, snap.entry.ContextWindow, runtimeCfg.Compaction.BackgroundThreshold) &&
 			len(cleanMessages) > lastCompactedMessageCount+2 {
 			blocking := conversationTokenRatio(cleanMessages, snap.entry.ContextWindow) >= runtimeCfg.Compaction.BlockingThreshold
@@ -182,7 +214,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				if ctx.Err() != nil {
 					return all, nil
 				}
-				return all, fmt.Errorf("continuation wall-time budget exhausted after %d minutes", budget.MaxWallTimeMinutes)
+				return all, fmt.Errorf("run stalled: no activity for %d minutes", budget.MaxWallTimeMinutes)
 			case next, ok := <-stream:
 				if !ok {
 					break streamLoop
@@ -194,11 +226,13 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 			switch ev.Kind {
 			case bridge.EventResponseDelta:
+				resetIdle()
 				response.WriteString(ev.Delta)
 				all.WriteString(ev.Delta)
-				out.beat(fmt.Sprintf("responding turn %d/%d", inferenceTurn, maxInferenceTurns))
+				out.beat(fmt.Sprintf("responding turn %d/%s", inferenceTurn, turnBudgetLabel))
 				out.emit(runCtx, ev)
 			case bridge.EventToolCall:
+				resetIdle()
 				out.emit(runCtx, ev)
 				if ev.ToolCall != nil {
 					out.beat("tool: " + ev.ToolCall.Name)
@@ -234,7 +268,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 					if ctx.Err() != nil {
 						return all, nil
 					}
-					return all, fmt.Errorf("continuation wall-time budget exhausted after %d minutes", budget.MaxWallTimeMinutes)
+					return all, fmt.Errorf("run stalled: no activity for %d minutes", budget.MaxWallTimeMinutes)
 				}
 				lastErr = ev.Error
 				// A vision-rejection on an image-bearing request is recoverable:
@@ -274,12 +308,15 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				cancelAttempt()
 				break streamLoop
 			case bridge.EventThinkingDelta:
-				// Accumulate reasoning so it can be persisted as a show-only
-				// "thinking" turn (survives restart), then forward it live.
+				// Reasoning tokens are progress too (the model is working, not
+				// stuck) — reset the inactivity deadline. Accumulate reasoning so
+				// it can be persisted as a show-only "thinking" turn (survives
+				// restart), then forward it live.
+				resetIdle()
 				if thinkingOut != nil {
 					thinkingOut.WriteString(ev.Delta)
 				}
-				out.beat(fmt.Sprintf("thinking turn %d/%d", inferenceTurn, maxInferenceTurns))
+				out.beat(fmt.Sprintf("thinking turn %d/%s", inferenceTurn, turnBudgetLabel))
 				out.emit(runCtx, ev)
 			case bridge.EventDone:
 				// A bridge-level done ends one inference turn. The orchestrator
@@ -342,7 +379,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				if ctx.Err() != nil {
 					return all, nil
 				}
-				return all, fmt.Errorf("continuation wall-time budget exhausted after %d minutes", budget.MaxWallTimeMinutes)
+				return all, fmt.Errorf("run stalled: no activity for %d minutes", budget.MaxWallTimeMinutes)
 			case <-time.After(backoff):
 			}
 			inferenceTurn--

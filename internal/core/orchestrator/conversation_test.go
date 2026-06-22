@@ -340,6 +340,44 @@ func (b *repeatingToolBridge) Complete(_ context.Context, _ bridge.Request) (<-c
 	return out, nil
 }
 
+// TestRunTurnLoopUnlimitedTurnsStillBoundedByGuards proves the executor's
+// unlimited turn budget (maxInferenceTurns < 0) does NOT mean "loop forever":
+// a misbehaving model that repeats an identical tool call is still stopped by
+// the identical-tool guard, not by a turn ceiling. This is the safety
+// contract that lets the executor run without an arbitrary turn cap.
+func TestRunTurnLoopUnlimitedTurnsStillBoundedByGuards(t *testing.T) {
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+	}
+	out := make(chan bridge.StreamEvent, 64)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:         "s1",
+		runID:             "actor-unlimited",
+		tools:             []string{"sapaloq_get_task_status"},
+		sink:              chatSink{o: o, out: out},
+		finishOnNoTool:    false,            // executor: only a terminal tool finishes it
+		maxInferenceTurns: unlimitedTurnsBudget, // < 0 → no turn ceiling
+		dispatch: func(context.Context, parse.ToolCall) turnOutcome {
+			return turnOutcome{text: "status", handled: true}
+		},
+	}
+	_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+		cfg:   o.cfg,
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    &repeatingToolBridge{},
+	}, "task", []bridge.Message{{Role: "user", Content: "loop"}}, cfg)
+	close(out)
+	if err == nil || !strings.Contains(err.Error(), "identical tool call") {
+		t.Fatalf("unlimited turns must still be bounded by the identical-tool guard; err = %v", err)
+	}
+}
+
 func TestWaitForTaskChangeUsesBackendSignal(t *testing.T) {
 	orch := &Orchestrator{memoryDir: t.TempDir()}
 	now := time.Now().UTC()
@@ -516,4 +554,138 @@ func TestRunConversationRecordsToolCallInTranscript(t *testing.T) {
 	if !recorded {
 		t.Fatalf("assistant transcript missing [Called tools: …] record; messages=%#v", msgs)
 	}
+}
+
+// busyBridge keeps producing deltas — one short delay then output, repeated —
+// so the run is always making progress. Total runtime exceeds the idle window,
+// but no single gap does. It finishes (tool-less done) after `turns` turns.
+type busyBridge struct {
+	gap   time.Duration
+	turns int
+	seen  int
+}
+
+func (b *busyBridge) ID() string              { return "busy" }
+func (b *busyBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *busyBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.seen++
+	last := b.seen >= b.turns
+	out := make(chan bridge.StreamEvent, 4)
+	go func() {
+		defer close(out)
+		// A couple of progress deltas with a sub-window gap between them.
+		for i := 0; i < 2; i++ {
+			time.Sleep(b.gap)
+			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "x"}
+		}
+		_ = last
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+// silentBridge opens a stream and never emits anything — a stuck network /
+// dead stream. The idle deadline must cancel it.
+type silentBridge struct{}
+
+func (b *silentBridge) ID() string              { return "silent" }
+func (b *silentBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *silentBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	out := make(chan bridge.StreamEvent)
+	// Never write, never close — only ctx cancellation (the idle deadline)
+	// unblocks the loop's select on the stream.
+	return out, nil
+}
+
+func shrinkIdleWindow(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := idleWindowUnit
+	idleWindowUnit = d
+	t.Cleanup(func() { idleWindowUnit = prev })
+}
+
+func newIdleTestOrch(t *testing.T) *Orchestrator {
+	t.Helper()
+	cfg := config.DefaultOrchestratorConfig()
+	cfg.Continuation.MaxWallTimeMinutes = 1 // × idleWindowUnit (shrunk in tests)
+	return &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: cfg},
+		vision:    make(map[string]bool),
+	}
+}
+
+// TestWallTimeIsIdleNotTotal proves a busy agent is NOT killed for total
+// runtime: with a 20ms idle window it produces progress every ~8ms across
+// several turns (well over 20ms total) and still finishes cleanly.
+func TestWallTimeIsIdleNotTotal(t *testing.T) {
+	shrinkIdleWindow(t, 20*time.Millisecond)
+	o := newIdleTestOrch(t)
+	out := make(chan bridge.StreamEvent, 128)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:      "s1",
+		runID:          "actor-busy",
+		tools:          []string{},
+		sink:           chatSink{o: o, out: out},
+		finishOnNoTool: true,
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    &busyBridge{gap: 8 * time.Millisecond, turns: 4},
+		}, "task", []bridge.Message{{Role: "user", Content: "go"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("busy agent must not be idle-cancelled: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("busy run did not finish")
+	}
+	close(out)
+}
+
+// TestWallTimeCancelsStalledRun proves a silent (stuck) run IS cancelled once
+// the idle window elapses with no activity.
+func TestWallTimeCancelsStalledRun(t *testing.T) {
+	shrinkIdleWindow(t, 30*time.Millisecond)
+	o := newIdleTestOrch(t)
+	out := make(chan bridge.StreamEvent, 16)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:      "s1",
+		runID:          "actor-stuck",
+		tools:          []string{},
+		sink:           chatSink{o: o, out: out},
+		finishOnNoTool: true,
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    &silentBridge{},
+		}, "task", []bridge.Message{{Role: "user", Content: "go"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "stalled") {
+			t.Fatalf("stalled run should be idle-cancelled; err = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stalled run was not cancelled by idle deadline")
+	}
+	close(out)
 }

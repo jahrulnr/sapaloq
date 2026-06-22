@@ -344,7 +344,12 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 		return "", err
 	}
 	o.publishTaskUpdate(sessionID, record)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// No hard total-runtime cap: a productive background task must be free to
+	// work as long as it makes progress. The real guards are runConversation's
+	// inactivity (idle) deadline — which fires only when the run goes silent —
+	// the worker watchdog (stale heartbeat), and the loop-anomaly budgets. The
+	// stored cancel still backs user-initiated Stop and shutdown.
+	ctx, cancel := context.WithCancel(context.Background())
 	o.taskMu.Lock()
 	if o.taskCancels == nil {
 		o.taskCancels = make(map[string]context.CancelFunc)
@@ -367,7 +372,9 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 // goroutine plumbing of spawnBackground but reuses the existing record (with
 // its transcript + answer) rather than creating a new one.
 func (o *Orchestrator) resumeBackground(snap providerSnapshot, sessionID string, record taskRecord) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// Same rationale as spawnBackground: no total-runtime cap; the idle
+	// deadline + worker watchdog + loop-anomaly budgets are the real guards.
+	ctx, cancel := context.WithCancel(context.Background())
 	o.taskMu.Lock()
 	if o.taskCancels == nil {
 		o.taskCancels = make(map[string]context.CancelFunc)

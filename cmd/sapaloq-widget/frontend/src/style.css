@@ -376,31 +376,35 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .message ul, .message ol { margin: 0.2em 0; padding-left: 1.25em; }
 .message li + li { margin-top: 0.2em; }
 
-/* GFM task lists (`- [ ]` / `- [x]`). `marked` emits a native
-   `<input type=checkbox disabled>` (no wrapper class), which WebKitGTK renders
-   as an opaque black box that swallowed the item text. Drop the list bullet,
-   lay the row out as a flex line, and replace the native control with a small
-   custom glyph so the checklist reads cleanly. Targeted via :has() so it only
-   affects list items that actually contain a checkbox. */
-.message li:has(> input[type='checkbox']) {
+/* GFM task lists (`- [ ]` / `- [x]`). marked emits a native
+   `<input disabled type=checkbox>`; DOMPurify strips `type`, so we re-assert it
+   and tag the row (.md-task-item) + control (.md-task-check) in
+   decorateRenderedMarkdown. Without styling the native control rendered as a
+   long text field / black box that swallowed the item text. Drop the bullet,
+   lay the row out as a flex line, and draw a small custom glyph instead. */
+.message li.md-task-item {
   list-style: none;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.45em;
+  /* No flex here: a flex <li> turns its children (text, <strong>, <code>, and
+     the nested <ul>) into sibling flex items that share one row and shrink to
+     near-zero width, which pecah the text per-character. Keep the item as a
+     normal block so its inline content flows/wraps naturally and any nested
+     sublist sits below it; only the checkbox is pulled inline to the left. */
 }
-.message input[type='checkbox'] {
+.message input.md-task-check {
   appearance: none;
   -webkit-appearance: none;
-  flex: 0 0 auto;
+  display: inline-block;
+  vertical-align: middle;
   width: 0.95em;
   height: 0.95em;
-  margin: 0.2em 0 0;
+  margin: 0 0.45em 0.15em 0;
+  padding: 0;
   border: 1.5px solid oklch(100% 0 0 / 0.32);
   border-radius: 4px;
   background: oklch(0% 0 0 / 0.18);
   cursor: default;
 }
-.message input[type='checkbox']:checked {
+.message input.md-task-check:checked {
   border-color: var(--accent);
   background-color: var(--accent);
   /* checkmark drawn with two gradients so no extra markup is needed */

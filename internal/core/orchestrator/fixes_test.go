@@ -106,30 +106,44 @@ func TestPlanWriteIsIterable(t *testing.T) {
 	}
 }
 
-// TestRoleMaxTurns verifies per-role maxTurns is read from config with a safe
-// fallback and a floor — but NO upper clamp, so an operator can grant a role as
-// much room as they want (the wall-time budget is the only final safety net).
+// TestRoleMaxTurns verifies the per-role tool-loop budget policy:
+//   - the executor (task-runner) with no config runs UNLIMITED (sentinel < 0),
+//     so a productive long task is never force-failed on an arbitrary turn
+//     count; the no-progress / identical-tool / wall-time / tool-call guards are
+//     the real stoppers.
+//   - short-lived roles (planner/scribe) with no config inherit the chat budget
+//     (Continuation.MaxInferenceTurns, default 128).
+//   - an explicit per-role maxTurns always wins, honored as-is with no clamp.
 func TestRoleMaxTurns(t *testing.T) {
 	o := &Orchestrator{}
-	if got := o.roleMaxTurns("planner"); got != subAgentMaxTurns {
-		t.Fatalf("fallback: got %d want %d", got, subAgentMaxTurns)
+	defaultTurns := o.cfg.Orchestrator.WithDefaults().Continuation.MaxInferenceTurns
+	if defaultTurns != 128 {
+		t.Fatalf("precondition: default MaxInferenceTurns got %d want 128", defaultTurns)
+	}
+	// Executor with no config → unlimited (negative sentinel).
+	if got := o.roleMaxTurns("task-runner"); got >= 0 {
+		t.Fatalf("task-runner default should be unlimited (<0): got %d", got)
+	}
+	// Short-lived roles inherit the chat budget.
+	if got := o.roleMaxTurns("planner"); got != defaultTurns {
+		t.Fatalf("planner fallback should inherit chat budget: got %d want %d", got, defaultTurns)
+	}
+	if got := o.roleMaxTurns("scribe"); got != defaultTurns {
+		t.Fatalf("scribe fallback should inherit chat budget: got %d want %d", got, defaultTurns)
 	}
 
 	o.cfg.SubAgents = config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{
 		"planner":     {MaxTurns: 12},
-		"task-runner": {MaxTurns: 999}, // honored as-is — no upper clamp
-		"weird":       {MaxTurns: -5},  // invalid (<=0) → fallback to default
+		"task-runner": {MaxTurns: 999}, // explicit cap wins, honored as-is
 	}}
 	if got := o.roleMaxTurns("planner"); got != 12 {
 		t.Fatalf("planner: got %d want 12", got)
 	}
 	if got := o.roleMaxTurns("task-runner"); got != 999 {
-		t.Fatalf("task-runner should be honored without clamp: got %d want 999", got)
+		t.Fatalf("task-runner explicit cap should be honored: got %d want 999", got)
 	}
-	if got := o.roleMaxTurns("weird"); got != subAgentMaxTurns {
-		t.Fatalf("weird invalid maxTurns should fall back: got %d want %d", got, subAgentMaxTurns)
-	}
-	if got := o.roleMaxTurns("missing"); got != subAgentMaxTurns {
-		t.Fatalf("missing role fallback: got %d want %d", got, subAgentMaxTurns)
+	// A role with no entry still follows its default (executor → unlimited).
+	if got := o.roleMaxTurns("task-runner-2"); got != defaultTurns {
+		t.Fatalf("unknown role fallback: got %d want %d", got, defaultTurns)
 	}
 }

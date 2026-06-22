@@ -39,6 +39,20 @@ function decorateRenderedMarkdown(root: ParentNode) {
     img.loading = 'lazy';
     img.addEventListener('click', () => showImagePreview(img.src, img.alt || 'image'));
   });
+  // GFM task-list checkboxes. marked emits `<input disabled type="checkbox">`
+  // for `- [ ]`/`- [x]`, but DOMPurify strips the `type` attribute on <input>
+  // (its own input-attr policy, not overridable via ADD_ATTR), leaving a bare
+  // <input> the browser renders as a long TEXT field — the "checkbox jadi input
+  // panjang" bug. Every <input> our markdown produces is a task-list checkbox,
+  // so re-assert type=checkbox (and disabled, since these are display-only) and
+  // tag the row for styling. The `checked` attribute survives sanitization.
+  root.querySelectorAll('input').forEach((node) => {
+    const input = node as HTMLInputElement;
+    input.type = 'checkbox';
+    input.disabled = true;
+    input.classList.add('md-task-check');
+    input.closest('li')?.classList.add('md-task-item');
+  });
   // Keep existing heading/quote/code styling hooks the stylesheet relies on.
   root.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((h) => h.classList.add('md-heading'));
   root.querySelectorAll('blockquote').forEach((q) => q.classList.add('md-quote'));
