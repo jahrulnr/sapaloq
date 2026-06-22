@@ -6,6 +6,13 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
+  "info": {
+    "companyName": "SapaLOQ",
+    "productName": "SapaLOQ",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2026 SapaLOQ",
+    "comments": "Local desktop companion"
+  },
   "author": {
     "name": "Jahrulnr",
     "email": "jahrulnr@gmail.com"

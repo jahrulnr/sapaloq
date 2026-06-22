@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-22
+> Last updated: 2026-06-23
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -25,7 +25,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go` |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor` |
-| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect |
+| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
 | 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
@@ -41,6 +41,72 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` — schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` — size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` — the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
+
+---
+
+## Implemented this session (2026-06-23) — Linux taskbar icon (WM_CLASS + .desktop)
+
+- **Fixed the generic taskbar icon + dev binary name under `make run`.** The
+  app-bar showed a placeholder icon and the title `Sapaloq-widget-dev-linux-amd64`.
+  Root cause (verified against Wails v2.12.0 source): Wails never sets `WM_CLASS`
+  on Linux — only `g_set_prgname` + `gtk_window_set_icon`. GNOME Shell ignores
+  the in-window icon for the dock; it matches the window to a `.desktop` entry by
+  `WM_CLASS`/`StartupWMClass`. With WM_CLASS defaulting to the binary name and no
+  registered `.desktop`, GNOME fell back to the generic icon. Fix has two halves:
+  (1) set **`WM_CLASS = sapaloq`** via CGO (`g_set_prgname` + `gdk_set_program_class`)
+  in `cmd/sapaloq-widget/input_shape_linux.go`, called from `main.go` before
+  `wails.Run` (no-op stub on non-Linux); (2) ship `build/linux/sapaloq.desktop`
+  (`Icon=sapaloq`, `StartupWMClass=sapaloq`) and install it + the hicolor icon —
+  a new `make desktop-entry` target (which `make run` now depends on, so dev runs
+  get the right icon), plus `make install`/`install.sh` (Exec rewritten to the
+  installed widget) and uninstall removal in both. `release.yml` now stages the
+  `.desktop` into the release tarball alongside `sapaloq.png`.
+  `cmd/sapaloq-widget/{input_shape_linux.go,input_shape_stub.go,main.go,build/linux/sapaloq.desktop}`,
+  `Makefile`, `install.sh`, `.github/workflows/release.yml`, `docs/{UI-DECISION.md,STATUS.md}`.
+
+## Implemented this session (2026-06-23) — shared persona (core character)
+
+- **`persona.md` — SapaLOQ's core character, prepended to every role.** Ported the
+  *working principles* of `AGENTS.md` into a general, role-agnostic persona that
+  applies to all work (coding, note-taking, research): contract-first **but with
+  baseline security woven in** (no secret exposure, no casual destruction,
+  parameterized queries / escaped-validated untrusted input, sanitized
+  user-supplied paths/commands — no SQL injection), "work is a craft" tidiness
+  (clear naming, *why*-comments at non-obvious points, structured notes),
+  explore-before-change, prove-don't-just-compile, follow conventions, and
+  honesty (don't claim un-done work, ask when ambiguous). It is **not** a mode:
+  `Orchestrator.systemPrompt(role)` prepends the resolved persona (`<persona>\n\n---\n\n<role>`)
+  to ask/planner/agent/scribe (and any future role) through the single funnel, so
+  the baseline lives in one file instead of being copied into each role prompt.
+  Persona is never wrapped around itself and an empty persona is a no-op (zero
+  regression). Embedded + materialized like other prompts (editable at
+  `~/SapaLOQ/prompts/persona.md`). `internal/prompts/{defaults/persona.md,prompts.go,prompts_test.go}`,
+  `core/orchestrator/{session.go,persona_test.go}`, `docs/{PROMPT-BUILDER-SOP.md,STATUS.md}`.
+
+## Implemented this session (2026-06-23) — network-core widget identity
+
+- Kept near-black/graphite/gunmetal as the structural base, then added controlled
+  cyan, blue, indigo, magenta, and amber accents for focus and energy. User
+  messages are blue-indigo, reasoning is violet, and active runtime state is
+  cyan; semantic status colors remain distinct.
+- Replaced the constructed logo glyph with a source-derived network-core visual:
+  luminous local core, concentric processing rings, and cyan/violet
+  orchestration mesh. The original wide artwork is center-cropped so its text
+  and branding are completely excluded.
+- The app icon keeps the wider mesh composition; the 52px orb uses a tighter
+  circular crop so the core remains legible. Thinking/delegating states animate
+  brightness and the outer ring rather than overlaying text.
+- Removed the latency text badge because it clipped at the 52px HUD size;
+  connection and task state remain visible through node/ring color, motion, and
+  the expanded panel.
+- Added a shared raster app-icon master (`build/appicon.png`), Windows
+  multi-resolution ICO, Linux hicolor PNG, and macOS-compatible Wails source.
+  Linux dev/live windows receive the embedded icon directly.
+- `make install`, the release workflow, and `install.sh` now package/install the
+  Linux icon under the user icon theme; uninstall removes it. Windows and macOS
+  Wails packaging consume their platform-specific icon assets.
+- Verified the complete panel at 376×640 and the collapsed orb at 76×76 in
+  Chromium.
 
 ---
 

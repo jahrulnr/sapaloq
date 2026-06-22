@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=SapaLOQ
+GenericName=Desktop companion
+Comment=Local desktop AI companion
+Exec=sapaloq-widget
+Icon=sapaloq
+Terminal=false
+Categories=Utility;
+Keywords=ai;assistant;companion;sapaloq;
+StartupNotify=false
+StartupWMClass=sapaloq

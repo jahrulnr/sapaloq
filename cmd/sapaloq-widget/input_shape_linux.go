@@ -84,8 +84,31 @@ static void sapaloq_schedule_shape(int w, int h, int circle) {
 	args->attempt = 0;
 	g_timeout_add(50, sapaloq_apply_shape_retry_timeout, args);
 }
+
+// sapaloq_set_program_class fixes the WM_CLASS GNOME (and other shells) use to
+// match a window to its .desktop entry — and therefore to its taskbar icon.
+//
+// Wails never sets WM_CLASS on Linux: it only calls g_set_prgname() and
+// gtk_window_set_icon(). GNOME Shell ignores gtk_window_set_icon for the
+// dock/taskbar; it looks up the .desktop file whose StartupWMClass matches the
+// window's WM_CLASS and takes the icon from there. Without this the WM_CLASS
+// defaults to the binary name (e.g. "sapaloq-widget-dev-linux-amd64" under
+// `wails dev`), so no .desktop matches and the generic placeholder icon shows.
+//
+// g_set_prgname sets the WM_CLASS *instance*; gdk_set_program_class sets the
+// WM_CLASS *class*. Both must be set before the toplevel is realized to take
+// effect, which is why main() calls this before wails.Run.
+static void sapaloq_set_program_class(const char *name) {
+	if (name == NULL || name[0] == '\0') {
+		return;
+	}
+	g_set_prgname(name);
+	gdk_set_program_class(name);
+}
 */
 import "C"
+
+import "unsafe"
 
 func scheduleInputShape(collapsed bool) {
 	if collapsed {
@@ -93,4 +116,14 @@ func scheduleInputShape(collapsed bool) {
 	} else {
 		C.sapaloq_schedule_shape(2000, 2000, 0)
 	}
+}
+
+// setProgramClass sets the GTK program name + WM_CLASS class so the window
+// matches the sapaloq.desktop entry (StartupWMClass=sapaloq) and GNOME shows
+// the SapaLOQ icon in the taskbar/dock. Must be called before wails.Run so it
+// takes effect before the toplevel window is realized.
+func setProgramClass(name string) {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	C.sapaloq_set_program_class(cname)
 }

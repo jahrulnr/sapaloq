@@ -3,7 +3,7 @@
 > Setiap spawn sub-agent dapat **system-prompt per role**.
 > Setelah task selesai: **automation-learning** (SapaLOQ) + orchestrator hooks → prompt/skill builder.
 > Learning **tidak hanya** dari interaksi user — bisa **research internet** untuk best practice.
-> Last updated: 2026-06-22 (runtime variables and persistent actor workspace)
+> Last updated: 2026-06-23 (shared persona.md core-character layer prepended to every role)
 
 Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [FEEDBACK-SOP.md](./FEEDBACK-SOP.md)
 
@@ -90,11 +90,35 @@ Async, boleh LLM + web:
 
 Role system-prompts are **not** hardcoded Go strings anymore — they are editable Markdown files the user can override. Implemented in `internal/prompts`.
 
-- **Defaults are embedded** in the binary (`internal/prompts/defaults/{ask,planner,agent,scribe}.md`, `go:embed`).
+- **Defaults are embedded** in the binary (`internal/prompts/defaults/{ask,planner,agent,scribe,persona}.md`, `go:embed`).
 - On startup the manager **materializes** them to `~/SapaLOQ/prompts/` (configurable via `prompts.dir`) and records each file's `sha256` in `prompts.manifest.json`.
 - **User edits are preserved.** On upgrade, a file whose on-disk hash still matches the manifest (i.e. untouched by the user) is refreshed when the embedded default changes; a file the user modified is **left alone**.
 - Resolution order at spawn: **on-disk file → embedded default**. `Manager.Get(role)` returns the active prompt; `task-runner` aliases `agent`.
 - The Ask system prompt and `buildSubAgentMessages` (planner/task-runner/scribe) all go through `Orchestrator.systemPrompt(role)`, so editing the `.md` file changes behavior without a rebuild.
+
+### Shared persona (core character)
+
+`persona.md` is a **role-agnostic character layer** — SapaLOQ's "how to carry
+yourself" (contract-first but never careless with security, tidy/well-documented
+work, explore-before-change, prove-don't-just-run, honesty). It is not a mode of
+its own. `Orchestrator.systemPrompt(role)` **prepends** the resolved persona to
+every role prompt:
+
+```
+<persona.md>
+
+---
+
+<role prompt (ask|planner|agent|scribe)>
+```
+
+- One injection point → ask/planner/agent/scribe **and any future role** inherit
+  the same baseline without duplicating it into each role file.
+- The persona is never wrapped around itself (`systemPrompt("persona")` returns
+  the bare persona), and an empty/missing persona is a no-op (role prompt
+  unchanged) — zero regression for tests that build a bare `Orchestrator`.
+- It is embedded + materialized like any other prompt, so users can edit
+  `~/SapaLOQ/prompts/persona.md` to retune SapaLOQ's character globally.
 
 | Config (`config.json` → `prompts`) | Default | Meaning |
 |-------------------------------------|---------|---------|
