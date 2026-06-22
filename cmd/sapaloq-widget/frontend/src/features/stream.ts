@@ -6,6 +6,7 @@ import { getMessageList, hasVisibleText, scrollMessagesToBottom } from '../ui/do
 import { renderMarkdown } from '../ui/markdown';
 import { appendMessage, wireAssistantFeedback } from './messages';
 import { setRingState } from './connection';
+import { refreshRuntimeStatus } from './runtime-status';
 import { getUserGroup, nextMessageSeq, taskBubbles, taskStatuses } from '../core/state';
 
 // ---------------------------------------------------------------------------
@@ -257,6 +258,11 @@ export function renderTaskUpdate(event: StreamEvent) {
   } else {
     const active = [...taskStatuses.values()].some((value) => value === 'pending' || value === 'in_progress' || value === 'stopping');
     if (!active) setRingState('idle');
+    // A terminal transition (done/failed/stopped) means the sub-agent has wound
+    // down. Refresh the runtime-status pill immediately instead of waiting up to
+    // 3s for the next poll — otherwise the "Agent" pill keeps blinking
+    // "finalizing" after the task is already finished.
+    if (terminal.has(status)) void refreshRuntimeStatus();
   }
 
   const summary = (event.summary || '').trim();

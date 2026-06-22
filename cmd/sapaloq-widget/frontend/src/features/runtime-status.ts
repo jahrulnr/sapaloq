@@ -15,9 +15,20 @@ function roleLabel(role: string) {
   return role || 'Actor';
 }
 
-function actorState(actor?: ActorRuntimeStatus) {
+// A worker that has reached a terminal outcome (done/failed/stopped) or whose
+// phase says it has wound down (finalizing/exited) is NOT live work — it must
+// not keep the pill blinking. Only genuinely-running phases map to 'active'.
+function isSettled(actor: ActorRuntimeStatus) {
+  const status = (actor.status || '').toLowerCase();
+  const phase = (actor.phase || '').toLowerCase();
+  return status === 'done' || status === 'failed' || status === 'stopped' ||
+    phase === 'finalizing' || phase === 'exited';
+}
+
+export function actorState(actor?: ActorRuntimeStatus) {
   if (!actor) return 'idle';
   if (actor.status === 'failed' || actor.status === 'stopped') return actor.status;
+  if (isSettled(actor)) return 'idle';
   return 'active';
 }
 
@@ -33,7 +44,9 @@ function actorTile(role: string, actor?: ActorRuntimeStatus) {
   const label = document.createElement('b');
   label.textContent = roleLabel(role);
   const phase = document.createElement('small');
-  phase.textContent = actor ? (actor.phase || actor.status || 'active') : 'idle';
+  // Once settled, the pill reads 'idle' rather than freezing on a transient
+  // phase like 'finalizing' that no longer reflects live work.
+  phase.textContent = actor && !isSettled(actor) ? (actor.phase || actor.status || 'active') : 'idle';
   copy.append(label, phase);
   article.append(signal, copy);
   return article;
