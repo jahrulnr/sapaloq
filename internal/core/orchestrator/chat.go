@@ -96,9 +96,16 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	)
 	// Load file-driven skills (read-only context). Errors are non-fatal: a
 	// missing/unreadable skills dir simply leaves the feature inert.
+	//
+	// The default skills ship embedded in the binary and are materialized to
+	// the skills dir on first run (Seed), so a fresh install has working
+	// defaults without any manual download/copy. Seeding never clobbers user
+	// edits and is best-effort — a disk error must not break startup.
 	var loadedSkills []skills.Skill
 	if cfg.Skills.WithDefaults().Enabled {
-		loadedSkills, _ = skills.Load(config.ExpandPath(cfg.Skills.WithDefaults().Dir))
+		skillsDir := config.ExpandPath(cfg.Skills.WithDefaults().Dir)
+		_ = skills.Seed(skillsDir)
+		loadedSkills, _ = skills.Load(skillsDir)
 	}
 	// Detect the desktop adapter (notifications/DND). Falls back to headless on
 	// non-Linux/headless hosts or when no real backend is registered, so this
