@@ -29,6 +29,11 @@ Commands:
   vault list          Show recent undeclared/unknown tool calls
   vault stats         Summarize vault log
   vault path          Print vault log file path
+  service install     Install systemd --user unit, enable + start it
+  service uninstall   Stop, disable and remove the unit (config is kept)
+  service start       Start the service (manual)
+  service stop        Stop the service (manual)
+  service status      systemctl --user status passthrough
   help                Show this help
 
 Environment:
@@ -52,6 +57,8 @@ Examples:
   sapaloq-core vault list --limit 20
   SAPALOQ_CURSOR_TOKEN=... sapaloq-core chat "test live stream"
   sapaloq-core doctor
+  sapaloq-core service install
+  sapaloq-core service status
 `
 
 func printUsage() {

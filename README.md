@@ -8,7 +8,54 @@ Portable desktop companion — isolated from `cursor-agent`. **Go modular driver
 
 **UI (M5):** Wails v2 FAB+popup — [docs/UI-DECISION.md](./docs/UI-DECISION.md) · [cmd/sapaloq-widget/](./cmd/sapaloq-widget/)
 
-## Quick start
+## Install
+
+```bash
+# Build binaries, seed config, register + start the systemd --user service
+./install.sh
+```
+
+`install.sh` builds `sapaloq-core` (and the Wails `sapaloq-widget` when `wails` +
+`libwebkit2gtk` are available), installs them into `~/.local/bin`, seeds a default
+config at `~/.config/sapaloq/config.json` (an existing config is never overwritten),
+creates the runtime dirs (`memory/ state/ run/ vault/`), and runs
+`sapaloq-core service install` to enable + start the background service.
+
+```bash
+./install.sh --no-service          # install binaries only, no systemd
+./install.sh --bin-dir ~/bin       # install binaries elsewhere
+./install.sh --uninstall           # remove service + binaries (config is KEPT)
+```
+
+Make sure `~/.local/bin` is on your `PATH`. To keep the service running without an
+active login session: `loginctl enable-linger $USER`.
+
+### Service (systemd `--user`)
+
+The service supervises `sapaloq-core run` (the orchestrator + IPC socket).
+
+| Command | Action |
+|---------|--------|
+| `sapaloq-core service install` | Write the unit, `daemon-reload`, enable + start (idempotent) |
+| `sapaloq-core service uninstall` | Stop, disable and remove the unit — **config/data kept** |
+| `sapaloq-core service start` | Start the service (manual) |
+| `sapaloq-core service stop` | Stop the service (manual) |
+| `sapaloq-core service status` | `systemctl --user status` passthrough |
+
+The unit is written to `~/.config/systemd/user/sapaloq.service` with an absolute
+`ExecStart` pointing at the installed binary.
+
+### Uninstall / delete config
+
+`./install.sh --uninstall` (or `sapaloq-core service uninstall`) removes the service
+and binaries but **keeps** your config and data. To erase everything — facts, chat
+history and the tool vault — delete the data dir manually:
+
+```bash
+rm -rf ~/.config/sapaloq
+```
+
+## Quick start (dev)
 
 ```bash
 # Build & test
@@ -42,6 +89,7 @@ Details: [docs/RUNTIME.md](./docs/RUNTIME.md) · widget spike: [docs/development
 | `vault list [--limit N] [--json]` | Recent undeclared/unknown tool calls |
 | `vault stats [--json]` | Vault summary by reason and top tools |
 | `vault path` | Print vault log path |
+| `service install\|uninstall\|start\|stop\|status` | Manage the systemd `--user` background service (see [Service](#service-systemd---user)) |
 | `help` | Usage |
 
 Env: `SAPALOQ_CONFIG`, `SAPALOQ_CURSOR_TOKEN`, `CURSOR_ACCESS_TOKEN`, `CURSOR_MACHINE_ID`. Credentials autoload from `.env` or Cursor IDE `state.vscdb` (see [docs/BRIDGE.md](./docs/BRIDGE.md#credentials)).
