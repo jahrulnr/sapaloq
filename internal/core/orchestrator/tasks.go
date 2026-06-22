@@ -84,7 +84,11 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		Scope      string `json:"scope"`
 		Answer     string `json:"answer"`
 	}
-	_ = json.Unmarshal(call.Arguments, &args)
+	if err := json.Unmarshal(call.Arguments, &args); err != nil {
+		// Tolerate raw control bytes in multi-line string values (see
+		// parseToolArgs); repair and retry so arguments aren't silently lost.
+		_ = json.Unmarshal(parse.RepairControlCharsInJSON(call.Arguments), &args)
+	}
 	o.auditTool(sessionID, "ask", call)
 	switch call.Name {
 	case "sapaloq_spawn_plan":

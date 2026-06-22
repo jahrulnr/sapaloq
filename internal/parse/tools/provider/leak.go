@@ -189,7 +189,9 @@ func toolLabelBefore(text string, brace int, known func(string) bool) (name stri
 // the raw (trimmed) bytes whether or not json.Valid accepts them so a slightly
 // malformed body is still surfaced as a tool call rather than silently dropped.
 func normalizeArgs(s string) json.RawMessage {
-	return json.RawMessage(strings.TrimSpace(s))
+	// Repair raw control bytes inside string literals so a multi-line args body
+	// (e.g. a heredoc) is valid JSON downstream; a no-op for already-valid JSON.
+	return json.RawMessage(parse.RepairControlCharsInJSON([]byte(strings.TrimSpace(s))))
 }
 
 func isASCIISpace(b byte) bool {
@@ -277,11 +279,16 @@ func splitOnce(s, sep string) (before, after string) {
 // contains a string "name" field and either an "arguments" object or a
 // "parameters" object.
 func looksLikeToolJSON(s string) bool {
-	if !json.Valid([]byte(s)) {
+	// Repair raw control bytes inside string literals first: a model that
+	// writes an inline tool call with a multi-line argument (e.g. a heredoc
+	// body) embeds real newlines, which make the JSON technically invalid and
+	// would otherwise cause the whole call to be rejected and lost.
+	b := parse.RepairControlCharsInJSON([]byte(s))
+	if !json.Valid(b) {
 		return false
 	}
 	var probe map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(s), &probe); err != nil {
+	if err := json.Unmarshal(b, &probe); err != nil {
 		return false
 	}
 	if _, ok := probe["name"]; !ok {
@@ -302,7 +309,10 @@ func decodeLooseToolJSON(s string) (name string, args json.RawMessage, ok bool) 
 		Arguments  json.RawMessage `json:"arguments"`
 		Parameters json.RawMessage `json:"parameters"`
 	}
-	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+	// Repair raw control bytes (see looksLikeToolJSON) so a multi-line argument
+	// value decodes — and so the Arguments we hand downstream are valid JSON
+	// that parseToolArgs can unmarshal.
+	if err := json.Unmarshal(parse.RepairControlCharsInJSON([]byte(s)), &raw); err != nil {
 		return "", nil, false
 	}
 	if strings.TrimSpace(raw.Name) == "" {

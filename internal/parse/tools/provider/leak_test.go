@@ -227,6 +227,48 @@ func TestParseToolCallLabeledReassembledAcrossFragments(t *testing.T) {
 	}
 }
 
+// TestParseToolCallLeakMultilineRawNewlines is the regression for the
+// orch-task heredoc failure: a model wrote an inline tool call whose argument
+// body had REAL (unescaped) line breaks (a heredoc HTML file). The JSON is
+// technically invalid, so the call used to be rejected/lost and the model
+// concluded its content was "stripped". The scanner must repair the raw control
+// bytes and recover the call with the full multi-line command intact.
+func TestParseToolCallLeakMultilineRawNewlines(t *testing.T) {
+	known := func(n string) bool { return n == "exec" }
+
+	// Envelope form with a raw newline inside the command value.
+	envelope := "ok: {\"name\":\"exec\",\"arguments\":{\"command\":\"cat > f <<X\n<!DOCTYPE html>\n<html></html>\nX\"}}"
+	tc, ok := ParseToolCallLeak(envelope, known)
+	if !ok {
+		t.Fatal("multi-line envelope tool call was not recovered")
+	}
+	if tc.Name != "exec" {
+		t.Fatalf("name=%q want exec", tc.Name)
+	}
+	var args struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(tc.Arguments, &args); err != nil {
+		t.Fatalf("recovered arguments are not valid JSON: %v (%q)", err, string(tc.Arguments))
+	}
+	if !strings.Contains(args.Command, "<!DOCTYPE html>") || !strings.Contains(args.Command, "<<X") {
+		t.Fatalf("command lost its multi-line body: %q", args.Command)
+	}
+
+	// Bracketed labeled form with raw newlines in the bare args object.
+	labeled := "[Tool: exec]\n{\"command\":\"echo a\necho b\"}"
+	tc2, ok2 := ParseToolCallLeak(labeled, known)
+	if !ok2 {
+		t.Fatal("multi-line labeled tool call was not recovered")
+	}
+	if err := json.Unmarshal(tc2.Arguments, &args); err != nil {
+		t.Fatalf("labeled args not valid JSON: %v (%q)", err, string(tc2.Arguments))
+	}
+	if args.Command != "echo a\necho b" {
+		t.Fatalf("labeled command=%q", args.Command)
+	}
+}
+
 func mustJSONString(s string) string {
 	b, err := json.Marshal(s)
 	if err != nil {

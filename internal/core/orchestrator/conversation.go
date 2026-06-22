@@ -142,12 +142,6 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		var response strings.Builder
 		var toolResults []string
-		// scrub removes internal scaffolding labels ("[Tool results]", "[Usage]
-		// …") that a model sometimes echoes at the very start of its visible
-		// answer (it mimics the transcript framing the orchestrator uses to feed
-		// tool output back in). It is turn-scoped: a fresh scrubber per turn so
-		// the start-of-answer anchor resets each inference turn.
-		var scrub responseScrubber
 		stop := false
 		hadError := false
 		retryTextOnly := false
@@ -160,16 +154,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 			switch ev.Kind {
 			case bridge.EventResponseDelta:
+				response.WriteString(ev.Delta)
+				all.WriteString(ev.Delta)
 				out.beat(fmt.Sprintf("responding turn %d/%d", inferenceTurn, maxInferenceTurns))
-				cleaned := scrub.feed(ev.Delta)
-				if cleaned == "" {
-					// Either fully stripped or still buffering the leading
-					// region — nothing to surface yet.
-					continue
-				}
-				response.WriteString(cleaned)
-				all.WriteString(cleaned)
-				ev.Delta = cleaned
 				out.emit(runCtx, ev)
 			case bridge.EventToolCall:
 				out.emit(runCtx, ev)
@@ -248,17 +235,6 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				// emits one final done after all tool continuations.
 			default:
 				out.emit(runCtx, ev)
-			}
-		}
-		// Flush any leading bytes the scrubber was still buffering when the turn
-		// ended (e.g. a turn whose entire visible output was shorter than the
-		// label-probe window). On a retry path the aborted turn's text is
-		// discarded, so only flush when we are not about to redo the turn.
-		if !retryTextOnly && !retryCompacted && !retryTransport {
-			if tail := scrub.flush(); tail != "" {
-				response.WriteString(tail)
-				all.WriteString(tail)
-				out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: tail, At: time.Now().UTC()})
 			}
 		}
 		if retryTextOnly {

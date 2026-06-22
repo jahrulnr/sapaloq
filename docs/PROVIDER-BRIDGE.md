@@ -1,7 +1,7 @@
 # SapaLOQ — Provider Bridge (OpenAI / Claude / Kimi)
 
 > **Multi-model LLM bridge** — speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
-> Last updated: 2026-06-22 (inline tool-call reassembly across content deltas; labeled `[Tool: name]` / bare `name {args}` recovery)
+> Last updated: 2026-06-22 (inline tool-call reassembly across content deltas; labeled `[Tool: name]` / bare `name {args}` recovery; raw control-char tolerance for multi-line args)
 
 Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -354,6 +354,19 @@ not an envelope:
 Both reuse the string-aware brace matcher and the moving-frontier streaming
 logic, so a labeled call whose large args object (or the label itself) is split
 across deltas is still reassembled into a single `EventToolCall`.
+
+**Raw control-char tolerance.** A model that writes a multi-line argument inline
+(e.g. an `exec` heredoc whose body is a whole HTML file) embeds **real newline
+bytes** inside the JSON string value. Per the JSON spec a literal control byte
+(U+0000–U+001F) in a string is invalid, so `encoding/json` would reject the whole
+call and it was silently lost — the tool then saw empty args, returned "command
+is required", and the model wrongly concluded its content had been
+"stripped/filtered" (and burned turns on base64/chunking workarounds). The
+reassembler and `parseToolArgs` now run the candidate through
+`parse.RepairControlCharsInJSON`, which escapes raw control bytes **inside string
+literals** (`\n`, `\r`, `\t`, `\u00XX`) while leaving structure untouched — a
+no-op for already-valid JSON. So a multi-line inline call is recognised and its
+stored `Arguments` are valid JSON that downstream unmarshalling accepts.
 
 (The old `EventToolLeak` event type remains defined but is no longer emitted by
 this path; the orchestrator only ever consumed `EventToolCall`.)

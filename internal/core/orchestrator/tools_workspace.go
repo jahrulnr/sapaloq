@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 // resolvePath turns a user-supplied path into an absolute host path. SapaLOQ is
@@ -78,7 +80,14 @@ type toolArgs struct {
 
 func parseToolArgs(raw json.RawMessage) toolArgs {
 	var args toolArgs
-	_ = json.Unmarshal(raw, &args)
+	if err := json.Unmarshal(raw, &args); err != nil {
+		// Models frequently emit multi-line argument values (heredoc bodies,
+		// file content) with RAW control bytes inside the JSON string, which is
+		// invalid JSON and makes encoding/json drop the value silently — the
+		// tool then sees empty args and the model wrongly concludes its content
+		// was "stripped". Repair the raw control chars and retry once.
+		_ = json.Unmarshal(parse.RepairControlCharsInJSON(raw), &args)
+	}
 	return args
 }
 

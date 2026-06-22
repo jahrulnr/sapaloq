@@ -78,27 +78,30 @@ jalanap").
 
 ---
 
-## Fixed this session (2026-06-22) — echoed `[Tool Results]` / `[Usage]` scaffolding labels leaked into the visible answer
+## Fixed this session (2026-06-22) — multi-line tool args (raw newlines) silently dropped → wasted token loops
 
-- **Bug.** A model began its visible reply with the literal scaffolding label
-  `[Tool Results]` followed by the real prose (orch-chat `…683.jsonl` line 84:
-  `[Tool Results]\nPantesan kelihatan "kosongan" ya…`). The user saw the
-  internal label. Root cause: the orchestrator feeds tool output back into the
-  conversation prefixed with `"[Tool results]\n"` (`conversation.go:350`) and a
-  `"[Usage] turn N · tool-calls so far M"` line; the model mimics that framing
-  and echoes the label at the start of its answer. There was no sanitizer on the
-  visible-response path (deltas are forwarded verbatim, incrementally).
-- **Fix.** Added a turn-scoped `responseScrubber`
-  (`internal/core/orchestrator/response_scrub.go`) wired into the
-  `EventResponseDelta` path in `conversation.go`. It strips a leading
-  `[Tool results]` / `[Tool result]` (optionally + newline) or `[Usage] …` line
-  when it appears at the **start** of a turn's visible output, buffering only the
-  small leading region so a label split across SSE deltas is still caught, then
-  passing the rest through unchanged. The anchor is start-of-turn only (a `[`
-  later in the answer is untouched); both the live UI stream and the persisted
-  assistant turn get the cleaned text. Unit tests (`response_scrub_test.go`)
-  cover mixed-case/lowercase labels, 1-byte-fragment splits, `[Usage]` lines,
-  no-label pass-through, and non-label leading brackets. Docs: `ORCHESTRATOR.md`.
+- **Bug.** A sub-agent tried to write `index.html` via `exec` with a heredoc
+  whose body had **real line breaks** (`cat > f <<X\n<!DOCTYPE html>\n…\nX`). The
+  tool-call argument JSON therefore held **raw, unescaped newline bytes inside
+  the string value**, which is invalid JSON. `parseToolArgs`
+  (`tools_workspace.go`) did `_ = json.Unmarshal(raw, …)` and **ignored the
+  error**, so `args.Command` came back empty and `exec` answered "command is
+  required". The model interpreted the empty result as its content being
+  "stripped/filtered" and burned ~22 turns on base64/chunking/Python-script
+  workarounds before giving up (orch-task `…977.jsonl`). The inline reassembler
+  (`leak.go`) had the same blind spot: `looksLikeToolJSON` gated on `json.Valid`,
+  so a multi-line inline call was rejected outright.
+- **Fix.** New `parse.RepairControlCharsInJSON` (`internal/parse/jsonrepair.go`)
+  escapes raw control bytes (`\n`, `\r`, `\t`, `\u00XX`) **inside JSON string
+  literals** while leaving structure untouched — a no-op for already-valid JSON.
+  `parseToolArgs` and `handleAskTool` (`tasks.go`) now retry unmarshal through it
+  instead of swallowing the error; `leak.go`'s `looksLikeToolJSON`,
+  `decodeLooseToolJSON`, and `normalizeArgs` validate/decode against the repaired
+  bytes so multi-line inline calls reassemble and their stored `Arguments` are
+  valid JSON. Tests: `jsonrepair_test.go`, `leak_test.go`
+  (`TestParseToolCallLeakMultilineRawNewlines`), and orchestrator
+  `tools_args_repair_test.go` (parse + end-to-end heredoc file write). Docs:
+  `PROVIDER-BRIDGE.md`.
 
 ---
 
