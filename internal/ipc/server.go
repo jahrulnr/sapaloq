@@ -59,6 +59,15 @@ func (s *Server) ListenAndServe(ctx context.Context, socketPath string) error {
 
 func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
 	sc := bufio.NewScanner(conn)
 	// Requests can carry inlined attachments (base64 images / file text), which
 	// easily exceed bufio.Scanner's default 64KB line cap and would otherwise
@@ -80,6 +89,9 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			s.handleHistory(ctx, conn, req, start)
 		case "context_usage":
 			s.handleUsage(ctx, conn, req, start)
+		case "runtime_status":
+			status := s.orch.RuntimeStatus()
+			write(conn, Response{OK: true, Op: req.Op, Runtime: &status, ServerMs: time.Since(start).Milliseconds()})
 		case "chat_delete":
 			s.handleDelete(ctx, conn, req, start)
 		case "chat_retry":
@@ -154,9 +166,13 @@ func (s *Server) writeStream(ctx context.Context, conn net.Conn, requestedSessio
 			usage, _ := s.orch.ContextUsage(ctx, sessionID)
 			resp.Usage = &usage
 		}
-		write(conn, resp)
+		if err := write(conn, resp); err != nil {
+			return
+		}
 		if ring != orchestrator.RingIdle {
-			write(conn, Response{OK: true, Op: "ring_state", SessionID: sessionID, RingState: string(ring)})
+			if err := write(conn, Response{OK: true, Op: "ring_state", SessionID: sessionID, RingState: string(ring)}); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -192,20 +208,24 @@ func (s *Server) handleUsage(ctx context.Context, conn net.Conn, req Request, st
 func (s *Server) handleWatch(ctx context.Context, conn net.Conn) {
 	events, cancel := s.orch.Bus().Subscribe(64)
 	defer cancel()
-	write(conn, Response{OK: true, Op: "watch", Message: "subscribed"})
+	if err := write(conn, Response{OK: true, Op: "watch", Message: "subscribed"}); err != nil {
+		return
+	}
 	// Durable catch-up: a widget may start late or reconnect after the in-memory
 	// bus push. Rehydrate recent task states from status.json before streaming
 	// live events. The frontend updates one card per task id, so overlap with a
 	// queued live event is harmless.
 	for _, event := range s.orch.RecentTaskUpdates(20) {
 		ev := event
-		write(conn, Response{
+		if err := write(conn, Response{
 			OK:        true,
 			Op:        "event",
 			SessionID: ev.SessionID,
 			Event:     &ev,
 			RingState: string(orchestrator.RingStateFor(ev.Kind)),
-		})
+		}); err != nil {
+			return
+		}
 	}
 	for {
 		select {
@@ -216,12 +236,18 @@ func (s *Server) handleWatch(ctx context.Context, conn net.Conn) {
 				return
 			}
 			data := ev.Data
-			write(conn, Response{OK: true, Op: "event", Event: &data, RingState: string(orchestrator.RingStateFor(data.Kind))})
+			if err := write(conn, Response{OK: true, Op: "event", Event: &data, RingState: string(orchestrator.RingStateFor(data.Kind))}); err != nil {
+				return
+			}
 		}
 	}
 }
 
-func write(conn net.Conn, res Response) {
+func write(conn net.Conn, res Response) error {
 	b, _ := json.Marshal(res)
-	_, _ = conn.Write(append(b, '\n'))
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+	_, err := conn.Write(append(b, '\n'))
+	return err
 }

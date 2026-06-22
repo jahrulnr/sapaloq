@@ -76,6 +76,9 @@ func main() {
 	case "service":
 		runService(cfg, cfgPath, cmdArgs)
 	case "run":
+		if err := config.MigrateDefaultDataRoot(); err != nil {
+			fmt.Fprintf(os.Stderr, "sapaloq-core: %v\n", err)
+		}
 		dirs := config.RuntimeDirs(cfg)
 		if err := config.EnsureRuntimeDirs(dirs); err != nil {
 			exitf("runtime dirs: %v", err)

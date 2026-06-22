@@ -76,6 +76,10 @@ type toolArgs struct {
 	Title          string   `json:"title"`      // desktop_notify: notification title
 	Body           string   `json:"body"`       // desktop_notify: notification body
 	Urgency        string   `json:"urgency"`    // desktop_notify: low|normal|critical
+	TargetTaskID   string   `json:"target_task_id"`
+	Message        string   `json:"message"`
+	Priority       string   `json:"priority"`
+	CorrelationID  string   `json:"correlation_id"`
 }
 
 func parseToolArgs(raw json.RawMessage) toolArgs {
@@ -464,6 +468,11 @@ func toolWriteFile(args toolArgs, mustNotExist bool) string {
 // honors an explicit cwd argument (any path). Output is byte-capped and a
 // timeout guards runaway commands.
 func toolExec(ctx context.Context, args toolArgs) string {
+	return (&Orchestrator{}).toolExec(ctx, args)
+}
+
+func (o *Orchestrator) toolExec(ctx context.Context, args toolArgs) string {
+	args = o.resolveActorArgs(ctx, args)
 	cmd := strings.TrimSpace(args.Command)
 	if cmd == "" {
 		return "Error: command is required."
@@ -477,12 +486,17 @@ func toolExec(ctx context.Context, args toolArgs) string {
 	}
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
-	c := exec.CommandContext(runCtx, "bash", "-lc", cmd)
+	const cwdMarker = "__SAPALOQ_FINAL_CWD__="
+	wrapped := cmd + "\nstatus=$?\nprintf '\\n" + cwdMarker + "%s\\n' \"$PWD\"\nexit $status"
+	c := exec.CommandContext(runCtx, "bash", "-lc", wrapped)
 	if dir := strings.TrimSpace(args.Cwd); dir != "" {
 		c.Dir = expandHome(dir)
 	}
 	out, err := c.CombinedOutput()
-	text := string(out)
+	text, finalCWD := splitExecCWD(string(out), cwdMarker)
+	if finalCWD != "" {
+		o.persistActorCWD(actorRunID(ctx), finalCWD)
+	}
 	if len(text) > 16*1024 {
 		text = text[:16*1024] + "\n[output truncated]"
 	}
@@ -496,4 +510,17 @@ func toolExec(ctx context.Context, args toolArgs) string {
 		return "(command produced no output)"
 	}
 	return text
+}
+
+func splitExecCWD(output, marker string) (string, string) {
+	index := strings.LastIndex(output, "\n"+marker)
+	if index < 0 {
+		return output, ""
+	}
+	tail := output[index+1+len(marker):]
+	lineEnd := strings.IndexByte(tail, '\n')
+	if lineEnd >= 0 {
+		tail = tail[:lineEnd]
+	}
+	return strings.TrimSuffix(output[:index], "\n"), strings.TrimSpace(tail)
 }

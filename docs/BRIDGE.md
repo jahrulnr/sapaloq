@@ -2,7 +2,7 @@
 
 > **Brain bridge drivers** — connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-06-22 (provider bridge recovers labeled `[Tool: name]` / bare `name {args}` inline tool calls — see PROVIDER-BRIDGE.md)
+> Last updated: 2026-06-22 (runtime bridge/vault paths moved to ~/SapaLOQ)
 
 Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -74,7 +74,7 @@ Orchestrator & sub-agents call unified interface `bridge.Complete()` — driver 
 
 When Cursor or another provider emits a **structured tool call** (protobuf `TOOL_CALL` or Kimi inline) that is not on the companion **declared surface**, SapaLOQ appends a JSONL row — **no blocking**, stream continues.
 
-**Path:** `~/.config/sapaloq/vault/tool-calls.jsonl`
+**Path:** `~/SapaLOQ/vault/tool-calls.jsonl`
 
 **CLI:**
 
@@ -264,7 +264,7 @@ func init() { bridge.Register(&CursorBridgeFactory{}) }
     "declaredTools": ["read_file", "grep", "glob_file_search"],
     "coercion": {
       "enabled": true,
-      "schemaPath": "~/.config/sapaloq/bridge/cursor-bridge.schema.json"
+      "schemaPath": "~/SapaLOQ/bridge/cursor-bridge.schema.json"
     },
     "fallback": {
       "driver": "local-llama",
@@ -457,5 +457,3 @@ Implication for milestones: M1–M3 need bridge session + SQLite only; deep curs
 | [jahrulnr/cursor-bridge](https://github.com/jahrulnr/cursor-bridge) | Schema, coercion test vectors, proto-lab          |
 | 9router                                                             | Transport pattern reference — **not** runtime dep |
 | `cursor-agent-toolcall-spec.json`                                   | ToolCall variant map for mirror UI                |
-
-

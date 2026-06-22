@@ -8,9 +8,9 @@ import { SyncInputShape } from '../../wailsjs/go/main/App';
 
 export const COLLAPSED = { w: 76, h: 76 };
 export const PANEL_SIZES = [
-  { w: 376, h: 536 },
-  { w: 520, h: 680 },
-  { w: 720, h: 820 },
+  { w: 376, h: 640 },
+  { w: 520, h: 760 },
+  { w: 720, h: 860 },
 ];
 export const EXPANDED = PANEL_SIZES[0];
 const MARGIN = 20;

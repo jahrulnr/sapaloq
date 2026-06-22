@@ -1,7 +1,7 @@
 # SapaLOQ — Runtime: Single Binary
 
 > **Satu binary Go** — goroutine + channel + persistence lokal. Zero external daemons.
-> Last updated: 2026-06-21
+> Last updated: 2026-06-22 (config/data split, persistent actor workspace, runtime map)
 
 Related: [EVENT-BUS.md](./EVENT-BUS.md) · [VISION.md](./VISION.md)
 
@@ -35,7 +35,10 @@ sapaloq-core (one binary)
 
 | Store | Path | Role |
 |-------|------|------|
-| SQLite | `~/.config/sapaloq/memory/companion.db` | Facts, FTS, skills index, dedupe |
+| Config | `~/.config/sapaloq/config.json` | User-editable runtime configuration |
+| SQLite | `~/SapaLOQ/memory/companion.db` | Facts, FTS, skills index, dedupe |
+| Workspace | `~/SapaLOQ/workspace/` | Default actor CWD; persisted per actor |
+| Runtime state | `~/SapaLOQ/state/` | Tasks, workers, actor inboxes, tool jobs |
 | jsonl | `events.jsonl`, `progress/*.jsonl` | WAL, audit, replay on boot |
 | Worker health | `state/workers/<task-id>/health.json` | Live per-worker PID/phase/heartbeat snapshot (observability) |
 | Worker errors | `state/workers/<task-id>/error.log` | Errors-only trail per sub-agent (debugging) |
@@ -83,7 +86,7 @@ After=graphical-session.target
 [Service]
 ExecStart=%h/.local/bin/sapaloq-core
 Restart=on-failure
-Environment=SAPALOQ_HOME=%h/.config/sapaloq
+Environment=SAPALOQ_HOME=%h/SapaLOQ
 
 [Install]
 WantedBy=default.target
@@ -121,6 +124,24 @@ prompts, feedback, vault, and event-bus socket/WAL. Roadmap-only knobs remain
 documented in their subsystem docs but are not copied into a live config where
 `/settings` could falsely report a successful no-op.
 
+`orchestrator.continuation.maxParallelTools` defaults to `8`. Tool-job state is
+persisted under `state/tool-jobs/*.json`; queued/running jobs found after a
+restart are marked cancelled with an explicit restart reason. Cross-actor
+steering is persisted under `state/actor-inbox/<actor-id>/*.json` and consumed
+at inference safe points.
+
+Config and runtime data are intentionally separate. `SAPALOQ_CONFIG` controls
+only the config file path (default `~/.config/sapaloq/config.json`). The default
+runtime root is `~/SapaLOQ`; schema migration 1.4 rewrites only legacy shipped
+defaults and preserves explicit custom paths. Startup moves known non-config
+artifacts from the legacy root without moving or overwriting `config.json` and
+`.env`.
+
+Each actor starts at `~/SapaLOQ/workspace`. Relative file tools and `exec`
+resolve from its persisted CWD. A shell `cd` is captured after command execution
+and stored under `state/workspaces/<actor>.json`; missing directories fall back
+to the default workspace.
+
 ---
 
 ## Non-goals (runtime)
@@ -151,7 +172,7 @@ Debug output goes to **stderr**; chat events stay on stdout. Env: `SAPALOQ_DEBUG
 
 | Env | Default | Purpose |
 |-----|---------|---------|
-| `SAPALOQ_CONFIG` | `~/.config/sapaloq/config.json` | Live config |
+| `SAPALOQ_CONFIG` | `~/.config/sapaloq/config.json` | Live config only |
 | `SAPALOQ_CURSOR_TOKEN` | — | Cursor bearer token (sapaloq name) |
 | `CURSOR_ACCESS_TOKEN` | — | Same token (cursor-bridge convention) |
 | `CURSOR_MACHINE_ID` | — | Machine id for checksum headers |
@@ -217,10 +238,13 @@ sapaloq-core doctor --json       # machine-readable exit payload
 
 Config **schema migration** is implemented: `Load` decodes to a raw map, runs
 an ordered upgrade chain (`internal/config/migrate.go`,
-`CurrentSchemaVersion = 1.2.0`; lower → upgrade + persist, equal → no-op,
+`CurrentSchemaVersion = 1.4.0`; lower → upgrade + persist, equal → no-op,
 higher → load as-is) before unmarshalling. The 1.2 migration aligns active
 `skills.dir`, `prompts.dir`, and `events.bus.walPath` names. Still planned:
 `os.json` regeneration checks and a unified SQL migration runner.
+`maxParallelTools` is additive and receives its default through
+`OrchestratorConfig.WithDefaults`, so existing 1.2 configs do not require a
+destructive rewrite.
 
 ```bash
 sapaloq-core doctor              # current checks

@@ -22,6 +22,7 @@ import {
 } from './stream';
 import { bindLatestGroupTurnID, removeRepliesAfterTurn, restoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
+import { refreshRuntimeStatus } from './runtime-status';
 import {
   getCompose,
   getSessionID,
@@ -232,6 +233,7 @@ export function initChatController() {
       // the completion trigger would be silently dropped while idle.
       if (event.kind === 'task_update') {
         renderTaskUpdate(event);
+        void refreshRuntimeStatus();
         return;
       }
       // The orchestrator SPEAKS a sub-agent's terminal outcome as a SINGLE,

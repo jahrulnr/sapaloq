@@ -207,6 +207,122 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .popup-close:hover,
 .popup-resize:hover { background: oklch(100% 0 0 / 0.14); }
 
+.runtime-strip {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(88px, 0.85fr) minmax(152px, 1.35fr) minmax(82px, 0.8fr);
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: oklch(9% 0.035 255 / 0.28);
+}
+
+.runtime-model,
+.runtime-workspace,
+.actor-tile {
+  min-width: 0;
+  border: 1px solid oklch(100% 0 0 / 0.1);
+  background: oklch(100% 0 0 / 0.045);
+}
+
+.runtime-model,
+.runtime-workspace {
+  display: grid;
+  align-content: center;
+  gap: 1px;
+  min-height: 40px;
+  padding: 6px 8px;
+  border-radius: 10px;
+}
+
+.runtime-kicker {
+  color: var(--subtle);
+  font-size: 0.5rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.runtime-model strong,
+.runtime-workspace strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.66rem;
+  font-weight: 850;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-model > span:last-child {
+  overflow: hidden;
+  color: var(--accent);
+  font-size: 0.54rem;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-workspace strong { color: oklch(82% 0.07 205); }
+
+.runtime-actors {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(68px, 1fr));
+  gap: 6px;
+}
+
+.actor-tile {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 6px 7px;
+  border-radius: 10px;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+
+.actor-tile > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.actor-tile b,
+.actor-tile small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actor-tile b { color: var(--muted); font-size: 0.62rem; font-weight: 850; }
+.actor-tile small { color: var(--subtle); font-size: 0.52rem; }
+.actor-signal {
+  width: 6px;
+  height: 18px;
+  border-radius: 999px;
+  background: oklch(48% 0.03 245);
+}
+
+.actor-tile[data-state='active'] {
+  border-color: oklch(73% 0.16 186 / 0.28);
+  background: oklch(73% 0.16 186 / 0.075);
+}
+.actor-tile[data-state='active'] .actor-signal {
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--glow);
+  animation: actor-breathe 1.5s ease-in-out infinite;
+}
+.actor-tile[data-state='active'] b { color: var(--ink); }
+.actor-tile[data-state='failed'] .actor-signal,
+.actor-tile[data-state='stopped'] .actor-signal { background: var(--danger); }
+
+@keyframes actor-breathe {
+  0%, 100% { opacity: 0.55; transform: scaleY(0.65); }
+  50% { opacity: 1; transform: scaleY(1); }
+}
+
 .popup-body {
   position: relative;
   z-index: 1;

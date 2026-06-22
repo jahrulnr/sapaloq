@@ -34,11 +34,12 @@ func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) 
 	if o.spokenTasks == nil {
 		o.spokenTasks = make(map[string]struct{})
 	}
-	if _, already := o.spokenTasks[record.ID]; already {
+	spokenKey := record.ID + ":" + record.Status
+	if _, already := o.spokenTasks[spokenKey]; already {
 		o.spokenMu.Unlock()
 		return
 	}
-	o.spokenTasks[record.ID] = struct{}{}
+	o.spokenTasks[spokenKey] = struct{}{}
 	o.spokenMu.Unlock()
 
 	text := spokenCompletionText(record)

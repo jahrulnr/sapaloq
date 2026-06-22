@@ -223,3 +223,47 @@ func TestMigrate120FlattensToolNames(t *testing.T) {
 		t.Fatalf("exec should appear exactly once after dedup, got %d in %v", count, list)
 	}
 }
+
+func TestMigrate130MovesOnlyDefaultRuntimePaths(t *testing.T) {
+	raw := map[string]any{
+		"schemaVersion": "1.3.0",
+		"runtime":       map[string]any{"dataDir": "~/.config/sapaloq"},
+		"skills":        map[string]any{"dir": "~/.config/sapaloq/skills"},
+		"prompts":       map[string]any{"dir": "~/.config/sapaloq/prompts"},
+		"events": map[string]any{"bus": map[string]any{
+			"socketPath": "~/.config/sapaloq/run/sapaloq.sock",
+			"walPath":    "~/.config/sapaloq/state/events.jsonl",
+		}},
+	}
+	out, changed, err := migrateRaw(raw)
+	if err != nil || !changed {
+		t.Fatalf("migrateRaw changed=%v err=%v", changed, err)
+	}
+	if out["schemaVersion"] != "1.4.0" {
+		t.Fatalf("schemaVersion = %v", out["schemaVersion"])
+	}
+	if out["runtime"].(map[string]any)["dataDir"] != "~/SapaLOQ" {
+		t.Fatalf("runtime path not migrated: %+v", out["runtime"])
+	}
+	if out["prompts"].(map[string]any)["dir"] != "~/SapaLOQ/prompts" {
+		t.Fatalf("prompts path not migrated: %+v", out["prompts"])
+	}
+}
+
+func TestMigrate130PreservesCustomRuntimePaths(t *testing.T) {
+	raw := map[string]any{
+		"schemaVersion": "1.3.0",
+		"runtime":       map[string]any{"dataDir": "/srv/sapaloq"},
+		"skills":        map[string]any{"dir": "/srv/sapaloq-skills"},
+	}
+	out, _, err := migrateRaw(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["runtime"].(map[string]any)["dataDir"] != "/srv/sapaloq" {
+		t.Fatalf("custom runtime path changed: %+v", out["runtime"])
+	}
+	if out["skills"].(map[string]any)["dir"] != "/srv/sapaloq-skills" {
+		t.Fatalf("custom skills path changed: %+v", out["skills"])
+	}
+}

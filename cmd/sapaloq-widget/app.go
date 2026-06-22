@@ -115,6 +115,10 @@ func (a *App) ContextUsage() (*chatUsage, error) {
 	return contextUsage(a.socketPath)
 }
 
+func (a *App) RuntimeStatus() (*runtimeStatus, error) {
+	return runtimeInfo(a.socketPath)
+}
+
 func (a *App) SlashSuggest(query string) ([]config.CommandEntry, error) {
 	return slashSuggest(a.socketPath, query)
 }

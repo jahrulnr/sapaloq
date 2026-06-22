@@ -6,7 +6,13 @@ import (
 	"strings"
 )
 
-const defaultDataDir = "~/.config/sapaloq"
+const (
+	defaultConfigDir = "~/.config/sapaloq"
+	defaultDataDir   = "~/SapaLOQ"
+)
+
+func DefaultConfigDir() string { return ExpandPath(defaultConfigDir) }
+func DefaultDataDir() string   { return ExpandPath(defaultDataDir) }
 
 func ExpandPath(path string) string {
 	if path == "" {
@@ -32,15 +38,19 @@ func RuntimeDirs(cfg Config) RuntimeDirsInfo {
 		dataDir = ExpandPath(defaultDataDir)
 	}
 	return RuntimeDirsInfo{
-		DataDir:     dataDir,
-		RunDir:      filepath.Join(dataDir, "run"),
-		MemoryDir:   filepath.Join(dataDir, "memory"),
-		StateDir:    filepath.Join(dataDir, "state"),
-		TasksDir:    filepath.Join(dataDir, "state", "tasks"),
-		ProgressDir: filepath.Join(dataDir, "state", "progress"),
-		WorkersDir:  filepath.Join(dataDir, "state", "workers"),
-		VaultDir:    filepath.Join(dataDir, "vault"),
-		SocketPath:  ExpandPath(cfg.Events.Bus.SocketPath),
+		DataDir:      dataDir,
+		RunDir:       filepath.Join(dataDir, "run"),
+		MemoryDir:    filepath.Join(dataDir, "memory"),
+		StateDir:     filepath.Join(dataDir, "state"),
+		TasksDir:     filepath.Join(dataDir, "state", "tasks"),
+		ProgressDir:  filepath.Join(dataDir, "state", "progress"),
+		WorkersDir:   filepath.Join(dataDir, "state", "workers"),
+		VaultDir:     filepath.Join(dataDir, "vault"),
+		WorkspaceDir: filepath.Join(dataDir, "workspace"),
+		PromptsDir:   filepath.Join(dataDir, "prompts"),
+		SkillsDir:    filepath.Join(dataDir, "skills"),
+		EtcDir:       filepath.Join(dataDir, "etc"),
+		SocketPath:   ExpandPath(cfg.Events.Bus.SocketPath),
 	}
 }
 
@@ -61,13 +71,17 @@ type RuntimeDirsInfo struct {
 	ProgressDir string
 	// WorkersDir holds per-worker observability artifacts: error logs and the
 	// worker-registry snapshot. One subdir per task id. Lives under StateDir.
-	WorkersDir string
-	VaultDir   string
-	SocketPath string
+	WorkersDir   string
+	VaultDir     string
+	WorkspaceDir string
+	PromptsDir   string
+	SkillsDir    string
+	EtcDir       string
+	SocketPath   string
 }
 
 func EnsureRuntimeDirs(dirs RuntimeDirsInfo) error {
-	for _, dir := range []string{dirs.DataDir, dirs.RunDir, dirs.MemoryDir, dirs.StateDir, dirs.TasksDir, dirs.ProgressDir, dirs.WorkersDir, dirs.VaultDir} {
+	for _, dir := range []string{dirs.DataDir, dirs.RunDir, dirs.MemoryDir, dirs.StateDir, dirs.TasksDir, dirs.ProgressDir, dirs.WorkersDir, dirs.VaultDir, dirs.WorkspaceDir, dirs.PromptsDir, dirs.SkillsDir, dirs.EtcDir} {
 		if dir == "" {
 			continue
 		}

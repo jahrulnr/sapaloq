@@ -2,7 +2,7 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop — bukan repo coding.
-> Last updated: 2026-06-21
+> Last updated: 2026-06-22 (cancellation-safe streams and durable actor steering)
 
 Related: [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [VISION.md](./VISION.md) · [config.schema.json](../schema/config.schema.json)
 
@@ -36,6 +36,14 @@ SapaLOQ harus **prefetch context yang tepat dalam <2 detik** sebelum sub-agent j
 8. **Lifecycle certainty is durable** — task status comes from
    `state/tasks/<taskId>/status.json`; a missed live event or core restart must
    produce a visible snapshot/failure, never an indefinitely silent task.
+9. **Cancellation is local and immediate** — Stop is observed by the
+   orchestrator consumer directly; it must not wait for a provider stream to
+   emit another event or close its channel. Failed retry attempts are cancelled
+   and abandoned, not synchronously drained.
+10. **Shared context is evented, not mutable** — Planner/Agent steering is
+    queued in a durable target inbox and folded into that actor only at a safe
+    point. A decision mediator receives a bounded snapshot; it never mutates the
+    foreground UI orchestrator's live message slice.
 
 ---
 
@@ -89,7 +97,7 @@ Output: **prefetch packet** (bounded tokens):
   "facts": [
     { "kind": "preference", "key": "notes_target", "value": "personal-notes" }
   ],
-  "skills": [{ "id": "sapaloq-scribe", "path": "~/.config/sapaloq/skills/scribe.md" }],
+  "skills": [{ "id": "sapaloq-scribe", "path": "~/SapaLOQ/skills/scribe.md" }],
   "configKeys": ["/notifications/read", "/storage/intents"],
   "storagePathId": "personal-notes",
   "antiDeepCheck": true
@@ -169,7 +177,7 @@ Adaptasi dari automation-learning — namespace = mode (`personal`, `hobby`, `wo
 File layout (optional mirror to SQLite):
 
 ```text
-~/.config/sapaloq/memory/files/
+~/SapaLOQ/memory/files/
   {namespace}/
     YYYY-MM-DD-{slug}-{kind}.md
 ```
@@ -180,7 +188,7 @@ SQLite = **authoritative index**; markdown = human-readable source + agent appen
 
 ## SQLite index (primary store)
 
-Path: `~/.config/sapaloq/memory/companion.db` — **only** persistence engine. Hot cache = in-memory in same binary; optional `hot_cache` SQLite table for restart warm-up.
+Path: `~/SapaLOQ/memory/companion.db` — **only** persistence engine. Hot cache = in-memory in same binary; optional `hot_cache` SQLite table for restart warm-up.
 
 ### Core tables
 
@@ -306,7 +314,7 @@ CREATE INDEX idx_nodes_role ON nodes(role, enabled, priority DESC);
 On `sapaloq-core` start:
 
 1. Load `config.json` → index `storage.paths`, `apps.entries`, `events.watchers`
-2. Scan `~/.config/sapaloq/skills/*.md` → `skills_index`
+2. Scan `~/SapaLOQ/skills/*.md` → `skills_index`
 3. Scan `memory/files/**/*.md` → upsert `facts` + FTS
 4. Load `prompt/slices/` → `prompt_slices`
 5. Ensure `nodes` table has bootstrap row `local-default` — see [NODES.md](./NODES.md)
@@ -331,7 +339,7 @@ See [LIMITATIONS.md](./LIMITATIONS.md) — mitigates partial; not infinite scale
 
 ## Skills SOP (sapaloq-local)
 
-Skills live in `~/.config/sapaloq/skills/` — **not** `~/.cursor/skills-cursor/`.
+Skills live in `~/SapaLOQ/skills/` — **not** `~/.cursor/skills-cursor/`.
 
 ### Skill file frontmatter
 
@@ -364,7 +372,7 @@ Max `skills.maxLoadPerTurn` (default 2) — prevents skill dump on compaction.
 ```
 User: /settings buatin skill buat reminder obat
 → sub-agent:settings or dedicated skill-writer
-→ write ~/.config/sapaloq/skills/meds-reminder.md
+→ write ~/SapaLOQ/skills/meds-reminder.md
 → upsert skills_index
 → optional: add prefetch_rule
 ```

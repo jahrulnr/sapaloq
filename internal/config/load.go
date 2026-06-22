@@ -62,7 +62,7 @@ type PromptsConfig struct {
 	// treated as enabled (see WithDefaults). An explicit {"enabled": false}
 	// keeps the prompts inert (embedded defaults are still served in-memory).
 	Enabled bool `json:"enabled"`
-	// Dir is the prompts directory (supports ~). Default ~/.config/sapaloq/prompts.
+	// Dir is the prompts directory (supports ~). Default ~/SapaLOQ/prompts.
 	Dir string `json:"dir,omitempty"`
 }
 
@@ -75,7 +75,7 @@ func (p PromptsConfig) WithDefaults() PromptsConfig {
 		p.Enabled = true
 	}
 	if strings.TrimSpace(p.Dir) == "" {
-		p.Dir = "~/.config/sapaloq/prompts"
+		p.Dir = "~/SapaLOQ/prompts"
 	}
 	return p
 }
@@ -144,7 +144,7 @@ type SkillsConfig struct {
 	// is false, callers treat an entirely-absent skills block as enabled — see
 	// WithDefaults / the absentEnabled handling at the call site.
 	Enabled bool `json:"enabled"`
-	// Dir is the skills directory (supports ~). Default ~/.config/sapaloq/skills.
+	// Dir is the skills directory (supports ~). Default ~/SapaLOQ/skills.
 	Dir string `json:"dir,omitempty"`
 	// MaxLoadPerTurn bounds how many skills are injected per turn. Default 2.
 	MaxLoadPerTurn int `json:"maxLoadPerTurn,omitempty"`
@@ -161,7 +161,7 @@ func (s SkillsConfig) WithDefaults() SkillsConfig {
 		s.Enabled = true
 	}
 	if strings.TrimSpace(s.Dir) == "" {
-		s.Dir = "~/.config/sapaloq/skills"
+		s.Dir = "~/SapaLOQ/skills"
 	}
 	if s.MaxLoadPerTurn <= 0 {
 		s.MaxLoadPerTurn = 2
@@ -520,6 +520,7 @@ func (c CompletionConfig) WithDefaults() CompletionConfig {
 type ContinuationConfig struct {
 	MaxInferenceTurns     int `json:"maxInferenceTurns"`
 	MaxToolCalls          int `json:"maxToolCalls"`
+	MaxParallelTools      int `json:"maxParallelTools"`
 	MaxWallTimeMinutes    int `json:"maxWallTimeMinutes"`
 	MaxNoProgressTurns    int `json:"maxNoProgressTurns"`
 	MaxIdenticalToolCalls int `json:"maxIdenticalToolCalls"`
@@ -538,6 +539,7 @@ func DefaultOrchestratorConfig() OrchestratorConfig {
 		Continuation: ContinuationConfig{
 			MaxInferenceTurns:     128,
 			MaxToolCalls:          512,
+			MaxParallelTools:      8,
 			MaxWallTimeMinutes:    30,
 			MaxNoProgressTurns:    5,
 			MaxIdenticalToolCalls: 5,
@@ -565,6 +567,9 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 	}
 	if c.Continuation.MaxToolCalls <= 0 {
 		c.Continuation.MaxToolCalls = defaults.Continuation.MaxToolCalls
+	}
+	if c.Continuation.MaxParallelTools <= 0 {
+		c.Continuation.MaxParallelTools = defaults.Continuation.MaxParallelTools
 	}
 	if c.Continuation.MaxWallTimeMinutes <= 0 {
 		c.Continuation.MaxWallTimeMinutes = defaults.Continuation.MaxWallTimeMinutes
@@ -614,7 +619,7 @@ func DefaultConfig() Config {
 			},
 		},
 		Commands:     DefaultCommands(),
-		Events:       EventsConfig{Bus: BusConfig{SocketPath: "~/.config/sapaloq/run/sapaloq.sock"}},
+		Events:       EventsConfig{Bus: BusConfig{SocketPath: "~/SapaLOQ/run/sapaloq.sock", WALPath: "~/SapaLOQ/state/events.jsonl"}},
 		Orchestrator: DefaultOrchestratorConfig(),
 	}
 }
@@ -680,7 +685,8 @@ func ValidateRaw(raw map[string]any) (Config, error) {
 
 func normalizeAndValidate(cfg Config) (Config, error) {
 	cfg.Runtime.DataDir = ExpandPath(defaultIfEmpty(cfg.Runtime.DataDir, defaultDataDir))
-	cfg.Events.Bus.SocketPath = ExpandPath(defaultIfEmpty(cfg.Events.Bus.SocketPath, "~/.config/sapaloq/run/sapaloq.sock"))
+	cfg.Events.Bus.SocketPath = ExpandPath(defaultIfEmpty(cfg.Events.Bus.SocketPath, "~/SapaLOQ/run/sapaloq.sock"))
+	cfg.Events.Bus.WALPath = ExpandPath(defaultIfEmpty(cfg.Events.Bus.WALPath, "~/SapaLOQ/state/events.jsonl"))
 	cfg.Commands = cfg.Commands.WithDefaults()
 	cfg.Orchestrator = cfg.Orchestrator.WithDefaults()
 	cfg.Skills = cfg.Skills.WithDefaults()

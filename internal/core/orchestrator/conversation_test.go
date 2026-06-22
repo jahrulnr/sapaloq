@@ -54,6 +54,97 @@ func (b *thinkingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan b
 	return out, nil
 }
 
+// stuckBridge models a provider/bridge that ignores context cancellation and
+// never closes its event channel. User Stop must still finish the conversation
+// immediately instead of waiting for this producer forever.
+type stuckBridge struct {
+	started chan struct{}
+}
+
+func (b *stuckBridge) ID() string              { return "stuck" }
+func (b *stuckBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *stuckBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	close(b.started)
+	return make(chan bridge.StreamEvent), nil
+}
+
+func TestRunConversationCancellationDoesNotWaitForBridgeClose(t *testing.T) {
+	fake := &stuckBridge{started: make(chan struct{})}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
+	out := make(chan bridge.StreamEvent, 16)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := orch.runConversation(ctx, snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
+		done <- err
+	}()
+
+	select {
+	case <-fake.started:
+	case <-time.After(time.Second):
+		t.Fatal("bridge did not start")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("cancelled conversation returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("cancelled conversation waited for the bridge channel to close")
+	}
+}
+
+type retryWithoutCloseBridge struct {
+	calls int
+}
+
+func (b *retryWithoutCloseBridge) ID() string              { return "retry-without-close" }
+func (b *retryWithoutCloseBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *retryWithoutCloseBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	out := make(chan bridge.StreamEvent, 2)
+	if b.calls == 1 {
+		out <- bridge.StreamEvent{Kind: bridge.EventError, Error: "provider-bridge: upstream status 500: unavailable"}
+		return out, nil
+	}
+	out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "recovered"}
+	out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	return out, nil
+}
+
+func TestRunConversationRetryDoesNotDrainBrokenStream(t *testing.T) {
+	orig := transportRetryBaseBackoff
+	transportRetryBaseBackoff = 0
+	defer func() { transportRetryBaseBackoff = orig }()
+
+	fake := &retryWithoutCloseBridge{}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
+	out := make(chan bridge.StreamEvent, 16)
+
+	result, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "recovered" {
+		t.Fatalf("result = %q, want recovered", result.String())
+	}
+	if fake.calls != 2 {
+		t.Fatalf("calls = %d, want one retry", fake.calls)
+	}
+}
+
 func TestRunConversationCapturesThinking(t *testing.T) {
 	orch := &Orchestrator{
 		memoryDir: t.TempDir(),
@@ -347,5 +438,82 @@ func TestExtractImagesBuildsVisionPayload(t *testing.T) {
 	}
 	if messages[0].Content == "" || messages[0].Content == "describe\n![sample](data:image/png;base64,aGVsbG8=)" {
 		t.Fatalf("image marker was not replaced: %q", messages[0].Content)
+	}
+}
+
+func TestCalledToolsNote(t *testing.T) {
+	mk := func(names ...string) []scheduledTool {
+		tools := make([]scheduledTool, 0, len(names))
+		for _, n := range names {
+			tools = append(tools, scheduledTool{call: parse.ToolCall{Name: n}})
+		}
+		return tools
+	}
+	cases := []struct {
+		name  string
+		tools []scheduledTool
+		want  string
+	}{
+		{"none", nil, ""},
+		{"single", mk("sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent]"},
+		{"multiple distinct", mk("read_file", "exec"), "[Called tools: read_file, exec]"},
+		{"duplicates collapse", mk("sapaloq_spawn_agent", "sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent ×2]"},
+		{"mixed", mk("exec", "read_file", "exec"), "[Called tools: exec ×2, read_file]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := calledToolsNote(tc.tools); got != tc.want {
+				t.Fatalf("calledToolsNote = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunConversationRecordsToolCallInTranscript proves the double-spawn fix:
+// after a turn that invoked a tool, the assistant message replayed to the model
+// on the next turn must carry an explicit [Called tools: …] record. Without it
+// the transcript shows only the model's narration plus a tool result, with no
+// proof the model itself called the tool — which leads some models (e.g. Opus)
+// to second-guess ("I forgot to call it") and re-issue the same call.
+func TestRunConversationRecordsToolCallInTranscript(t *testing.T) {
+	fake := &sequenceBridge{}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	if err := orch.writeTask(taskRecord{ID: "task-test", Status: "done", Result: "result"}); err != nil {
+		t.Fatal(err)
+	}
+	snap := providerSnapshot{
+		cfg:   config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    fake,
+	}
+	out := make(chan bridge.StreamEvent, 16)
+	go func() {
+		for range out {
+		}
+	}()
+	_, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "status"}}, nil)
+	close(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(fake.requests))
+	}
+	// The 2nd request replays the turn-1 continuation. The appended assistant
+	// message (second-to-last) must record the tool the model just called.
+	msgs := fake.requests[1].Messages
+	var recorded bool
+	for _, m := range msgs {
+		if m.Role == "assistant" && strings.Contains(m.Content, "[Called tools: sapaloq_get_task_status]") {
+			recorded = true
+			break
+		}
+	}
+	if !recorded {
+		t.Fatalf("assistant transcript missing [Called tools: …] record; messages=%#v", msgs)
 	}
 }

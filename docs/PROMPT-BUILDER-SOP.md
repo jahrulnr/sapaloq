@@ -3,7 +3,7 @@
 > Setiap spawn sub-agent dapat **system-prompt per role**.
 > Setelah task selesai: **automation-learning** (SapaLOQ) + orchestrator hooks → prompt/skill builder.
 > Learning **tidak hanya** dari interaksi user — bisa **research internet** untuk best practice.
-> Last updated: 2026-06-21
+> Last updated: 2026-06-22 (runtime variables and persistent actor workspace)
 
 Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [FEEDBACK-SOP.md](./FEEDBACK-SOP.md)
 
@@ -91,7 +91,7 @@ Async, boleh LLM + web:
 Role system-prompts are **not** hardcoded Go strings anymore — they are editable Markdown files the user can override. Implemented in `internal/prompts`.
 
 - **Defaults are embedded** in the binary (`internal/prompts/defaults/{ask,planner,agent,scribe}.md`, `go:embed`).
-- On startup the manager **materializes** them to `~/.config/sapaloq/prompts/` (configurable via `prompts.dir`) and records each file's `sha256` in `prompts.manifest.json`.
+- On startup the manager **materializes** them to `~/SapaLOQ/prompts/` (configurable via `prompts.dir`) and records each file's `sha256` in `prompts.manifest.json`.
 - **User edits are preserved.** On upgrade, a file whose on-disk hash still matches the manifest (i.e. untouched by the user) is refreshed when the embedded default changes; a file the user modified is **left alone**.
 - Resolution order at spawn: **on-disk file → embedded default**. `Manager.Get(role)` returns the active prompt; `task-runner` aliases `agent`.
 - The Ask system prompt and `buildSubAgentMessages` (planner/task-runner/scribe) all go through `Orchestrator.systemPrompt(role)`, so editing the `.md` file changes behavior without a rebuild.
@@ -99,7 +99,11 @@ Role system-prompts are **not** hardcoded Go strings anymore — they are editab
 | Config (`config.json` → `prompts`) | Default | Meaning |
 |-------------------------------------|---------|---------|
 | `enabled` | `true` | Materialize + read on-disk prompt overrides |
-| `dir` | `~/.config/sapaloq/prompts` | Where role `.md` files + `prompts.manifest.json` live |
+| `dir` | `~/SapaLOQ/prompts` | Where role `.md` files + `prompts.manifest.json` live |
+
+Every Ask/Planner/Agent context also receives a generated system block with
+`config_path`, `memory_path`, `state_path`, `workspace`, and related runtime
+variables. The same map is materialized to `~/SapaLOQ/etc/ROADMAP.md`.
 
 > This is the **base template** layer of step 1 above; the learning-side builder still layers task slices / overlays on top at assemble time.
 5. Optional: **research** best practice → cite sources → merge into skill

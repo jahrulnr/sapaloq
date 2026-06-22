@@ -32,6 +32,14 @@
    contract still works. Do not invent restrictions that the product contract
    does not require. This rule does not permit real-secret exposure, destructive
    behavior, or bypassing an explicit security requirement from the user/spec.
+6. **Tests must prove the contract, not only the happy path.** Every behavior
+   change requires tests for the successful flow and all reasonably testable
+   edge cases: invalid/empty input, cancellation/timeouts, retries, duplicate
+   or out-of-order events, persistence/restart recovery, concurrent access,
+   partial failures, and relevant boundary values. If an edge case genuinely
+   cannot be automated (for example compositor-specific behavior), document
+   why and record the manual verification performed. A single happy-path test
+   is not sufficient evidence for a non-trivial change.
 
 ---
 
@@ -105,5 +113,6 @@ make widget-build    # build the Wails widget (wails build)
 make widget-dev      # widget dev mode
 ```
 
-> Tip: data dir defaults to `~/.config/sapaloq` (override via `SAPALOQ_CONFIG`).
-> The runtime materializes `prompts/*.md`, `vault/`, `memory/`, `run/` there.
+> Tip: config defaults to `~/.config/sapaloq/config.json` (override via
+> `SAPALOQ_CONFIG`). Non-config runtime data defaults to `~/SapaLOQ/`:
+> `prompts/`, `skills/`, `workspace/`, `memory/`, `state/`, `vault/`, `run/`.

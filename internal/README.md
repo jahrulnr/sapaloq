@@ -15,4 +15,4 @@ Private Go packages for the SapaLOQ monorepo. See [docs/BLUEPRINT.md](../docs/BL
 | `vault/` | JSONL log for undeclared structured tool calls |
 | `bus/` | In-process event bus |
 
-Vault log: `~/.config/sapaloq/vault/tool-calls.jsonl` — review via `sapaloq-core vault list`.
+Vault log: `~/SapaLOQ/vault/tool-calls.jsonl` — review via `sapaloq-core vault list`.

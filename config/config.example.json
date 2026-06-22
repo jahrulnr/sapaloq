@@ -1,9 +1,9 @@
 {
-  "schemaVersion": "1.3.0",
+  "schemaVersion": "1.4.0",
   "updatedAt": "2026-06-21T00:00:00Z",
   "updatedBy": "bootstrap",
   "runtime": {
-    "dataDir": "~/.config/sapaloq",
+    "dataDir": "~/SapaLOQ",
     "binaryName": "sapaloq-core"
   },
   "platform": {
@@ -115,6 +115,7 @@
     "continuation": {
       "maxInferenceTurns": 128,
       "maxToolCalls": 512,
+      "maxParallelTools": 8,
       "maxWallTimeMinutes": 30,
       "maxNoProgressTurns": 5,
       "maxIdenticalToolCalls": 5,
@@ -151,7 +152,10 @@
           "exec",
           "write_plan",
           "read_plan",
-          "request_clarification"
+          "request_clarification",
+          "sapaloq_request_decision",
+          "sapaloq_send_steering",
+          "sapaloq_wait_events"
         ],
         "maxTurns": 12,
         "canEditConfig": false,
@@ -177,6 +181,9 @@
           "sapaloq_complete_task",
           "sapaloq_fail_task",
           "request_clarification",
+          "sapaloq_request_decision",
+          "sapaloq_send_steering",
+          "sapaloq_wait_events",
           "desktop_notify"
         ],
         "maxTurns": 30,
@@ -197,7 +204,10 @@
           "sapaloq_update_task_progress",
           "sapaloq_complete_task",
           "sapaloq_fail_task",
-          "request_clarification"
+          "request_clarification",
+          "sapaloq_request_decision",
+          "sapaloq_send_steering",
+          "sapaloq_wait_events"
         ],
         "maxTurns": 8,
         "canEditConfig": false
@@ -237,13 +247,13 @@
   },
   "skills": {
     "enabled": true,
-    "dir": "~/.config/sapaloq/skills",
+    "dir": "~/SapaLOQ/skills",
     "maxLoadPerTurn": 2,
     "maxBodyLines": 40
   },
   "prompts": {
     "enabled": true,
-    "dir": "~/.config/sapaloq/prompts"
+    "dir": "~/SapaLOQ/prompts"
   },
   "feedback": {
     "explicitSignalsEnabled": true,
@@ -255,8 +265,8 @@
   },
   "events": {
     "bus": {
-      "socketPath": "~/.config/sapaloq/run/sapaloq.sock",
-      "walPath": "~/.config/sapaloq/state/events.jsonl",
+      "socketPath": "~/SapaLOQ/run/sapaloq.sock",
+      "walPath": "~/SapaLOQ/state/events.jsonl",
       "replayOnBoot": true
     }
   }

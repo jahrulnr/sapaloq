@@ -2,7 +2,7 @@
 
 > **Modular drivers** — detect OS/distro/DE once, cache **`os.json`**, load matching **platform driver**.
 > LLM **bridge drivers** (cursor-bridge, openai-compat, …) = keluarga terpisah — see [BRIDGE.md](./BRIDGE.md).
-> Last updated: 2026-06-19
+> Last updated: 2026-06-22 (runtime OS/cache paths moved to ~/SapaLOQ)
 
 Related: [PLATFORM.md](./PLATFORM.md) · [BRIDGE.md](./BRIDGE.md) · [RUNTIME.md](./RUNTIME.md) · [os.json.schema.json](./os.json.schema.json)
 
@@ -62,7 +62,7 @@ flowchart TD
 
 ### Fast path (<10ms)
 
-1. Read `~/.config/sapaloq/os.json`
+1. Read `~/SapaLOQ/os.json`
 2. Compare `fingerprint` dengan cheap probe (env + 2–3 file stats)
 3. Match → load `selectedDriver` + `capabilities` — **no full scan**
 
@@ -80,7 +80,7 @@ User pindah distro (Ubuntu → Fedora KDE) → fingerprint mismatch → auto res
 
 ## `os.json` (generated — not hand-edited)
 
-Path: `~/.config/sapaloq/os.json`  
+Path: `~/SapaLOQ/os.json`
 Schema: [os.json.schema.json](./os.json.schema.json)
 
 ```json
@@ -110,7 +110,7 @@ Schema: [os.json.schema.json](./os.json.schema.json)
     "dnd"
   ],
   "paths": {
-    "dataDir": "/home/user/.config/sapaloq",
+    "dataDir": "/home/user/SapaLOQ",
     "runtimeDir": "/run/user/1000"
   }
 }
@@ -212,8 +212,8 @@ Config override: `driver.override: gnome` skips scoring.
   "driver": {
     "mode": "auto",
     "override": null,
-    "osJsonPath": "~/.config/sapaloq/os.json",
-    "backupDir": "~/.config/sapaloq/cache",
+    "osJsonPath": "~/SapaLOQ/os.json",
+    "backupDir": "~/SapaLOQ/cache",
     "rescanOnFingerprintMismatch": true,
     "detectOrder": ["gnome", "kde", "freedesktop", "windows", "headless"]
   }

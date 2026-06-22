@@ -30,8 +30,17 @@ var transportRetryBaseBackoff = 750 * time.Millisecond
 // (runTurnLoop) for the chat role: the full Ask tool surface, a live channel
 // sink, no heartbeat, and natural finish on a tool-less turn.
 func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, messages []bridge.Message, thinkingOut *strings.Builder) (strings.Builder, error) {
+	return o.runConversationActor(ctx, snap, out, sessionID, sessionID, fallbackTask, messages, thinkingOut)
+}
+
+// runConversationActor runs the shared Ask engine under an explicit actor id.
+// Foreground chat uses sessionID; invisible mediators use their own runID while
+// sharing the same bounded conversation snapshot, preventing mailbox/tool-job
+// identity conflicts with a concurrently active UI orchestrator.
+func (o *Orchestrator) runConversationActor(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, runID, fallbackTask string, messages []bridge.Message, thinkingOut *strings.Builder) (strings.Builder, error) {
 	cfg := turnConfig{
 		sessionID:       sessionID,
+		runID:           runID,
 		tools:           askTools,
 		sink:            chatSink{o: o, out: out},
 		finishOnNoTool:  true,
@@ -53,6 +62,10 @@ func (o *Orchestrator) runConversation(ctx context.Context, snap providerSnapsho
 // clean stream/error handling) is shared so a fix lands once for everyone.
 func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, fallbackTask string, messages []bridge.Message, cfg turnConfig) (strings.Builder, error) {
 	sessionID := cfg.sessionID
+	runID := cfg.runID
+	if runID == "" {
+		runID = sessionID
+	}
 	out := cfg.sink
 	thinkingOut := cfg.thinkingOut
 	var all strings.Builder
@@ -106,6 +119,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 			return all, fmt.Errorf("continuation wall-time budget exhausted after %d minutes", budget.MaxWallTimeMinutes)
 		}
+		if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
+			cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
+		}
 		// Heartbeat at the top of every turn so the health watchdog can tell a
 		// genuinely-working agent (advancing turns) from a wedged goroutine.
 		out.beat(fmt.Sprintf("inference turn %d/%d", inferenceTurn, maxInferenceTurns))
@@ -126,7 +142,13 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 
 		out.emit(runCtx, statusEvent(sessionID, "working"))
-		stream, err := snap.br.Complete(runCtx, bridge.Request{
+		// Give every inference attempt its own cancellation scope. The outer
+		// run may retry the same turn after a recoverable provider error, so it
+		// must be able to abandon a broken stream without cancelling the whole
+		// conversation. Conversely, user Stop must never depend on the bridge
+		// producer noticing cancellation and closing its channel promptly.
+		attemptCtx, cancelAttempt := context.WithCancel(runCtx)
+		stream, err := snap.br.Complete(attemptCtx, bridge.Request{
 			SessionID:     sessionID,
 			Messages:      cleanMessages,
 			Model:         snap.entry.Model,
@@ -134,6 +156,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			Images:        images,
 		})
 		if err != nil {
+			cancelAttempt()
 			if runCtx.Err() != nil && ctx.Err() != nil {
 				out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 				return all, nil
@@ -142,13 +165,30 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		var response strings.Builder
 		var toolResults []string
+		var pendingTools []scheduledTool
 		stop := false
 		hadError := false
 		retryTextOnly := false
 		retryCompacted := false
 		retryTransport := false
 		lastErr := ""
-		for ev := range stream {
+	streamLoop:
+		for {
+			var ev bridge.StreamEvent
+			select {
+			case <-runCtx.Done():
+				cancelAttempt()
+				out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+				if ctx.Err() != nil {
+					return all, nil
+				}
+				return all, fmt.Errorf("continuation wall-time budget exhausted after %d minutes", budget.MaxWallTimeMinutes)
+			case next, ok := <-stream:
+				if !ok {
+					break streamLoop
+				}
+				ev = next
+			}
 			if ev.SessionID == "" {
 				ev.SessionID = sessionID
 			}
@@ -164,6 +204,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 					out.beat("tool: " + ev.ToolCall.Name)
 					toolCalls++
 					if toolCalls > budget.MaxToolCalls {
+						cancelAttempt()
 						return all, fmt.Errorf("tool-call budget exhausted after %d calls", budget.MaxToolCalls)
 					}
 					signature := toolCallSignature(*ev.ToolCall)
@@ -174,16 +215,21 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 						identicalToolCalls = 1
 					}
 					if identicalToolCalls > budget.MaxIdenticalToolCalls {
+						cancelAttempt()
 						return all, fmt.Errorf("loop detected: identical tool call repeated %d times", identicalToolCalls)
 					}
-					result := cfg.dispatch(runCtx, *ev.ToolCall)
-					if result.handled {
-						toolResults = append(toolResults, result.text)
-					}
-					stop = stop || result.stop
+					call := *ev.ToolCall
+					pendingTools = append(pendingTools, scheduledTool{
+						index: len(pendingTools),
+						call:  call,
+						execute: func(ctx context.Context) turnOutcome {
+							return cfg.dispatch(withActorRunID(ctx, runID), call)
+						},
+					})
 				}
 			case bridge.EventError:
 				if runCtx.Err() != nil {
+					cancelAttempt()
 					out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 					if ctx.Err() != nil {
 						return all, nil
@@ -200,7 +246,8 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 					o.persistVisionSupport(snap.entry.Key, snap.entry.Model, false)
 					retryTextOnly = true
 					out.emit(runCtx, statusEvent(sessionID, "model can't see images — retrying without the attachment"))
-					break
+					cancelAttempt()
+					break streamLoop
 				}
 				// A context/token-overflow 400 means our (guessed) context window
 				// was too large. Force a compaction pass and retry instead of
@@ -209,7 +256,8 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				if looksLikeContextOverflow(ev.Error) && forcedCompactions < maxForcedCompactions {
 					retryCompacted = true
 					out.emit(runCtx, statusEvent(sessionID, "context too large — compacting and retrying"))
-					break
+					cancelAttempt()
+					break streamLoop
 				}
 				// A transient transport hiccup (slow TTFB, reset, 5xx/429) is
 				// worth retrying the same turn with a short backoff instead of
@@ -218,10 +266,13 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				if looksLikeTransientTransport(ev.Error) && transportRetries < maxTransportRetries {
 					retryTransport = true
 					out.emit(runCtx, statusEvent(sessionID, fmt.Sprintf("provider error — retrying (%d/%d)", transportRetries+1, maxTransportRetries)))
-					break
+					cancelAttempt()
+					break streamLoop
 				}
 				hadError = true
 				out.emit(runCtx, ev)
+				cancelAttempt()
+				break streamLoop
 			case bridge.EventThinkingDelta:
 				// Accumulate reasoning so it can be persisted as a show-only
 				// "thinking" turn (survives restart), then forward it live.
@@ -233,17 +284,23 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			case bridge.EventDone:
 				// A bridge-level done ends one inference turn. The orchestrator
 				// emits one final done after all tool continuations.
+				cancelAttempt()
+				break streamLoop
 			default:
 				out.emit(runCtx, ev)
 			}
 		}
+		cancelAttempt()
+		if len(pendingTools) > 0 && !retryTextOnly && !retryCompacted && !retryTransport && !hadError {
+			results, batchStop := o.executeToolBatch(runCtx, runID, sessionID, pendingTools)
+			toolResults = append(toolResults, results...)
+			stop = stop || batchStop
+		}
 		if retryTextOnly {
-			// Drain any trailing events from the broken stream, then strip the
-			// images and re-run this inference turn text-only. The accumulated
-			// `all`/`response` from this aborted turn is discarded by reusing
-			// the same cleanMessages without appending an assistant message.
-			for range stream {
-			}
+			// Strip the images and re-run this inference turn text-only. The
+			// per-attempt context above has already cancelled the broken stream;
+			// never drain it synchronously because an uncooperative bridge may
+			// never close its channel.
 			visionDowngraded = true
 			cleanMessages, _ = extractImages(cleanMessages)
 			images = nil
@@ -251,12 +308,10 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			continue
 		}
 		if retryCompacted {
-			// Drain the broken stream, then force one compaction pass and re-run
-			// this same turn against the shrunken history. If compaction can't
-			// shrink further (already minimal), recovery is impossible — surface
-			// the original overflow error rather than loop.
-			for range stream {
-			}
+			// Force one compaction pass and re-run this same turn against the
+			// shrunken history. The failed attempt is already cancelled. If
+			// compaction can't shrink further (already minimal), recovery is
+			// impossible — surface the original overflow error rather than loop.
 			compacted := compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
 			if len(compacted) >= len(cleanMessages) {
 				return all, fmt.Errorf("context overflow and conversation already minimal: %s", lastErr)
@@ -273,11 +328,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			continue
 		}
 		if retryTransport {
-			// Drain the broken stream, wait a short exponential backoff (capped),
-			// then re-run this same turn. The accumulated text from the aborted
-			// turn is discarded by reusing cleanMessages unchanged.
-			for range stream {
-			}
+			// Wait a short exponential backoff (capped), then re-run this same
+			// turn. The broken attempt is already cancelled, and accumulated
+			// text from it is discarded by reusing cleanMessages unchanged.
 			transportRetries++
 			backoff := time.Duration(transportRetries) * transportRetryBaseBackoff
 			if backoff > 5*time.Second {
@@ -368,8 +421,25 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// informational — the budgets are set generously so they don't cage the
 		// model; this just helps it pace itself. Cheap to render, ~1 line.
 		continuation += fmt.Sprintf("\n\n[Usage] turn %d · tool-calls so far %d", inferenceTurn, toolCalls)
+		// Record the tool calls this turn actually made into the assistant
+		// message. response.String() carries only the model's text deltas — not
+		// the tool_call itself — so without this the next turn sees the model's
+		// narration ("I'll delegate to an agent…") followed by a tool result,
+		// but no evidence that IT invoked the tool. Some models (e.g. Opus)
+		// need that confirmation in-transcript to trust the action happened;
+		// lacking it they second-guess ("I forgot to actually call it") and
+		// re-issue the same call — the double-spawn bug. Appending an explicit
+		// [Called tools: …] note gives that proof back. Models that don't need
+		// it (e.g. minimax) are unaffected.
+		assistantContent := response.String()
+		if note := calledToolsNote(pendingTools); note != "" {
+			if assistantContent != "" {
+				assistantContent += "\n\n"
+			}
+			assistantContent += note
+		}
 		cleanMessages = append(cleanMessages,
-			bridge.Message{Role: "assistant", Content: response.String()},
+			bridge.Message{Role: "assistant", Content: assistantContent},
 			bridge.Message{Role: "user", Content: continuation},
 		)
 		// Re-extract images from the freshly appended tool-results message so a
@@ -388,6 +458,36 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 
 func toolCallSignature(call parse.ToolCall) string {
 	return call.Name + "\x00" + strings.TrimSpace(string(call.Arguments))
+}
+
+// calledToolsNote renders an explicit, in-transcript record of the tools the
+// assistant invoked on a turn, e.g. "[Called tools: sapaloq_spawn_agent]". It
+// is appended to the assistant message so the model sees proof that it acted —
+// the text delta stream alone does not include the tool_call. Duplicate names
+// in the same turn are listed once with a ×N count to stay compact. Returns ""
+// when no tools were called.
+func calledToolsNote(tools []scheduledTool) string {
+	if len(tools) == 0 {
+		return ""
+	}
+	order := make([]string, 0, len(tools))
+	counts := make(map[string]int, len(tools))
+	for _, t := range tools {
+		name := t.call.Name
+		if _, seen := counts[name]; !seen {
+			order = append(order, name)
+		}
+		counts[name]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		if counts[name] > 1 {
+			parts = append(parts, fmt.Sprintf("%s ×%d", name, counts[name]))
+		} else {
+			parts = append(parts, name)
+		}
+	}
+	return "[Called tools: " + strings.Join(parts, ", ") + "]"
 }
 
 func conversationTokenRatio(messages []bridge.Message, contextWindow int) float64 {

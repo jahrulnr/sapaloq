@@ -41,6 +41,8 @@ var askTools = append(append([]string{
 	"sapaloq_get_task_status",
 	"sapaloq_wait",
 	"sapaloq_answer_clarification",
+	"sapaloq_send_steering",
+	"sapaloq_wait_events",
 	"sapaloq_stop",
 	"exec",
 }, readOnlyAssessmentTools...), desktopTools...)
@@ -54,6 +56,9 @@ var scribeTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"sapaloq_complete_task",
 	"sapaloq_fail_task",
 	"request_clarification",
+	"sapaloq_request_decision",
+	"sapaloq_send_steering",
+	"sapaloq_wait_events",
 )
 
 // planTools: planner. Assessment + exec (so it can investigate the host while
@@ -63,6 +68,9 @@ var planTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"write_plan",
 	"read_plan",
 	"request_clarification",
+	"sapaloq_request_decision",
+	"sapaloq_send_steering",
+	"sapaloq_wait_events",
 )
 
 // agentTools: full executor. Assessment + exec + write/edit/delete + lifecycle.
@@ -78,6 +86,9 @@ var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"sapaloq_fail_task",
 	"request_clarification",
 	"desktop_notify",
+	"sapaloq_request_decision",
+	"sapaloq_send_steering",
+	"sapaloq_wait_events",
 )
 
 // staticToolsForRole returns the built-in declared-tool profile for a role.
@@ -185,6 +196,32 @@ func init() {
 		"required":["path"]
 	}`)
 
+	reg("sapaloq_send_steering", `{
+		"type":"object",
+		"properties":{
+			"target_task_id":{"type":"string","description":"Target actor/task id. Use the session id to steer the foreground UI orchestrator."},
+			"message":{"type":"string","description":"Concrete steering, correction, new evidence, or follow-up."},
+			"priority":{"type":"string","enum":["normal","interrupt"],"default":"normal"},
+			"correlation_id":{"type":"string","description":"Optional id linking this steering to a prior decision or plan event."}
+		},
+		"required":["target_task_id","message"]
+	}`)
+	reg("sapaloq_wait_events", `{
+		"type":"object",
+		"properties":{
+			"timeout_seconds":{"type":"integer","minimum":1,"maximum":600,"default":120}
+		}
+	}`)
+	reg("sapaloq_request_decision", `{
+		"type":"object",
+		"properties":{
+			"question":{"type":"string"},
+			"options":{"type":"array","items":{"type":"string"}},
+			"correlation_id":{"type":"string"}
+		},
+		"required":["question"]
+	}`)
+
 	reg("search", `{
 		"type":"object",
 		"properties":{
@@ -242,7 +279,7 @@ func init() {
 		"type":"object",
 		"properties":{
 			"command":{"type":"string","description":"Any shell command to run on the host with full access. Use this to read host files too (e.g. cat/sed -n/head/tail/rg). NOTE: commands run via 'bash -lc', so syntax is POSIX/Unix (Linux & macOS); macOS BSD tools differ slightly from GNU (e.g. sed -i, date), and on Windows hosts a bash shell may be unavailable — prefer portable invocations or check the OS first."},
-			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded). Defaults to the process CWD."},
+			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded). Defaults to the actor's persisted workspace CWD (initially ~/SapaLOQ/workspace). A cd persists for later calls by the same actor."},
 			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
 		},
 		"required":["command"]

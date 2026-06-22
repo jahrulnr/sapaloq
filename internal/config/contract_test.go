@@ -41,16 +41,16 @@ func TestPublicExampleLoadsActiveRuntimeFields(t *testing.T) {
 	if cfg.Platform.Adapter != "auto" || len(cfg.Platform.DetectOrder) == 0 {
 		t.Fatalf("platform config not loaded: %+v", cfg.Platform)
 	}
-	if !cfg.Skills.Enabled || !strings.HasSuffix(cfg.Skills.Dir, "/.config/sapaloq/skills") {
+	if !cfg.Skills.Enabled || !strings.HasSuffix(cfg.Skills.Dir, "/SapaLOQ/skills") {
 		t.Fatalf("skills config not loaded: %+v", cfg.Skills)
 	}
-	if !cfg.Prompts.Enabled || !strings.HasSuffix(cfg.Prompts.Dir, "/.config/sapaloq/prompts") {
+	if !cfg.Prompts.Enabled || !strings.HasSuffix(cfg.Prompts.Dir, "/SapaLOQ/prompts") {
 		t.Fatalf("prompts config not loaded: %+v", cfg.Prompts)
 	}
 	if cfg.Vault.MaxLogBytes != 5<<20 || cfg.Vault.KeepRotatedFiles != 3 {
 		t.Fatalf("vault config not loaded: %+v", cfg.Vault)
 	}
-	if !strings.HasSuffix(cfg.Events.Bus.WALPath, "/.config/sapaloq/state/events.jsonl") {
+	if !strings.HasSuffix(cfg.Events.Bus.WALPath, "/SapaLOQ/state/events.jsonl") {
 		t.Fatalf("event WAL path not loaded: %+v", cfg.Events.Bus)
 	}
 	planner, ok := cfg.SubAgents.Roles["planner"]

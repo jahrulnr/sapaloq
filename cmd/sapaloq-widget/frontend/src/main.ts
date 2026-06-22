@@ -24,6 +24,7 @@ import { addClipboardItems, addFiles } from './features/attachments';
 import { initDragAndDrop } from './features/drag-overlay';
 import { initChatController, stopActiveResponse, submitMessage } from './features/chat-controller';
 import { restoreChatHistory } from './features/history';
+import { startRuntimeStatusLoop } from './features/runtime-status';
 
 document.querySelector('#app')!.innerHTML = APP_TEMPLATE;
 
@@ -115,3 +116,4 @@ initDragAndDrop();
 void restoreChatHistory();
 void ContextUsage().then((usage) => renderUsage(usage as ChatUsage)).catch(() => undefined);
 startPingLoop();
+startRuntimeStatusLoop();

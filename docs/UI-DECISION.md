@@ -1,7 +1,7 @@
 # SapaLOQ — UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-21 (durable task lifecycle cards)
+> Last updated: 2026-06-22 (runtime telemetry rail)
 
 **Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** — orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) — not two independent products long-term.
 
@@ -59,6 +59,11 @@ GNOME Wayland (optional, M5c):
 
 Widget is **not** embedded inside `sapaloq-core` process for M5 — separate `sapaloq-widget` binary keeps core headless-testable and matches `doctor` / no-UI recovery story. Same repo, shared types package optional.
 
+The long-lived `watch` scanner is cancellable: widget shutdown closes its Unix
+socket to wake an idle blocking read immediately. Core event writes carry a
+five-second write deadline, so a wedged/disconnected webview cannot retain an
+IPC stream goroutine indefinitely.
+
 ### Background task visibility
 
 The widget keeps one lifecycle card per `task_id`. `pending`, `in_progress`,
@@ -66,6 +71,11 @@ The widget keeps one lifecycle card per `task_id`. `pending`, `in_progress`,
 same card and ring state. On startup/reconnect, IPC `watch` first sends recent
 durable task snapshots and then live events, so a completion or failure cannot
 disappear merely because the widget was disconnected.
+
+The header includes a compact telemetry rail showing the active model/provider,
+live Planner and Agent slots with their current phase, and the effective actor
+workspace. It refreshes every three seconds and immediately after task events;
+the existing task cards remain the detailed lifecycle history.
 
 ---
 

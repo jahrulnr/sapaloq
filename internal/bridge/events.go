@@ -16,6 +16,15 @@ const (
 	EventStatus        EventKind = "status"
 	EventDone          EventKind = "done"
 	EventError         EventKind = "error"
+	// EventToolUpdate reports the durable lifecycle of an asynchronously
+	// scheduled tool job. Tool calls are accepted by the run actor, executed by
+	// scheduler workers, and correlated back through JobID/RunID.
+	EventToolUpdate EventKind = "tool_update"
+	// EventDecisionUpdate and EventSteeringUpdate are actor-to-actor control
+	// events. They never write directly to the user chat; the session/UI
+	// orchestrator is the single writer when a decision must be escalated.
+	EventDecisionUpdate EventKind = "decision_update"
+	EventSteeringUpdate EventKind = "steering_update"
 	// EventTaskUpdate is a push from the orchestrator to the widget when a
 	// background sub-agent reaches a terminal (or notable) state — the
 	// completion trigger that lets the chat surface "task done/failed" without
@@ -37,11 +46,18 @@ type StreamEvent struct {
 	// Task* fields are populated on EventTaskUpdate (background sub-agent
 	// lifecycle pushes). TaskStatus mirrors taskRecord.Status (done/failed/
 	// awaiting_clarification/stopped); Summary is a short human line.
-	TaskID     string    `json:"task_id,omitempty"`
-	TaskRole   string    `json:"task_role,omitempty"`
-	TaskStatus string    `json:"task_status,omitempty"`
-	Summary    string    `json:"summary,omitempty"`
-	At         time.Time `json:"at"`
+	TaskID        string    `json:"task_id,omitempty"`
+	TaskRole      string    `json:"task_role,omitempty"`
+	TaskStatus    string    `json:"task_status,omitempty"`
+	Summary       string    `json:"summary,omitempty"`
+	RunID         string    `json:"run_id,omitempty"`
+	JobID         string    `json:"job_id,omitempty"`
+	ParentID      string    `json:"parent_id,omitempty"`
+	TargetID      string    `json:"target_id,omitempty"`
+	EventID       string    `json:"event_id,omitempty"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
+	Version       int64     `json:"version,omitempty"`
+	At            time.Time `json:"at"`
 }
 
 func NewEvent(kind EventKind) StreamEvent {
