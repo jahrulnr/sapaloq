@@ -13,6 +13,23 @@
 //	# When capturing notes
 //	- Resolve destination via storage.intents before writing.
 //
+// To interoperate with the widely-used Anthropic/OpenAI "Agent Skills" layout
+// (one folder per skill containing a SKILL.md with name/description
+// frontmatter), Load ALSO descends one level into subdirectories and parses
+// their SKILL.md, and parseFile accepts `name`/`description` as aliases:
+//
+//	frontend-design/SKILL.md
+//	  ---
+//	  name: frontend-design
+//	  description: Create distinctive, production-grade frontend interfaces...
+//	  ---
+//	  # Frontend Design ...
+//
+// `name` fills ID when `id` is absent; `description` is shown above the body and
+// — when no explicit `triggers` are given — is mined for trigger keywords so the
+// skill still fires on a relevant message. This lets a standard skill folder be
+// dropped into ~/SapaLOQ/skills and work as a default without rewriting it.
+//
 // Skills are READ-ONLY context. They never grant tools or execute anything.
 package skills
 
@@ -33,6 +50,15 @@ type Skill struct {
 	MaxBodyLines int
 	Body         string
 	Path         string
+	// Description is the optional one-line "what + when to use" summary from
+	// name/description-style frontmatter. It is rendered above the body and, in
+	// the absence of explicit triggers, mined for matching keywords.
+	Description string
+
+	// name holds the raw `name:` frontmatter value (Anthropic/OpenAI layout). It
+	// is kept separate from ID so finalizeSkill can prefer an explicit `id:` and
+	// still mine triggers from the original name. Unexported: parse-time only.
+	name string
 }
 
 // Load walks dir for *.md skill files and parses each one. A missing dir is
@@ -53,6 +79,13 @@ func Load(dir string) ([]Skill, error) {
 	var out []Skill
 	for _, e := range entries {
 		if e.IsDir() {
+			// Anthropic/OpenAI layout: one folder per skill with a SKILL.md
+			// inside. Descend one level and parse it; a folder without a
+			// readable SKILL.md is simply skipped (never fatal).
+			path := filepath.Join(dir, e.Name(), "SKILL.md")
+			if sk, ok := parseFile(path); ok {
+				out = append(out, sk)
+			}
 			continue
 		}
 		name := e.Name()
@@ -102,6 +135,18 @@ func parseFile(path string) (Skill, bool) {
 				frontmatterDone = true
 				continue
 			}
+			// Recover from a malformed frontmatter that was never closed with a
+			// "---": a real Markdown heading (e.g. "# Skill Creator") clearly
+			// starts the body, so end the frontmatter here and keep the line as
+			// body instead of losing the entire document. A "## name:" style
+			// heading is still a key line (handled by parseFrontmatterLine), so
+			// only treat headings WITHOUT a colon as the body boundary.
+			if isMarkdownHeading(trimmed) && !strings.Contains(trimmed, ":") {
+				inFrontmatter = false
+				frontmatterDone = true
+				bodyLines = append(bodyLines, line)
+				continue
+			}
 			parseFrontmatterLine(&sk, trimmed)
 			continue
 		}
@@ -114,10 +159,124 @@ func parseFile(path string) (Skill, bool) {
 	}
 
 	sk.Body = strings.TrimSpace(strings.Join(bodyLines, "\n"))
+	finalizeSkill(&sk)
 	if strings.TrimSpace(sk.ID) == "" {
 		return Skill{}, false
 	}
 	return sk, true
+}
+
+// finalizeSkill fills derived fields after raw frontmatter parsing so that a
+// standard name/description-style skill (no id, no triggers) still loads and
+// fires:
+//   - ID falls back to the skill's name, then to its containing folder name.
+//   - When no explicit triggers were declared, mine them from name +
+//     description so skills.Match can select the skill on a relevant message.
+func finalizeSkill(sk *Skill) {
+	if strings.TrimSpace(sk.ID) == "" {
+		if n := strings.TrimSpace(sk.name); n != "" {
+			sk.ID = n
+		} else if base := skillFolderName(sk.Path); base != "" {
+			sk.ID = base
+		}
+	}
+	if len(sk.Triggers) == 0 {
+		sk.Triggers = deriveTriggers(sk.ID, sk.name, sk.Description)
+	}
+}
+
+// isMarkdownHeading reports whether a line is an ATX Markdown heading ("# ...").
+func isMarkdownHeading(line string) bool {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "#") {
+		return false
+	}
+	rest := strings.TrimLeft(line, "#")
+	return strings.HasPrefix(rest, " ")
+}
+
+// skillFolderName returns the parent folder name for a ".../<folder>/SKILL.md"
+// path, or "" for a top-level "<dir>/<name>.md" file. Used as the last-resort
+// ID for a folder-style skill whose frontmatter omits both id and name.
+func skillFolderName(path string) string {
+	if path == "" {
+		return ""
+	}
+	if !strings.EqualFold(filepath.Base(path), "SKILL.md") {
+		return ""
+	}
+	return filepath.Base(filepath.Dir(path))
+}
+
+// triggerStopwords are low-signal words excluded from mined triggers so a
+// generic description doesn't match nearly every message.
+var triggerStopwords = map[string]struct{}{
+	"the": {}, "and": {}, "for": {}, "with": {}, "use": {}, "used": {}, "when": {},
+	"this": {}, "that": {}, "are": {}, "any": {}, "you": {}, "your": {}, "they": {},
+	"its": {}, "from": {}, "into": {}, "via": {}, "per": {}, "all": {}, "new": {},
+	"create": {}, "creating": {}, "creates": {}, "update": {}, "updating": {},
+	"existing": {}, "should": {}, "specialized": {}, "knowledge": {}, "guide": {},
+	"effective": {}, "skill": {}, "skills": {}, "workflows": {}, "tool": {},
+	"integrations": {}, "support": {}, "including": {}, "other": {}, "high": {},
+	"quality": {}, "production": {}, "grade": {}, "distinctive": {},
+}
+
+// deriveTriggers mines short, lowercased keyword triggers from a skill's name
+// and description when no explicit triggers were declared. The name (and its
+// hyphen/space tokens) are always included; description words are kept when
+// they are reasonably specific (length >= 4, not a stopword). The result is
+// deduped and bounded to keep matching cheap and precise.
+func deriveTriggers(id, name, description string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(tok string) {
+		tok = strings.ToLower(strings.TrimSpace(strings.Trim(tok, ".,;:()[]\"'`")))
+		if tok == "" {
+			return
+		}
+		if _, dup := seen[tok]; dup {
+			return
+		}
+		seen[tok] = struct{}{}
+		out = append(out, tok)
+	}
+
+	// The name and its tokens are the strongest signal — always include them.
+	for _, base := range []string{name, id} {
+		base = strings.TrimSpace(base)
+		if base == "" {
+			continue
+		}
+		add(base)
+		for _, part := range strings.FieldsFunc(base, func(r rune) bool { return r == '-' || r == '_' || r == ' ' }) {
+			if len(part) >= 3 {
+				add(part)
+			}
+		}
+	}
+
+	// Specific words from the description, capped so a long description doesn't
+	// produce an over-broad trigger set.
+	const maxFromDescription = 12
+	added := 0
+	for _, w := range strings.Fields(strings.ToLower(description)) {
+		if added >= maxFromDescription {
+			break
+		}
+		w = strings.Trim(w, ".,;:()[]\"'`/")
+		if len(w) < 4 {
+			continue
+		}
+		if _, stop := triggerStopwords[w]; stop {
+			continue
+		}
+		before := len(out)
+		add(w)
+		if len(out) > before {
+			added++
+		}
+	}
+	return out
 }
 
 // parseFrontmatterLine handles the tiny subset of YAML we support:
@@ -147,6 +306,9 @@ func parseFrontmatterLine(sk *Skill, line string) {
 		}
 		return
 	}
+	// Tolerate a stray Markdown heading prefix on a key line (some skill files
+	// have a slightly malformed frontmatter like "## name: skill-creator").
+	line = strings.TrimLeft(line, "# ")
 	key, val, ok := strings.Cut(line, ":")
 	if !ok {
 		return
@@ -156,6 +318,10 @@ func parseFrontmatterLine(sk *Skill, line string) {
 	switch key {
 	case "id":
 		sk.ID = strings.Trim(val, `"'`)
+	case "name":
+		sk.name = strings.Trim(val, `"'`)
+	case "description":
+		sk.Description = strings.Trim(val, `"'`)
 	case "priority":
 		if n, err := strconv.Atoi(val); err == nil {
 			sk.Priority = n
@@ -238,8 +404,9 @@ func SortByRelevance(skills []Skill, max int) []Skill {
 	return sorted
 }
 
-// Render returns a bounded block for one skill: a "### <id>" heading followed by
-// the body trimmed to the smaller of the skill's MaxBodyLines and globalMaxLines
+// Render returns a bounded block for one skill: a "### <id>" heading, an
+// optional one-line description (the "what + when to use" summary), then the
+// body trimmed to the smaller of the skill's MaxBodyLines and globalMaxLines
 // (counting non-empty lines). A non-positive cap means "use the other cap".
 func (s Skill) Render(globalMaxLines int) string {
 	cap := s.MaxBodyLines
@@ -249,6 +416,10 @@ func (s Skill) Render(globalMaxLines int) string {
 	var b strings.Builder
 	b.WriteString("### ")
 	b.WriteString(s.ID)
+	if desc := strings.TrimSpace(s.Description); desc != "" {
+		b.WriteString("\n")
+		b.WriteString(desc)
+	}
 	body := strings.TrimSpace(s.Body)
 	if body == "" {
 		return b.String()

@@ -14,6 +14,162 @@ func writeSkill(t *testing.T, dir, name, content string) {
 	}
 }
 
+// writeFolderSkill writes a folder-style skill: <dir>/<folder>/SKILL.md, the
+// Anthropic/OpenAI layout.
+func writeFolderSkill(t *testing.T, dir, folder, content string) {
+	t.Helper()
+	sub := filepath.Join(dir, folder)
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir skill folder %s: %v", folder, err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "SKILL.md"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write SKILL.md in %s: %v", folder, err)
+	}
+}
+
+func hasTrigger(triggers []string, want string) bool {
+	for _, t := range triggers {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestLoadFolderSkillNameDescription proves the Anthropic/OpenAI layout works:
+// a folder with a SKILL.md using name/description frontmatter loads, ID falls
+// back to name, the description is captured, and triggers are mined from the
+// name + description so the skill can actually fire.
+func TestLoadFolderSkillNameDescription(t *testing.T) {
+	dir := t.TempDir()
+	writeFolderSkill(t, dir, "frontend-design", `---
+name: frontend-design
+description: Create distinctive production-grade frontend interfaces. Use when building web components, pages, dashboards, themes, palettes or OKLCH color tokens.
+---
+# Frontend Design
+- Build with OKLCH and semantic tokens.`)
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 skill, got %d (%+v)", len(got), got)
+	}
+	sk := got[0]
+	if sk.ID != "frontend-design" {
+		t.Fatalf("ID should fall back to name; got %q", sk.ID)
+	}
+	if !strings.Contains(sk.Description, "production-grade frontend") {
+		t.Fatalf("description not captured: %q", sk.Description)
+	}
+	if !strings.Contains(sk.Body, "OKLCH and semantic tokens") {
+		t.Fatalf("body not captured: %q", sk.Body)
+	}
+	// Triggers mined from name + description.
+	if !hasTrigger(sk.Triggers, "frontend") || !hasTrigger(sk.Triggers, "design") {
+		t.Fatalf("name-derived triggers missing: %v", sk.Triggers)
+	}
+	if !hasTrigger(sk.Triggers, "palettes") && !hasTrigger(sk.Triggers, "dashboards") {
+		t.Fatalf("description-derived triggers missing: %v", sk.Triggers)
+	}
+	// And it actually matches a relevant message (mined name/description words).
+	if m := Match(got, "help me with the frontend design of this page"); len(m) != 1 {
+		t.Fatalf("folder skill should match a relevant message; got %+v", m)
+	}
+}
+
+// TestLoadFolderSkillRecoversBrokenFrontmatter proves a SKILL.md whose
+// frontmatter was never closed with a "---" still loads: the body begins at the
+// first real Markdown heading instead of swallowing the whole file.
+func TestLoadFolderSkillRecoversBrokenFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	writeFolderSkill(t, dir, "skill-creator", `---
+
+## name: skill-creator
+
+description: Guide for creating effective skills. Used when users want to create or update a skill.
+metadata:
+  short-description: Create or update a skill
+
+# Skill Creator
+
+This skill provides guidance for creating effective skills.`)
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 skill, got %d (%+v)", len(got), got)
+	}
+	sk := got[0]
+	if sk.ID != "skill-creator" {
+		t.Fatalf("ID should be derived from name; got %q", sk.ID)
+	}
+	if !strings.Contains(sk.Body, "guidance for creating effective skills") {
+		t.Fatalf("body not recovered after broken frontmatter: %q", sk.Body)
+	}
+	if strings.Contains(sk.Body, "short-description") {
+		t.Fatalf("frontmatter leaked into body: %q", sk.Body)
+	}
+}
+
+// TestLoadFolderSkillExplicitIDAndTriggersWin confirms an explicit id/triggers
+// in a folder skill override the name fallback and the mined triggers.
+func TestLoadFolderSkillExplicitIDAndTriggersWin(t *testing.T) {
+	dir := t.TempDir()
+	writeFolderSkill(t, dir, "anything", `---
+id: my-id
+name: ignored-name
+triggers: [onlythis]
+description: some description with manywords here
+---
+body`)
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "my-id" {
+		t.Fatalf("explicit id should win: %+v", got)
+	}
+	if len(got[0].Triggers) != 1 || got[0].Triggers[0] != "onlythis" {
+		t.Fatalf("explicit triggers should win (no mining): %v", got[0].Triggers)
+	}
+}
+
+// TestLoadFolderSkillFolderNameFallback confirms ID falls back to the folder
+// name when neither id nor name is present.
+func TestLoadFolderSkillFolderNameFallback(t *testing.T) {
+	dir := t.TempDir()
+	writeFolderSkill(t, dir, "from-folder", `---
+description: no id and no name here
+---
+body`)
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "from-folder" {
+		t.Fatalf("ID should fall back to folder name; got %+v", got)
+	}
+}
+
+// TestRenderIncludesDescription confirms a skill's description is rendered above
+// its body so the model sees the "when to use" hint.
+func TestRenderIncludesDescription(t *testing.T) {
+	sk := Skill{ID: "x", Description: "Use for foo and bar.", Body: "line1\nline2"}
+	out := sk.Render(40)
+	if !strings.Contains(out, "Use for foo and bar.") {
+		t.Fatalf("render should include description: %q", out)
+	}
+	if !strings.Contains(out, "line1") {
+		t.Fatalf("render should include body: %q", out)
+	}
+}
+
 func TestLoadParsesFrontmatterAndBody(t *testing.T) {
 	dir := t.TempDir()
 	writeSkill(t, dir, "scribe.md", `---
