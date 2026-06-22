@@ -3,8 +3,8 @@ import {
   WindowGetPosition,
   WindowSetPosition,
   WindowSetSize,
-} from '../wailsjs/runtime/runtime';
-import { SyncInputShape } from '../wailsjs/go/main/App';
+} from '../../wailsjs/runtime/runtime';
+import { SyncInputShape } from '../../wailsjs/go/main/App';
 
 export const COLLAPSED = { w: 76, h: 76 };
 export const PANEL_SIZES = [
