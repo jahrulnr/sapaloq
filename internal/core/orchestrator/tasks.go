@@ -259,7 +259,7 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 }
 
 func (o *Orchestrator) latestTaskID() string {
-	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	entries, err := os.ReadDir(o.tasksRoot())
 	if err != nil {
 		return ""
 	}
@@ -354,7 +354,7 @@ func (o *Orchestrator) resumeBackground(snap providerSnapshot, sessionID string,
 // that is currently awaiting clarification, so the user can answer without
 // naming a task id.
 func (o *Orchestrator) latestAwaitingTaskID(sessionID string) string {
-	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	entries, err := os.ReadDir(o.tasksRoot())
 	if err != nil {
 		return ""
 	}
@@ -506,7 +506,7 @@ func (o *Orchestrator) RecentTaskUpdates(limit int) []bridge.StreamEvent {
 	if limit <= 0 {
 		limit = 20
 	}
-	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	entries, err := os.ReadDir(o.tasksRoot())
 	if err != nil {
 		return nil
 	}
@@ -538,7 +538,7 @@ func (o *Orchestrator) RecentTaskUpdates(limit int) []bridge.StreamEvent {
 }
 
 func (o *Orchestrator) recoverOrphanedTasks() {
-	entries, err := os.ReadDir(filepath.Join(o.memoryDir, "tasks"))
+	entries, err := os.ReadDir(o.tasksRoot())
 	if err != nil {
 		return
 	}
@@ -627,8 +627,18 @@ func (o *Orchestrator) validatePlanForAgent(sessionID, planTaskID string) error 
 	return nil
 }
 
+// tasksRoot resolves the directory holding per-task records. Production wires
+// tasksDir from RuntimeDirs (under state/); when it is unset (e.g. in tests
+// that only populate memoryDir) it falls back to the legacy memory/tasks path.
+func (o *Orchestrator) tasksRoot() string {
+	if o.tasksDir != "" {
+		return o.tasksDir
+	}
+	return filepath.Join(o.memoryDir, "tasks")
+}
+
 func (o *Orchestrator) taskDir(id string) string {
-	return filepath.Join(o.memoryDir, "tasks", filepath.Base(id))
+	return filepath.Join(o.tasksRoot(), filepath.Base(id))
 }
 
 func (o *Orchestrator) writeTask(record taskRecord) error {

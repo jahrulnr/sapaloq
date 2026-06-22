@@ -151,7 +151,7 @@ func TestE2ESettingsPatchViaIPC(t *testing.T) {
 func TestE2EWatchRehydratesDurableTaskStatus(t *testing.T) {
 	h := startInProcessCore(t)
 	taskID := "task-watch-catchup"
-	taskDir := filepath.Join(filepath.Dir(h.ConfigPath), "memory", "tasks", taskID)
+	taskDir := filepath.Join(filepath.Dir(h.ConfigPath), "state", "tasks", taskID)
 	if err := os.MkdirAll(taskDir, 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -78,6 +78,11 @@ func main() {
 		if err := config.EnsureRuntimeDirs(dirs); err != nil {
 			exitf("runtime dirs: %v", err)
 		}
+		// Move pre-split artifacts out of memory/ into state/. Best-effort and
+		// idempotent; never fatal so a migration hiccup can't block startup.
+		if err := config.MigrateLegacyLayout(dirs); err != nil {
+			fmt.Fprintf(os.Stderr, "sapaloq-core: %v\n", err)
+		}
 		orchestrator.SetBridgeFactory(newBridge)
 		orch, err := newOrchestrator(cfg, cfgPath)
 		if err != nil {

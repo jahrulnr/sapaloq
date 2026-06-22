@@ -33,6 +33,8 @@ type Orchestrator struct {
 	chat         *chatstore.Store
 	vault        *vault.Writer
 	memoryDir    string
+	stateDir     string
+	tasksDir     string
 	workersDir   string
 	workers      *workerRegistry
 	mu           sync.RWMutex
@@ -116,6 +118,8 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		chat:         chatStore,
 		vault:        vaultWriter,
 		memoryDir:    dirs.MemoryDir,
+		stateDir:     dirs.StateDir,
+		tasksDir:     dirs.TasksDir,
 		workersDir:   dirs.WorkersDir,
 		workers:      newWorkerRegistry(dirs.WorkersDir),
 		cfgModTime:   modTime,

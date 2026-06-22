@@ -263,11 +263,11 @@ bug observed in the widget (agent spawned → `sapaloq_wait` → "still in_progr
   (`StartWorkerWatchdog`, wired in `cmd/sapaloq-core/main.go`) force-fails any
   worker with no heartbeat within `completion.staleAfterSec`, so a wedged
   goroutine can no longer masquerade as `in_progress` forever. Live health is
-  also persisted to `memory/workers/<task-id>/health.json` for outside-process
+  also persisted to `state/workers/<task-id>/health.json` for outside-process
   inspection. (PID field is first-class so a future real-subprocess upgrade via
   `internal/node` Transport needs no consumer/schema change.)
 - **Per-worker error-only log.** `worklog.go` writes
-  `memory/workers/<task-id>/error.log` (errors only — separate from the verbose
+  `state/workers/<task-id>/error.log` (errors only — separate from the verbose
   progress JSONL) on inference errors, task failure, and stalls. Gated by
   `completion.workerErrorLog` (default on).
 - **Event-driven completion now SPEAKS.** `completion.go`
@@ -284,7 +284,7 @@ bug observed in the widget (agent spawned → `sapaloq_wait` → "still in_progr
 - **Config:** wired the previously-inert `orchestrator.completion` block
   (`HeartbeatIntervalSec`/`StaleAfterSec` now drive the watchdog) and added
   `speakOnTerminal` + `workerErrorLog` (`load.go`, `schema/config.schema.json`,
-  `config/config.example.json`). New `memory/workers` runtime dir
+  `config/config.example.json`). New `state/workers` runtime dir
   (`internal/config/paths.go`).
 - **Tests:** `worker_test.go` (stall→fail, healthy untouched, health snapshot),
   `completion_test.go` (spoken-on-terminal regression, idempotent, opt-in,

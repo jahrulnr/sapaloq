@@ -1,0 +1,121 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func dirsForData(dataDir string) RuntimeDirsInfo {
+	return RuntimeDirs(Config{Runtime: RuntimeConfig{DataDir: dataDir}})
+}
+
+func TestRuntimeDirsLayout(t *testing.T) {
+	data := t.TempDir()
+	dirs := dirsForData(data)
+
+	if got, want := dirs.MemoryDir, filepath.Join(data, "memory"); got != want {
+		t.Errorf("MemoryDir = %q, want %q", got, want)
+	}
+	if got, want := dirs.StateDir, filepath.Join(data, "state"); got != want {
+		t.Errorf("StateDir = %q, want %q", got, want)
+	}
+	for name, got := range map[string]string{
+		"TasksDir":    dirs.TasksDir,
+		"ProgressDir": dirs.ProgressDir,
+		"WorkersDir":  dirs.WorkersDir,
+	} {
+		if filepath.Dir(got) != dirs.StateDir {
+			t.Errorf("%s = %q, expected to live under StateDir %q", name, got, dirs.StateDir)
+		}
+	}
+
+	if err := EnsureRuntimeDirs(dirs); err != nil {
+		t.Fatalf("EnsureRuntimeDirs: %v", err)
+	}
+	for _, d := range []string{dirs.MemoryDir, dirs.StateDir, dirs.TasksDir, dirs.ProgressDir, dirs.WorkersDir} {
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			t.Errorf("expected dir %q to exist: err=%v", d, err)
+		}
+	}
+}
+
+func TestMigrateLegacyLayout(t *testing.T) {
+	data := t.TempDir()
+	dirs := dirsForData(data)
+
+	// Seed a legacy memory/ layout: a task record, worker health, a progress
+	// stream, the event WAL, plus companion.db which must be left in place.
+	mustWrite(t, filepath.Join(dirs.MemoryDir, "tasks", "task-1", "status.json"), `{"id":"task-1"}`)
+	mustWrite(t, filepath.Join(dirs.MemoryDir, "workers", "task-1", "health.json"), `{"id":"task-1"}`)
+	mustWrite(t, filepath.Join(dirs.MemoryDir, "progress", "chat-1.jsonl"), `{"kind":"status"}`)
+	mustWrite(t, filepath.Join(dirs.MemoryDir, "events.jsonl"), `{"seq":1}`)
+	mustWrite(t, filepath.Join(dirs.MemoryDir, "companion.db"), "SQLITE")
+
+	if err := MigrateLegacyLayout(dirs); err != nil {
+		t.Fatalf("MigrateLegacyLayout: %v", err)
+	}
+
+	// Moved into state/.
+	assertFile(t, filepath.Join(dirs.TasksDir, "task-1", "status.json"), `{"id":"task-1"}`)
+	assertFile(t, filepath.Join(dirs.WorkersDir, "task-1", "health.json"), `{"id":"task-1"}`)
+	assertFile(t, filepath.Join(dirs.ProgressDir, "chat-1.jsonl"), `{"kind":"status"}`)
+	assertFile(t, filepath.Join(dirs.StateDir, "events.jsonl"), `{"seq":1}`)
+
+	// Originals removed.
+	for _, p := range []string{
+		filepath.Join(dirs.MemoryDir, "tasks"),
+		filepath.Join(dirs.MemoryDir, "workers"),
+		filepath.Join(dirs.MemoryDir, "progress"),
+		filepath.Join(dirs.MemoryDir, "events.jsonl"),
+	} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("expected legacy path %q to be gone, err=%v", p, err)
+		}
+	}
+
+	// companion.db must remain untouched in memory/.
+	assertFile(t, filepath.Join(dirs.MemoryDir, "companion.db"), "SQLITE")
+}
+
+func TestMigrateLegacyLayoutIdempotentAndNonClobbering(t *testing.T) {
+	data := t.TempDir()
+	dirs := dirsForData(data)
+
+	// A fresh state/ already holds the current task record; a stale legacy copy
+	// exists too. The migration must NOT clobber the new one.
+	mustWrite(t, filepath.Join(dirs.TasksDir, "task-1", "status.json"), `{"id":"new"}`)
+	mustWrite(t, filepath.Join(dirs.MemoryDir, "tasks", "task-1", "status.json"), `{"id":"stale"}`)
+
+	if err := MigrateLegacyLayout(dirs); err != nil {
+		t.Fatalf("first migrate: %v", err)
+	}
+	assertFile(t, filepath.Join(dirs.TasksDir, "task-1", "status.json"), `{"id":"new"}`)
+
+	// Running again is a no-op and must not error.
+	if err := MigrateLegacyLayout(dirs); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+	assertFile(t, filepath.Join(dirs.TasksDir, "task-1", "status.json"), `{"id":"new"}`)
+}
+
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %q: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %q: %v", path, err)
+	}
+}
+
+func assertFile(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %q: %v", path, err)
+	}
+	if string(got) != want {
+		t.Errorf("file %q = %q, want %q", path, string(got), want)
+	}
+}

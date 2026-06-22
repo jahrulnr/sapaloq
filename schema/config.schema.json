@@ -674,7 +674,7 @@
         "globalRateLimitPerMinute": { "type": "integer", "minimum": 0, "default": 30 },
         "busPath": {
           "type": "string",
-          "default": "~/.config/sapaloq/memory/events.jsonl"
+          "default": "~/.config/sapaloq/state/events.jsonl"
         },
         "bus": {
           "type": "object",
@@ -692,7 +692,7 @@
             },
             "walPath": {
               "type": "string",
-              "default": "~/.config/sapaloq/memory/events.jsonl"
+              "default": "~/.config/sapaloq/state/events.jsonl"
             },
             "watcherBufferSize": {
               "type": "integer",

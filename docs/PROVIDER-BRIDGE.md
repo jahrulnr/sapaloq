@@ -414,7 +414,7 @@ Provider-bridge backends should not receive one static global tool list forever.
 | Role | Mode | Tool source | Notes |
 |------|------|-------------|-------|
 | `orchestrator` | Ask | `tools.profiles.ask` | spawn/status/context/clarify + light `desktop_*`; no shell or file mutation |
-| `planner` | Plan | `tools.profiles.plan` | read-only workspace/memory + `sapaloq_write_plan_markdown`; writes `memory/tasks/<taskId>/plan.md` |
+| `planner` | Plan | `tools.profiles.plan` | read-only workspace/memory + `sapaloq_write_plan_markdown`; writes `state/tasks/<taskId>/plan.md` |
 | `task-runner` | Agent | `tools.profiles.agent` | workspace edits, terminal/build/test, progress/complete |
 
 `llmBridge.providers[].declaredTools` remains a compatibility fallback for old configs and vault review. The target runtime contract is request-scoped tools:
