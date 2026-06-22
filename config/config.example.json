@@ -186,7 +186,6 @@
           "sapaloq_wait_events",
           "desktop_notify"
         ],
-        "maxTurns": 30,
         "canEditConfig": false,
         "toolPolicy": "full"
       },
