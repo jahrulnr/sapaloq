@@ -12,8 +12,9 @@
 #
 # Options:
 #   --no-service        Install binaries only; skip systemd --user setup.
+#   --no-autostart      Skip the widget desktop autostart (no launch on login).
 #   --bin-dir DIR       Install binaries into DIR (default: ~/.local/bin).
-#   --uninstall         Remove the service and installed binaries.
+#   --uninstall         Remove the service, autostart entry and binaries.
 #                       Config and data under ~/.config/sapaloq are KEPT.
 #   -h, --help          Show this help.
 #
@@ -23,6 +24,7 @@ set -euo pipefail
 BIN_DIR="${HOME}/.local/bin"
 DATA_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/sapaloq"
 INSTALL_SERVICE=1
+INSTALL_AUTOSTART=1
 DO_UNINSTALL=0
 
 CORE_BIN="sapaloq-core"
@@ -37,18 +39,19 @@ warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
-	sed -n '3,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '3,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 	exit 0
 }
 
 # --- arg parsing ---------------------------------------------------------
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-		--no-service) INSTALL_SERVICE=0; shift ;;
-		--bin-dir)    BIN_DIR="${2:?--bin-dir needs a path}"; shift 2 ;;
-		--bin-dir=*)  BIN_DIR="${1#*=}"; shift ;;
-		--uninstall)  DO_UNINSTALL=1; shift ;;
-		-h|--help)    usage ;;
+		--no-service)   INSTALL_SERVICE=0; shift ;;
+		--no-autostart) INSTALL_AUTOSTART=0; shift ;;
+		--bin-dir)      BIN_DIR="${2:?--bin-dir needs a path}"; shift 2 ;;
+		--bin-dir=*)    BIN_DIR="${1#*=}"; shift ;;
+		--uninstall)    DO_UNINSTALL=1; shift ;;
+		-h|--help)      usage ;;
 		*) die "unknown option: $1 (try --help)" ;;
 	esac
 done
@@ -130,11 +133,17 @@ case ":${PATH}:" in
 	   warn "  export PATH=\"${BIN_DIR}:\$PATH\"" ;;
 esac
 
-# --- service -------------------------------------------------------------
+# --- service + widget autostart -----------------------------------------
+# `service install` also writes the widget's XDG autostart entry so the GUI
+# launches on login; --no-autostart suppresses just that part.
 if [[ "${INSTALL_SERVICE}" -eq 1 ]]; then
 	if command -v systemctl >/dev/null 2>&1; then
 		log "Registering systemd --user service"
-		"${BIN_DIR}/${CORE_BIN}" service install
+		if [[ "${INSTALL_AUTOSTART}" -eq 0 ]]; then
+			SAPALOQ_SKIP_WIDGET_AUTOSTART=1 "${BIN_DIR}/${CORE_BIN}" service install
+		else
+			"${BIN_DIR}/${CORE_BIN}" service install
+		fi
 	else
 		warn "systemctl not found; skipping service install."
 		warn "Run the core manually with: ${CORE_BIN} run"
@@ -147,5 +156,10 @@ fi
 echo
 log "SapaLOQ installed."
 echo "    core:   ${BIN_DIR}/${CORE_BIN}"
-[[ -x "${BIN_DIR}/${WIDGET_BIN}" ]] && echo "    widget: ${BIN_DIR}/${WIDGET_BIN}"
+if [[ -x "${BIN_DIR}/${WIDGET_BIN}" ]]; then
+	echo "    widget: ${BIN_DIR}/${WIDGET_BIN}"
+	if [[ "${INSTALL_SERVICE}" -eq 1 && "${INSTALL_AUTOSTART}" -eq 1 ]]; then
+		echo "    widget autostart: enabled (appears on next login; start now with '${WIDGET_BIN} &')"
+	fi
+fi
 echo "    config: ${CONFIG_FILE}"

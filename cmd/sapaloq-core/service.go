@@ -13,6 +13,13 @@ import (
 // serviceUnitName is the systemd --user unit that supervises `sapaloq-core run`.
 const serviceUnitName = "sapaloq.service"
 
+// widgetBinName is the GUI companion binary; widgetAutostartFile is the XDG
+// autostart entry that launches it when the desktop session starts.
+const (
+	widgetBinName       = "sapaloq-widget"
+	widgetAutostartFile = "sapaloq-widget.desktop"
+)
+
 // runService manages the systemd --user unit that keeps sapaloq-core running.
 //
 //	install    write the unit, daemon-reload, enable + start (idempotent)
@@ -75,6 +82,96 @@ func serviceInstall(cfg config.Config, cfgPath string) {
 	mustSystemctl("restart", serviceUnitName) // restart == start when stopped; reloads on re-install
 	fmt.Println("sapaloq.service installed, enabled and started")
 	fmt.Println("Tip: `loginctl enable-linger $USER` keeps it running without an active login session.")
+
+	installWidgetAutostart(exe)
+}
+
+// installWidgetAutostart writes an XDG autostart .desktop so the GUI widget
+// launches automatically when the desktop session starts (e.g. after GNOME
+// login). The widget is a graphical app, so it belongs in the session's
+// autostart — not in the headless systemd service. No-op (with a hint) when the
+// widget binary can't be found, or when SAPALOQ_SKIP_WIDGET_AUTOSTART is set.
+func installWidgetAutostart(coreExe string) {
+	if os.Getenv("SAPALOQ_SKIP_WIDGET_AUTOSTART") != "" {
+		fmt.Println("widget autostart skipped (SAPALOQ_SKIP_WIDGET_AUTOSTART set)")
+		return
+	}
+	widget := findWidgetBinary(coreExe)
+	if widget == "" {
+		fmt.Printf("widget binary (%s) not found next to %s or on PATH; skipping desktop autostart\n", widgetBinName, filepath.Base(coreExe))
+		return
+	}
+	path, err := widgetAutostartPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "service: widget autostart: %v\n", err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "service: widget autostart dir: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(path, []byte(renderWidgetDesktopEntry(widget)), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "service: write widget autostart: %v\n", err)
+		return
+	}
+	fmt.Printf("wrote %s (widget starts on next login)\n", path)
+}
+
+func removeWidgetAutostart() {
+	path, err := widgetAutostartPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "service: widget autostart: %v\n", err)
+		return
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "service: remove widget autostart: %v\n", err)
+		return
+	}
+	fmt.Printf("removed %s\n", path)
+}
+
+// findWidgetBinary looks for sapaloq-widget next to the core binary first
+// (the install layout), then falls back to PATH. Returns "" when not found.
+func findWidgetBinary(coreExe string) string {
+	if coreExe != "" {
+		sibling := filepath.Join(filepath.Dir(coreExe), widgetBinName)
+		if fi, err := os.Stat(sibling); err == nil && !fi.IsDir() {
+			return sibling
+		}
+	}
+	if p, err := exec.LookPath(widgetBinName); err == nil {
+		return p
+	}
+	return ""
+}
+
+func widgetAutostartPath() (string, error) {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home dir: %w", err)
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "autostart", widgetAutostartFile), nil
+}
+
+func renderWidgetDesktopEntry(widgetPath string) string {
+	var b strings.Builder
+	b.WriteString("[Desktop Entry]\n")
+	b.WriteString("Type=Application\n")
+	b.WriteString("Name=SapaLOQ\n")
+	b.WriteString("Comment=SapaLOQ desktop companion\n")
+	b.WriteString(fmt.Sprintf("Exec=%s\n", widgetPath))
+	b.WriteString("Icon=sapaloq\n")
+	b.WriteString("Terminal=false\n")
+	b.WriteString("Categories=Utility;\n")
+	b.WriteString("X-GNOME-Autostart-enabled=true\n")
+	return b.String()
 }
 
 func serviceUninstall() {
@@ -91,6 +188,8 @@ func serviceUninstall() {
 	}
 	mustSystemctl("daemon-reload")
 	fmt.Printf("removed %s\n", unitPath)
+
+	removeWidgetAutostart()
 	fmt.Println("sapaloq.service uninstalled (config and data under ~/.config/sapaloq are kept)")
 }
 

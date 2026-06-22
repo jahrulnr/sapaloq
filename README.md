@@ -23,12 +23,20 @@ creates the runtime dirs (`memory/ state/ run/ vault/`), and runs
 
 ```bash
 ./install.sh --no-service          # install binaries only, no systemd
+./install.sh --no-autostart        # don't launch the widget on login
 ./install.sh --bin-dir ~/bin       # install binaries elsewhere
-./install.sh --uninstall           # remove service + binaries (config is KEPT)
+./install.sh --uninstall           # remove service + autostart + binaries (config KEPT)
 ```
 
-Make sure `~/.local/bin` is on your `PATH`. To keep the service running without an
-active login session: `loginctl enable-linger $USER`.
+Make sure `~/.local/bin` is on your `PATH`. To keep the core service running
+without an active login session: `loginctl enable-linger $USER`.
+
+**Widget on login:** `service install` also writes an XDG autostart entry
+(`~/.config/autostart/sapaloq-widget.desktop`), so the widget appears on your
+desktop automatically after you log in to GNOME (or any XDG-compliant session) —
+no manual launching. It shows up on the next login; to start it immediately the
+first time, run `sapaloq-widget &`. The widget is a graphical app, so it uses the
+desktop session's autostart rather than the headless systemd service.
 
 ### Service (systemd `--user`)
 
@@ -36,8 +44,8 @@ The service supervises `sapaloq-core run` (the orchestrator + IPC socket).
 
 | Command | Action |
 |---------|--------|
-| `sapaloq-core service install` | Write the unit, `daemon-reload`, enable + start (idempotent) |
-| `sapaloq-core service uninstall` | Stop, disable and remove the unit — **config/data kept** |
+| `sapaloq-core service install` | Write the unit, `daemon-reload`, enable + start, **and add the widget login autostart** (idempotent) |
+| `sapaloq-core service uninstall` | Stop, disable, remove the unit **and the widget autostart** — **config/data kept** |
 | `sapaloq-core service start` | Start the service (manual) |
 | `sapaloq-core service stop` | Stop the service (manual) |
 | `sapaloq-core service status` | `systemctl --user status` passthrough |
