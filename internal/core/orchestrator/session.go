@@ -16,7 +16,31 @@ import (
 // falling back to the embedded default when the manager is nil (e.g. an
 // Orchestrator constructed directly in tests). This is the single source of
 // truth for every mode's system prompt.
+//
+// SapaLOQ's shared persona (persona.md) — its core character, applicable to
+// every kind of work — is prepended to whatever role prompt is resolved, so
+// ask/planner/agent/scribe (and any future role) all carry the same "how to
+// carry yourself" baseline without duplicating it into each role file. The
+// persona itself is never wrapped around itself, and a missing/empty persona
+// is a no-op (the role prompt is returned unchanged).
 func (o *Orchestrator) systemPrompt(role string) string {
+	base := o.rolePrompt(role)
+	if role == prompts.RolePersona {
+		return base
+	}
+	persona := o.rolePrompt(prompts.RolePersona)
+	if strings.TrimSpace(persona) == "" {
+		return base
+	}
+	if strings.TrimSpace(base) == "" {
+		return persona
+	}
+	return persona + "\n\n---\n\n" + base
+}
+
+// rolePrompt resolves a single role's prompt (on-disk override preferred, else
+// embedded default) without applying the persona layer.
+func (o *Orchestrator) rolePrompt(role string) string {
 	if o != nil && o.prompts != nil {
 		if p := o.prompts.Get(role); strings.TrimSpace(p) != "" {
 			return p

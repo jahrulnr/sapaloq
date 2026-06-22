@@ -9,7 +9,7 @@ import (
 
 func TestGetFallsBackToEmbeddedDefaults(t *testing.T) {
 	m := New("", false) // disabled, no dir → embedded defaults only
-	for _, role := range []string{RoleAsk, RolePlanner, RoleAgent, RoleScribe} {
+	for _, role := range []string{RoleAsk, RolePlanner, RoleAgent, RoleScribe, RolePersona} {
 		if got := m.Get(role); strings.TrimSpace(got) == "" {
 			t.Fatalf("Get(%q) returned empty; expected embedded default", role)
 		}
@@ -23,10 +23,33 @@ func TestGetFallsBackToEmbeddedDefaults(t *testing.T) {
 	}
 }
 
+// TestPersonaServedFromEmbeddedAndDisk proves the shared persona is available
+// both via the helper and as a seeded, editable file.
+func TestPersonaServedFromEmbeddedAndDisk(t *testing.T) {
+	m := New("", false) // embedded only
+	persona := m.Persona()
+	if strings.TrimSpace(persona) == "" {
+		t.Fatalf("Persona() returned empty")
+	}
+	// A stable marker from persona.md so the wiring can't silently drift.
+	if !strings.Contains(persona, "Contract first") {
+		t.Fatalf("persona missing expected content: %q", persona)
+	}
+	if persona != Default(RolePersona) {
+		t.Fatalf("Persona() should equal the embedded default when no dir is set")
+	}
+
+	// A nil manager must still serve the embedded persona.
+	var nilMgr *Manager
+	if strings.TrimSpace(nilMgr.Persona()) == "" {
+		t.Fatalf("nil Manager.Persona() should fall back to embedded default")
+	}
+}
+
 func TestSyncSeedsDefaultsWithManifest(t *testing.T) {
 	dir := t.TempDir()
 	m := New(dir, true)
-	for _, file := range []string{"ask.md", "planner.md", "agent.md", "scribe.md"} {
+	for _, file := range []string{"ask.md", "planner.md", "agent.md", "scribe.md", "persona.md"} {
 		if _, err := os.Stat(filepath.Join(dir, file)); err != nil {
 			t.Fatalf("expected %s seeded: %v", file, err)
 		}

@@ -25,11 +25,14 @@ import (
 var defaultFS embed.FS
 
 // Role keys. These map 1:1 to sub-agent roles plus the Ask orchestrator.
+// RolePersona is special: it is the shared core character prepended to every
+// other role's prompt (see Orchestrator.systemPrompt), not a mode of its own.
 const (
 	RoleAsk        = "ask"
 	RolePlanner    = "planner"
 	RoleAgent      = "agent" // task-runner
 	RoleScribe     = "scribe"
+	RolePersona    = "persona"
 	manifestName   = "prompts.manifest.json"
 	roleTaskRunner = "task-runner"
 )
@@ -45,6 +48,8 @@ func fileFor(role string) (string, bool) {
 		return "agent.md", true
 	case RoleScribe:
 		return "scribe.md", true
+	case RolePersona:
+		return "persona.md", true
 	default:
 		return "", false
 	}
@@ -80,6 +85,7 @@ func roles() []struct{ role, file string } {
 		{RolePlanner, "planner.md"},
 		{RoleAgent, "agent.md"},
 		{RoleScribe, "scribe.md"},
+		{RolePersona, "persona.md"},
 	}
 }
 
@@ -161,6 +167,14 @@ func (m *Manager) Get(role string) string {
 		}
 	}
 	return ""
+}
+
+// Persona returns the shared core-character prompt (persona.md): the on-disk
+// copy when loaded, otherwise the embedded default. It is prepended to every
+// role's prompt by Orchestrator.systemPrompt. A nil Manager still serves the
+// embedded default.
+func (m *Manager) Persona() string {
+	return m.Get(RolePersona)
 }
 
 // Default returns the embedded (shipped) default for a role, ignoring any
