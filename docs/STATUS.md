@@ -44,6 +44,20 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Implemented this session (2026-06-23) — docs: context window vs output cap
+
+- **Documented the two token knobs in `docs/PROVIDER-BRIDGE.md`.** Expanded the
+  "Context window" section into "Context window & output cap": a table
+  distinguishing `contextWindow` (**input** budget — local truncation, default
+  1,000,000, `len/4` estimate, system msg preserved, `0` disables) from
+  `maxTokens` (**output** budget — `max_completion_tokens` for openai/kimi sent
+  only when >0, `max_tokens` for claude always sent and defaulting to 8192).
+  Added a concrete "1M context / 128k output" entry example (128k = 131072), the
+  caveat that `contextWindow` is input-only (set it below a *shared* total budget
+  to leave room for output), and how to set both (edit `config.json` or
+  `/settings`). Verified against `internal/bridges/provider/{detect.go,wire.go,context.go}`.
+  No code change. `docs/{PROVIDER-BRIDGE.md,STATUS.md}`.
+
 ## Implemented this session (2026-06-23) — Linux taskbar icon (WM_CLASS + .desktop)
 
 - **Fixed the generic taskbar icon + dev binary name under `make run`.** The
