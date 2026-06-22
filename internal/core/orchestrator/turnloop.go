@@ -58,6 +58,9 @@ type turnSink interface {
 // turnConfig parameterizes one run of the shared engine.
 type turnConfig struct {
 	sessionID string
+	// runID is the stable actor identity used to correlate tool jobs and
+	// steering/decision events. It may equal sessionID for a foreground run.
+	runID string
 	// tools is the declared-tool surface offered to the model this run.
 	tools []string
 	// dispatch executes one tool call and returns its normalized outcome.

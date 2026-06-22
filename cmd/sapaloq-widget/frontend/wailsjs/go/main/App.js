@@ -34,6 +34,10 @@ export function RetryChatTurn(arg1, arg2) {
   return window['go']['main']['App']['RetryChatTurn'](arg1, arg2);
 }
 
+export function RuntimeStatus() {
+  return window['go']['main']['App']['RuntimeStatus']();
+}
+
 export function SendMessage(arg1, arg2) {
   return window['go']['main']['App']['SendMessage'](arg1, arg2);
 }

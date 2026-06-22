@@ -207,6 +207,122 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .popup-close:hover,
 .popup-resize:hover { background: oklch(100% 0 0 / 0.14); }
 
+.runtime-strip {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(88px, 0.85fr) minmax(152px, 1.35fr) minmax(82px, 0.8fr);
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: oklch(9% 0.035 255 / 0.28);
+}
+
+.runtime-model,
+.runtime-workspace,
+.actor-tile {
+  min-width: 0;
+  border: 1px solid oklch(100% 0 0 / 0.1);
+  background: oklch(100% 0 0 / 0.045);
+}
+
+.runtime-model,
+.runtime-workspace {
+  display: grid;
+  align-content: center;
+  gap: 1px;
+  min-height: 40px;
+  padding: 6px 8px;
+  border-radius: 10px;
+}
+
+.runtime-kicker {
+  color: var(--subtle);
+  font-size: 0.5rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.runtime-model strong,
+.runtime-workspace strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.66rem;
+  font-weight: 850;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-model > span:last-child {
+  overflow: hidden;
+  color: var(--accent);
+  font-size: 0.54rem;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-workspace strong { color: oklch(82% 0.07 205); }
+
+.runtime-actors {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(68px, 1fr));
+  gap: 6px;
+}
+
+.actor-tile {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 6px 7px;
+  border-radius: 10px;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+
+.actor-tile > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.actor-tile b,
+.actor-tile small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actor-tile b { color: var(--muted); font-size: 0.62rem; font-weight: 850; }
+.actor-tile small { color: var(--subtle); font-size: 0.52rem; }
+.actor-signal {
+  width: 6px;
+  height: 18px;
+  border-radius: 999px;
+  background: oklch(48% 0.03 245);
+}
+
+.actor-tile[data-state='active'] {
+  border-color: oklch(73% 0.16 186 / 0.28);
+  background: oklch(73% 0.16 186 / 0.075);
+}
+.actor-tile[data-state='active'] .actor-signal {
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--glow);
+  animation: actor-breathe 1.5s ease-in-out infinite;
+}
+.actor-tile[data-state='active'] b { color: var(--ink); }
+.actor-tile[data-state='failed'] .actor-signal,
+.actor-tile[data-state='stopped'] .actor-signal { background: var(--danger); }
+
+@keyframes actor-breathe {
+  0%, 100% { opacity: 0.55; transform: scaleY(0.65); }
+  50% { opacity: 1; transform: scaleY(1); }
+}
+
 .popup-body {
   position: relative;
   z-index: 1;
@@ -259,6 +375,45 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .message a { color: var(--accent); overflow-wrap: anywhere; word-break: break-word; }
 .message ul, .message ol { margin: 0.2em 0; padding-left: 1.25em; }
 .message li + li { margin-top: 0.2em; }
+
+/* GFM task lists (`- [ ]` / `- [x]`). marked emits a native
+   `<input disabled type=checkbox>`; DOMPurify strips `type`, so we re-assert it
+   and tag the row (.md-task-item) + control (.md-task-check) in
+   decorateRenderedMarkdown. Without styling the native control rendered as a
+   long text field / black box that swallowed the item text. Drop the bullet,
+   lay the row out as a flex line, and draw a small custom glyph instead. */
+.message li.md-task-item {
+  list-style: none;
+  /* No flex here: a flex <li> turns its children (text, <strong>, <code>, and
+     the nested <ul>) into sibling flex items that share one row and shrink to
+     near-zero width, which pecah the text per-character. Keep the item as a
+     normal block so its inline content flows/wraps naturally and any nested
+     sublist sits below it; only the checkbox is pulled inline to the left. */
+}
+.message input.md-task-check {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-block;
+  vertical-align: middle;
+  width: 0.95em;
+  height: 0.95em;
+  margin: 0 0.45em 0.15em 0;
+  padding: 0;
+  border: 1.5px solid oklch(100% 0 0 / 0.32);
+  border-radius: 4px;
+  background: oklch(0% 0 0 / 0.18);
+  cursor: default;
+}
+.message input.md-task-check:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  /* checkmark drawn with two gradients so no extra markup is needed */
+  background-image: linear-gradient(45deg, transparent 46%, oklch(18% 0.02 250) 46% 54%, transparent 54%),
+                    linear-gradient(-45deg, transparent 46%, oklch(18% 0.02 250) 46% 54%, transparent 54%);
+  background-size: 0.5em 0.5em, 0.5em 0.5em;
+  background-position: center;
+  background-repeat: no-repeat;
+}
 
 /* Block markdown */
 .message .md-heading { margin: 0.5em 0 0.3em; line-height: 1.25; font-weight: 820; letter-spacing: -0.01em; }

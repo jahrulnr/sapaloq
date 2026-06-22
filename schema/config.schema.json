@@ -88,7 +88,7 @@
           "description": "sapaloq-core only; informational lock"
         },
         "binaryName": { "type": "string", "default": "sapaloq-core" },
-        "dataDir": { "type": "string", "default": "~/.config/sapaloq" }
+        "dataDir": { "type": "string", "default": "~/SapaLOQ" }
       }
     },
 
@@ -109,11 +109,11 @@
         },
         "osJsonPath": {
           "type": "string",
-          "default": "~/.config/sapaloq/os.json"
+          "default": "~/SapaLOQ/os.json"
         },
         "backupDir": {
           "type": "string",
-          "default": "~/.config/sapaloq/cache"
+          "default": "~/SapaLOQ/cache"
         },
         "rescanOnFingerprintMismatch": { "type": "boolean", "default": true },
         "backupOnRescan": { "type": "boolean", "default": true },
@@ -183,7 +183,7 @@
             "enabled": { "type": "boolean", "default": true },
             "schemaPath": {
               "type": "string",
-              "default": "~/.config/sapaloq/bridge/cursor-bridge.schema.json"
+              "default": "~/SapaLOQ/bridge/cursor-bridge.schema.json"
             }
           }
         },
@@ -262,6 +262,7 @@
           "properties": {
             "maxInferenceTurns": { "type": "integer", "minimum": 1, "default": 128 },
             "maxToolCalls": { "type": "integer", "minimum": 1, "default": 512 },
+            "maxParallelTools": { "type": "integer", "minimum": 1, "maximum": 64, "default": 8 },
             "maxWallTimeMinutes": { "type": "integer", "minimum": 1, "default": 30 },
             "maxNoProgressTurns": { "type": "integer", "minimum": 1, "default": 5 },
             "maxIdenticalToolCalls": { "type": "integer", "minimum": 1, "default": 5 },
@@ -480,8 +481,8 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean", "default": true },
-            "slicesPath": { "type": "string", "default": "~/.config/sapaloq/prompt/slices" },
-            "corePath": { "type": "string", "default": "~/.config/sapaloq/prompt/core.md" }
+            "slicesPath": { "type": "string", "default": "~/SapaLOQ/prompt/slices" },
+            "corePath": { "type": "string", "default": "~/SapaLOQ/prompt/core.md" }
           }
         }
       }
@@ -494,10 +495,10 @@
         "index": {
           "type": "object",
           "properties": {
-            "dbPath": { "type": "string", "default": "~/.config/sapaloq/memory/companion.db" },
+            "dbPath": { "type": "string", "default": "~/SapaLOQ/memory/companion.db" },
             "filesMirrorPath": {
               "type": "string",
-              "default": "~/.config/sapaloq/memory/files",
+              "default": "~/SapaLOQ/memory/files",
               "description": "Optional markdown mirror for human/agent append"
             },
             "ftsEnabled": { "type": "boolean", "default": true },
@@ -528,7 +529,7 @@
       "properties": {
         "commSpecDirectory": {
           "type": "string",
-          "default": "~/.config/sapaloq/nodes",
+          "default": "~/SapaLOQ/nodes",
           "description": "SKILL-like how-to communicate per node (comm_spec_path)"
         },
         "defaultLocalNode": { "type": "string", "default": "local-default" },
@@ -554,7 +555,7 @@
       "description": "SapaLOQ-local skills registry (indexed, not full dump)",
       "properties": {
         "enabled": { "type": "boolean", "default": true },
-        "dir": { "type": "string", "default": "~/.config/sapaloq/skills" },
+        "dir": { "type": "string", "default": "~/SapaLOQ/skills" },
         "maxLoadPerTurn": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
         "maxBodyLines": { "type": "integer", "minimum": 5, "maximum": 200, "default": 40 }
       }
@@ -567,7 +568,7 @@
         "enabled": { "type": "boolean", "default": true },
         "queuePath": {
           "type": "string",
-          "default": "~/.config/sapaloq/memory/learning-queue.jsonl"
+          "default": "~/SapaLOQ/memory/learning-queue.jsonl"
         },
         "autoTunePrefetchRules": { "type": "boolean", "default": true },
         "minSamplesForRuleTune": { "type": "integer", "minimum": 1, "default": 3 },
@@ -618,7 +619,7 @@
       "description": "Replaceable role prompts materialized from embedded defaults",
       "properties": {
         "enabled": { "type": "boolean", "default": true },
-        "dir": { "type": "string", "default": "~/.config/sapaloq/prompts" }
+        "dir": { "type": "string", "default": "~/SapaLOQ/prompts" }
       }
     },
 
@@ -648,8 +649,8 @@
         },
         "maxPositiveSlicesPerTurn": { "type": "integer", "minimum": 0, "maximum": 3, "default": 1 },
         "maxNegativeSlicesPerTurn": { "type": "integer", "minimum": 0, "maximum": 3, "default": 1 },
-        "positiveSlicesPath": { "type": "string", "default": "~/.config/sapaloq/prompt/positive" },
-        "negativeSlicesPath": { "type": "string", "default": "~/.config/sapaloq/prompt/negative" },
+        "positiveSlicesPath": { "type": "string", "default": "~/SapaLOQ/prompt/positive" },
+        "negativeSlicesPath": { "type": "string", "default": "~/SapaLOQ/prompt/negative" },
         "banditTunePrefetch": {
           "type": "boolean",
           "default": true,
@@ -674,7 +675,7 @@
         "globalRateLimitPerMinute": { "type": "integer", "minimum": 0, "default": 30 },
         "busPath": {
           "type": "string",
-          "default": "~/.config/sapaloq/state/events.jsonl"
+          "default": "~/SapaLOQ/state/events.jsonl"
         },
         "bus": {
           "type": "object",
@@ -688,11 +689,11 @@
             },
             "socketPath": {
               "type": "string",
-              "default": "~/.config/sapaloq/run/sapaloq.sock"
+              "default": "~/SapaLOQ/run/sapaloq.sock"
             },
             "walPath": {
               "type": "string",
-              "default": "~/.config/sapaloq/state/events.jsonl"
+              "default": "~/SapaLOQ/state/events.jsonl"
             },
             "watcherBufferSize": {
               "type": "integer",

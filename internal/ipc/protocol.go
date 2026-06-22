@@ -3,6 +3,7 @@ package ipc
 import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/core/orchestrator"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
@@ -19,14 +20,15 @@ type Request struct {
 }
 
 type Response struct {
-	OK          bool                  `json:"ok"`
-	Op          string                `json:"op"`
-	Message     string                `json:"message,omitempty"`
-	RingState   string                `json:"ring_state,omitempty"`
-	ServerMs    int64                 `json:"server_ms"`
-	SessionID   string                `json:"session_id,omitempty"`
-	Event       *bridge.StreamEvent   `json:"event,omitempty"`
-	Suggestions []config.CommandEntry `json:"suggestions,omitempty"`
-	Turns       []chatstore.Turn      `json:"turns,omitempty"`
-	Usage       *chatstore.Usage      `json:"usage,omitempty"`
+	OK          bool                        `json:"ok"`
+	Op          string                      `json:"op"`
+	Message     string                      `json:"message,omitempty"`
+	RingState   string                      `json:"ring_state,omitempty"`
+	ServerMs    int64                       `json:"server_ms"`
+	SessionID   string                      `json:"session_id,omitempty"`
+	Event       *bridge.StreamEvent         `json:"event,omitempty"`
+	Suggestions []config.CommandEntry       `json:"suggestions,omitempty"`
+	Turns       []chatstore.Turn            `json:"turns,omitempty"`
+	Usage       *chatstore.Usage            `json:"usage,omitempty"`
+	Runtime     *orchestrator.RuntimeStatus `json:"runtime,omitempty"`
 }

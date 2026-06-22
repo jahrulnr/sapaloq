@@ -36,7 +36,7 @@ func defaultSocketPath() string {
 	if p := os.Getenv("SAPALOQ_SOCKET"); p != "" {
 		return p
 	}
-	return filepath.Join(os.Getenv("HOME"), ".config", "sapaloq", "run", "sapaloq.sock")
+	return filepath.Join(os.Getenv("HOME"), "SapaLOQ", "run", "sapaloq.sock")
 }
 
 type chatResult struct {
@@ -69,6 +69,27 @@ type chatHistoryResult struct {
 	SessionID string     `json:"session_id"`
 	Turns     []chatTurn `json:"turns"`
 	Usage     *chatUsage `json:"usage,omitempty"`
+}
+
+type actorRuntimeStatus struct {
+	ID        string `json:"id"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
+	Phase     string `json:"phase"`
+	Workspace string `json:"workspace"`
+}
+
+type runtimeStatus struct {
+	Provider      string               `json:"provider"`
+	Model         string               `json:"model"`
+	Driver        string               `json:"driver"`
+	Reasoning     string               `json:"reasoning,omitempty"`
+	ConfigPath    string               `json:"config_path"`
+	DataPath      string               `json:"data_path"`
+	MemoryPath    string               `json:"memory_path"`
+	StatePath     string               `json:"state_path"`
+	WorkspacePath string               `json:"workspace_path"`
+	Actors        []actorRuntimeStatus `json:"actors"`
 }
 
 func sendChat(socketPath, sessionID, message string) (chatResult, error) {
@@ -209,6 +230,29 @@ func contextUsage(socketPath string) (*chatUsage, error) {
 	return mapUsage(responses[0].Usage), nil
 }
 
+func runtimeInfo(socketPath string) (*runtimeStatus, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "runtime_status"})
+	if err != nil {
+		return nil, err
+	}
+	if len(responses) == 0 || !responses[0].OK || responses[0].Runtime == nil {
+		return nil, fmt.Errorf("core error")
+	}
+	src := responses[0].Runtime
+	out := &runtimeStatus{
+		Provider: src.Provider, Model: src.Model, Driver: src.Driver,
+		Reasoning: src.Reasoning, ConfigPath: src.ConfigPath, DataPath: src.DataPath,
+		MemoryPath: src.MemoryPath, StatePath: src.StatePath, WorkspacePath: src.WorkspacePath,
+	}
+	for _, actor := range src.Actors {
+		out.Actors = append(out.Actors, actorRuntimeStatus{
+			ID: actor.ID, Role: actor.Role, Status: actor.Status,
+			Phase: actor.Phase, Workspace: actor.Workspace,
+		})
+	}
+	return out, nil
+}
+
 func mapUsage(usage *chatstore.Usage) *chatUsage {
 	if usage == nil {
 		return nil
@@ -287,6 +331,18 @@ func watchEvents(socketPath string, stop <-chan struct{}, onEvent func(bridge.St
 		}
 		func() {
 			defer conn.Close()
+			// Scanner.Scan blocks while the watch socket is idle. Tie the
+			// connection lifetime to stop so shutdown closes the fd and wakes
+			// Scan immediately instead of waiting for another event.
+			watchDone := make(chan struct{})
+			defer close(watchDone)
+			go func() {
+				select {
+				case <-stop:
+					_ = conn.Close()
+				case <-watchDone:
+				}
+			}()
 			b, _ := json.Marshal(ipcRequest{Op: "watch"})
 			if _, werr := conn.Write(append(b, '\n')); werr != nil {
 				return

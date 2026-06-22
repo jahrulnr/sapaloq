@@ -11,7 +11,7 @@ import (
 // matching upgrade step in migrationSteps so older configs are upgraded in
 // place. Old JSON formats are always preserved in code (the upgrade steps are
 // additive and idempotent) so a config written by any prior version still loads.
-const CurrentSchemaVersion = "1.3.0"
+const CurrentSchemaVersion = "1.4.0"
 
 // migrationStep upgrades a raw config map from one schema version to the next.
 // from is the version the step applies to; to is the version it produces. Steps
@@ -125,6 +125,34 @@ var migrationSteps = []migrationStep{
 			}
 		},
 	},
+	{
+		from: "1.3.0",
+		to:   "1.4.0",
+		apply: func(raw map[string]any) {
+			// Split immutable config from runtime data. Only rewrite shipped
+			// legacy defaults; explicit custom paths remain user-owned.
+			replaceLegacyPath(raw, []string{"runtime", "dataDir"}, "~/.config/sapaloq", "~/SapaLOQ")
+			replaceLegacyPath(raw, []string{"skills", "dir"}, "~/.config/sapaloq/skills", "~/SapaLOQ/skills")
+			replaceLegacyPath(raw, []string{"prompts", "dir"}, "~/.config/sapaloq/prompts", "~/SapaLOQ/prompts")
+			replaceLegacyPath(raw, []string{"events", "bus", "socketPath"}, "~/.config/sapaloq/run/sapaloq.sock", "~/SapaLOQ/run/sapaloq.sock")
+			replaceLegacyPath(raw, []string{"events", "bus", "walPath"}, "~/.config/sapaloq/state/events.jsonl", "~/SapaLOQ/state/events.jsonl")
+		},
+	},
+}
+
+func replaceLegacyPath(raw map[string]any, path []string, oldValue, newValue string) {
+	current := raw
+	for _, key := range path[:len(path)-1] {
+		next, ok := current[key].(map[string]any)
+		if !ok {
+			return
+		}
+		current = next
+	}
+	key := path[len(path)-1]
+	if value, ok := current[key].(string); ok && value == oldValue {
+		current[key] = newValue
+	}
 }
 
 func renameNestedKey(raw map[string]any, block, oldKey, newKey string) {

@@ -76,13 +76,18 @@ type askToolResult struct {
 
 func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, call parse.ToolCall) askToolResult {
 	var args struct {
-		Task       string `json:"task"`
-		TaskID     string `json:"task_id"`
-		PlanTaskID string `json:"plan_task_id"`
-		Seconds    int    `json:"seconds"`
-		Reason     string `json:"reason"`
-		Scope      string `json:"scope"`
-		Answer     string `json:"answer"`
+		Task           string `json:"task"`
+		TaskID         string `json:"task_id"`
+		PlanTaskID     string `json:"plan_task_id"`
+		Seconds        int    `json:"seconds"`
+		Reason         string `json:"reason"`
+		Scope          string `json:"scope"`
+		Answer         string `json:"answer"`
+		TargetTaskID   string `json:"target_task_id"`
+		Message        string `json:"message"`
+		Priority       string `json:"priority"`
+		CorrelationID  string `json:"correlation_id"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(call.Arguments, &args); err != nil {
 		// Tolerate raw control bytes in multi-line string values (see
@@ -244,6 +249,35 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			return askToolResult{text: fmt.Sprintf("generation and %d task(s) stopped: %s", stopped, reason), handled: true, stop: true}
 		}
 		return askToolResult{text: "Invalid stop scope: " + scope, handled: true}
+	case "sapaloq_send_steering":
+		target := strings.TrimSpace(args.TargetTaskID)
+		message := strings.TrimSpace(args.Message)
+		if target == "" || message == "" {
+			return askToolResult{text: "Error: target_task_id and message are required.", handled: true}
+		}
+		err := o.enqueueActorEvent(actorControlEvent{
+			Kind:          "steering.proposed",
+			SessionID:     sessionID,
+			SourceID:      sessionID,
+			TargetID:      target,
+			CorrelationID: args.CorrelationID,
+			Message:       message,
+			Priority:      args.Priority,
+		})
+		if err != nil {
+			return askToolResult{text: "Failed to queue steering: " + err.Error(), handled: true}
+		}
+		return askToolResult{text: fmt.Sprintf("Steering queued for `%s`.", target), handled: true}
+	case "sapaloq_wait_events":
+		timeout := args.TimeoutSeconds
+		if timeout <= 0 {
+			timeout = 120
+		}
+		events := o.waitActorEvents(ctx, sessionID, time.Duration(timeout)*time.Second)
+		if len(events) == 0 {
+			return askToolResult{text: "No actor event arrived before the wait ended.", handled: true}
+		}
+		return askToolResult{text: actorEventsPrompt(events), handled: true}
 	case "desktop_notify":
 		return askToolResult{text: o.toolDesktopNotify(ctx, parseToolArgs(call.Arguments)), handled: true}
 	case "desktop_dnd_status":
@@ -251,7 +285,7 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 	default:
 		// Read-only assessment + web tools shared across all modes so Ask is
 		// no longer blind: it can read, search, and research before delegating.
-		if text, ok := runSharedTool(ctx, call); ok {
+		if text, ok := o.runSharedTool(ctx, call); ok {
 			return askToolResult{text: text, handled: true}
 		}
 		return askToolResult{}
@@ -310,7 +344,12 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 		return "", err
 	}
 	o.publishTaskUpdate(sessionID, record)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// No hard total-runtime cap: a productive background task must be free to
+	// work as long as it makes progress. The real guards are runConversation's
+	// inactivity (idle) deadline — which fires only when the run goes silent —
+	// the worker watchdog (stale heartbeat), and the loop-anomaly budgets. The
+	// stored cancel still backs user-initiated Stop and shutdown.
+	ctx, cancel := context.WithCancel(context.Background())
 	o.taskMu.Lock()
 	if o.taskCancels == nil {
 		o.taskCancels = make(map[string]context.CancelFunc)
@@ -333,7 +372,9 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 // goroutine plumbing of spawnBackground but reuses the existing record (with
 // its transcript + answer) rather than creating a new one.
 func (o *Orchestrator) resumeBackground(snap providerSnapshot, sessionID string, record taskRecord) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// Same rationale as spawnBackground: no total-runtime cap; the idle
+	// deadline + worker watchdog + loop-anomaly budgets are the real guards.
+	ctx, cancel := context.WithCancel(context.Background())
 	o.taskMu.Lock()
 	if o.taskCancels == nil {
 		o.taskCancels = make(map[string]context.CancelFunc)
@@ -467,6 +508,18 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 // sub-agent state. Chat visibility is unconditional: notifyUserOnDone may
 // govern desktop notifications later, but it must never hide task certainty.
 func (o *Orchestrator) publishTaskUpdate(sessionID string, record taskRecord) {
+	// Clarification is mediated before it reaches the UI. A dedicated
+	// decision actor first tries to resolve it from shared session/task context;
+	// only an unresolved decision is published as an awaiting-clarification
+	// task update and spoken into the user conversation.
+	if record.Status == "awaiting_clarification" {
+		o.resolveClarification(sessionID, record)
+		return
+	}
+	o.publishTaskUpdateDirect(sessionID, record)
+}
+
+func (o *Orchestrator) publishTaskUpdateDirect(sessionID string, record taskRecord) {
 	ev := taskUpdateEvent(sessionID, record)
 	if ev.Kind == "" {
 		return
@@ -479,13 +532,6 @@ func (o *Orchestrator) publishTaskUpdate(sessionID string, record taskRecord) {
 	// into the conversation so a finish that lands after sapaloq_wait returns is
 	// surfaced as a real chat message, not just a card. Idempotent per task id.
 	o.speakTaskCompletion(sessionID, record)
-	// Event-driven clarification: when a sub-agent pauses for a decision, let
-	// the orchestrator try to answer it itself (reusing the chat engine) and
-	// resume the task — otherwise the spoken question waits for the user. The
-	// worker goroutine has already exited cleanly, so this never blocks.
-	if record.Status == "awaiting_clarification" {
-		o.resolveClarification(sessionID, record)
-	}
 }
 
 func (o *Orchestrator) publishTaskActivity(sessionID string, record taskRecord, summary string) {
@@ -569,10 +615,11 @@ func taskUpdateEvent(sessionID string, record taskRecord) bridge.StreamEvent {
 	case "in_progress":
 		summary = "Sub-agent sedang mengerjakan task."
 	case "done":
-		summary = strings.TrimSpace(record.Result)
-		if summary == "" {
-			summary = "Task selesai."
-		}
+		// The card is a STATUS timeline, not a result dump. The full summary is
+		// authored by the orchestrator and surfaced as a chat bubble
+		// (speakTaskCompletion) — duplicating record.Result here produced two
+		// identical, redundant summaries (card + bubble). Keep this terse.
+		summary = "Selesai."
 	case "failed":
 		summary = "Task gagal"
 		if e := strings.TrimSpace(record.Error); e != "" {

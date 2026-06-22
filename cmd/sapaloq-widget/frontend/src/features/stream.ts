@@ -6,6 +6,7 @@ import { getMessageList, hasVisibleText, scrollMessagesToBottom } from '../ui/do
 import { renderMarkdown } from '../ui/markdown';
 import { appendMessage, wireAssistantFeedback } from './messages';
 import { setRingState } from './connection';
+import { refreshRuntimeStatus } from './runtime-status';
 import { getUserGroup, nextMessageSeq, taskBubbles, taskStatuses } from '../core/state';
 
 // ---------------------------------------------------------------------------
@@ -243,21 +244,59 @@ export function renderTaskUpdate(event: StreamEvent) {
   const terminal = new Set(['done', 'failed', 'stopped']);
   if (previousStatus && terminal.has(previousStatus) && !terminal.has(status)) return;
   const role = event.task_role || 'task';
-  const summary = (event.summary || '').trim();
-  if (!summary) return;
 
+  // Record the latest status and recompute the orb's busy ring FIRST, before any
+  // early return. A terminal transition (done/failed/stopped) must always clear
+  // the busy flag — even if its summary happens to be empty — otherwise the orb
+  // stays stuck pulsing ("responding") after the sub-agent has finished. The
+  // bubble rendering below needs a summary; the ring state must not depend on it.
+  if (taskID) taskStatuses.set(taskID, status);
+  if (status === 'pending' || status === 'in_progress') {
+    setRingState('delegating');
+  } else if (status === 'awaiting_clarification') {
+    setRingState('needs-input');
+  } else {
+    const active = [...taskStatuses.values()].some((value) => value === 'pending' || value === 'in_progress' || value === 'stopping');
+    if (!active) setRingState('idle');
+    // A terminal transition (done/failed/stopped) means the sub-agent has wound
+    // down. Refresh the runtime-status pill immediately instead of waiting up to
+    // 3s for the next poll — otherwise the "Agent" pill keeps blinking
+    // "finalizing" after the task is already finished.
+    if (terminal.has(status)) void refreshRuntimeStatus();
+  }
+
+  // The card is a STATUS TIMELINE, not a result dump. It shows a one-line
+  // status label, plus a short activity hint while the task is running (e.g.
+  // "Menjalankan `exec`."). The full, human-readable summary is authored by the
+  // orchestrator and shown as its own chat bubble (response_delta tagged with
+  // task_id) — rendering record.Result here too produced two identical,
+  // redundant summaries. So for terminal states we deliberately drop the
+  // summary body and keep only the status line.
   let prefix = '';
   switch (status) {
     case 'done': prefix = `✅ ${role} selesai`; break;
     case 'failed': prefix = `⚠️ ${role} gagal`; break;
-    case 'awaiting_clarification': prefix = `❓ ${role} butuh keputusan`; setRingState('needs-input'); break;
+    case 'awaiting_clarification': prefix = `❓ ${role} butuh keputusan`; break;
     case 'pending': prefix = `🕓 ${role} dijadwalkan`; break;
     case 'in_progress': prefix = `⏳ ${role} sedang bekerja`; break;
     case 'stopping': prefix = `⏹️ ${role} sedang dihentikan`; break;
     case 'stopped': prefix = `⏹️ ${role} dihentikan`; break;
     default: prefix = `${role}`; break;
   }
-  const text = `**${prefix}**\n\n${summary}`;
+
+  const summary = (event.summary || '').trim();
+  const isTerminal = terminal.has(status) || status === 'awaiting_clarification';
+  // A short activity hint is useful WHILE running; a terminal card needs only
+  // its status line (the summary lives in the orchestrator's bubble). The
+  // failed/clarification status already carry their reason in `prefix`-adjacent
+  // summary, so keep a one-liner there; done/stopped show status only.
+  let activity = '';
+  if (!isTerminal && summary && summary.length <= 120) {
+    activity = summary;
+  } else if (status === 'failed' || status === 'awaiting_clarification') {
+    activity = summary && summary.length <= 200 ? summary : '';
+  }
+  const text = activity ? `**${prefix}**\n\n${activity}` : `**${prefix}**`;
   let item = taskID ? taskBubbles.get(taskID) : undefined;
   if (!item || !item.isConnected) {
     item = appendMessage('message--task', text);
@@ -271,11 +310,6 @@ export function renderTaskUpdate(event: StreamEvent) {
     item.replaceChildren(renderMarkdown(text));
     scrollMessagesToBottom();
   }
-  if (taskID) taskStatuses.set(taskID, status);
-  if (status === 'pending' || status === 'in_progress') {
-    setRingState('delegating');
-  } else if (status !== 'awaiting_clarification') {
-    const active = [...taskStatuses.values()].some((value) => value === 'pending' || value === 'in_progress' || value === 'stopping');
-    if (!active) setRingState('idle');
-  }
+  // Status + ring state were already updated at the top of this function so a
+  // terminal transition clears the busy ring regardless of summary presence.
 }

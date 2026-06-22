@@ -1,7 +1,7 @@
 # SapaLOQ — Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-22 (structural worker liveness + no-limit budgets; wall-time is the only final cap)
+> Last updated: 2026-06-22 (parallel actors, persistent workspace, runtime variables)
 
 ---
 
@@ -25,6 +25,16 @@
 - **Post-task learning** — learning-agent builds prompts/skills; optional web research for best practice.
 - **Clarification loop** — sub-agent tanya orchestrator saat keputusan unclear; orchestrator jawab sendiri atau forward ke user.
 - **Sub-agent control** — orchestrator dapat **delay start**, **pause**, **resume**, **stop**, **delete** sub-agent dari task.
+- **Parallel actor tooling** — Ask, Planner, and Agent collect all tool calls in
+  one provider turn and submit them as durable jobs. Independent jobs run
+  concurrently up to `continuation.maxParallelTools`; same-path mutations and
+  same-cwd `exec` use resource lanes; terminal lifecycle tools are barriers.
+- **Cross-actor steering** — `sapaloq_send_steering` writes a durable target
+  inbox. The target folds events into its context only at an inference safe
+  point. `sapaloq_wait_events` is the explicit dependency primitive.
+- **Decision mediation** — Planner/Agent questions first spawn an invisible
+  mediator sharing a bounded session/task snapshot. It cannot write chat. Only
+  unresolved decisions emit `decision.escalated` and reach the UI orchestrator.
 - **Sub-agent nodes** — sub-agent as **node** (local or remote Docker/VPS/EC2/SSH); registry SQLite + comm spec ([NODES.md](./NODES.md)).
 
 ---
@@ -58,6 +68,10 @@ yet.
 | Path | Role |
 |------|------|
 | `~/.config/sapaloq/config.json` | Live config (agent-editable) |
+| `~/SapaLOQ/memory/` | Durable chat/facts memory |
+| `~/SapaLOQ/state/` | Tasks, workers, tool jobs, actor inboxes and CWD state |
+| `~/SapaLOQ/workspace/` | Default CWD for Ask/Planner/Agent |
+| `~/SapaLOQ/etc/ROADMAP.md` | Materialized runtime-variable map |
 | `config.schema.json` (repo) | Validation contract |
 | `config.example.json` (repo) | Bootstrap template |
 
@@ -225,6 +239,26 @@ Deterministic failures (auth, malformed request, context overflow) are **not**
 retried here — context overflow has its own compaction-and-retry path.
 `conversation.go` (`looksLikeTransientTransport`).
 
+**Cancellation is consumer-owned.** Every inference attempt has a child context,
+and the shared turn loop selects between the stream channel and cancellation.
+The widget's Stop action therefore finishes the active generation immediately
+even if an upstream connection or bridge producer is slow to acknowledge
+cancel, ignores it, or never closes its channel. Recoverable retry paths also
+cancel and abandon the failed attempt instead of synchronously draining it.
+
+**Tool execution is scheduler-owned.** `runTurnLoop` no longer invokes tool
+implementations while consuming provider events. It records all tool calls,
+ends the inference attempt, and submits the batch to `toolJobScheduler`.
+Scheduler state is durable under `state/tool-jobs`; lifecycle events carry
+`run_id`/`job_id`. Results are sorted back into provider call order before the
+next inference turn, preserving deterministic context despite parallel work.
+
+**Workspace is actor-owned.** Relative paths are resolved against the actor's
+persisted workspace rather than the core process CWD. `exec` captures the final
+shell `PWD`; a successful `cd` therefore affects subsequent calls from that
+actor only. Deleted/unreadable persisted directories safely fall back to the
+default workspace.
+
 `sapaloq_wait` blocks in the backend until the selected task changes state or the wait window expires. Waiting emits a `status=waiting` event but does not spend inference turns. `sapaloq_stop` accepts `scope=generation|task|all`; the widget stop button uses `generation`, so background tasks are not killed accidentally.
 
 During a long run, local continuation messages are compacted when estimated context reaches `orchestrator.compaction.backgroundThreshold` (default `0.70`). At the blocking threshold (`0.88`) the UI receives `status=compacting`; the checkpoint preserves the original task and recent messages, then resumes the same run.
@@ -338,7 +372,7 @@ Refactor config schema validation without touching Cursor worker memory.
   "contextPacket": {
     "taskId": "task-001",
     "planId": "plan-001",
-    "planPath": "~/.config/sapaloq/state/tasks/task-001/plan.md",
+    "planPath": "~/SapaLOQ/state/tasks/task-001/plan.md",
     "userSnippet": "..."
   }
 }
@@ -539,7 +573,7 @@ stateDiagram-v2
 Control bus per sub-agent:
 
 ```text
-~/.config/sapaloq/memory/control/<subAgentId>.json
+~/SapaLOQ/memory/control/<subAgentId>.json
 ```
 
 Orchestrator writes command; bus publish `sapaloq.v1.orchestrator.control.{subAgentId}`. Legacy control file only if `events.bus.enabled: false`.
@@ -732,7 +766,7 @@ satu turn dan tidak boleh dianggap task selesai.
 Setiap sub-agent append ke stream:
 
 ```text
-~/.config/sapaloq/state/progress/<subAgentId>.jsonl
+~/SapaLOQ/state/progress/<subAgentId>.jsonl
 ```
 
 Satu baris = satu event:
@@ -1002,7 +1036,7 @@ Sub-agent executor **wajib** memanggil `sapaloq_complete_task` atau
 }
 ```
 
-Bus internal (`~/.config/sapaloq/state/events.jsonl`) juga dapat:
+Bus internal (`~/SapaLOQ/state/events.jsonl`) juga dapat:
 
 ```json
 {
@@ -1066,7 +1100,7 @@ Orchestrator **watching** sumber event di luar chat — proactive companion.
 ### Event bus (unified)
 
 ```text
-~/.config/sapaloq/state/events.jsonl
+~/SapaLOQ/state/events.jsonl
 ```
 
 Semua sumber → satu append-only bus:
@@ -1187,7 +1221,7 @@ user sees: "Ada notif Slack — mau aku rangkum?"
 Orchestrator reads **summaries**, not raw dumps.
 
 ```text
-~/.config/sapaloq/memory/
+~/SapaLOQ/memory/
   companion.db           # namespaces: personal, hobby, work
   tasks/                 # task stack persistence
   context-packets/       # ephemeral, task-scoped

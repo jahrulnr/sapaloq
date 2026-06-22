@@ -124,6 +124,18 @@ func TestLoadBootstrapsConfigFromWorkspaceExample(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigPathIsSeparateFromRuntimeData(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := DefaultConfig()
+	if got, want := ConfigPath("", cfg), filepath.Join(home, ".config", "sapaloq", "config.json"); got != want {
+		t.Fatalf("ConfigPath = %q, want %q", got, want)
+	}
+	if got, want := RuntimeDirs(cfg).DataDir, filepath.Join(home, "SapaLOQ"); got != want {
+		t.Fatalf("DataDir = %q, want %q", got, want)
+	}
+}
+
 func TestLLMBridgeRootActiveProvider(t *testing.T) {
 	root := LLMBridgeRoot{
 		ProviderKey: "openai",

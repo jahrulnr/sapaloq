@@ -19,6 +19,8 @@ export function ReadDroppedFile(arg1:string):Promise<main.droppedFile>;
 
 export function RetryChatTurn(arg1:string,arg2:number):Promise<main.chatResult>;
 
+export function RuntimeStatus():Promise<main.runtimeStatus>;
+
 export function SendMessage(arg1:string,arg2:string):Promise<main.chatResult>;
 
 export function SlashSuggest(arg1:string):Promise<Array<config.CommandEntry>>;

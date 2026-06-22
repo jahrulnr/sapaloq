@@ -12,7 +12,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 | # | Subsystem | Status | Evidence / notes |
 |---|-----------|--------|------------------|
-| 1 | Execution modes Ask / Plan / Agent | ✅ | `internal/core/orchestrator/conversation.go` (`runConversation`), `tasks.go` (`handleAskTool`), roles `planner` / `task-runner` |
+| 1 | Execution modes Ask / Plan / Agent | ✅ | Shared actor loop in `conversation.go`; inference cancellation is immediate; multi-call turns dispatch durable parallel tool jobs with deterministic ordered results |
 | 2 | Sub-agent tool loop + per-role profiles | ✅ | `subagent.go` (`runSubAgentLoop`, `handleSubAgentTool`), `tools.go` (`toolsForRole`); `maxTurns` read from config (`roleMaxTurns`). Role policy is checked before shared-tool dispatch, so undeclared/provider-poisoned calls cannot bypass the role allowlist |
 | 3 | Assessment tools (read/search/list_dir, web_search/fetch) | ✅ | `tools_workspace.go`, `tools_web.go`, dispatch in `tools_dispatch.go` |
 | 4 | File + exec tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`, `exec`) | ✅ | `tools_workspace.go`; flat unrestricted surface (any path; no workspace sandbox). Mutating file tools gated to `task-runner`; `exec` available in every mode |
@@ -25,10 +25,10 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go` |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor` |
-| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; markdown via `marked`+DOMPurify; wait countdown; one durable lifecycle card per background `task_id`, rehydrated on watcher reconnect |
+| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
-| 17 | Event bus (in-proc pub/sub) | ✅ | `internal/bus/bus.go`: topic-pattern routing (`*`/`**` via `matchTopic`/`SubscribeTopics`), JSON-lines WAL (`NewWithWAL`, non-blocking append goroutine, seq monotonic across boots), `Replay(since, fn)`, boot replay wired in `cmd/sapaloq-core/main.go` (`newEventBus`). `Subscribe` stays receive-all for live widget updates; IPC `watch` also rehydrates recent task snapshots from durable `status.json`, so reconnect cannot silently lose completion/failure. Terminal task transitions also **speak** a durable assistant turn + `response_delta` republish (`completion.go`), so a finish landing after `sapaloq_wait` is surfaced in chat, not just as a card |
+| 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
 | 18 | Context-SOP: FTS index / prefetch / anti-deep-check / intent-router | 🟡 | `facts` + `facts_fts` (FTS5-probed, LIKE fallback) now live in the chat store (`store.go` migrate, `facts.go`): `AddFact`/`SearchFacts`/`RecentFacts`/`DeleteFact`. No prefetch/anti-deep-check/intent-router yet |
 | 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `feedback_events` table + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; bounded negative-guidance slice injected into Ask prompt (`session.go`); widget 👍/👎 + correction box wired (`app.go`, `ipc.go`, `main.ts`). No learning_queue / bandit yet |
 | 20 | Named sub-agent roles (scribe, memory-janitor, intent-router, boundary-guard, event-watcher, learning-agent, research) | 🟡 | `scribe` is now spawnable (`sapaloq_spawn_scribe`); the sub-agent tool gate is config-driven (`roleAllows` honors `subAgents.roles[].allowedTools` with `*`-wildcards, default-deny mutation when unconfigured); `toolsForRole` offers only allowed+registered tools. memory-janitor/intent-router/boundary-guard/event-watcher/learning-agent/research still not spawnable |
@@ -36,11 +36,86 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 22 | Skills system | 🟡 | Scan + trigger/FTS match + bounded injection done; learning-agent skill *writing* still deferred |
 | 23 | Nodes (remote sub-agents) | 🟡 | nodes table + local-default bootstrap + role/priority picker + local spawn routing (no behavior change) + remote Transport (ws) behind a connect probe + fake for tests; full remote execution wiring (envelope→runSubAgentLoop bridge) + /settings node CRUD still deferred |
 | 24 | Driver / Platform (GNOME / D-Bus notifications, `desktop_*`) | 🟡 | `internal/platform` abstraction + headless + freedesktop/gnome D-Bus adapter (behind session-bus probe) + `desktop_notify`/`desktop_dnd_status` + notify→bus bridge; window/screenshot/clipboard still deferred |
-| 25 | Replaceable per-mode system prompts (Ask/planner/agent/scribe) | ✅ | `internal/prompts` — embedded defaults materialized to `~/.config/sapaloq/prompts` with a sha256 manifest; user edits preserved, unmodified files upgraded when the shipped default changes. Wired via `Orchestrator.systemPrompt` in `session.go` (Ask) + `subagent.go` (planner/agent/scribe). `config.prompts.{enabled,dir}` |
+| 25 | Replaceable per-mode system prompts (Ask/planner/agent/scribe) | ✅ | `internal/prompts` — embedded defaults materialized to `~/SapaLOQ/prompts` with a sha256 manifest; user edits preserved, unmodified files upgraded when the shipped default changes. Wired via `Orchestrator.systemPrompt` in `session.go` (Ask) + `subagent.go` (planner/agent/scribe). `config.prompts.{enabled,dir}` |
 | 26 | Host command tool (`exec`) | ✅ | Run any command anywhere (any path; optional `cwd`), also reads any host file via cat/sed/head/tail/rg; available in **every** mode via the shared dispatcher. `tools_workspace.go` (`toolExec`), in `askTools`/`planTools`/`agentTools`, dispatched in `tools_dispatch.go`. Merged the former `system_exec` + `terminal_run` into one flat `exec` (2026-06-21) |
-| 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` — `CurrentSchemaVersion` (1.1.0) + semver compare; lower version → ordered upgrade chain (old JSON formats preserved, additive/idempotent), equal → no-op, higher → load as-is (forward-compat; mandatory-empty validated post-load via `LLMBridge.Validate`). Hooked into `Load`, upgraded config persisted atomically |
+| 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` — schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` — size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` — the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
+
+---
+
+## Implemented this session (2026-06-22) — runtime telemetry + persistent workspace
+
+- Added a compact mission-control telemetry rail below the widget header:
+  current model/provider, always-visible Planner and Agent slots, live phase,
+  and effective workspace. It refreshes every three seconds and on task events.
+- Added IPC `runtime_status`, backed by the live worker registry and active
+  provider snapshot. It exposes paths for UI diagnostics without reading config
+  from the webview.
+- Split paths: config remains at `~/.config/sapaloq/config.json`; non-config
+  runtime data defaults to `~/SapaLOQ`. Schema 1.4 migrates legacy defaults,
+  while startup moves known old runtime artifacts idempotently and leaves
+  `config.json`/`.env` untouched.
+- Added actor-scoped persistent CWD. Actors start at `~/SapaLOQ/workspace`;
+  relative file/exec paths use their CWD, and `cd` persists under
+  `state/workspaces/<actor>.json`. State is isolated per actor and missing
+  directories fall back safely.
+- Added `docs/SAPALOQ-ROADMAP.md` and runtime materialization at
+  `~/SapaLOQ/etc/ROADMAP.md`. Ask/Planner/Agent receive the active path map as a
+  system context block.
+- Strengthened `AGENTS.md`: tests must cover success and every reasonably
+  automatable edge case, with explicit justification for untestable cases.
+- Tests cover default-path migration, preservation of custom paths and config,
+  non-clobbering data migration, CWD persistence, actor isolation, and missing
+  workspace fallback.
+
+---
+
+## Implemented this session (2026-06-22) — parallel tool actors + steering
+
+- Provider tool calls are accumulated for the full inference turn and submitted
+  to `toolJobScheduler`, rather than executed synchronously inside the stream
+  callback. This prevents a slow tool from blocking provider event consumption.
+- Jobs persist under `state/tool-jobs/*.json` and emit correlated
+  `tool_update` lifecycle events. Independent calls run concurrently up to
+  `orchestrator.continuation.maxParallelTools` (default 8).
+- Mutations to the same path serialize; commands sharing a cwd serialize;
+  different resources and read-only tools run concurrently. Terminal
+  complete/fail/clarification/stop calls are batch barriers.
+- Results are restored to provider call order before they enter the next model
+  turn, so parallel completion order cannot make context nondeterministic.
+- Durable actor inboxes under `state/actor-inbox` support
+  `sapaloq_send_steering`; events are applied at safe points before inference.
+  `sapaloq_wait_events` provides explicit event dependency waiting.
+- Clarification is mediator-first. Planner/Agent questions stay off the UI while
+  an independent decision mediator reasons from shared context. Only unresolved
+  questions emit `decision.escalated`, publish awaiting-clarification state, and
+  become a widget/chat question.
+- IPC watch shutdown now closes the idle socket to wake `Scanner.Scan`; core
+  stream/watch writes use a five-second write deadline and stop on write error.
+- Regression tests cover independent parallel starts, same-resource
+  serialization, durable inbox drain, cancellation, and broken-stream retry.
+
+---
+
+## Fixed this session (2026-06-22) — Stop waited for a stuck provider stream
+
+- **Root cause.** The shared inference loop used `for ev := range stream`.
+  Cancelling the active generation only cancelled its context; the consumer
+  still waited until the bridge producer closed the channel. A slow or
+  uncooperative upstream therefore left the widget at `stopping`.
+- **Fix.** Each inference attempt now has its own child context, and stream
+  consumption selects directly on `runCtx.Done()`. Stop emits the terminal
+  event and returns without waiting for another provider event or channel
+  closure. `EventDone` is also treated as terminal immediately.
+- **Retry fix.** Vision, context-overflow, and transport retries cancel and
+  abandon the failed attempt instead of synchronously draining its stream,
+  removing the same blocking failure mode from retry recovery.
+- **Regression coverage.** `TestRunConversationCancellationDoesNotWaitForBridgeClose`
+  uses a bridge that deliberately ignores cancellation and never closes its
+  channel; the conversation must still stop within 500 ms.
+  `TestRunConversationRetryDoesNotDrainBrokenStream` proves a 500 retry can
+  recover even when both attempts leave their channels open.
 
 ---
 
@@ -403,7 +478,7 @@ Root cause of sub-agents stalling ("kepentok") with no continuation, plus the mi
 
 ## Implemented this session (2026-06-21) — new-proposal.md
 
-- **Replaceable per-mode system prompts:** new `internal/prompts` package — the Ask/planner/agent/scribe system prompts now ship as embedded Markdown defaults that are materialized to `config.prompts.dir` (default `~/.config/sapaloq/prompts`) alongside a `prompts.manifest.json` sha256 manifest. "Updateable if non-modified": on each boot an on-disk file whose hash still matches the recorded shipped hash is transparently upgraded when the embedded default changes, while any user edit is always preserved (never clobbered). Resolution goes through `Orchestrator.systemPrompt(role)` (on-disk → embedded default), replacing the previously hardcoded inline strings in `session.go` (Ask) and `subagent.go` (`buildSubAgentMessages`). New `PromptsConfig{enabled,dir}` (absent block treated as enabled, like skills). `internal/prompts/{prompts.go,prompts_test.go,defaults/*.md}`, `config/load.go`, `core/orchestrator/{chat.go,session.go,subagent.go}`, `config/config.example.json`.
+- **Replaceable per-mode system prompts:** new `internal/prompts` package — the Ask/planner/agent/scribe system prompts now ship as embedded Markdown defaults that are materialized to `config.prompts.dir` (current default `~/SapaLOQ/prompts`) alongside a `prompts.manifest.json` sha256 manifest. "Updateable if non-modified": on each boot an on-disk file whose hash still matches the recorded shipped hash is transparently upgraded when the embedded default changes, while any user edit is always preserved (never clobbered). Resolution goes through `Orchestrator.systemPrompt(role)` (on-disk → embedded default), replacing the previously hardcoded inline strings in `session.go` (Ask) and `subagent.go` (`buildSubAgentMessages`). New `PromptsConfig{enabled,dir}` (absent block treated as enabled, like skills). `internal/prompts/{prompts.go,prompts_test.go,defaults/*.md}`, `config/load.go`, `core/orchestrator/{chat.go,session.go,subagent.go}`, `config/config.example.json`.
 
 - **Unrestricted host tools (no workspace sandbox):** by explicit user design SapaLOQ is no longer "kebiri" to the workspace root. New `system_read_file` (read ANY path — e.g. `/etc/hosts`; binary-guarded, byte-capped, supports offset/limit line ranges) and `system_exec` (run ANY shell command anywhere with full access, optional `cwd`, timeout-guarded). Both are offered in **every** mode (Ask, planner, agent) via the shared-tool dispatcher so simple host tasks don't require spawning a plan/agent. The boundary-rooted `workspace_*` tools are unchanged for scoped, safe project edits. `core/orchestrator/tools_system.go` (+ `tools_system_test.go`), `tools.go` (`unrestrictedSystemTools` added to askTools/planTools/agentTools/knownToolSet + JSON schemas), `tools_dispatch.go`, `tools_workspace.go` (`Cwd` arg), `config/config.example.json` (orchestrator/planner/task-runner allowlists).
 
@@ -415,7 +490,7 @@ Root cause of sub-agents stalling ("kepentok") with no continuation, plus the mi
 
 - **Platform / desktop driver (roadmap #7 / #6 in this list):** new `internal/platform` package — an OS-agnostic `Desktop` interface (`NotifySend`/`NotifyWatch`/`DNDEnabled`/`Info`/`Capabilities`), a `Capability` set + `Has` helper, and a pure `ResolveAdapterID`/`Detect` (env-driven: `XDG_CURRENT_DESKTOP`/`DESKTOP_SESSION`/GOOS, config `platform.adapter`/`detectOrder`/`allowFallback`, factory registry + headless fallback). Always-available `internal/platform/headless` adapter (no caps, closed watch channel) keeps CI/non-Linux green. `internal/platform/freedesktop` adapter implements the `org.freedesktop.Notifications` D-Bus spec for `NotifySend` (urgency hints) + best-effort eavesdrop `NotifyWatch`, constructed behind a `dbus.SessionBus()` probe (falls back to headless when no bus); the `gnome` adapter reuses it. New `desktop_notify` + `desktop_dnd_status` tools (schemas + Ask + sub-agent dispatch) gated by the active adapter's capabilities. Core wires a notify-watch→bus bridge publishing `sapaloq.v1.platform.notification`. Uses the already-present `godbus/dbus/v5` (no new dependency). `internal/platform/{desktop,capability,detect}.go` + tests, `internal/platform/headless/*`, `internal/platform/freedesktop/notify.go`, `config/load.go` (`PlatformConfig`), `core/orchestrator/{chat.go,tools.go,tools_desktop.go,tasks.go,subagent.go,tools_workspace.go}` + `tools_desktop_test.go`, `cmd/sapaloq-core/main.go`, `config/config.example.json`.
 
-- **Skills system (roadmap #6 / #8 in this list):** new `internal/skills` package — `Load` scans `~/.config/sapaloq/skills/*.md` (minimal YAML frontmatter: `id`, `triggers`, `priority`, `maxBodyLines` + Markdown body; malformed/no-id files skipped, missing dir inert), `Match` does case-insensitive trigger-substring matching, `SortByRelevance` orders by priority + caps, `Render` emits a bounded `### <id>` block. New `SkillsConfig` (`enabled`/`dir`/`maxLoadPerTurn`/`maxBodyLines`, absent-block treated as enabled like feedback). Orchestrator loads skills in `New`, best-effort indexes bodies into `facts` (kind=`skill`) for a secondary FTS signal, and injects a config-bounded `skillsBlock` into the Ask prompt right after the negative-guidance block (`session.go`). Seed skill at `examples/skills/sapaloq-scribe.md`. Scope: scan + match + inject only — learning-agent skill *writing* remains deferred. `internal/skills/{skills.go,skills_test.go}`, `config/load.go`, `core/orchestrator/{chat.go,session.go,skills_test.go}`, `config/config.example.json`.
+- **Skills system (roadmap #6 / #8 in this list):** new `internal/skills` package — `Load` scans `~/SapaLOQ/skills/*.md` (minimal YAML frontmatter: `id`, `triggers`, `priority`, `maxBodyLines` + Markdown body; malformed/no-id files skipped, missing dir inert), `Match` does case-insensitive trigger-substring matching, `SortByRelevance` orders by priority + caps, `Render` emits a bounded `### <id>` block. New `SkillsConfig` (`enabled`/`dir`/`maxLoadPerTurn`/`maxBodyLines`, absent-block treated as enabled like feedback). Orchestrator loads skills in `New`, best-effort indexes bodies into `facts` (kind=`skill`) for a secondary FTS signal, and injects a config-bounded `skillsBlock` into the Ask prompt right after the negative-guidance block (`session.go`). Seed skill at `examples/skills/sapaloq-scribe.md`. Scope: scan + match + inject only — learning-agent skill *writing* remains deferred. `internal/skills/{skills.go,skills_test.go}`, `config/load.go`, `core/orchestrator/{chat.go,session.go,skills_test.go}`, `config/config.example.json`.
 
 ## Implemented this session (2026-06-20)
 
@@ -443,5 +518,5 @@ Root cause of sub-agents stalling ("kepentok") with no continuation, plus the mi
 5. **Event bus completion:** topic-pattern matcher ✅, jsonl WAL ✅, replay-on-boot ✅, completion trigger (`EventTaskUpdate` → bus → widget `watch`) ✅ (2026-06-21). Remaining: a socket-level bus *publish* op for external producers.
 6. **Platform/Driver:** GNOME/D-Bus notifications, `desktop_*` tools, `os.json` detect/cache.
 7. **Nodes:** remote sub-agent registry + transport.
-8. **Skills:** scan `~/.config/sapaloq/skills/`, trigger matching, bounded injection.
+8. **Skills:** scan `~/SapaLOQ/skills/`, trigger matching, bounded injection.
 9. **Scribe storage mapping:** mode-aware note writing to `storage.paths`.

@@ -13,7 +13,7 @@ func ConfigPath(envPath string, cfg Config) string {
 	if envPath != "" {
 		return ExpandPath(envPath)
 	}
-	return filepath.Join(RuntimeDirs(cfg).DataDir, "config.json")
+	return filepath.Join(DefaultConfigDir(), "config.json")
 }
 
 func LoadRaw(path string) (map[string]any, error) {

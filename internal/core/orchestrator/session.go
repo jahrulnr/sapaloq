@@ -53,6 +53,7 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 	}
 	messages := make([]bridge.Message, 0, len(turns)+1)
 	messages = append(messages, bridge.Message{Role: "system", Content: o.systemPrompt(prompts.RoleAsk)})
+	messages = append(messages, o.runtimeContextMessage())
 	if block := o.negativeGuidanceBlock(ctx); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}

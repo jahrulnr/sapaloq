@@ -13,6 +13,13 @@ export namespace bridge {
 	    task_role?: string;
 	    task_status?: string;
 	    summary?: string;
+	    run_id?: string;
+	    job_id?: string;
+	    parent_id?: string;
+	    target_id?: string;
+	    event_id?: string;
+	    correlation_id?: string;
+	    version?: number;
 	    // Go type: time
 	    at: any;
 	
@@ -34,6 +41,13 @@ export namespace bridge {
 	        this.task_role = source["task_role"];
 	        this.task_status = source["task_status"];
 	        this.summary = source["summary"];
+	        this.run_id = source["run_id"];
+	        this.job_id = source["job_id"];
+	        this.parent_id = source["parent_id"];
+	        this.target_id = source["target_id"];
+	        this.event_id = source["event_id"];
+	        this.correlation_id = source["correlation_id"];
+	        this.version = source["version"];
 	        this.at = this.convertValues(source["at"], null);
 	    }
 	
@@ -89,6 +103,26 @@ export namespace config {
 
 export namespace main {
 	
+	export class actorRuntimeStatus {
+	    id: string;
+	    role: string;
+	    status: string;
+	    phase: string;
+	    workspace: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new actorRuntimeStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.role = source["role"];
+	        this.status = source["status"];
+	        this.phase = source["phase"];
+	        this.workspace = source["workspace"];
+	    }
+	}
 	export class chatUsage {
 	    session_id: string;
 	    used_tokens: number;
@@ -252,6 +286,54 @@ export namespace main {
 	        this.round_trip_ms = source["round_trip_ms"];
 	        this.socket_path = source["socket_path"];
 	    }
+	}
+	export class runtimeStatus {
+	    provider: string;
+	    model: string;
+	    driver: string;
+	    reasoning?: string;
+	    config_path: string;
+	    data_path: string;
+	    memory_path: string;
+	    state_path: string;
+	    workspace_path: string;
+	    actors: actorRuntimeStatus[];
+	
+	    static createFrom(source: any = {}) {
+	        return new runtimeStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.driver = source["driver"];
+	        this.reasoning = source["reasoning"];
+	        this.config_path = source["config_path"];
+	        this.data_path = source["data_path"];
+	        this.memory_path = source["memory_path"];
+	        this.state_path = source["state_path"];
+	        this.workspace_path = source["workspace_path"];
+	        this.actors = this.convertValues(source["actors"], actorRuntimeStatus);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

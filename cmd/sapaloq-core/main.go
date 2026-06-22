@@ -20,6 +20,15 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/platform/freedesktop"
 )
 
+// version is the build version, stamped at release time via
+//
+//	-ldflags "-X main.version=<tag>"
+//
+// It defaults to "dev" for local/unstamped builds. Surfaced via the `version`
+// command and the `--version`/`-V` flag so the release installer and users can
+// confirm what is installed.
+var version = "dev"
+
 // init registers the concrete desktop backends so platform.Detect can build
 // them. The core stays OS-agnostic: backends self-probe the session bus and
 // fall back to headless when unavailable.
@@ -32,6 +41,10 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) >= 2 && isVersionArg(os.Args[1]) {
+		fmt.Printf("sapaloq-core %s\n", version)
+		return
+	}
 	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
 		printUsage()
 		if len(os.Args) >= 2 && isHelpArg(os.Args[1]) {
@@ -76,6 +89,9 @@ func main() {
 	case "service":
 		runService(cfg, cfgPath, cmdArgs)
 	case "run":
+		if err := config.MigrateDefaultDataRoot(); err != nil {
+			fmt.Fprintf(os.Stderr, "sapaloq-core: %v\n", err)
+		}
 		dirs := config.RuntimeDirs(cfg)
 		if err := config.EnsureRuntimeDirs(dirs); err != nil {
 			exitf("runtime dirs: %v", err)

@@ -2,7 +2,7 @@
 
 > Sub-agent = **node** — bisa local goroutine **atau** remote (Docker, VPS, EC2, SSH host).
 > Registry di SQLite table `nodes` + **comm spec** (SKILL-like) per node.
-> Last updated: 2026-06-19 (memory policy: no shared memory to remote nodes)
+> Last updated: 2026-06-22 (runtime data root moved to ~/SapaLOQ)
 
 Related: [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [DRIVER.md](./DRIVER.md) · [EVENT-BUS.md](./EVENT-BUS.md)
 
@@ -79,7 +79,7 @@ Same-host Docker: default `shareMemory: false` in node row; explicit opt-in only
 
 ## SQLite table: `nodes`
 
-Path: `~/.config/sapaloq/memory/companion.db`
+Path: `~/SapaLOQ/memory/companion.db`
 
 ```sql
 CREATE TABLE nodes (
@@ -88,7 +88,7 @@ CREATE TABLE nodes (
   wrapper         TEXT NOT NULL,             -- local | machine | docker | vps | ec2 | ssh
   address         TEXT,                      -- loq@1.2.3.4, unix://..., empty for local
   communicate     TEXT NOT NULL,             -- unix | http | ws | mcp | grpc | ssh
-  comm_spec_path  TEXT NOT NULL,             -- ~/.config/sapaloq/nodes/{name}.md
+  comm_spec_path  TEXT NOT NULL,             -- ~/SapaLOQ/nodes/{name}.md
   enabled         INTEGER NOT NULL DEFAULT 1,
   priority        INTEGER NOT NULL DEFAULT 0, -- higher = preferred for role
   capabilities    TEXT,                      -- JSON array, optional override
@@ -210,7 +210,7 @@ VALUES (
   'local',
   '',
   'unix',
-  '~/.config/sapaloq/nodes/local-default.md',
+  '~/SapaLOQ/nodes/local-default.md',
   1,                      -- share_memory = 1 (local bus OK)
   ...
 );

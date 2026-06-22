@@ -1,6 +1,7 @@
 import {
   ScreenGetAll,
   WindowGetPosition,
+  WindowGetSize,
   WindowSetPosition,
   WindowSetSize,
 } from '../../wailsjs/runtime/runtime';
@@ -8,9 +9,9 @@ import { SyncInputShape } from '../../wailsjs/go/main/App';
 
 export const COLLAPSED = { w: 76, h: 76 };
 export const PANEL_SIZES = [
-  { w: 376, h: 536 },
-  { w: 520, h: 680 },
-  { w: 720, h: 820 },
+  { w: 376, h: 640 },
+  { w: 520, h: 760 },
+  { w: 720, h: 860 },
 ];
 export const EXPANDED = PANEL_SIZES[0];
 const MARGIN = 20;
@@ -27,6 +28,30 @@ function nextFrame() {
 
 function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+// waitForWindowSize blocks until the OS window has actually reached (within a
+// few px) the requested size, or a short timeout elapses. WindowSetSize is a
+// non-blocking runtime call: the OS may not have resized the window yet when
+// the CSS `.expanded` class is applied, so the panel (which fills the window:
+// `.popup` is width/height 100%) gets painted into a still-collapsed window and
+// shows up clipped. Gating the visual switch on the confirmed size removes that
+// race; the timeout guarantees we never hang if the runtime stops reporting.
+async function waitForWindowSize(target: { w: number; h: number }, timeoutMs = 300) {
+  const tolerance = 4;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const size = await WindowGetSize();
+      if (Math.abs(size.w - target.w) <= tolerance && Math.abs(size.h - target.h) <= tolerance) {
+        return;
+      }
+    } catch {
+      return; // runtime unavailable (plain browser) — don't block the UI
+    }
+    if (Date.now() >= deadline) return;
+    await nextFrame();
+  }
 }
 
 export function isExpanded() {
@@ -66,6 +91,11 @@ export async function setExpanded(next: boolean) {
       WindowSetSize(expandedSize.w, expandedSize.h);
       WindowSetPosition(pos.x, pos.y - deltaH);
       expanded = true;
+      // Wait until the OS window has actually grown before painting the panel
+      // at full size, otherwise it renders clipped inside the still-collapsed
+      // window (the intermittent "panel kepotong" bug). Bounded by a timeout so
+      // a non-reporting runtime can never wedge the open animation.
+      await waitForWindowSize(expandedSize);
       document.body.classList.remove('closing');
       document.body.classList.add('opening');
       document.body.classList.add('expanded');

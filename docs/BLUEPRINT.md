@@ -1,7 +1,7 @@
 # SapaLOQ — Development Blueprint (Proposal)
 
 > **Unified synthesis** of all SapaLOQ architecture docs. Single book for implementers, reviewers, and future contributors.
-> Last updated: 2026-06-21 (flat unrestricted tool surface) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
+> Last updated: 2026-06-22 (runtime telemetry UI, config/data split, persistent workspace) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
 
 ---
 
@@ -79,7 +79,8 @@ SapaLOQ = **dua produk terpisah** + optional bridge:
 | ------- | ------------------------------------------------ | ---------------------------- |
 | Feel    | Ambient HUD, ngobrol santai                      | Task execution, coding       |
 | Brain   | LLM bridge driver (`cursor-bridge`, compat APIs) | `cursor-agent` / GoClaw      |
-| Memory  | `~/.config/sapaloq/`                             | `~/.cursor/`, agent sessions |
+| Config  | `~/.config/sapaloq/config.json`                  | Runtime data |
+| Runtime data | `~/SapaLOQ/`                                | `~/.cursor/`, agent sessions |
 | MCP     | Desktop adapter (`desktop_`*)                    | git, fs, terminal, repo      |
 | Default | Always-on widget                                 | Explicit handoff only        |
 
@@ -249,11 +250,20 @@ Fifteen numbered principles dengan rationale — anchor untuk semua design decis
 | 13  | **In-proc event bus**               | Wake <5ms; jsonl WAL for audit; no Redis                           |
 | 14  | **RL-inspired not weight training** | Prompt slices + SQLite facts + bandit — auditable, local           |
 | 15  | **Honest UX contract**              | Document hard limits; proactive only while running                 |
+| 16  | **Actor loops never execute tools** | Tool syscalls live in scheduler workers; actors consume lifecycle events |
 
 
 **Corollaries:**
 
 - Ask + Plan front-load restrictions → Agent (`task-runner`) gets **full tool access** by default.
+- Ask, Planner, and Agent are independent actors. Multi-call tool turns are
+  submitted as durable jobs; read-only/different-resource jobs run in parallel,
+  same-path mutations serialize, and terminal lifecycle calls are barriers.
+- Cross-actor follow-up uses durable `sapaloq_send_steering` inbox events.
+  `sapaloq_wait_events` is explicit dependency waiting, not implicit polling.
+- Actor CWD defaults to `~/SapaLOQ/workspace` and persists per actor after
+  `cd`. Runtime paths are injected as system variables and materialized in
+  `~/SapaLOQ/etc/ROADMAP.md`.
 - Thinking pre-tag → widget ring only; **strip** from companion memory by default.
 - 9router = transport **pattern reference** only — built-in compat bridges, not third-party dep.
 
@@ -523,7 +533,7 @@ planner directory in the session.
   "contextPacket": {
     "taskId": "task-001",
     "planId": "plan-001",
-    "planPath": "~/.config/sapaloq/state/tasks/task-001/plan.md",
+    "planPath": "~/SapaLOQ/state/tasks/task-001/plan.md",
     "userSnippet": "..."
   },
   "systemPrompt": "<assembled from roles/task-runner.md + overlays>",
@@ -715,7 +725,7 @@ Prefetch packet example:
   "intent": "catat",
   "mode": "personal",
   "facts": [{ "kind": "preference", "key": "notes_target", "value": "personal-notes" }],
-  "skills": [{ "id": "sapaloq-scribe", "path": "~/.config/sapaloq/skills/scribe.md" }],
+  "skills": [{ "id": "sapaloq-scribe", "path": "~/SapaLOQ/skills/scribe.md" }],
   "storagePathId": "personal-notes",
   "antiDeepCheck": true
 }
@@ -742,7 +752,7 @@ Log overrides → learning_queue → prefetch rule tuning.
 
 ### SQLite schema summary
 
-Path: `~/.config/sapaloq/memory/companion.db` — **only** persistence engine. Full DDL: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [NODES.md](./NODES.md).
+Path: `~/SapaLOQ/memory/companion.db` — **only** persistence engine. Full DDL: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [NODES.md](./NODES.md).
 
 
 | Table                 | Purpose                                 | Key columns                                           |
@@ -1294,7 +1304,7 @@ Coercion config:
   "parsers": { "tools": "cursor", "thinking": "cursor" },
   "coercion": {
     "enabled": true,
-    "schemaPath": "~/.config/sapaloq/bridge/cursor-bridge.schema.json"
+    "schemaPath": "~/SapaLOQ/bridge/cursor-bridge.schema.json"
   },
   "credentialsEnv": "SAPALOQ_CURSOR_TOKEN",
   "fallback": { "driver": "local-llama", "on": ["auth_error", "offline"] }
@@ -1436,7 +1446,7 @@ See Part VII schema. Key columns:
 | role           | `scribe`                                        |
 | wrapper        | `local` | `docker` | `vps` | `ec2` | `ssh`      |
 | communicate    | `unix` | `http` | `ws` | `mcp` | `grpc` | `ssh` |
-| comm_spec_path | `~/.config/sapaloq/nodes/vps-scribe.md`         |
+| comm_spec_path | `~/SapaLOQ/nodes/vps-scribe.md`                 |
 | share_memory   | 0 for remote                                    |
 
 
@@ -1457,7 +1467,7 @@ Agent: `/settings register node vps-scribe ...` → insert row + generate templa
 
 ```sql
 INSERT INTO nodes (name, role, wrapper, communicate, comm_spec_path, ...)
-VALUES ('local-default', '*', 'local', 'unix', '~/.config/sapaloq/nodes/local-default.md', ...);
+VALUES ('local-default', '*', 'local', 'unix', '~/SapaLOQ/nodes/local-default.md', ...);
 ```
 
 ### Remote progress & control
@@ -1545,7 +1555,7 @@ Built-in watchers at `main()`:
 
 ### Unix socket
 
-Path: `~/.config/sapaloq/run/sapaloq.sock`
+Path: `~/SapaLOQ/run/sapaloq.sock`
 Ops: `publish`, `watch`, `unwatch`, `event`, `ping`.
 
 Orchestrator uses in-proc channel — no socket hop for local path.
@@ -1558,7 +1568,7 @@ Orchestrator uses in-proc channel — no socket hop for local path.
     "bus": {
       "enabled": true,
       "wakeViaBus": true,
-      "socketPath": "~/.config/sapaloq/run/sapaloq.sock",
+      "socketPath": "~/SapaLOQ/run/sapaloq.sock",
       "watcherBufferSize": 64,
       "topicPrefix": "sapaloq.v1",
       "replayOnBoot": true
@@ -1788,7 +1798,7 @@ Companion **does not merge memory** to coding worker. Explicit packet bridges in
 
 ### Handoff packet schema
 
-Path: `~/.config/sapaloq/bridge/handoff/<uuid>.json`
+Path: `~/SapaLOQ/bridge/handoff/<uuid>.json`
 
 ```json
 {
@@ -1799,7 +1809,7 @@ Path: `~/.config/sapaloq/bridge/handoff/<uuid>.json`
   "attachments": [],
   "planRef": {
     "planId": "plan-001",
-    "summaryPath": "~/.config/sapaloq/state/tasks/task-001/plan.md"
+    "summaryPath": "~/SapaLOQ/state/tasks/task-001/plan.md"
   },
   "mode": "work",
   "source": "sapaloq",
@@ -2034,7 +2044,7 @@ Boot replay: tail WAL if `events.bus.replayOnBoot` — then live bus only. Detai
 
 ## Appendix B — Progress event types
 
-File: `~/.config/sapaloq/state/progress/{subAgentId}.jsonl`
+File: `~/SapaLOQ/state/progress/{subAgentId}.jsonl`
 
 One JSON object per line. Common envelope:
 

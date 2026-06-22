@@ -67,6 +67,7 @@ func (o *Orchestrator) applyConfig(next config.Config) error {
 	// workersDir/workers were left dangling on reload — a latent bug.
 	o.stateDir = dirs.StateDir
 	o.tasksDir = dirs.TasksDir
+	o.workspaceDir = dirs.WorkspaceDir
 	if dirs.WorkersDir != o.workersDir {
 		o.workersDir = dirs.WorkersDir
 		o.workers = newWorkerRegistry(dirs.WorkersDir)

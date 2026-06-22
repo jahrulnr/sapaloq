@@ -7,6 +7,44 @@ import (
 	"path/filepath"
 )
 
+// MigrateDefaultDataRoot moves non-config runtime artifacts from the old
+// ~/.config/sapaloq layout into ~/SapaLOQ. config.json and .env intentionally
+// remain under ~/.config/sapaloq. The migration is idempotent and never
+// overwrites a destination that already exists.
+func MigrateDefaultDataRoot() error {
+	oldRoot := filepath.Join(DefaultConfigDir())
+	newRoot := DefaultDataDir()
+	if oldRoot == "" || newRoot == "" || oldRoot == newRoot {
+		return nil
+	}
+	names := []string{
+		"memory", "state", "run", "vault", "workspace", "prompts", "skills",
+		"nodes", "bridge", "cache", "prompt", "widget", "os.json",
+	}
+	var errs []error
+	for _, name := range names {
+		from := filepath.Join(oldRoot, name)
+		to := filepath.Join(newRoot, name)
+		if _, err := os.Stat(from); err != nil {
+			continue
+		}
+		if _, err := os.Stat(to); err == nil {
+			continue
+		}
+		if err := movePath(from, to); err != nil {
+			errs = append(errs, fmt.Errorf("migrate data root %s -> %s: %w", from, to, err))
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	msg := "data-root migration had issues:"
+	for _, err := range errs {
+		msg += "\n  - " + err.Error()
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 // MigrateLegacyLayout moves runtime/orchestration artifacts that older versions
 // stored under <dataDir>/memory into the dedicated <dataDir>/state directory.
 //

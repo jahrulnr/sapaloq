@@ -190,7 +190,7 @@ func serviceUninstall() {
 	fmt.Printf("removed %s\n", unitPath)
 
 	removeWidgetAutostart()
-	fmt.Println("sapaloq.service uninstalled (config and data under ~/.config/sapaloq are kept)")
+	fmt.Println("sapaloq.service uninstalled (config under ~/.config/sapaloq and data under ~/SapaLOQ are kept)")
 }
 
 // userUnitPath resolves ~/.config/systemd/user/sapaloq.service, honouring

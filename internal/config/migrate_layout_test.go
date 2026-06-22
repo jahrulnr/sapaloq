@@ -99,6 +99,40 @@ func TestMigrateLegacyLayoutIdempotentAndNonClobbering(t *testing.T) {
 	assertFile(t, filepath.Join(dirs.TasksDir, "task-1", "status.json"), `{"id":"new"}`)
 }
 
+func TestMigrateDefaultDataRootKeepsConfigAndMovesRuntime(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	oldRoot := filepath.Join(home, ".config", "sapaloq")
+	newRoot := filepath.Join(home, "SapaLOQ")
+	mustWrite(t, filepath.Join(oldRoot, "config.json"), `{"keep":true}`)
+	mustWrite(t, filepath.Join(oldRoot, ".env"), "TOKEN=secret")
+	mustWrite(t, filepath.Join(oldRoot, "memory", "companion.db"), "db")
+	mustWrite(t, filepath.Join(oldRoot, "prompts", "ask.md"), "prompt")
+
+	if err := MigrateDefaultDataRoot(); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(oldRoot, "config.json"), `{"keep":true}`)
+	assertFile(t, filepath.Join(oldRoot, ".env"), "TOKEN=secret")
+	assertFile(t, filepath.Join(newRoot, "memory", "companion.db"), "db")
+	assertFile(t, filepath.Join(newRoot, "prompts", "ask.md"), "prompt")
+}
+
+func TestMigrateDefaultDataRootDoesNotClobberDestination(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	oldRoot := filepath.Join(home, ".config", "sapaloq")
+	newRoot := filepath.Join(home, "SapaLOQ")
+	mustWrite(t, filepath.Join(oldRoot, "memory", "companion.db"), "old")
+	mustWrite(t, filepath.Join(newRoot, "memory", "companion.db"), "new")
+
+	if err := MigrateDefaultDataRoot(); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(newRoot, "memory", "companion.db"), "new")
+	assertFile(t, filepath.Join(oldRoot, "memory", "companion.db"), "old")
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

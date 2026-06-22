@@ -22,7 +22,7 @@ func (o *Orchestrator) bootstrapLocalDefaultNode(ctx context.Context) {
 	if _, ok, err := o.chat.GetNode(ctx, localDefaultNode); err == nil && ok {
 		return
 	}
-	specPath := config.ExpandPath("~/.config/sapaloq/nodes/local-default.md")
+	specPath := config.ExpandPath("~/SapaLOQ/nodes/local-default.md")
 	_ = o.chat.UpsertNode(ctx, chatstore.Node{
 		Name:         localDefaultNode,
 		Role:         "*",

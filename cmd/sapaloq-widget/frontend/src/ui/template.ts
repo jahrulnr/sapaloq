@@ -17,6 +17,21 @@ export const APP_TEMPLATE = `
           <button type="button" class="popup-close" id="btn-close" aria-label="Tutup">×</button>
         </div>
       </header>
+      <section class="runtime-strip" aria-label="Runtime status">
+        <div class="runtime-model" title="Model aktif">
+          <span class="runtime-kicker">MODEL</span>
+          <strong id="runtime-model-name">loading…</strong>
+          <span id="runtime-provider">provider</span>
+        </div>
+        <div class="runtime-actors" id="runtime-actors">
+          <article class="actor-tile" data-state="idle"><span class="actor-signal"></span><span><b>Planner</b><small>idle</small></span></article>
+          <article class="actor-tile" data-state="idle"><span class="actor-signal"></span><span><b>Agent</b><small>idle</small></span></article>
+        </div>
+        <div class="runtime-workspace" id="runtime-workspace" title="Workspace aktif">
+          <span class="runtime-kicker">WORKSPACE</span>
+          <strong>~/SapaLOQ/workspace</strong>
+        </div>
+      </section>
       <div class="popup-body">
         <div class="message-list" id="message-list"></div>
       </div>

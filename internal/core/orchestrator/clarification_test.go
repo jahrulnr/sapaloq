@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,12 +16,17 @@ import (
 // inference (auto-answer attempt) or was correctly gated/skipped. It always
 // finishes a turn with no tool call (a "not confident" orchestrator), so the
 // resume path is never triggered and the test stays deterministic.
-type countingBridge struct{ calls int }
+//
+// calls is accessed from both the async resolver goroutine (via Complete) and
+// the test goroutine (via waitForCalls), so it is atomic to stay race-clean.
+type countingBridge struct{ calls int64 }
+
+func (b *countingBridge) callCount() int { return int(atomic.LoadInt64(&b.calls)) }
 
 func (b *countingBridge) ID() string              { return "counting" }
 func (b *countingBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
 func (b *countingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
-	b.calls++
+	atomic.AddInt64(&b.calls, 1)
 	out := make(chan bridge.StreamEvent, 2)
 	go func() {
 		defer close(out)
@@ -49,12 +55,12 @@ func waitForCalls(t *testing.T, br *countingBridge, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if br.calls >= n {
+		if br.callCount() >= n {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("resolver did not run: bridge calls = %d, want >= %d", br.calls, n)
+	t.Fatalf("resolver did not run: bridge calls = %d, want >= %d", br.callCount(), n)
 }
 
 // TestClarificationResolverRunsThenDefersToUser proves the event-driven
@@ -70,8 +76,8 @@ func TestClarificationResolverRunsThenDefersToUser(t *testing.T) {
 	waitForCalls(t, br, 1)
 
 	// The resolver consulted the model exactly once for this attempt.
-	if br.calls != 1 {
-		t.Fatalf("bridge calls = %d, want exactly 1", br.calls)
+	if br.callCount() != 1 {
+		t.Fatalf("bridge calls = %d, want exactly 1", br.callCount())
 	}
 }
 
@@ -92,8 +98,8 @@ func TestClarificationAutoAnswerBudget(t *testing.T) {
 	// The next call must be gated (budget spent) — no additional inference.
 	o.resolveClarification("s1", rec)
 	time.Sleep(50 * time.Millisecond)
-	if br.calls != maxAutoClarifyAnswers {
-		t.Fatalf("auto-answer budget not enforced: bridge calls = %d, want %d", br.calls, maxAutoClarifyAnswers)
+	if br.callCount() != maxAutoClarifyAnswers {
+		t.Fatalf("auto-answer budget not enforced: bridge calls = %d, want %d", br.callCount(), maxAutoClarifyAnswers)
 	}
 }
 
@@ -106,7 +112,7 @@ func TestClarificationResolverIgnoresNonAwaiting(t *testing.T) {
 
 	o.resolveClarification("s1", rec)
 	time.Sleep(50 * time.Millisecond)
-	if br.calls != 0 {
-		t.Fatalf("resolver ran for a non-awaiting task: bridge calls = %d, want 0", br.calls)
+	if br.callCount() != 0 {
+		t.Fatalf("resolver ran for a non-awaiting task: bridge calls = %d, want 0", br.callCount())
 	}
 }

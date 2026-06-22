@@ -54,6 +54,97 @@ func (b *thinkingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan b
 	return out, nil
 }
 
+// stuckBridge models a provider/bridge that ignores context cancellation and
+// never closes its event channel. User Stop must still finish the conversation
+// immediately instead of waiting for this producer forever.
+type stuckBridge struct {
+	started chan struct{}
+}
+
+func (b *stuckBridge) ID() string              { return "stuck" }
+func (b *stuckBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *stuckBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	close(b.started)
+	return make(chan bridge.StreamEvent), nil
+}
+
+func TestRunConversationCancellationDoesNotWaitForBridgeClose(t *testing.T) {
+	fake := &stuckBridge{started: make(chan struct{})}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
+	out := make(chan bridge.StreamEvent, 16)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := orch.runConversation(ctx, snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
+		done <- err
+	}()
+
+	select {
+	case <-fake.started:
+	case <-time.After(time.Second):
+		t.Fatal("bridge did not start")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("cancelled conversation returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("cancelled conversation waited for the bridge channel to close")
+	}
+}
+
+type retryWithoutCloseBridge struct {
+	calls int
+}
+
+func (b *retryWithoutCloseBridge) ID() string              { return "retry-without-close" }
+func (b *retryWithoutCloseBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *retryWithoutCloseBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	out := make(chan bridge.StreamEvent, 2)
+	if b.calls == 1 {
+		out <- bridge.StreamEvent{Kind: bridge.EventError, Error: "provider-bridge: upstream status 500: unavailable"}
+		return out, nil
+	}
+	out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "recovered"}
+	out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	return out, nil
+}
+
+func TestRunConversationRetryDoesNotDrainBrokenStream(t *testing.T) {
+	orig := transportRetryBaseBackoff
+	transportRetryBaseBackoff = 0
+	defer func() { transportRetryBaseBackoff = orig }()
+
+	fake := &retryWithoutCloseBridge{}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
+	out := make(chan bridge.StreamEvent, 16)
+
+	result, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "recovered" {
+		t.Fatalf("result = %q, want recovered", result.String())
+	}
+	if fake.calls != 2 {
+		t.Fatalf("calls = %d, want one retry", fake.calls)
+	}
+}
+
 func TestRunConversationCapturesThinking(t *testing.T) {
 	orch := &Orchestrator{
 		memoryDir: t.TempDir(),
@@ -249,6 +340,44 @@ func (b *repeatingToolBridge) Complete(_ context.Context, _ bridge.Request) (<-c
 	return out, nil
 }
 
+// TestRunTurnLoopUnlimitedTurnsStillBoundedByGuards proves the executor's
+// unlimited turn budget (maxInferenceTurns < 0) does NOT mean "loop forever":
+// a misbehaving model that repeats an identical tool call is still stopped by
+// the identical-tool guard, not by a turn ceiling. This is the safety
+// contract that lets the executor run without an arbitrary turn cap.
+func TestRunTurnLoopUnlimitedTurnsStillBoundedByGuards(t *testing.T) {
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+	}
+	out := make(chan bridge.StreamEvent, 64)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:         "s1",
+		runID:             "actor-unlimited",
+		tools:             []string{"sapaloq_get_task_status"},
+		sink:              chatSink{o: o, out: out},
+		finishOnNoTool:    false,            // executor: only a terminal tool finishes it
+		maxInferenceTurns: unlimitedTurnsBudget, // < 0 → no turn ceiling
+		dispatch: func(context.Context, parse.ToolCall) turnOutcome {
+			return turnOutcome{text: "status", handled: true}
+		},
+	}
+	_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+		cfg:   o.cfg,
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    &repeatingToolBridge{},
+	}, "task", []bridge.Message{{Role: "user", Content: "loop"}}, cfg)
+	close(out)
+	if err == nil || !strings.Contains(err.Error(), "identical tool call") {
+		t.Fatalf("unlimited turns must still be bounded by the identical-tool guard; err = %v", err)
+	}
+}
+
 func TestWaitForTaskChangeUsesBackendSignal(t *testing.T) {
 	orch := &Orchestrator{memoryDir: t.TempDir()}
 	now := time.Now().UTC()
@@ -348,4 +477,215 @@ func TestExtractImagesBuildsVisionPayload(t *testing.T) {
 	if messages[0].Content == "" || messages[0].Content == "describe\n![sample](data:image/png;base64,aGVsbG8=)" {
 		t.Fatalf("image marker was not replaced: %q", messages[0].Content)
 	}
+}
+
+func TestCalledToolsNote(t *testing.T) {
+	mk := func(names ...string) []scheduledTool {
+		tools := make([]scheduledTool, 0, len(names))
+		for _, n := range names {
+			tools = append(tools, scheduledTool{call: parse.ToolCall{Name: n}})
+		}
+		return tools
+	}
+	cases := []struct {
+		name  string
+		tools []scheduledTool
+		want  string
+	}{
+		{"none", nil, ""},
+		{"single", mk("sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent]"},
+		{"multiple distinct", mk("read_file", "exec"), "[Called tools: read_file, exec]"},
+		{"duplicates collapse", mk("sapaloq_spawn_agent", "sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent ×2]"},
+		{"mixed", mk("exec", "read_file", "exec"), "[Called tools: exec ×2, read_file]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := calledToolsNote(tc.tools); got != tc.want {
+				t.Fatalf("calledToolsNote = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunConversationRecordsToolCallInTranscript proves the double-spawn fix:
+// after a turn that invoked a tool, the assistant message replayed to the model
+// on the next turn must carry an explicit [Called tools: …] record. Without it
+// the transcript shows only the model's narration plus a tool result, with no
+// proof the model itself called the tool — which leads some models (e.g. Opus)
+// to second-guess ("I forgot to call it") and re-issue the same call.
+func TestRunConversationRecordsToolCallInTranscript(t *testing.T) {
+	fake := &sequenceBridge{}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	if err := orch.writeTask(taskRecord{ID: "task-test", Status: "done", Result: "result"}); err != nil {
+		t.Fatal(err)
+	}
+	snap := providerSnapshot{
+		cfg:   config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    fake,
+	}
+	out := make(chan bridge.StreamEvent, 16)
+	go func() {
+		for range out {
+		}
+	}()
+	_, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "status"}}, nil)
+	close(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(fake.requests))
+	}
+	// The 2nd request replays the turn-1 continuation. The appended assistant
+	// message (second-to-last) must record the tool the model just called.
+	msgs := fake.requests[1].Messages
+	var recorded bool
+	for _, m := range msgs {
+		if m.Role == "assistant" && strings.Contains(m.Content, "[Called tools: sapaloq_get_task_status]") {
+			recorded = true
+			break
+		}
+	}
+	if !recorded {
+		t.Fatalf("assistant transcript missing [Called tools: …] record; messages=%#v", msgs)
+	}
+}
+
+// busyBridge keeps producing deltas — one short delay then output, repeated —
+// so the run is always making progress. Total runtime exceeds the idle window,
+// but no single gap does. It finishes (tool-less done) after `turns` turns.
+type busyBridge struct {
+	gap   time.Duration
+	turns int
+	seen  int
+}
+
+func (b *busyBridge) ID() string              { return "busy" }
+func (b *busyBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *busyBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.seen++
+	last := b.seen >= b.turns
+	out := make(chan bridge.StreamEvent, 4)
+	go func() {
+		defer close(out)
+		// A couple of progress deltas with a sub-window gap between them.
+		for i := 0; i < 2; i++ {
+			time.Sleep(b.gap)
+			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "x"}
+		}
+		_ = last
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+// silentBridge opens a stream and never emits anything — a stuck network /
+// dead stream. The idle deadline must cancel it.
+type silentBridge struct{}
+
+func (b *silentBridge) ID() string              { return "silent" }
+func (b *silentBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *silentBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	out := make(chan bridge.StreamEvent)
+	// Never write, never close — only ctx cancellation (the idle deadline)
+	// unblocks the loop's select on the stream.
+	return out, nil
+}
+
+func shrinkIdleWindow(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := idleWindowUnit
+	idleWindowUnit = d
+	t.Cleanup(func() { idleWindowUnit = prev })
+}
+
+func newIdleTestOrch(t *testing.T) *Orchestrator {
+	t.Helper()
+	cfg := config.DefaultOrchestratorConfig()
+	cfg.Continuation.MaxWallTimeMinutes = 1 // × idleWindowUnit (shrunk in tests)
+	return &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: cfg},
+		vision:    make(map[string]bool),
+	}
+}
+
+// TestWallTimeIsIdleNotTotal proves a busy agent is NOT killed for total
+// runtime: with a 20ms idle window it produces progress every ~8ms across
+// several turns (well over 20ms total) and still finishes cleanly.
+func TestWallTimeIsIdleNotTotal(t *testing.T) {
+	shrinkIdleWindow(t, 20*time.Millisecond)
+	o := newIdleTestOrch(t)
+	out := make(chan bridge.StreamEvent, 128)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:      "s1",
+		runID:          "actor-busy",
+		tools:          []string{},
+		sink:           chatSink{o: o, out: out},
+		finishOnNoTool: true,
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    &busyBridge{gap: 8 * time.Millisecond, turns: 4},
+		}, "task", []bridge.Message{{Role: "user", Content: "go"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("busy agent must not be idle-cancelled: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("busy run did not finish")
+	}
+	close(out)
+}
+
+// TestWallTimeCancelsStalledRun proves a silent (stuck) run IS cancelled once
+// the idle window elapses with no activity.
+func TestWallTimeCancelsStalledRun(t *testing.T) {
+	shrinkIdleWindow(t, 30*time.Millisecond)
+	o := newIdleTestOrch(t)
+	out := make(chan bridge.StreamEvent, 16)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:      "s1",
+		runID:          "actor-stuck",
+		tools:          []string{},
+		sink:           chatSink{o: o, out: out},
+		finishOnNoTool: true,
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    &silentBridge{},
+		}, "task", []bridge.Message{{Role: "user", Content: "go"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "stalled") {
+			t.Fatalf("stalled run should be idle-cancelled; err = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stalled run was not cancelled by idle deadline")
+	}
+	close(out)
 }

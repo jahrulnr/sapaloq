@@ -1,0 +1,93 @@
+name: release
+
+# Builds the core + widget for Linux on a version tag and publishes a release
+# tarball (+ checksums) that install.sh downloads. Pushing a tag like v0.1.0
+# triggers a real release; workflow_dispatch builds the same artifacts for a
+# manual/dry run without creating a tag.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp (e.g. v0.0.0-test). No release is published for manual runs.'
+        required: false
+        default: 'v0.0.0-dev'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build deps (wails + webkit)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Build core
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
+            -o dist/sapaloq-core ./cmd/sapaloq-core
+
+      - name: Build widget
+        run: |
+          npm install --prefix cmd/sapaloq-widget/frontend
+          (cd cmd/sapaloq-widget && wails build -tags webkit2_41)
+          cp cmd/sapaloq-widget/build/bin/sapaloq-widget dist/sapaloq-widget
+
+      - name: Stage release assets
+        run: |
+          cp config/config.example.json dist/config.example.json
+          echo "${{ steps.ver.outputs.version }}" > dist/VERSION
+          chmod +x dist/sapaloq-core dist/sapaloq-widget
+
+      - name: Package tarball + checksums
+        id: pkg
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          ARCH=amd64
+          PKG="sapaloq_${VERSION}_linux_${ARCH}"
+          mkdir -p "out/${PKG}"
+          cp dist/sapaloq-core dist/sapaloq-widget dist/config.example.json dist/VERSION "out/${PKG}/"
+          tar -C out -czf "out/${PKG}.tar.gz" "${PKG}"
+          (cd out && sha256sum "${PKG}.tar.gz" > checksums.txt)
+          echo "tarball=out/${PKG}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "checksums=out/checksums.txt" >> "$GITHUB_OUTPUT"
+          ls -lh out
+
+      - name: Upload workflow artifacts (manual/dry runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sapaloq-linux-amd64
+          path: |
+            ${{ steps.pkg.outputs.tarball }}
+            ${{ steps.pkg.outputs.checksums }}
+
+      - name: Publish GitHub Release (tag pushes only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.pkg.outputs.tarball }}
+            ${{ steps.pkg.outputs.checksums }}
+          generate_release_notes: true

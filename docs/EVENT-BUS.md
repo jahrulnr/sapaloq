@@ -2,7 +2,7 @@
 
 > **Internal pub/sub** inside `sapaloq-core` — goroutine + channel + route watcher.
 > Bukan service terpisah. Bukan Redis / Rabbit / MQTT.
-> Last updated: 2026-06-21
+> Last updated: 2026-06-22 (tool lifecycle, steering, and decision events)
 
 Related: [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md)
 
@@ -84,12 +84,22 @@ Publish never blocks on slow consumer — drop + log.
 ## Unix socket (same binary)
 
 ```text
-~/.config/sapaloq/run/sapaloq.sock
+~/SapaLOQ/run/sapaloq.sock
 ```
 
 Ops: `publish`, `watch`, `unwatch`, `event`, `ping`.
 
 Orchestrator uses in-proc channel — **no socket hop**.
+
+The bus carries wake/visibility events, while durable files remain authoritative:
+
+- `sapaloq.v1.tool.{queued,running,completed,failed,cancelled}` correlates
+  `run_id` and `job_id`.
+- `sapaloq.v1.actor.steering.proposed` wakes a target actor whose durable inbox
+  is under `state/actor-inbox`.
+- `sapaloq.v1.actor.decision.{requested,resolved,escalated}` routes
+  sub-agent questions through an invisible mediator. Only `escalated` becomes
+  an awaiting-clarification task update and user-visible chat question.
 
 The widget `watch` stream is live-first but not live-only. After the subscribe
 ack, the IPC server rehydrates recent `EventTaskUpdate` snapshots from
@@ -129,7 +139,7 @@ Prefix `sapaloq.v1` — see prior catalog (subagent.completed, orchestrator.cont
     "bus": {
       "enabled": true,
       "wakeViaBus": true,
-      "socketPath": "~/.config/sapaloq/run/sapaloq.sock",
+      "socketPath": "~/SapaLOQ/run/sapaloq.sock",
       "watcherBufferSize": 64
     }
   }

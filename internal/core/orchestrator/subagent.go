@@ -12,9 +12,16 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
-// subAgentMaxTurns bounds a sub-agent's tool loop so a misbehaving model can't
-// loop forever. Generous because real tasks chain several read/edit/run steps.
-const subAgentMaxTurns = 24
+// unlimitedTurnsBudget is the sentinel roleMaxTurns returns for a role that
+// should run without any turn ceiling (the executor): runTurnLoop treats a
+// negative budget as unbounded, leaving the real anomaly guards (no-progress,
+// identical-tool, wall-time, tool-call) as the only stoppers.
+const unlimitedTurnsBudget = -1
+
+// minSubAgentMaxTurns is only a sane floor for a misconfigured POSITIVE
+// per-role value (so a config of a tiny number can't starve a run); it never
+// applies to the unlimited sentinel.
+const minSubAgentMaxTurns = 1
 
 // runSubAgentLoop drives a sub-agent (planner / task-runner / scribe) on the
 // SAME inference engine as chat (runTurnLoop). Planner and Agent are therefore
@@ -49,6 +56,7 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 
 	cfg := turnConfig{
 		sessionID:         subSession,
+		runID:             record.ID,
 		tools:             o.toolsForRole(record.Role),
 		sink:              &subagentSink{o: o, taskID: record.ID},
 		finishOnNoTool:    record.Role != "task-runner",
@@ -129,23 +137,33 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	record.Status = "done"
 }
 
-// roleMaxTurns resolves the tool-loop budget for a sub-agent role, preferring
-// the per-role maxTurns from config.json and falling back to subAgentMaxTurns.
-// Only a sane floor is enforced (a config of 0/negative must not starve the
-// run to nothing); there is intentionally NO upper clamp, so an operator can
-// give a role as much room as they want — the wall-time budget is the single
-// final safety net, not an arbitrary turn ceiling.
+// roleMaxTurns resolves the tool-loop budget for a sub-agent role.
+//
+//   - An explicit per-role maxTurns in config.json always wins (honored as-is,
+//     no upper clamp; a tiny positive value is floored to minSubAgentMaxTurns).
+//   - Otherwise the EXECUTOR (task-runner) runs UNLIMITED: it does the heavy
+//     lifting (many read/edit/run/verify steps over a long task — scaffolding a
+//     whole app can take hundreds of tool calls), so an arbitrary turn ceiling
+//     would force-fail a productive agent with "inference-turn budget
+//     exhausted". A genuinely stuck/looping model is still bounded by the real
+//     anomaly guards (no-progress, identical-tool, wall-time, tool-call) — none
+//     of which depend on the turn count.
+//   - Every other (short-lived) role — planner, scribe — falls back to the same
+//     budget the chat loop uses (Continuation.MaxInferenceTurns, default 128).
 func (o *Orchestrator) roleMaxTurns(role string) int {
-	turns := subAgentMaxTurns
 	if roles := o.cfg.SubAgents.Roles; roles != nil {
 		if r, ok := roles[role]; ok && r.MaxTurns > 0 {
-			turns = r.MaxTurns
+			turns := r.MaxTurns
+			if turns < minSubAgentMaxTurns {
+				turns = minSubAgentMaxTurns
+			}
+			return turns
 		}
 	}
-	if turns < 1 {
-		turns = 1
+	if role == "task-runner" {
+		return unlimitedTurnsBudget
 	}
-	return turns
+	return o.cfg.Orchestrator.WithDefaults().Continuation.MaxInferenceTurns
 }
 
 // roleAllows reports whether a sub-agent role may invoke a given tool. When the
@@ -223,6 +241,7 @@ func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Messag
 	}
 
 	messages := []bridge.Message{{Role: "system", Content: systemContent}}
+	messages = append(messages, o.runtimeContextMessage())
 
 	// Hand off the plan (goal + acceptance criteria) to the agent.
 	if record.Role == "task-runner" && record.PlanTaskID != "" {
@@ -285,10 +304,11 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		return subToolResult{text: fmt.Sprintf("Error: %s is not allowed for role %s.", call.Name, record.Role)}
 	}
 	// Shared read-only assessment + web tools.
-	if text, ok := runSharedTool(ctx, call); ok {
+	if text, ok := o.runSharedTool(ctx, call); ok {
 		return subToolResult{text: text}
 	}
 	args := parseToolArgs(call.Arguments)
+	args = o.resolveActorArgs(ctx, args)
 	switch call.Name {
 	case "write_file":
 		return subToolResult{text: toolWriteFile(args, false)}
@@ -299,7 +319,7 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 	case "delete_file":
 		return subToolResult{text: toolDeleteFile(args)}
 	case "exec":
-		return subToolResult{text: toolExec(ctx, args)}
+		return subToolResult{text: o.toolExec(ctx, args)}
 	case "scribe_write_note":
 		return subToolResult{text: o.toolScribeWriteNote(args)}
 	case "desktop_notify":
@@ -355,7 +375,7 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		record.Error = reason
 		record.Status = "failed"
 		return subToolResult{text: "Task marked failed.", terminal: true}
-	case "request_clarification":
+	case "request_clarification", "sapaloq_request_decision":
 		question := strings.TrimSpace(args.Question)
 		if question == "" {
 			return subToolResult{text: "Error: question is required."}
@@ -368,6 +388,35 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		record.UpdatedAt = time.Now().UTC()
 		_ = o.writeTask(*record)
 		return subToolResult{text: "Clarification requested from the user.", terminal: false}
+	case "sapaloq_send_steering":
+		target := strings.TrimSpace(args.TargetTaskID)
+		message := strings.TrimSpace(args.Message)
+		if target == "" || message == "" {
+			return subToolResult{text: "Error: target_task_id and message are required."}
+		}
+		err := o.enqueueActorEvent(actorControlEvent{
+			Kind:          "steering.proposed",
+			SessionID:     record.SessionID,
+			SourceID:      record.ID,
+			TargetID:      target,
+			CorrelationID: args.CorrelationID,
+			Message:       message,
+			Priority:      args.Priority,
+		})
+		if err != nil {
+			return subToolResult{text: "Error: " + err.Error()}
+		}
+		return subToolResult{text: fmt.Sprintf("Steering queued for `%s`.", target)}
+	case "sapaloq_wait_events":
+		timeout := args.TimeoutSeconds
+		if timeout <= 0 {
+			timeout = 120
+		}
+		events := o.waitActorEvents(ctx, record.ID, time.Duration(timeout)*time.Second)
+		if len(events) == 0 {
+			return subToolResult{text: "No actor event arrived before the wait ended."}
+		}
+		return subToolResult{text: actorEventsPrompt(events)}
 	default:
 		return subToolResult{text: "Error: unknown tool " + call.Name}
 	}

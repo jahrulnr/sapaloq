@@ -24,40 +24,45 @@ import (
 )
 
 type Orchestrator struct {
-	cfgPath      string
-	cfg          config.Config
-	entry        config.LLMBridge
-	bridge       bridge.Bridge
-	bus          *bus.Bus
-	progress     ProgressWriter
-	chat         *chatstore.Store
-	vault        *vault.Writer
-	memoryDir    string
-	stateDir     string
-	tasksDir     string
-	workersDir   string
-	workers      *workerRegistry
-	mu           sync.RWMutex
-	cfgModTime   time.Time
-	activeMu     sync.Mutex
-	active       map[string]*activeRun
-	runSeq       uint64
-	taskMu       sync.Mutex
-	taskCancels  map[string]context.CancelFunc
-	taskSignals  map[string]chan struct{}
-	sessionTasks map[string]map[string]struct{}
-	spokenMu     sync.Mutex
-	spokenTasks  map[string]struct{}
+	cfgPath        string
+	cfg            config.Config
+	entry          config.LLMBridge
+	bridge         bridge.Bridge
+	bus            *bus.Bus
+	progress       ProgressWriter
+	chat           *chatstore.Store
+	vault          *vault.Writer
+	memoryDir      string
+	stateDir       string
+	tasksDir       string
+	workersDir     string
+	workspaceDir   string
+	workers        *workerRegistry
+	mu             sync.RWMutex
+	cfgModTime     time.Time
+	activeMu       sync.Mutex
+	active         map[string]*activeRun
+	runSeq         uint64
+	taskMu         sync.Mutex
+	taskCancels    map[string]context.CancelFunc
+	taskSignals    map[string]chan struct{}
+	sessionTasks   map[string]map[string]struct{}
+	schedulerMu    sync.Mutex
+	scheduler      *toolJobScheduler
+	controlMu      sync.Mutex
+	controlSignals map[string]chan struct{}
+	spokenMu       sync.Mutex
+	spokenTasks    map[string]struct{}
 	// autoClarifyCount bounds orchestrator self-answers per task so an
 	// auto-answer ↔ re-ask loop with a confused sub-agent can't run forever.
 	// Guarded by spokenMu (same terminal-path lock).
 	autoClarifyCount map[string]int
-	visionMu     sync.RWMutex
-	vision       map[string]bool
-	skillsMu     sync.RWMutex
-	skills       []skills.Skill
-	desktop      platform.Desktop
-	prompts      *prompts.Manager
+	visionMu         sync.RWMutex
+	vision           map[string]bool
+	skillsMu         sync.RWMutex
+	skills           []skills.Skill
+	desktop          platform.Desktop
+	prompts          *prompts.Manager
 }
 
 type activeRun struct {
@@ -91,9 +96,16 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	)
 	// Load file-driven skills (read-only context). Errors are non-fatal: a
 	// missing/unreadable skills dir simply leaves the feature inert.
+	//
+	// The default skills ship embedded in the binary and are materialized to
+	// the skills dir on first run (Seed), so a fresh install has working
+	// defaults without any manual download/copy. Seeding never clobbers user
+	// edits and is best-effort — a disk error must not break startup.
 	var loadedSkills []skills.Skill
 	if cfg.Skills.WithDefaults().Enabled {
-		loadedSkills, _ = skills.Load(config.ExpandPath(cfg.Skills.WithDefaults().Dir))
+		skillsDir := config.ExpandPath(cfg.Skills.WithDefaults().Dir)
+		_ = skills.Seed(skillsDir)
+		loadedSkills, _ = skills.Load(skillsDir)
 	}
 	// Detect the desktop adapter (notifications/DND). Falls back to headless on
 	// non-Linux/headless hosts or when no real backend is registered, so this
@@ -121,6 +133,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		stateDir:     dirs.StateDir,
 		tasksDir:     dirs.TasksDir,
 		workersDir:   dirs.WorkersDir,
+		workspaceDir: dirs.WorkspaceDir,
 		workers:      newWorkerRegistry(dirs.WorkersDir),
 		cfgModTime:   modTime,
 		active:       make(map[string]*activeRun),
@@ -136,6 +149,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	// text-only (supportsImages:false) is skipped before we ever send an image
 	// again — and a known-good one (true) isn't needlessly re-probed.
 	o.seedVisionFromConfig(cfg)
+	o.materializeRuntimeRoadmap()
 	// Best-effort: index skill bodies into facts (kind="skill") so the
 	// secondary FTS match in skillsBlock can find them. Never fatal.
 	o.indexSkills(context.Background())
@@ -150,6 +164,29 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 }
 
 func (o *Orchestrator) Bus() *bus.Bus { return o.bus }
+
+func (o *Orchestrator) toolJobs() *toolJobScheduler {
+	o.schedulerMu.Lock()
+	defer o.schedulerMu.Unlock()
+	if o.scheduler != nil {
+		return o.scheduler
+	}
+	root := ""
+	if o.stateDir != "" {
+		root = filepath.Join(o.stateDir, "tool-jobs")
+	} else if o.memoryDir != "" {
+		root = filepath.Join(o.memoryDir, "tool-jobs")
+	}
+	maxParallel := o.cfg.Orchestrator.WithDefaults().Continuation.MaxParallelTools
+	var publisher interface {
+		Publish(string, bridge.StreamEvent)
+	}
+	if o.bus != nil {
+		publisher = o.bus
+	}
+	o.scheduler = newToolJobScheduler(root, maxParallel, publisher)
+	return o.scheduler
+}
 
 // indexSkills upserts the in-memory skills into the facts store under
 // kind="skill" so SearchFacts can surface them as a secondary signal. It is

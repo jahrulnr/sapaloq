@@ -17,6 +17,19 @@ export type StreamEvent = {
 };
 export type ChatTurn = { id: number; seq: number; role: string; content: string };
 export type ChatUsage = { session_id: string; used_tokens: number; context_window: number; percent: number; provider: string; model: string };
+export type ActorRuntimeStatus = { id: string; role: string; status: string; phase: string; workspace: string };
+export type RuntimeStatus = {
+  provider: string;
+  model: string;
+  driver: string;
+  reasoning?: string;
+  config_path: string;
+  data_path: string;
+  memory_path: string;
+  state_path: string;
+  workspace_path: string;
+  actors: ActorRuntimeStatus[];
+};
 export type PendingAttachment = { name: string; type: string; size: number; path?: string; dataURI?: string; text?: string };
 
 // Streaming coalescer: accumulates delta chunks into one bubble so
