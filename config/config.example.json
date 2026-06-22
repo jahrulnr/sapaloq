@@ -47,6 +47,15 @@
         "authScheme": "x-api-key",
         "apiVersion": "2023-06-01",
         "contextWindow": 200000
+      },
+      {
+        "key": "blackbox",
+        "driver": "provider-bridge",
+        "endpoint": "https://api.blackbox.ai/chat/completions",
+        "model": "blackboxai/anthropic/claude-opus-4.8",
+        "credentialsEnv": "BLACKBOX_API_KEY",
+        "parser": "openai",
+        "contextWindow": 131072
       }
     ]
   },
