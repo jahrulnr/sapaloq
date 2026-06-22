@@ -73,6 +73,8 @@ func main() {
 		runChat(cfg, cfgPath, message)
 	case "vault":
 		runVault(cmdArgs)
+	case "service":
+		runService(cfg, cfgPath, cmdArgs)
 	case "run":
 		dirs := config.RuntimeDirs(cfg)
 		if err := config.EnsureRuntimeDirs(dirs); err != nil {

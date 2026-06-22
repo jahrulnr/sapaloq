@@ -8,6 +8,10 @@
 *.out
 /vendor/
 
+# Built binaries (from `go build` without -o, or install.sh into the repo)
+/sapaloq-core
+/sapaloq-widget
+
 # Wails widget
 cmd/sapaloq-widget/build/bin/
 cmd/sapaloq-widget/frontend/node_modules/
