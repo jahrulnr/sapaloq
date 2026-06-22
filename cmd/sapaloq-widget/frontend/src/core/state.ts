@@ -11,7 +11,6 @@ let _currentSessionID = '';
 let _messageSeq = 0;
 let _currentUserGroup = 0;
 let _lastSubmittedText = '';
-let _lastLatencyMs = -1;
 let _compose: ComposeBox | null = null;
 
 export function getConnection() { return _connection; }
@@ -32,9 +31,6 @@ export function resetMessageSeq() { _messageSeq = 0; }
 
 export function getLastSubmittedText() { return _lastSubmittedText; }
 export function setLastSubmittedText(v: string) { _lastSubmittedText = v; }
-
-export function getLatencyMs() { return _lastLatencyMs; }
-export function setLatencyMs(v: number) { _lastLatencyMs = v; }
 
 export function getCompose() { return _compose; }
 export function setCompose(c: ComposeBox | null) { _compose = c; }

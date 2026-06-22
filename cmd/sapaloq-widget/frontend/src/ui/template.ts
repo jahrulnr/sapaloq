@@ -8,7 +8,9 @@ export const APP_TEMPLATE = `
       <header class="popup-header">
         <div class="popup-brand">
           <span class="brand-mark" aria-hidden="true"><span class="brand-mark-core"></span></span>
-          <span class="brand-copy"><span class="popup-name">SapaLOQ</span></span>
+          <span class="brand-copy">
+            <span class="popup-name">SapaLOQ</span>
+          </span>
         </div>
         <div class="popup-header-right">
           <span class="context-usage" id="context-usage" data-level="normal" title="context usage">0/0</span>
@@ -48,6 +50,6 @@ export const APP_TEMPLATE = `
         </div>
       </footer>
     </section>
-    <div class="fab-row"><button type="button" class="orb" id="orb" data-state="idle" aria-label="Buka SapaLOQ" style="--wails-draggable: drag"><span class="orb-aura" aria-hidden="true"></span><span class="orb-ring" aria-hidden="true"></span><span class="orb-body" aria-hidden="true"><span class="orb-grid" aria-hidden="true"></span><span class="sapa-glyph" aria-hidden="true"><span class="glyph-node glyph-node--a"></span><span class="glyph-node glyph-node--b"></span><span class="glyph-node glyph-node--c"></span><span class="glyph-path glyph-path--a"></span><span class="glyph-path glyph-path--b"></span></span><span class="orb-specular" aria-hidden="true"></span><span class="ring-badge" id="ring-badge" aria-hidden="true"></span><span class="orb-chevron" aria-hidden="true">⌄</span></span></button></div>
+    <div class="fab-row"><button type="button" class="orb" id="orb" data-state="idle" aria-label="Buka SapaLOQ" style="--wails-draggable: drag"><span class="orb-aura" aria-hidden="true"></span><span class="orb-ring" aria-hidden="true"></span><span class="orb-body" aria-hidden="true"><span class="orb-art" aria-hidden="true"></span><span class="orb-specular" aria-hidden="true"></span><span class="orb-chevron" aria-hidden="true">⌄</span></span></button></div>
   </div>
 `;
