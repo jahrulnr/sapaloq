@@ -457,7 +457,7 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 	// "speak"-style trigger the realtime flow expects.
 	o.publishTaskUpdate(sessionID, record)
 	// NOTE: plan.md is written ONLY when the planner explicitly calls
-	// sapaloq_write_plan_markdown (see handleSubAgentTool). We deliberately do
+	// write_plan (see handleSubAgentTool). We deliberately do
 	// NOT synthesize a plan.md from free-form planner text here: a planner that
 	// merely answered a question (without producing a real plan) must not leave
 	// a fake artifact that can pass explicit plan_task_id validation.

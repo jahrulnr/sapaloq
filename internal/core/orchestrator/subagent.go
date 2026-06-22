@@ -25,10 +25,10 @@ const subAgentMaxTurns = 24
 //   - tools:        o.toolsForRole(record.Role)
 //   - dispatch:     handleSubAgentTool (terminal tools mutate record + stop)
 //   - sink:         progress JSONL + worker heartbeat (so a live stream never
-//                   looks stalled to the watchdog — the recurring stall bug)
+//     looks stalled to the watchdog — the recurring stall bug)
 //   - finish:       planner/scribe finish on a tool-less turn; an executor must
-//                   call a terminal tool (the shared no-progress guard bounds a
-//                   model that only narrates intent)
+//     call a terminal tool (the shared no-progress guard bounds a
+//     model that only narrates intent)
 //
 // record is mutated in place (Status/Result/Error/Question); the caller
 // persists the final state.
@@ -306,7 +306,7 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		return subToolResult{text: o.toolDesktopNotify(ctx, args)}
 	case "desktop_dnd_status":
 		return subToolResult{text: o.toolDesktopDNDStatus(ctx)}
-	case "sapaloq_write_plan_markdown":
+	case "write_plan":
 		md := strings.TrimSpace(args.Markdown)
 		if md == "" {
 			return subToolResult{text: "Error: markdown is required."}
@@ -318,8 +318,8 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		// Non-terminal: the planner may revise the plan (read it back, rewrite)
 		// before finishing. The loop ends naturally when the planner stops
 		// calling tools. The path is surfaced so the model knows where it lives.
-		return subToolResult{text: fmt.Sprintf("Plan saved to state/tasks/%s/plan.md. You may refine it (read it back with sapaloq_read_plan_markdown and rewrite) or stop to finalize.", record.ID)}
-	case "sapaloq_read_plan_markdown":
+		return subToolResult{text: fmt.Sprintf("Plan saved to state/tasks/%s/plan.md. You may refine it (read it back with read_plan and rewrite) or stop to finalize.", record.ID)}
+	case "read_plan":
 		// Planner reads its OWN plan (to iterate); agent reads the handed-off
 		// plan it must execute.
 		planID := record.PlanTaskID
@@ -355,7 +355,7 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		record.Error = reason
 		record.Status = "failed"
 		return subToolResult{text: "Task marked failed.", terminal: true}
-	case "sapaloq_request_clarification":
+	case "request_clarification":
 		question := strings.TrimSpace(args.Question)
 		if question == "" {
 			return subToolResult{text: "Error: question is required."}

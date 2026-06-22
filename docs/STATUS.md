@@ -18,9 +18,9 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 4 | File + exec tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`, `exec`) | ✅ | `tools_workspace.go`; flat unrestricted surface (any path; no workspace sandbox). Mutating file tools gated to `task-runner`; `exec` available in every mode |
 | 5 | In-place edit / delete / glob tools | ✅ | `tools_workspace.go` (`toolEditFile`, `toolDeleteFile`, `toolGlob`) — added 2026-06-20 |
 | 6 | `read_file` binary guard + line-range read | ✅ | `tools_workspace.go` (`toolReadFile`: NUL/non-printable sniff + `offset`/`limit` line range) — added 2026-06-20 |
-| 7 | Plan artifact + handoff | ✅ | `subagent.go` (`sapaloq_write_plan_markdown`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment |
+| 7 | Plan artifact + handoff | ✅ | `subagent.go` (`write_plan`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment |
 | 8 | Plan iteration (revise before finishing) | 🟡 | `write_plan_markdown` is non-terminal; planner can rewrite + read its own plan. Ask prompt requires user review before passing `plan_task_id`, but no approval-gate UI/state machine yet; no post-handoff agent amend |
-| 9 | Clarification loop | ✅ | Two-way: `sapaloq_request_clarification` pauses, `sapaloq_answer_clarification` resumes the paused sub-agent loop (transcript replayed, answer nudge injected). `tasks.go`, `subagent.go`, `tools.go`, `session.go` |
+| 9 | Clarification loop | ✅ | Two-way: `request_clarification` pauses, `sapaloq_answer_clarification` resumes the paused sub-agent loop (transcript replayed, answer nudge injected). `tasks.go`, `subagent.go`, `tools.go`, `session.go` |
 | 10 | Vault audit log | ✅ | `internal/vault`, wired via `Orchestrator.auditTool` (`chat.go`) at Ask + sub-agent chokepoints; cursor-bridge logs undeclared calls |
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go` |
@@ -422,7 +422,7 @@ Root cause of sub-agents stalling ("kepentok") with no continuation, plus the mi
 - **Markdown via library:** replaced the hand-rolled parser in the widget with `marked` + `DOMPurify` (GFM tables/headings now render). `cmd/sapaloq-widget/frontend/src/main.ts`, `style.css`.
 - **Wait countdown UX:** `waiting` status now carries `wait_seconds`; the widget shows a live countdown (`waiting · 10s, 9s, …`). `internal/bridge/events.go`, `tasks.go`, `main.ts`.
 - **Atomic task writes:** `writeFileAtomic` (temp + rename) fixes the `status.json` read/write race that made `sapaloq_wait` fail with "unexpected end of JSON input". `tasks.go`. Defensive retry in `readTask`.
-- **No fake plan.md:** planner no longer auto-writes `plan.md` from free-form text; only `sapaloq_write_plan_markdown` does. The current explicit `plan_task_id` validator requires a real `plan.md`. `tasks.go`.
+- **No fake plan.md:** planner no longer auto-writes `plan.md` from free-form text; only `write_plan` does. The current explicit `plan_task_id` validator requires a real `plan.md`. `tasks.go`.
 - **Tool audit:** every orchestrator-executed tool is appended to `vault/tool-calls.jsonl` (`reason: executed`). `chat.go`, `subagent.go`.
 - **Config consumed:** `subAgents.roles[].maxTurns` is now read (`roleMaxTurns`); `config.example.json` `allowedTools` aligned to real tool names. `internal/config/load.go`, `subagent.go`.
 - **Tool upgrade (cursor-style):** `read_file` gains binary detection + line-range (`offset`/`limit`); new `edit_file` (precise string replace), `delete_file`, `glob_file_search`. Plan made iterable. `tools_workspace.go`, `tools.go`, `subagent.go`.

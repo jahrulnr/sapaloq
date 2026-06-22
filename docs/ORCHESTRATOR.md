@@ -142,7 +142,7 @@ Provider-bridge backends (OpenAI/Claude/Kimi/OpenRouter/TokenRouter/etc.) do not
 | SapaLOQ mode | Role | Declared tools profile | Policy |
 |--------------|------|------------------------|--------|
 | **Ask** | `orchestrator` | spawn/status/clarification, assessment, web, light `desktop_*`, `exec` | Coordinate and explore; do not mutate task artifacts directly |
-| **Plan** | `planner` | read-only file/search/web, `exec`, `sapaloq_write_plan_markdown` | Explore thoroughly; terminal inspection is allowed, target-artifact mutation is not |
+| **Plan** | `planner` | read-only file/search/web, `exec`, `write_plan` | Explore thoroughly; terminal inspection is allowed, target-artifact mutation is not |
 | **Agent** | `task-runner` | file write tools, exec/build/test, progress/complete, clarification | Execute approved/direct task |
 
 Recommended MVP profile names:
@@ -166,12 +166,12 @@ plan:
   search
   read_file
   exec
-  sapaloq_write_plan_markdown
-  sapaloq_request_clarification
+  write_plan
+  request_clarification
 
 agent:
   sapaloq_read_context_packet
-  sapaloq_read_plan_markdown
+  read_plan
   sapaloq_update_task_progress
   sapaloq_complete_task
   sapaloq_fail_task
@@ -180,7 +180,7 @@ agent:
   edit_file
   create_file
   exec
-  sapaloq_request_clarification
+  request_clarification
 ```
 
 Provider `declaredTools` should be generated from this role profile. Static per-provider `declaredTools` remains a compatibility fallback only.

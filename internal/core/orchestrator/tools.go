@@ -53,16 +53,16 @@ var scribeTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"sapaloq_update_task_progress",
 	"sapaloq_complete_task",
 	"sapaloq_fail_task",
-	"sapaloq_request_clarification",
+	"request_clarification",
 )
 
 // planTools: planner. Assessment + exec (so it can investigate the host while
 // planning) + write/read its own plan markdown.
 var planTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"exec",
-	"sapaloq_write_plan_markdown",
-	"sapaloq_read_plan_markdown",
-	"sapaloq_request_clarification",
+	"write_plan",
+	"read_plan",
+	"request_clarification",
 )
 
 // agentTools: full executor. Assessment + exec + write/edit/delete + lifecycle.
@@ -72,11 +72,11 @@ var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"create_file",
 	"edit_file",
 	"delete_file",
-	"sapaloq_read_plan_markdown",
+	"read_plan",
 	"sapaloq_update_task_progress",
 	"sapaloq_complete_task",
 	"sapaloq_fail_task",
-	"sapaloq_request_clarification",
+	"request_clarification",
 	"desktop_notify",
 )
 
@@ -274,7 +274,7 @@ func init() {
 		"required":["task"]
 	}`)
 
-	reg("sapaloq_write_plan_markdown", `{
+	reg("write_plan", `{
 		"type":"object",
 		"properties":{
 			"markdown":{"type":"string","description":"The full plan in Markdown with Goal, Constraints, Steps, Risks, and Acceptance sections."}
@@ -282,7 +282,7 @@ func init() {
 		"required":["markdown"]
 	}`)
 
-	reg("sapaloq_read_plan_markdown", `{"type":"object","properties":{}}`)
+	reg("read_plan", `{"type":"object","properties":{}}`)
 
 	reg("sapaloq_update_task_progress", `{
 		"type":"object",
@@ -308,7 +308,7 @@ func init() {
 		"required":["reason"]
 	}`)
 
-	reg("sapaloq_request_clarification", `{
+	reg("request_clarification", `{
 		"type":"object",
 		"properties":{
 			"question":{"type":"string","description":"The clarifying question for the user/orchestrator."},

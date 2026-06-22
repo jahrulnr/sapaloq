@@ -140,9 +140,9 @@
           "web_search",
           "web_fetch",
           "exec",
-          "sapaloq_write_plan_markdown",
-          "sapaloq_read_plan_markdown",
-          "sapaloq_request_clarification"
+          "write_plan",
+          "read_plan",
+          "request_clarification"
         ],
         "maxTurns": 12,
         "canEditConfig": false,
@@ -163,11 +163,11 @@
           "create_file",
           "edit_file",
           "delete_file",
-          "sapaloq_read_plan_markdown",
+          "read_plan",
           "sapaloq_update_task_progress",
           "sapaloq_complete_task",
           "sapaloq_fail_task",
-          "sapaloq_request_clarification",
+          "request_clarification",
           "desktop_notify"
         ],
         "maxTurns": 30,
@@ -188,7 +188,7 @@
           "sapaloq_update_task_progress",
           "sapaloq_complete_task",
           "sapaloq_fail_task",
-          "sapaloq_request_clarification"
+          "request_clarification"
         ],
         "maxTurns": 8,
         "canEditConfig": false
