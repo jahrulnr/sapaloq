@@ -58,6 +58,8 @@ jobs:
       - name: Stage release assets
         run: |
           cp config/config.example.json dist/config.example.json
+          cp cmd/sapaloq-widget/build/linux/sapaloq.png dist/sapaloq.png
+          cp cmd/sapaloq-widget/build/linux/sapaloq.desktop dist/sapaloq.desktop
           echo "${{ steps.ver.outputs.version }}" > dist/VERSION
           chmod +x dist/sapaloq-core dist/sapaloq-widget
 
@@ -68,7 +70,7 @@ jobs:
           ARCH=amd64
           PKG="sapaloq_${VERSION}_linux_${ARCH}"
           mkdir -p "out/${PKG}"
-          cp dist/sapaloq-core dist/sapaloq-widget dist/config.example.json dist/VERSION "out/${PKG}/"
+          cp dist/sapaloq-core dist/sapaloq-widget dist/config.example.json dist/sapaloq.png dist/sapaloq.desktop dist/VERSION "out/${PKG}/"
           tar -C out -czf "out/${PKG}.tar.gz" "${PKG}"
           (cd out && sha256sum "${PKG}.tar.gz" > checksums.txt)
           echo "tarball=out/${PKG}.tar.gz" >> "$GITHUB_OUTPUT"

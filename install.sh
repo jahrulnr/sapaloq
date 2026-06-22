@@ -36,6 +36,7 @@ set -euo pipefail
 REPO="${SAPALOQ_REPO:-jahrulnr/sapaloq}"
 BIN_DIR="${HOME}/.local/bin"
 DATA_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/sapaloq"
+DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 VERSION="${SAPALOQ_VERSION:-}"
 INSTALL_SERVICE=1
 INSTALL_AUTOSTART=1
@@ -88,6 +89,11 @@ uninstall() {
 			log "removed ${BIN_DIR}/${bin}"
 		fi
 	done
+	rm -f "${DATA_HOME}/icons/hicolor/512x512/apps/sapaloq.png"
+	rm -f "${DATA_HOME}/applications/sapaloq.desktop"
+	if command -v update-desktop-database >/dev/null 2>&1; then
+		update-desktop-database "${DATA_HOME}/applications" >/dev/null 2>&1 || true
+	fi
 
 	echo
 	log "Done. Config and data were kept at: ${DATA_DIR}"
@@ -171,6 +177,31 @@ for bin in "${CORE_BIN}" "${WIDGET_BIN}"; do
 		warn "${bin} not in archive; skipping"
 	fi
 done
+
+if [[ -f "${SRC}/sapaloq.png" ]]; then
+	install -Dm 0644 "${SRC}/sapaloq.png" "${DATA_HOME}/icons/hicolor/512x512/apps/sapaloq.png"
+	log "installed ${DATA_HOME}/icons/hicolor/512x512/apps/sapaloq.png"
+	if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+		gtk-update-icon-cache -f -t "${DATA_HOME}/icons/hicolor" >/dev/null 2>&1 || true
+	fi
+else
+	warn "sapaloq.png not in archive; desktop launcher may use a fallback icon"
+fi
+
+# Desktop entry: lets GNOME map the widget's WM_CLASS (=sapaloq) to the SapaLOQ
+# icon in the taskbar/dock. Rewrite Exec= to the installed widget path.
+if [[ -f "${SRC}/sapaloq.desktop" ]]; then
+	mkdir -p "${DATA_HOME}/applications"
+	sed "s|^Exec=.*|Exec=${BIN_DIR}/${WIDGET_BIN}|" "${SRC}/sapaloq.desktop" \
+		> "${DATA_HOME}/applications/sapaloq.desktop"
+	chmod 0644 "${DATA_HOME}/applications/sapaloq.desktop"
+	log "installed ${DATA_HOME}/applications/sapaloq.desktop"
+	if command -v update-desktop-database >/dev/null 2>&1; then
+		update-desktop-database "${DATA_HOME}/applications" >/dev/null 2>&1 || true
+	fi
+else
+	warn "sapaloq.desktop not in archive; no app launcher / taskbar icon mapping"
+fi
 
 # --- seed config + runtime dirs -----------------------------------------
 mkdir -p "${DATA_DIR}" "${DATA_DIR}/memory" "${DATA_DIR}/state" "${DATA_DIR}/run" "${DATA_DIR}/vault"

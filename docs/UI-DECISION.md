@@ -1,7 +1,7 @@
 # SapaLOQ — UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-22 (runtime telemetry rail)
+> Last updated: 2026-06-23 (network-core identity and app icons)
 
 **Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** — orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) — not two independent products long-term.
 
@@ -76,6 +76,54 @@ The header includes a compact telemetry rail showing the active model/provider,
 live Planner and Agent slots with their current phase, and the effective actor
 workspace. It refreshes every three seconds and immediately after task events;
 the existing task cards remain the detailed lifecycle history.
+
+### Visual language
+
+The widget uses a dark graphite visual system: near-black shell, layered
+gunmetal surfaces, cool silver controls, restrained technical linework, and
+compact squared geometry. Graphite is the base rather than the whole palette:
+cyan, blue, indigo, magenta, and a small amber accent carry focus, energy, and
+state. User messages use a blue-indigo surface, reasoning uses violet, and
+active runtime elements use cyan; green, yellow, and red remain semantic status
+colors.
+
+The orb and application icon use a network-core visual derived from the supplied
+abstract artwork. A luminous blue local core sits inside concentric processing
+rings and a cyan/violet orchestration mesh. The original wide composition is
+reframed around the center; all source text and branding sit outside the crop
+and are not shipped.
+
+The orb uses a tighter circular crop of the same artwork, while the application
+icon keeps more of the surrounding mesh. At HUD size, state is carried by core
+brightness and ring motion; latency remains internal to ping handling so tiny
+rendering cannot clip a partial label.
+
+Icon packaging is platform-specific but derives from the same raster master:
+`build/appicon.png` feeds Wails/macOS, `build/windows/icon.ico` contains Windows
+multi-resolution sizes, `build/linux/sapaloq.png` is installed into the user
+hicolor icon theme, and `frontend/src/assets/images/orb-core.png` feeds the HUD.
+Linux live/dev windows also receive the embedded icon bytes directly via
+`gtk_window_set_icon`.
+
+That in-window icon is **not** what GNOME Shell shows in the taskbar/dock,
+though: GNOME matches a window to a `.desktop` entry by `WM_CLASS` and takes the
+icon from there. Wails never sets `WM_CLASS` on Linux (it only calls
+`g_set_prgname` + `gtk_window_set_icon`), so the class defaults to the binary
+name (e.g. `sapaloq-widget-dev-linux-amd64` under `wails dev`) and no entry
+matches — yielding a generic placeholder icon and the dev binary name as the
+title. Two pieces fix this:
+
+- **`WM_CLASS = sapaloq`** is set from `cmd/sapaloq-widget/input_shape_linux.go`
+  (`g_set_prgname` + `gdk_set_program_class`) before `wails.Run`, alongside the
+  existing input-shape CGO. No-op on non-Linux.
+- **`build/linux/sapaloq.desktop`** (`Icon=sapaloq`, `StartupWMClass=sapaloq`)
+  is installed into `${XDG_DATA_HOME}/applications`. `make run` depends on a
+  `desktop-entry` target that seeds the icon + entry, so dev runs already show
+  the right taskbar icon; `make install` and `install.sh` install it too (with
+  `Exec=` rewritten to the installed widget), and both remove it on uninstall.
+
+The visual change does not alter IPC, streaming states, attachments, runtime
+telemetry, or window sizing contracts.
 
 ---
 

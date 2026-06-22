@@ -44,6 +44,26 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Implemented this session (2026-06-23) — Linux taskbar icon (WM_CLASS + .desktop)
+
+- **Fixed the generic taskbar icon + dev binary name under `make run`.** The
+  app-bar showed a placeholder icon and the title `Sapaloq-widget-dev-linux-amd64`.
+  Root cause (verified against Wails v2.12.0 source): Wails never sets `WM_CLASS`
+  on Linux — only `g_set_prgname` + `gtk_window_set_icon`. GNOME Shell ignores
+  the in-window icon for the dock; it matches the window to a `.desktop` entry by
+  `WM_CLASS`/`StartupWMClass`. With WM_CLASS defaulting to the binary name and no
+  registered `.desktop`, GNOME fell back to the generic icon. Fix has two halves:
+  (1) set **`WM_CLASS = sapaloq`** via CGO (`g_set_prgname` + `gdk_set_program_class`)
+  in `cmd/sapaloq-widget/input_shape_linux.go`, called from `main.go` before
+  `wails.Run` (no-op stub on non-Linux); (2) ship `build/linux/sapaloq.desktop`
+  (`Icon=sapaloq`, `StartupWMClass=sapaloq`) and install it + the hicolor icon —
+  a new `make desktop-entry` target (which `make run` now depends on, so dev runs
+  get the right icon), plus `make install`/`install.sh` (Exec rewritten to the
+  installed widget) and uninstall removal in both. `release.yml` now stages the
+  `.desktop` into the release tarball alongside `sapaloq.png`.
+  `cmd/sapaloq-widget/{input_shape_linux.go,input_shape_stub.go,main.go,build/linux/sapaloq.desktop}`,
+  `Makefile`, `install.sh`, `.github/workflows/release.yml`, `docs/{UI-DECISION.md,STATUS.md}`.
+
 ## Implemented this session (2026-06-23) — shared persona (core character)
 
 - **`persona.md` — SapaLOQ's core character, prepended to every role.** Ported the
