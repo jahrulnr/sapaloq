@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"time"
 )
@@ -10,14 +12,35 @@ import (
 // orchestrator can store and retrieve (preferences, do_not_repeat penalties,
 // notes, skill triggers, …). Backed by the facts table (+ facts_fts when the
 // SQLite build supports FTS5).
+//
+// The Context-SOP fields (Namespace/Key/Value/Confidence) let a fact be
+// addressed as a typed, namespaced key/value with a confidence score, while the
+// original Content column remains the FTS-searchable text. ObsoleteAt is a
+// soft-delete marker: obsolete facts are excluded from search/recent by default.
 type Fact struct {
-	ID        int64     `json:"id"`
-	Kind      string    `json:"kind"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         int64      `json:"id"`
+	Namespace  string     `json:"namespace,omitempty"`
+	Kind       string     `json:"kind"`
+	Key        string     `json:"key,omitempty"`
+	Value      string     `json:"value,omitempty"`
+	Content    string     `json:"content"`
+	Confidence float64    `json:"confidence,omitempty"`
+	ObsoleteAt *time.Time `json:"obsolete_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
 }
 
+// factSelectCols is the canonical projection used by every fact query so the
+// scan in queryFacts stays in lockstep with the column order.
+const factSelectCols = `id, namespace, kind, key, value, content, confidence, obsolete_at, created_at, updated_at`
+
+// defaultNamespace is applied when a caller omits a namespace.
+const defaultNamespace = "default"
+
 // AddFact inserts a fact and returns its id. kind and content are required.
+// It is the legacy content-only entry point (used by the skill index and the
+// do_not_repeat feedback path); namespace defaults to "default" and the typed
+// key/value columns are left null.
 func (s *Store) AddFact(ctx context.Context, kind, content string) (int64, error) {
 	kind = strings.TrimSpace(kind)
 	content = strings.TrimSpace(content)
@@ -25,11 +48,111 @@ func (s *Store) AddFact(ctx context.Context, kind, content string) (int64, error
 		return 0, nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	res, err := s.db.ExecContext(ctx, `INSERT INTO facts(kind, content, created_at) VALUES (?, ?, ?)`, kind, content, now)
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO facts(namespace, kind, content, confidence, created_at, updated_at) VALUES (?, ?, ?, 1.0, ?, ?)`,
+		defaultNamespace, kind, content, now, now)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// UpsertFact stores a typed, namespaced key/value fact, deduping on
+// (namespace, kind, key): an existing live fact with the same key is updated in
+// place (value/content/confidence refreshed, obsolete_at cleared) rather than
+// duplicated. When key is empty it always inserts (free-form note). content is
+// what FTS searches; if empty it is derived from key/value so the fact is still
+// discoverable. Returns the row id.
+func (s *Store) UpsertFact(ctx context.Context, namespace, kind, key, value, content string, confidence float64) (int64, error) {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		namespace = defaultNamespace
+	}
+	kind = strings.TrimSpace(kind)
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	content = strings.TrimSpace(content)
+	if kind == "" {
+		return 0, nil
+	}
+	if content == "" {
+		content = strings.TrimSpace(strings.TrimSpace(key + " " + value))
+	}
+	if content == "" {
+		return 0, nil
+	}
+	if confidence <= 0 {
+		confidence = 1.0
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	if key != "" {
+		var id int64
+		err := s.db.QueryRowContext(ctx,
+			`SELECT id FROM facts WHERE namespace=? AND kind=? AND key=? AND obsolete_at IS NULL ORDER BY id DESC LIMIT 1`,
+			namespace, kind, key).Scan(&id)
+		switch {
+		case err == nil:
+			if _, uerr := s.db.ExecContext(ctx,
+				`UPDATE facts SET value=?, content=?, confidence=?, obsolete_at=NULL, updated_at=? WHERE id=?`,
+				value, content, confidence, now, id); uerr != nil {
+				return 0, uerr
+			}
+			return id, nil
+		case errors.Is(err, sql.ErrNoRows):
+			// fall through to insert
+		default:
+			return 0, err
+		}
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO facts(namespace, kind, key, value, content, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		namespace, kind, nullable(key), nullable(value), content, confidence, now, now)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ObsoleteFact soft-deletes a fact by id: it is stamped with obsolete_at and
+// excluded from future search/recent results, but the row (and its FTS shadow)
+// remains for audit. A no-op for an unknown id.
+func (s *Store) ObsoleteFact(ctx context.Context, id int64) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `UPDATE facts SET obsolete_at=?, updated_at=? WHERE id=? AND obsolete_at IS NULL`, now, now, id)
+	return err
+}
+
+// FactsByNamespace returns live facts in a namespace, newest first, optionally
+// filtered by kind. Obsolete facts are excluded. Used by the prefetch pipeline
+// to load mode-scoped preferences/routines without an FTS query.
+func (s *Store) FactsByNamespace(ctx context.Context, namespace, kind string, limit int) ([]Fact, error) {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		namespace = defaultNamespace
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	sqlStr := `SELECT ` + factSelectCols + ` FROM facts WHERE namespace=? AND obsolete_at IS NULL`
+	args := []any{namespace}
+	if k := strings.TrimSpace(kind); k != "" {
+		sqlStr += ` AND kind=?`
+		args = append(args, k)
+	}
+	sqlStr += ` ORDER BY updated_at DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+	return s.queryFacts(ctx, sqlStr, args...)
+}
+
+// nullable converts an empty string to a NULL so the typed columns stay null
+// rather than storing "".
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // SearchFacts returns facts matching query, most relevant first. It uses an
@@ -56,9 +179,9 @@ func (s *Store) SearchFacts(ctx context.Context, query string, kinds []string, l
 }
 
 func (s *Store) searchFactsFTS(ctx context.Context, query string, kinds []string, limit int) ([]Fact, error) {
-	sql := `SELECT f.id, f.kind, f.content, f.created_at
+	sql := `SELECT f.id, f.namespace, f.kind, f.key, f.value, f.content, f.confidence, f.obsolete_at, f.created_at, f.updated_at
 		FROM facts_fts ft JOIN facts f ON f.id = ft.rowid
-		WHERE facts_fts MATCH ?`
+		WHERE facts_fts MATCH ? AND f.obsolete_at IS NULL`
 	args := []any{ftsQuery(query)}
 	if clause, kindArgs := kindFilter("f.kind", kinds); clause != "" {
 		sql += " AND " + clause
@@ -70,7 +193,7 @@ func (s *Store) searchFactsFTS(ctx context.Context, query string, kinds []string
 }
 
 func (s *Store) searchFactsLike(ctx context.Context, query string, kinds []string, limit int) ([]Fact, error) {
-	sql := `SELECT id, kind, content, created_at FROM facts WHERE content LIKE '%' || ? || '%'`
+	sql := `SELECT ` + factSelectCols + ` FROM facts WHERE content LIKE '%' || ? || '%' AND obsolete_at IS NULL`
 	args := []any{query}
 	if clause, kindArgs := kindFilter("kind", kinds); clause != "" {
 		sql += " AND " + clause
@@ -86,10 +209,10 @@ func (s *Store) RecentFacts(ctx context.Context, kind string, limit int) ([]Fact
 	if limit <= 0 {
 		limit = 20
 	}
-	sql := `SELECT id, kind, content, created_at FROM facts`
+	sql := `SELECT ` + factSelectCols + ` FROM facts WHERE obsolete_at IS NULL`
 	var args []any
 	if strings.TrimSpace(kind) != "" {
-		sql += " WHERE kind = ?"
+		sql += " AND kind = ?"
 		args = append(args, strings.TrimSpace(kind))
 	}
 	sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
@@ -104,8 +227,8 @@ func (s *Store) DeleteFact(ctx context.Context, id int64) error {
 	return err
 }
 
-func (s *Store) queryFacts(ctx context.Context, sql string, args ...any) ([]Fact, error) {
-	rows, err := s.db.QueryContext(ctx, sql, args...)
+func (s *Store) queryFacts(ctx context.Context, query string, args ...any) ([]Fact, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,19 +236,51 @@ func (s *Store) queryFacts(ctx context.Context, sql string, args ...any) ([]Fact
 	var out []Fact
 	for rows.Next() {
 		var f Fact
-		var created string
-		if err := rows.Scan(&f.ID, &f.Kind, &f.Content, &created); err != nil {
+		var (
+			namespace  sql.NullString
+			key        sql.NullString
+			value      sql.NullString
+			confidence sql.NullFloat64
+			obsolete   sql.NullString
+			created    string
+			updated    sql.NullString
+		)
+		if err := rows.Scan(&f.ID, &namespace, &f.Kind, &key, &value, &f.Content, &confidence, &obsolete, &created, &updated); err != nil {
 			return nil, err
 		}
-		if parsed, perr := time.Parse(time.RFC3339Nano, created); perr == nil {
-			f.CreatedAt = parsed
-		} else if parsed, perr := time.Parse("2006-01-02 15:04:05", created); perr == nil {
-			// CURRENT_TIMESTAMP default format.
-			f.CreatedAt = parsed
+		f.Namespace = namespace.String
+		f.Key = key.String
+		f.Value = value.String
+		if confidence.Valid {
+			f.Confidence = confidence.Float64
+		}
+		f.CreatedAt = parseFactTime(created)
+		if obsolete.Valid && obsolete.String != "" {
+			if t := parseFactTime(obsolete.String); !t.IsZero() {
+				f.ObsoleteAt = &t
+			}
+		}
+		if updated.Valid && updated.String != "" {
+			if t := parseFactTime(updated.String); !t.IsZero() {
+				f.UpdatedAt = &t
+			}
 		}
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// parseFactTime accepts both the RFC3339Nano format written by the store and
+// the "YYYY-MM-DD HH:MM:SS" format produced by SQLite's CURRENT_TIMESTAMP
+// default (legacy rows). Returns the zero time when neither parses.
+func parseFactTime(s string) time.Time {
+	if parsed, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return parsed
+	}
+	if parsed, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+		return parsed
+	}
+	return time.Time{}
 }
 
 // kindFilter builds a `col IN (?, ?, …)` clause for a non-empty kinds slice.

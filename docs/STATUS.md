@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-23
+> Last updated: 2026-06-23 (Context-SOP memory subsystem: index-first prefetch + learning queue)
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -29,9 +29,9 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
 | 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
-| 18 | Context-SOP: FTS index / prefetch / anti-deep-check / intent-router | 🟡 | `facts` + `facts_fts` (FTS5-probed, LIKE fallback) now live in the chat store (`store.go` migrate, `facts.go`): `AddFact`/`SearchFacts`/`RecentFacts`/`DeleteFact`. No prefetch/anti-deep-check/intent-router yet |
-| 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `feedback_events` table + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; bounded negative-guidance slice injected into Ask prompt (`session.go`); widget 👍/👎 + correction box wired (`app.go`, `ipc.go`, `main.ts`). No learning_queue / bandit yet |
-| 20 | Named sub-agent roles (scribe, memory-janitor, intent-router, boundary-guard, event-watcher, learning-agent, research) | 🟡 | `scribe` is now spawnable (`sapaloq_spawn_scribe`); the sub-agent tool gate is config-driven (`roleAllows` honors `subAgents.roles[].allowedTools` with `*`-wildcards, default-deny mutation when unconfigured); `toolsForRole` offers only allowed+registered tools. memory-janitor/intent-router/boundary-guard/event-watcher/learning-agent/research still not spawnable |
+| 18 | Context-SOP: FTS index / prefetch / anti-deep-check / intent-router | 🟡 | `facts` + `facts_fts` (FTS5-probed, LIKE fallback) live in the chat store; `facts` now carries the typed memory schema (`namespace, key, value, confidence, obsolete_at, updated_at`) via idempotent additive migration with a legacy-DB FTS rebuild (`store.go`), `UpsertFact`/`ObsoleteFact`/`FactsByNamespace` (`facts.go`). Six index tables added: `skills_index`, `prefetch_rules`, `prompt_slices`, `learning_queue`, `hot_cache`, `prefetch_log` (`store.go`, `prefetch.go`, `learning.go`, `slices.go`, `skills_index.go`). Heuristic no-LLM intent-router (`orchestrator/intent.go`) + index-first prefetch packet with confidence-gated anti-deep-check directive (`orchestrator/prefetch.go`), injected as a bounded Ask-prompt block and logged to `prefetch_log` (`session.go`, `config.memory`). Still missing: prompt-slice/skills-index boot sync, full Fase-0 task-stack hook, bandit auto rule-tuning |
+| 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `feedback_events` table + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; bounded negative-guidance slice injected into Ask prompt (`session.go`); widget 👍/👎 + correction box wired (`app.go`, `ipc.go`, `main.ts`). `learning_queue` now live: each feedback enqueues a `feedback` event and a best-effort in-proc janitor (`orchestrator/learning.go`, `drainLearningQueue`) promotes `promote` events into facts (drained at boot + after each feedback). No bandit auto-tuning yet |
+| 20 | Named sub-agent roles (scribe, memory-janitor, intent-router, boundary-guard, event-watcher, learning-agent, research) | 🟡 | `scribe` is now spawnable (`sapaloq_spawn_scribe`); the sub-agent tool gate is config-driven (`roleAllows` honors `subAgents.roles[].allowedTools` with `*`-wildcards, default-deny mutation when unconfigured); `toolsForRole` offers only allowed+registered tools. `intent-router` and `memory-janitor` now exist as **in-process orchestrator hooks** (`intent.go` classify, `learning.go` drain) rather than spawnable sub-agents. boundary-guard/event-watcher/learning-agent/research still not spawnable |
 | 21 | Mode-aware scribe storage mapping (personal/work/hobby) | ✅ | `scribe_write_note` resolves a destination via `storage.intents`/explicit id/mode(+kind) and appends a timestamped note, boundary-enforced to declared `storage.paths` only. `internal/config/load.go` (`StorageConfig`/`StoragePath`/`Resolve`), `scribe.go` |
 | 22 | Skills system | 🟡 | Scan + trigger/FTS match + bounded injection done; learning-agent skill *writing* still deferred |
 | 23 | Nodes (remote sub-agents) | 🟡 | nodes table + local-default bootstrap + role/priority picker + local spawn routing (no behavior change) + remote Transport (ws) behind a connect probe + fake for tests; full remote execution wiring (envelope→runSubAgentLoop bridge) + /settings node CRUD still deferred |
@@ -43,6 +43,53 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` — the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
 
 ---
+
+## Implemented this session (2026-06-23) — Context-SOP memory subsystem (index-first prefetch + learning queue)
+
+- **`facts` upgraded to the typed memory schema (additive, idempotent).** The
+  original `(kind, content, created_at)` table now also carries
+  `namespace, key, value, confidence, obsolete_at, updated_at`, added per-column
+  via a `PRAGMA table_info`-guarded `ALTER TABLE` pass so an existing
+  `companion.db` is upgraded in place and a re-Open is a no-op. New
+  `UpsertFact` (dedupe on `namespace+kind+key`), `ObsoleteFact` (soft-delete,
+  excluded from search/recent), and `FactsByNamespace`. **Bug fixed:** creating
+  `facts_fts` on a DB that already held `facts` rows left the inverted index
+  empty (triggers only fire on future writes, and a `COUNT(*)` on an
+  external-content FTS table reflects the content table, so it can't detect the
+  gap) — now a fresh-this-Open `facts_fts` with existing rows triggers a
+  `'rebuild'`. `internal/store/chat/{store.go,facts.go}`, `migrations/001_initial.sql`.
+- **Six Context-SOP index tables added** (`store.go` migrate mirrors
+  `001_initial.sql`): `skills_index`, `prefetch_rules`, `prompt_slices`,
+  `learning_queue`, `hot_cache`, `prefetch_log`, each with a small typed DAO
+  (`prefetch.go`, `learning.go`, `slices.go`, `skills_index.go`):
+  upsert/lookup with namespace fallback, hit/success telemetry + `success_rate`,
+  TTL hot-cache (lazy expiry + prune), append-only learning queue with
+  oldest-first drain + idempotent processed-marking, and prefetch telemetry.
+- **Index-first prefetch wired into the Ask turn.** A no-LLM heuristic
+  intent-router (`orchestrator/intent.go`) classifies intent (`catat/notify/
+  task/settings/status/chat`) + mode (`personal/work/hobby`) with a confidence
+  score; `orchestrator/prefetch.go` assembles a bounded `PrefetchPacket` from
+  hot_cache → `prefetch_rules` → namespace facts → FTS, and renders a short
+  system block. At/above `memory.prefetchConfidenceThreshold` (default 0.7) the
+  block carries an **anti-deep-check** directive (don't explore the filesystem
+  first). Injected in `session.go` `contextMessages` alongside the existing
+  skills/negative-guidance blocks; every ingress logs one `prefetch_log` row.
+  The packet is assembled from `companion.db`, never the transcript, so it is
+  identical across compaction. New `config.memory` block (`prefetchEnabled`,
+  `prefetchConfidenceThreshold`, `hotCacheTtlSeconds`) with `WithDefaults`
+  (absent block = enabled), plus `schema/config.schema.json` +
+  `config/config.example.json`.
+- **Learning queue + in-proc memory-janitor.** `AddFeedback` now also enqueues a
+  `feedback` learning event; `orchestrator/learning.go` `drainLearningQueue`
+  promotes `promote` events into facts via `UpsertFact` (best-effort,
+  idempotent, malformed rows skipped) and is drained at boot and after each
+  feedback. Bandit auto-tuning / research spawn remain deferred.
+- Tests: `internal/store/chat/memory_test.go` (legacy-DB migration + FTS
+  rebuild, upsert dedupe, obsolete-hide on both FTS and LIKE paths, prefetch
+  rule telemetry + namespace fallback, hot-cache TTL, queue drain, concurrency)
+  and `orchestrator/{prefetch_test.go,learning_test.go}` (intent classify,
+  confidence gating, hot-cache repeat, rule kind-narrowing, config-disable,
+  promote drain, feedback drain). `go build/vet/test ./...` green.
 
 ## Implemented this session (2026-06-23) — suppress echoed [Called tools: …] leak
 
