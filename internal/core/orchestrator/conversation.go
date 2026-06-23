@@ -469,21 +469,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// it keeps looping (bounded by the budgets + loop guards below) until it
 		// does. Narrating without acting is allowed — the budgets, not a
 		// bespoke narration guard, bound a misbehaving model.
-		//
-		// EXPERIMENTAL: continuation.disableFinishOnNoTool relaxes the
-		// finish-on-no-tool gate so a model that announces its intent on one
-		// turn and only acts on the next (e.g. MiniMax) is not cut off mid-plan.
-		// We only relax it once the run has ALREADY used at least one tool —
-		// i.e. it is mid-work and a tool-less turn is most likely an
-		// "announce-then-act" pause, not a final answer. A pure-text turn with
-		// zero tools all run (an ordinary chat reply) still finishes normally,
-		// so plain chat does not hang. An explicit stop/terminal tool always
-		// ends the run regardless. Bounded by the resource caps.
-		finishOnNoTool := cfg.finishOnNoTool
-		if budget.DisableFinishOnNoTool && toolCalls > 0 {
-			finishOnNoTool = false
-		}
-		if stop || (finishOnNoTool && len(toolResults) == 0) {
+		if stop || (cfg.finishOnNoTool && len(toolResults) == 0) {
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return all, nil
 		}

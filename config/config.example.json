@@ -119,8 +119,7 @@
       "maxWallTimeMinutes": 30,
       "maxNoProgressTurns": 5,
       "maxIdenticalToolCalls": 5,
-      "maxWaitSeconds": 120,
-      "disableFinishOnNoTool": false
+      "maxWaitSeconds": 120
     },
     "compaction": {
       "backgroundThreshold": 0.7,

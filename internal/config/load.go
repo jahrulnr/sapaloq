@@ -565,13 +565,6 @@ type ContinuationConfig struct {
 	MaxNoProgressTurns    int `json:"maxNoProgressTurns"`
 	MaxIdenticalToolCalls int `json:"maxIdenticalToolCalls"`
 	MaxWaitSeconds        int `json:"maxWaitSeconds"`
-	// DisableFinishOnNoTool (EXPERIMENTAL) turns off the "a tool-less turn ends
-	// the run" gate for EVERY role (chat/planner included). With it on, a model
-	// that narrates its intent on one turn and only acts on the next (e.g.
-	// MiniMax) is no longer cut off mid-plan. The run is then bounded only by
-	// the real resource caps (maxInferenceTurns, maxToolCalls, idle wall-time)
-	// — so keep those sane while this is enabled. Default false (gate active).
-	DisableFinishOnNoTool bool `json:"disableFinishOnNoTool"`
 }
 
 type CompactionConfig struct {
