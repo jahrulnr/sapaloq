@@ -278,7 +278,8 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 						lastToolSignature = signature
 						identicalToolCalls = 1
 					}
-					if identicalToolCalls > budget.MaxIdenticalToolCalls {
+					// budget.MaxIdenticalToolCalls <= 0 disables this guard.
+					if budget.MaxIdenticalToolCalls > 0 && identicalToolCalls > budget.MaxIdenticalToolCalls {
 						cancelAttempt()
 						return all, fmt.Errorf("loop detected: identical tool call repeated %d times", identicalToolCalls)
 					}
@@ -487,7 +488,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			lastOutcome = outcome
 			noProgressTurns = 0
 		}
-		if noProgressTurns >= budget.MaxNoProgressTurns {
+		// budget.MaxNoProgressTurns <= 0 disables this guard entirely (used to
+		// observe a model's raw behavior without the loop-breaker cutting in).
+		if budget.MaxNoProgressTurns > 0 && noProgressTurns >= budget.MaxNoProgressTurns {
 			return all, fmt.Errorf("loop detected: no observable progress for %d inference turns", noProgressTurns)
 		}
 		// Build the continuation prompt. A tool-less turn for a non-finishing
@@ -504,15 +507,24 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				"edit_file), or call sapaloq_complete_task with a summary if the task is " +
 				"done, or sapaloq_fail_task with a reason if it cannot be done."
 		} else {
-			toolResultsBody = "[Tool results]\n" + strings.Join(toolResults, "\n\n")
+			// Tool output is an OBSERVATION the model should reason over and
+			// summarize — not a script to copy. A compliant non-native model
+			// (e.g. MiniMax) treated the old "[Tool results]\n…" framing as a
+			// template to echo and dumped the raw output (whole files, job
+			// metadata) straight into the user-facing answer. This neutral
+			// framing + the dedicated "tool" role below removes that cue.
+			toolResultsBody = "Tool output observed (for your reasoning only — " +
+				"summarize the outcome for the user in your own words; do not " +
+				"copy this verbatim):\n" + strings.Join(toolResults, "\n\n")
 		}
 		// Persist tool results as a "tool" turn so they count toward context
 		// usage and auto-compaction. These messages ARE sent to the model (they
-		// are appended to cleanMessages below and replayed via contextMessages,
-		// which maps role "tool" → "assistant"), so leaving them unrecorded made
-		// ContextUsage under-count and auto-compact trigger too late. Use the
-		// outer ctx (not the cancelable runCtx) so a wall-time timeout does not
-		// drop the audit/accounting record. Chat-only (recordToolTurns).
+		// are appended to cleanMessages below and replayed via contextMessages;
+		// the wire layer maps the internal "tool" role to a role the upstream
+		// API accepts), so leaving them unrecorded made ContextUsage
+		// under-count and auto-compact trigger too late. Use the outer ctx (not
+		// the cancelable runCtx) so a wall-time timeout does not drop the
+		// audit/accounting record. Chat-only (recordToolTurns).
 		if cfg.recordToolTurns && o.chat != nil && len(toolResults) > 0 {
 			_ = o.chat.AppendTurn(ctx, sessionID, "tool", toolResultsBody, estimateTextTokens(toolResultsBody))
 		}
@@ -542,9 +554,17 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 			assistantContent += note
 		}
+		// A turn carrying tool output is fed back under the dedicated "tool"
+		// role so the model can tell an observation apart from a user request
+		// (the wire layer maps it to an API-accepted role). A tool-less nudge
+		// is a genuine instruction, so it stays a "user" message.
+		continuationRole := "user"
+		if len(toolResults) > 0 {
+			continuationRole = "tool"
+		}
 		cleanMessages = append(cleanMessages,
 			bridge.Message{Role: "assistant", Content: assistantContent},
-			bridge.Message{Role: "user", Content: continuation},
+			bridge.Message{Role: continuationRole, Content: continuation},
 		)
 		// Re-extract images from the freshly appended tool-results message so a
 		// read_image tool call (which returns inline-image markdown) becomes real
@@ -665,9 +685,13 @@ func truncateForCheckpoint(text string, limit int) string {
 func extractImages(messages []bridge.Message) ([]bridge.Message, []bridge.Image) {
 	cleaned := make([]bridge.Message, 0, len(messages))
 	var images []bridge.Image
+	// The image-bearing message is the most recent fresh input to the model —
+	// either the user's latest message or a tool observation (e.g. read_image
+	// returns inline-image markdown). Both are valid vision sources; only this
+	// one message contributes real images, older ones become text placeholders.
 	lastUser := -1
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
+		if messages[i].Role == "user" || messages[i].Role == "tool" {
 			lastUser = i
 			break
 		}

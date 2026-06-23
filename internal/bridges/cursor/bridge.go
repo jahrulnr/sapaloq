@@ -248,7 +248,9 @@ func send(ctx context.Context, out chan<- bridge.StreamEvent, ev bridge.StreamEv
 
 func lastUserMessage(messages []bridge.Message) string {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
+		// A "tool" turn is fresh input to the model (a tool observation), so it
+		// counts as the latest user-side message alongside a real "user" turn.
+		if messages[i].Role == "user" || messages[i].Role == "tool" {
 			return messages[i].Content
 		}
 	}

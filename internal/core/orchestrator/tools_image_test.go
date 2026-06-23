@@ -48,6 +48,25 @@ func TestReadImageReturnsInlineMarkdown(t *testing.T) {
 	}
 }
 
+// A read_image result is fed back under the "tool" role. extractImages must
+// still treat that turn as the latest vision source — otherwise the inline
+// image would be downgraded to a text placeholder and the model would go blind
+// to it. This guards the tool-role addition against silently breaking vision.
+func TestExtractImagesTreatsToolRoleAsVisionSource(t *testing.T) {
+	got := toolReadImage(toolArgs{Path: writePNG(t, t.TempDir(), "shot.png")})
+	msgs, images := extractImages([]bridge.Message{
+		{Role: "user", Content: "look at this"},
+		{Role: "assistant", Content: "reading the image"},
+		{Role: "tool", Content: got},
+	})
+	if len(images) != 1 || images[0].MimeType != "image/png" {
+		t.Fatalf("expected 1 png vision image from tool turn, got %+v", images)
+	}
+	if strings.Contains(msgs[2].Content, "base64") {
+		t.Fatalf("tool image markdown should be replaced by a placeholder, got %q", msgs[2].Content)
+	}
+}
+
 func TestReadImageJPEGByExtension(t *testing.T) {
 	// Bytes are PNG, but the .jpg extension drives the mime mapping first.
 	dir := t.TempDir()

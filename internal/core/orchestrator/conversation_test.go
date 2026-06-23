@@ -324,6 +324,41 @@ func TestRunConversationStopsIdenticalToolLoop(t *testing.T) {
 	}
 }
 
+// TestDisabledIdenticalToolGuardLetsLoopRun proves a negative
+// MaxIdenticalToolCalls disables the identical-tool loop guard: the same
+// repeating bridge that trips the guard above now runs until the (still
+// enforced) MaxToolCalls resource cap instead. This is the "observe raw model
+// behavior" escape hatch — the loop-breaker is off, but real resource caps
+// still bound the run.
+func TestDisabledIdenticalToolGuardLetsLoopRun(t *testing.T) {
+	orch := &Orchestrator{memoryDir: t.TempDir(), vision: make(map[string]bool)}
+	if err := orch.writeTask(taskRecord{ID: "task-1", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	oc := config.DefaultOrchestratorConfig()
+	oc.Continuation.MaxIdenticalToolCalls = -1 // explicitly disabled
+	oc.Continuation.MaxToolCalls = 3           // resource cap still bounds the run
+	oc = oc.WithDefaults()                     // must NOT resurrect the -1
+	if oc.Continuation.MaxIdenticalToolCalls != -1 {
+		t.Fatalf("WithDefaults resurrected disabled guard: %d", oc.Continuation.MaxIdenticalToolCalls)
+	}
+	snap := providerSnapshot{
+		cfg:   config.Config{Orchestrator: oc},
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    &repeatingToolBridge{},
+	}
+	out := make(chan bridge.StreamEvent, 64)
+	go func() {
+		for range out {
+		}
+	}()
+	_, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "loop"}}, nil)
+	close(out)
+	if err == nil || !strings.Contains(err.Error(), "tool-call budget") {
+		t.Fatalf("expected tool-call budget stop (guard disabled), got err = %v", err)
+	}
+}
+
 type repeatingToolBridge struct{}
 
 func (b *repeatingToolBridge) ID() string              { return "repeat" }

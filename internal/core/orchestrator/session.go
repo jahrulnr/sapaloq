@@ -99,9 +99,11 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 		if role == "thinking" {
 			continue
 		}
-		if role == "tool" || role == "error" {
-			role = "assistant"
-		}
+		// "tool"/"error" turns keep their semantic role here; the wire layer
+		// (wireRole) maps them to an API-accepted role at request-build time.
+		// Centralizing the mapping there keeps live and replayed turns
+		// consistent and lets a tool observation stay distinguishable from a
+		// user request for as long as possible.
 		messages = append(messages, bridge.Message{Role: role, Content: turn.Content})
 	}
 	if len(turns) == 0 || turns[len(turns)-1].Content != latestUserMessage {

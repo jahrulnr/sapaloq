@@ -207,19 +207,39 @@ func claudeThinkingFromEffort(effort string) *claudeThinking {
 	}
 }
 
+// wireRole maps an internal bridge role to a role the upstream chat API
+// accepts. The orchestrator uses a dedicated "tool" role for tool observations
+// (and "error" for failures) so the model can tell them apart from a user
+// request. The OpenAI/Claude "tool" role, however, is reserved for native
+// function-calling and requires a tool_call_id tied to a preceding
+// assistant.tool_calls — which the non-native (inline) path does not have, so
+// sending it raw is rejected. We therefore surface these as "user" input: a
+// tool observation is, semantically, fresh input for the model to reason over.
+func wireRole(role string) string {
+	switch role {
+	case "tool", "error":
+		return "user"
+	default:
+		return role
+	}
+}
+
 // buildOpenAIMessages converts bridge.Message into the OpenAI / Kimi request
 // shape, attaching any inline images as content parts.
 func buildOpenAIMessages(messages []bridge.Message, images []bridge.Image) []openAIMessage {
 	out := make([]openAIMessage, 0, len(messages))
 	for i, msg := range messages {
-		parts := openAIPartsForMessage(msg, shouldAttachOpenAIImages(i, len(messages), msg.Role, images), images)
-		out = append(out, openAIMessage{Role: msg.Role, Content: parts})
+		wired := wireRole(msg.Role)
+		parts := openAIPartsForMessage(msg, shouldAttachOpenAIImages(i, len(messages), wired, images), images)
+		out = append(out, openAIMessage{Role: wired, Content: parts})
 	}
 	return out
 }
 
 // shouldAttachOpenAIImages returns true when inline images should be attached
-// to this message — only the final user message gets them.
+// to this message — only the final user message gets them. `role` is the wire
+// role (post wireRole), so a tool observation mapped to "user" still receives
+// its inline image (the read_image vision path).
 func shouldAttachOpenAIImages(idx, total int, role string, images []bridge.Image) bool {
 	return idx == total-1 && role == "user" && len(images) > 0
 }
@@ -265,13 +285,15 @@ func openAIDataURI(img bridge.Image) string {
 func buildClaudeMessages(messages []bridge.Message, images []bridge.Image) []claudeMessage {
 	out := make([]claudeMessage, 0, len(messages))
 	for i, msg := range messages {
-		parts := claudePartsForMessage(msg, shouldAttachClaudeImages(i, len(messages), msg.Role, images), images)
-		out = append(out, claudeMessage{Role: msg.Role, Content: parts})
+		wired := wireRole(msg.Role)
+		parts := claudePartsForMessage(msg, shouldAttachClaudeImages(i, len(messages), wired, images), images)
+		out = append(out, claudeMessage{Role: wired, Content: parts})
 	}
 	return out
 }
 
-// shouldAttachClaudeImages mirrors shouldAttachOpenAIImages for the Claude path.
+// shouldAttachClaudeImages mirrors shouldAttachOpenAIImages for the Claude path
+// (operates on the wire role, post wireRole).
 func shouldAttachClaudeImages(idx, total int, role string, images []bridge.Image) bool {
 	return idx == total-1 && role == "user" && len(images) > 0
 }

@@ -109,6 +109,55 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   note (`calledToolsNote`) is untouched — only the model's *echo* is stripped.
   `called_tools_filter.go` (+ `_test.go`), `conversation.go`.
 
+## Implemented this session (2026-06-23) — dedicated internal `tool` message role (fix `[job job-` echo)
+
+- **Symptom.** A compliant non-native model (MiniMax) re-ran a sub-agent task
+  itself, called `create_file`, succeeded — then **echoed the entire raw tool
+  result verbatim** into the answer channel (~11.5k chars: whole HTML file dump
+  + job metadata), instead of summarizing. Seen as the `[job job-…]` / `[Tool
+  results]` block bleeding into the response and progress `.jsonl`.
+- **Root cause.** Tool output was fed back to the model under role **`user`**,
+  framed `"[Tool results]\n[job <id>] <raw>"`. The model couldn't tell a *tool
+  observation* apart from a *user request to forward*, and the template-looking
+  framing invited a verbatim copy.
+- **Fix — semantic `tool` role + wire-safe mapping.** The live continuation that
+  carries tool output is now appended under a dedicated internal **`tool`** role
+  (a tool-less nudge stays `user`). The framing is neutral and anti-echo
+  (`"Tool output observed (for your reasoning only — summarize … do not copy
+  verbatim)"`), and the meaningless `[job <id>]` prefix is dropped. Because
+  OpenAI/Claude reserve role `tool` for native function-calling (needs
+  `tool_call_id`), the **wire layer** collapses `tool`/`error` → `user` via a
+  single `wireRole` helper used by both `buildOpenAIMessages` and
+  `buildClaudeMessages` — one source of truth for live + replay (the old forced
+  `tool→assistant` map in `session.go` replay was removed). `extractImages` now
+  also treats a `tool` turn as a valid vision source so `read_image` markdown
+  still becomes real vision input. Cursor bridge already maps non-assistant
+  roles to user; `lastUserMessage` updated to count a `tool` turn too.
+  `tool_batch.go`, `conversation.go`, `bridges/provider/types.go`,
+  `orchestrator/session.go`, `bridges/cursor/bridge.go` (+ `wire_role_test.go`,
+  `tools_image_test.go`). `go build/vet/test ./...` green.
+
+## Implemented this session (2026-06-23) — loop guards are config-disablable (`<0` = off)
+
+- **Context.** A `task-runner` sub-agent (`orch-task-1782191154831828869.jsonl`)
+  narrated *"saya akan membuat file secara paralel"* ~80× **without ever
+  emitting another tool call**, then died on `loop detected: no observable
+  progress`. This only happens in **agent** mode, not chat, because
+  `finishOnNoTool = record.Role != "task-runner"` (`subagent.go`) — task-runner
+  is the only role whose tool-less turn does NOT end the run, so it loops until
+  a guard fires. The exact-hash no-progress guard barely caught it because the
+  model varied its wording every turn (hash differs → counter resets).
+- **Change (this step).** Make the two loop-breakers **disablable via config**
+  so a model's raw behavior can be observed without the breaker cutting in:
+  `continuation.maxNoProgressTurns` and `continuation.maxIdenticalToolCalls`
+  now treat **any value `< 0` as "guard off"** in `conversation.go` (both
+  checks are now `> 0 && …`). `WithDefaults` only backfills the default when the
+  value is **exactly `0`** (unset), so a negative survives instead of being
+  resurrected to `5` (`internal/config/load.go`). Genuine resource caps
+  (`maxToolCalls`, idle wall-time) stay enforced. `conversation.go`,
+  `config/load.go` (+ `conversation_test.go`
+  `TestDisabledIdenticalToolGuardLetsLoopRun`). `go build/vet/test ./...` green.
+
 ## Implemented this session (2026-06-23) — docs: context window vs output cap
 
 - **Documented the two token knobs in `docs/PROVIDER-BRIDGE.md`.** Expanded the
