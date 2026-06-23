@@ -24,6 +24,47 @@ func StripReasoningFromText(text string) (thinking, cleaned string) {
 	return post, pre + after
 }
 
+// templateLeakTokens are chat-template control markers some open-weight models
+// (notably MiniMax-M3) leak verbatim into the visible content channel when they
+// are confused about whether it is their turn to speak or to call a tool. They
+// are never part of a real answer and they corrupt inline tool-call
+// reassembly (a stray `[/ask]` between two `{...}` objects breaks the scan), so
+// the bridge strips them from the visible text before both emit and leak-scan.
+var templateLeakTokens = []string{
+	"[/assistant]", "[assistant]",
+	"[/tool]", "[tool]",
+	"[/tool_call]", "[tool_call]",
+	"[/ask]", "[ask]",
+	"[/plan]", "[plan]",
+	"[/agent]", "[agent]",
+	"[/system]", "[system]",
+	"[/user]", "[user]",
+	"<|im_start|>", "<|im_end|>",
+	"<|assistant|>", "<|user|>", "<|system|>",
+	"<|tool|>", "<|tool_call|>",
+}
+
+// StripTemplateLeakTokens removes chat-template control markers (see
+// templateLeakTokens) from a visible-content fragment, returning the cleaned
+// text. It is a no-op for text that contains none of them (the common case), so
+// it is cheap to call on every delta. Stripping happens before leak-scanning so
+// a leaked `[/ask]` wedged between two inline tool-call objects no longer
+// derails reassembly, and before emit so the marker never reaches the user.
+func StripTemplateLeakTokens(text string) string {
+	if text == "" {
+		return text
+	}
+	if !strings.ContainsAny(text, "[<") {
+		return text
+	}
+	for _, tok := range templateLeakTokens {
+		if strings.Contains(text, tok) {
+			text = strings.ReplaceAll(text, tok, "")
+		}
+	}
+	return text
+}
+
 // HasReasoningLeak returns true when `text` contains markers that suggest the
 // model emitted thinking where it shouldn't have. The bridge uses this to
 // surface EventToolLeak rather than silently swallowing the content.
