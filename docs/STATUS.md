@@ -157,6 +157,19 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   (`maxToolCalls`, idle wall-time) stay enforced. `conversation.go`,
   `config/load.go` (+ `conversation_test.go`
   `TestDisabledIdenticalToolGuardLetsLoopRun`). `go build/vet/test ./...` green.
+- **Also (EXPERIMENTAL) `continuation.disableFinishOnNoTool`.** The deeper
+  "nanggung / response kepotong" symptom (`orch-chat-1782191032536787032.jsonl`):
+  the orchestrator took over a failed task, ran one `exec`, announced *"Aku buat
+  semua file-nya sekarang:"* — then the run **ended before any `create_file`**.
+  Cause: chat/Ask uses `finishOnNoTool=true`, so a tool-less turn ends the run;
+  MiniMax's "announce on this turn, act on the next" shape gets cut off. The new
+  flag relaxes the gate **only after at least one tool has been used this run**
+  (`toolCalls > 0`), so a mid-work announce-then-act pause keeps going while an
+  ordinary zero-tool chat reply still finishes in one turn (no chat hang). An
+  explicit stop/terminal tool always ends the run; resource caps still bound it.
+  `conversation.go`, `config/load.go` (+ `conversation_test.go`
+  `TestDisableFinishOnNoToolRelaxesGateMidWork` /
+  `TestDisableFinishOnNoToolStillFinishesPureTextChat`). Default off.
 
 ## Implemented this session (2026-06-23) — docs: context window vs output cap
 
