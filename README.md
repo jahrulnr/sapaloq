@@ -1,10 +1,10 @@
 # SapaLOQ
 
-Portable desktop companion — isolated from `cursor-agent`. **Go modular drivers** (platform + **LLM bridge**) + **sub-agent nodes** (local or remote).
+Portable desktop companion. **Go modular drivers** (platform + **LLM bridge**) + **sub-agent nodes** (local or remote).
 
 **Start here:** [docs/BLUEPRINT.md](./docs/BLUEPRINT.md) — unified development proposal.
 
-**Runtime:** one binary `sapaloq-core` — platform driver → **cursor-bridge** brain → IPC socket → Wails widget.
+**Runtime:** one binary `sapaloq-core` — platform driver → **provider-bridge** brain → IPC socket → Wails widget.
 
 **UI (M5):** Wails v2 FAB+popup — [docs/UI-DECISION.md](./docs/UI-DECISION.md) · [cmd/sapaloq-widget/](./cmd/sapaloq-widget/)
 
@@ -100,7 +100,7 @@ make test
 sudo apt install libwebkit2gtk-4.1-dev build-essential
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 make widget-install
-make run                          # autoload token from Cursor IDE state.vscdb or .env
+make run                          # autoload token from .env
 ```
 
 One-shot chat from CLI:
@@ -120,14 +120,12 @@ Details: [docs/RUNTIME.md](./docs/RUNTIME.md) · widget spike: [docs/development
 | `chat [message]` | Stream one chat turn to stdout (`[thinking]`, `[response]`, `[tool]`) |
 | `--debug`, `-d` | Audit logs on stderr (credentials, bridge, wire summary) |
 | `--verbose`, `-v` | Debug + per-frame wire detail |
-| `doctor` | Validate config paths, writable socket dir, cursor autoload |
+| `doctor` | Validate config paths, writable socket dir |
 | `vault list [--limit N] [--json]` | Recent undeclared/unknown tool calls |
 | `vault stats [--json]` | Vault summary by reason and top tools |
 | `vault path` | Print vault log path |
 | `service install\|uninstall\|start\|stop\|status` | Manage the systemd `--user` background service (see [Service](#service-systemd---user)) |
 | `help` | Usage |
-
-Env: `SAPALOQ_CONFIG`, `SAPALOQ_CURSOR_TOKEN`, `CURSOR_ACCESS_TOKEN`, `CURSOR_MACHINE_ID`. Credentials autoload from your shell rc (`~/.bashrc` then `~/.zshrc`, Linux), then `.env`, then Cursor IDE `state.vscdb` (see [docs/BRIDGE.md](./docs/BRIDGE.md#credentials)).
 
 Slash commands in chat: **`/settings` only** (MVP). Example:
 
@@ -159,8 +157,7 @@ sapaloq/
 ├── schema/               # config + os.json JSON Schema
 ├── config/               # example config.json
 ├── examples/nodes/       # node comm-spec templates
-├── migrations/           # SQLite migrations
-└── embed/                # embedded cursor-bridge schema
+└── migrations/           # SQLite migrations
 ```
 
 Runtime data (not in repo): `~/.config/sapaloq/`
@@ -171,16 +168,11 @@ Runtime data (not in repo): `~/.config/sapaloq/`
 |------|---------|
 | **[docs/BLUEPRINT.md](./docs/BLUEPRINT.md)** | Unified development book — proposal + roadmap |
 | [docs/RUNTIME.md](./docs/RUNTIME.md) | Single binary, CLI, doctor, vault paths |
-| [docs/BRIDGE.md](./docs/BRIDGE.md) | LLM bridge — cursor-bridge, vault, parsers |
+| [docs/BRIDGE.md](./docs/BRIDGE.md) | LLM bridge |
 | [docs/ORCHESTRATOR.md](./docs/ORCHESTRATOR.md) | Spawn, control, `/settings` |
-| [docs/RE-CURSOR-THINKING-TOOLS.md](./docs/RE-CURSOR-THINKING-TOOLS.md) | Cursor thinking/tools wire truth |
 | [docs/DRIVER.md](./docs/DRIVER.md) | Platform driver registry, os.json |
 | [docs/VISION.md](./docs/VISION.md) | Vision & mission |
 | [schema/config.schema.json](./schema/config.schema.json) | `config.json` contract |
-
-## Status
-
-M0 ✅ docs · M5a ✅ widget spike · **M5b/M8/M9 🚧** cursor-bridge stream + vault + `/settings` · M1 next: `companion.db` boot indexer
 
 ## License
 
