@@ -126,6 +126,15 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	transportRetries := 0
 	const maxTransportRetries = 4
 
+	// Bounds how many consecutive turns may emit tool calls that produce no
+	// usable result (a non-native model leaking malformed inline tool calls).
+	// Instead of mistaking such a turn for a clean tool-less finish and ending
+	// the run prematurely, we nudge the model to retry one call at a time; this
+	// caps that nudge so a model that can never produce a valid call still
+	// finishes instead of looping forever.
+	malformedToolTurns := 0
+	const maxMalformedToolTurns = 3
+
 	// maxInferenceTurns: a positive value caps the loop; a NEGATIVE value means
 	// UNLIMITED — the loop is then bounded only by the real anomaly guards
 	// (wall-time, no-progress, identical-tool, tool-call budgets). cfg overrides
@@ -209,6 +218,12 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		retryCompacted := false
 		retryTransport := false
 		lastErr := ""
+		// Count tool calls the model emitted this turn (including inline ones a
+		// non-native model leaks into its content). Used below to tell a turn
+		// that genuinely produced no tool from one where the model TRIED to
+		// call tools but they failed to parse/execute (the latter must not be
+		// mistaken for a clean tool-less finish).
+		toolCallsThisTurn := 0
 	streamLoop:
 		for {
 			var ev bridge.StreamEvent
@@ -251,6 +266,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				if ev.ToolCall != nil {
 					out.beat("tool: " + ev.ToolCall.Name)
 					toolCalls++
+					toolCallsThisTurn++
 					if toolCalls > budget.MaxToolCalls {
 						cancelAttempt()
 						return all, fmt.Errorf("tool-call budget exhausted after %d calls", budget.MaxToolCalls)
@@ -417,6 +433,34 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		if len(images) > 0 {
 			o.setVisionSupport(snap.entry.Key, snap.entry.Model, true)
 			o.persistVisionSupport(snap.entry.Key, snap.entry.Model, true)
+		}
+		// Malformed-tool-call recovery (non-native function calling). A model
+		// that emits tool calls inline in its content (source "openai_inline",
+		// e.g. MiniMax-M3) can produce a turn where tool calls were EMITTED
+		// (toolCallsThisTurn > 0) but none parsed/executed into a result
+		// (toolResults empty) — typically a multi-call batch whose JSON got
+		// mangled by leaked template tokens. Without this guard that turn looks
+		// identical to a clean tool-less finish and the run would end mid-task
+		// with no answer. Instead, nudge the model to retry one call at a time
+		// and continue. Bounded by maxMalformedToolTurns so a model that can
+		// never emit a valid call still finishes rather than looping forever.
+		if !stop && toolCallsThisTurn > 0 && len(toolResults) == 0 && malformedToolTurns < maxMalformedToolTurns {
+			malformedToolTurns++
+			nudge := "Your previous tool call(s) could not be parsed or executed — likely " +
+				"because they were emitted as inline text or batched together with stray " +
+				"markers. Please issue ONE tool call at a time using the proper tool-call " +
+				"format, or, if no tool is needed, just answer in plain text."
+			cleanMessages = append(cleanMessages,
+				bridge.Message{Role: "assistant", Content: response.String()},
+				bridge.Message{Role: "user", Content: nudge},
+			)
+			out.emit(runCtx, statusEvent(sessionID, "retrying malformed tool call"))
+			continue
+		}
+		// A turn that produced a usable tool result clears the malformed guard
+		// so an occasional bad batch during a long run doesn't accumulate.
+		if len(toolResults) > 0 {
+			malformedToolTurns = 0
 		}
 		// An explicit stop (sapaloq_stop / terminal tool) always ends the run.
 		// A tool-less turn ends it only for roles that finish naturally (chat,

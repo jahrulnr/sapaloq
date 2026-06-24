@@ -47,7 +47,24 @@ func (s *Store) AddFeedback(ctx context.Context, sessionID string, turnID *int64
 			return err
 		}
 	}
+
+	// Queue a learning event so the async drain (memory-janitor) can act on the
+	// reward signal later — e.g. tune a prefetch rule's success_rate or build an
+	// overlay. Best-effort: a queue failure must not fail the feedback write the
+	// user already saw acknowledged.
+	payload := `{"session_id":` + jsonString(sessionID) +
+		`,"signal":` + jsonString(signal) +
+		`,"correction":` + jsonString(correction) + `}`
+	_, _ = s.EnqueueLearning(ctx, "feedback", payload)
 	return nil
+}
+
+// jsonString renders a Go string as a minimal JSON string literal for the small
+// hand-built payloads above (avoids pulling encoding/json into this file for a
+// few fields).
+func jsonString(s string) string {
+	r := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\n", "\\n", "\r", "\\r", "\t", "\\t")
+	return "\"" + r.Replace(s) + "\""
 }
 
 // RecentDoNotRepeat returns the most recent do_not_repeat facts, used to inject

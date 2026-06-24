@@ -2,7 +2,7 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop — bukan repo coding.
-> Last updated: 2026-06-22 (cancellation-safe streams and durable actor steering)
+> Last updated: 2026-06-23 (index-first prefetch + typed facts + learning queue landed; see implementation-order status table)
 
 Related: [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [VISION.md](./VISION.md) · [config.schema.json](../schema/config.schema.json)
 
@@ -538,16 +538,19 @@ On compaction / session resume:
 
 ## Implementation order
 
-| Step | Deliverable |
-|------|-------------|
-| 1 | `companion.db` schema + boot indexer |
-| 2 | intent-router + prefetch_rules seed |
-| 3 | dynamic prompt assembler + slices |
-| 4 | context ingress hook in orchestrator |
-| 5 | anti-deep-check enforcement in context-scaler |
-| 6 | learning_queue + memory-janitor drain |
-| 7 | prefetch telemetry + auto rule tuning |
-| 8 | Skills directory + index sync |
+Status legend: ✅ implemented · 🟡 partial · ❌ not yet. Verify against
+`docs/STATUS.md` and the cited Go files.
+
+| Step | Deliverable | Status |
+|------|-------------|--------|
+| 1 | `companion.db` schema + boot indexer | 🟡 schema done (all 9 tables incl. typed `facts`, `prefetch_rules`, `prompt_slices`, `skills_index`, `learning_queue`, `hot_cache`, `prefetch_log`); boot file→index sync (slices/skills) not yet |
+| 2 | intent-router + prefetch_rules seed | 🟡 no-LLM heuristic router live (`orchestrator/intent.go`); rule lookup live; no seeded rules / no router sub-agent |
+| 3 | dynamic prompt assembler + slices | ❌ `prompt_slices` table + DAO exist; assembler still uses the static role prompt + bounded blocks |
+| 4 | context ingress hook in orchestrator | ✅ prefetch runs each Ask turn (`session.go` → `prefetchBlock` → `orchestrator/prefetch.go`), assembled from the index not the transcript |
+| 5 | anti-deep-check enforcement in context-scaler | 🟡 high-confidence packet injects a no-explore directive; hard tool-loop enforcement/escalation budget not yet |
+| 6 | learning_queue + memory-janitor drain | 🟡 queue + in-proc drain live (`orchestrator/learning.go`); promotes `promote` events to facts; no dedicated sub-agent |
+| 7 | prefetch telemetry + auto rule tuning | 🟡 `prefetch_log` written each ingress + `prefetch_rules` hit/success counters; auto bandit tuning not yet |
+| 8 | Skills directory + index sync | 🟡 skills still indexed into `facts(kind=skill)` (`indexSkills`); `skills_index` table/DAO exist but boot sync into it not yet wired |
 
 ---
 

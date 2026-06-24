@@ -153,6 +153,9 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	// Best-effort: index skill bodies into facts (kind="skill") so the
 	// secondary FTS match in skillsBlock can find them. Never fatal.
 	o.indexSkills(context.Background())
+	// Best-effort: drain any learning events left pending from a previous run so
+	// promoted facts land in memory before the first turn. Never fatal.
+	_, _ = o.drainLearningQueue(context.Background(), 100)
 	// Ensure the local-default execution node exists so spawns always have a
 	// routable in-proc target. Best-effort.
 	o.bootstrapLocalDefaultNode(context.Background())

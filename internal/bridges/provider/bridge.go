@@ -194,6 +194,14 @@ func (b *Bridge) handleWireEvent(ctx context.Context, mu *sync.Mutex, out chan<-
 	// Visible content may contain inline <think> tags; classify before emit.
 	if ev.Text != "" {
 		for _, seg := range splitter.push(ev.Text) {
+			// Strip leaked chat-template control markers (e.g. [/ask],
+			// <|im_end|>) from visible content before both emit and
+			// leak-scan: they corrupt inline tool-call reassembly and must
+			// never reach the user. Thinking segments are passed through
+			// untouched (they are not user-facing and not leak-scanned).
+			if !seg.thinking {
+				seg.text = leakpkg.StripTemplateLeakTokens(seg.text)
+			}
 			if !b.emitSegment(ctx, mu, out, sessionID, seg) {
 				return false
 			}

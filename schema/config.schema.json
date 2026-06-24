@@ -519,6 +519,24 @@
               "description": "Mirror hot_cache table in companion.db for restart warm-up"
             }
           }
+        },
+        "prefetchEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Inject the index-first prefetch block (facts from companion.db) into the Ask prompt each turn. An absent memory block is treated as enabled."
+        },
+        "prefetchConfidenceThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.7,
+          "description": "Confidence at/above which the prefetch block adds an anti-deep-check directive (do not explore the filesystem first)."
+        },
+        "hotCacheTtlSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 300,
+          "description": "How long an assembled prefetch packet is cached so an immediate repeat is served fast. 0 -> 300."
         }
       }
     },

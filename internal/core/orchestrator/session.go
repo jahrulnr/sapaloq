@@ -81,6 +81,14 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 	if block := o.negativeGuidanceBlock(ctx); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
+	// Index-first prefetch (Context-SOP Fase 1): assemble a bounded memory
+	// packet from companion.db and inject it as a system block so the model has
+	// the right facts before acting — and, when confidence is high, a directive
+	// not to explore the filesystem first. Best-effort: a low-confidence/empty
+	// packet renders "" and is skipped.
+	if block := o.prefetchBlock(ctx, sessionID, latestUserMessage); block != "" {
+		messages = append(messages, bridge.Message{Role: "system", Content: block})
+	}
 	if block := o.skillsBlock(ctx, latestUserMessage); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
@@ -122,6 +130,36 @@ func (o *Orchestrator) negativeGuidanceBlock(ctx context.Context) string {
 		b.WriteString(f.Content)
 	}
 	return b.String()
+}
+
+// prefetchBlock runs the index-first prefetch pipeline for a user message and
+// renders its bounded system block. It logs one prefetch telemetry row per call
+// (best-effort) so rule tuning has data. Returns "" when memory prefetch is
+// disabled, the orchestrator has no store, or the packet has nothing to inject.
+//
+// This is the anti-forget anchor: the packet is assembled from companion.db,
+// never the transcript, so it is identical before and after a compaction.
+func (o *Orchestrator) prefetchBlock(ctx context.Context, sessionID, userMsg string) string {
+	if o == nil || o.chat == nil {
+		return ""
+	}
+	if !o.cfg.Memory.WithDefaults().PrefetchEnabled {
+		return ""
+	}
+	start := time.Now()
+	packet := o.prefetchContext(ctx, userMsg)
+	block := packet.render()
+	// Telemetry: deep_check_used is the inverse of the anti-deep-check decision
+	// at assembly time (the actual tool loop may still escalate; that refinement
+	// is left to the learning layer).
+	_ = o.chat.LogPrefetch(ctx, chatstore.PrefetchTelemetry{
+		SessionID:     sessionID,
+		Intent:        packet.Intent,
+		Confidence:    packet.Confidence,
+		DeepCheckUsed: !packet.AntiDeepCheck,
+		LatencyMS:     time.Since(start).Milliseconds(),
+	})
+	return block
 }
 
 // skillsBlock builds a short system block listing the skills relevant to the
@@ -297,7 +335,14 @@ func (o *Orchestrator) SubmitFeedback(ctx context.Context, sessionID string, tur
 	if turnID > 0 {
 		turnPtr = &turnID
 	}
-	return o.chat.AddFeedback(ctx, sessionID, turnPtr, signal, correction)
+	if err := o.chat.AddFeedback(ctx, sessionID, turnPtr, signal, correction); err != nil {
+		return err
+	}
+	// Best-effort: drain the learning event AddFeedback just queued so any
+	// promoted memory is available immediately. A drain error never masks the
+	// successful feedback write.
+	_, _ = o.drainLearningQueue(ctx, 20)
+	return nil
 }
 
 func (o *Orchestrator) ContextUsage(ctx context.Context, sessionID string) (chatstore.Usage, error) {

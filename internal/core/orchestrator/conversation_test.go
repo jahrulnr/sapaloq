@@ -689,3 +689,118 @@ func TestWallTimeCancelsStalledRun(t *testing.T) {
 	}
 	close(out)
 }
+
+// malformedToolBridge models a non-native model (e.g. MiniMax-M3) that emits a
+// tool call which produces no usable result (an unhandled tool name → empty
+// toolResults) on its first turn, then answers in plain text once nudged.
+// Without the malformed-tool-call recovery this would `done` after turn 1 with
+// no answer; with it the run nudges and continues to the real answer.
+type malformedToolBridge struct {
+	calls    int
+	requests []bridge.Request
+}
+
+func (b *malformedToolBridge) ID() string              { return "malformed-tool" }
+func (b *malformedToolBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *malformedToolBridge) Complete(_ context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.requests = append(b.requests, req)
+	b.calls++
+	out := make(chan bridge.StreamEvent, 4)
+	call := b.calls
+	go func() {
+		defer close(out)
+		if call == 1 {
+			// An unknown tool name is not handled by handleAskTool/runSharedTool,
+			// so it yields no toolResult — exactly the "tool emitted but nothing
+			// executed" shape a mangled inline batch produces.
+			tool := parse.ToolCall{Name: "definitely_not_a_real_tool", Arguments: []byte(`{}`), Source: "openai_inline"}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
+		} else {
+			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "here is the answer"}
+		}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+func TestRunConversationRecoversFromMalformedToolCall(t *testing.T) {
+	fake := &malformedToolBridge{}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
+	out := make(chan bridge.StreamEvent, 32)
+	go func() {
+		for range out {
+		}
+	}()
+	result, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
+	close(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "here is the answer" {
+		t.Fatalf("result = %q, want the recovered answer", result.String())
+	}
+	if fake.calls != 2 {
+		t.Fatalf("calls = %d, want a nudge + retry (2)", fake.calls)
+	}
+	// The nudge must have been appended as a user message before the retry.
+	last := fake.requests[1].Messages[len(fake.requests[1].Messages)-1].Content
+	if !strings.Contains(last, "ONE tool call at a time") {
+		t.Fatalf("retry prompt missing the one-call-at-a-time nudge: %q", last)
+	}
+}
+
+// alwaysMalformedToolBridge never produces a usable tool result; it must still
+// terminate (bounded by maxMalformedToolTurns) instead of looping forever.
+type alwaysMalformedToolBridge struct {
+	calls int
+}
+
+func (b *alwaysMalformedToolBridge) ID() string              { return "always-malformed" }
+func (b *alwaysMalformedToolBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *alwaysMalformedToolBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	out := make(chan bridge.StreamEvent, 4)
+	go func() {
+		defer close(out)
+		tool := parse.ToolCall{Name: "definitely_not_a_real_tool", Arguments: []byte(`{}`), Source: "openai_inline"}
+		out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+func TestRunConversationMalformedToolCallIsBounded(t *testing.T) {
+	fake := &alwaysMalformedToolBridge{}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
+	out := make(chan bridge.StreamEvent, 64)
+	go func() {
+		for range out {
+		}
+	}()
+	done := make(chan struct{})
+	go func() {
+		_, _ = orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("malformed-tool recovery did not terminate")
+	}
+	close(out)
+	// 1 initial turn + up to maxMalformedToolTurns nudged retries, then it
+	// finishes (a clean tool-less done once the guard is exhausted).
+	if fake.calls < 2 || fake.calls > 6 {
+		t.Fatalf("calls = %d, want bounded retries", fake.calls)
+	}
+}

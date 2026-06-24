@@ -250,6 +250,11 @@
     "maxLoadPerTurn": 2,
     "maxBodyLines": 40
   },
+  "memory": {
+    "prefetchEnabled": true,
+    "prefetchConfidenceThreshold": 0.7,
+    "hotCacheTtlSeconds": 300
+  },
   "prompts": {
     "enabled": true,
     "dir": "~/SapaLOQ/prompts"
