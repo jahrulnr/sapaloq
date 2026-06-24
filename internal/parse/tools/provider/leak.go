@@ -42,6 +42,13 @@ var templateLeakTokens = []string{
 	"<|im_start|>", "<|im_end|>",
 	"<|assistant|>", "<|user|>", "<|system|>",
 	"<|tool|>", "<|tool_call|>",
+	// Anthropic-style tool-use wrapper that some OpenAI-compatible proxies leak
+	// around <invoke> blocks. The wrapper itself carries no arguments, so it is
+	// safe to strip from visible text. NOTE: we deliberately do NOT list
+	// <invoke>/<parameter>/</invoke> here - those ARE the tool call and must
+	// survive long enough for scanXMLInvokeFrom to reassemble them; stripping
+	// would happen before the leak scan and destroy the call.
+	"<function_calls>", "</function_calls>",
 }
 
 // StripTemplateLeakTokens removes chat-template control markers (see
@@ -108,6 +115,43 @@ func ParseToolCallLeak(text string, known func(string) bool) (parse.ToolCall, bo
 // buffer has been fully scanned for *complete* objects (so the caller can keep
 // the unscanned tail for the next delta).
 func ParseToolCallLeakFrom(text string, from int, known func(string) bool) (parse.ToolCall, int, bool) {
+	if from < 0 {
+		from = 0
+	}
+	// Two leak shapes are possible in the same buffer: the JSON form this
+	// scanner originally handled, and the Anthropic-style <invoke> XML that
+	// leaks when an OpenAI-compatible proxy fronting Claude fails to translate
+	// tool_use blocks. Run both and return whichever COMPLETES earliest; on a
+	// tie of "nothing complete yet" we report the smaller pending frontier so a
+	// partial block of either shape is retained for the next delta.
+	jsonTC, jsonNext, jsonOK := scanJSONLeakFrom(text, from, known)
+	xmlTC, xmlNext, xmlOK := scanXMLInvokeFrom(text, from, known)
+	switch {
+	case jsonOK && xmlOK:
+		// Both completed: emit the one that ends earlier in the buffer so the
+		// caller advances past it and re-scans for the other on the next loop.
+		if xmlNext < jsonNext {
+			return xmlTC, xmlNext, true
+		}
+		return jsonTC, jsonNext, true
+	case jsonOK:
+		return jsonTC, jsonNext, true
+	case xmlOK:
+		return xmlTC, xmlNext, true
+	default:
+		// Neither completed. Keep the smaller frontier so an in-flight partial
+		// of either shape survives into the next feed.
+		if xmlNext < jsonNext {
+			return parse.ToolCall{}, xmlNext, false
+		}
+		return parse.ToolCall{}, jsonNext, false
+	}
+}
+
+// scanJSONLeakFrom is the original JSON/labeled leak scanner, unchanged in
+// behaviour. It is split out so ParseToolCallLeakFrom can run it alongside the
+// XML scanner and merge their results.
+func scanJSONLeakFrom(text string, from int, known func(string) bool) (parse.ToolCall, int, bool) {
 	if from < 0 {
 		from = 0
 	}

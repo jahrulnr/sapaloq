@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+// wantDefaultSkillCount is the number of skill folders shipped under
+// defaults/. Bump it whenever a default skill is added or removed.
+const wantDefaultSkillCount = 3
+
 // TestSeedMaterializesDefaults proves the embedded defaults are written to disk
 // with their folder structure preserved, and that a freshly seeded dir loads as
 // the two default skills.
@@ -15,10 +19,11 @@ func TestSeedMaterializesDefaults(t *testing.T) {
 		t.Fatalf("Seed: %v", err)
 	}
 
-	// SKILL.md for both defaults must exist.
+	// SKILL.md for every default must exist.
 	for _, rel := range []string{
 		"frontend-design/SKILL.md",
 		"skill-creator/SKILL.md",
+		"code-styleguides/SKILL.md",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected seeded file %s: %v", rel, err)
@@ -36,20 +41,22 @@ func TestSeedMaterializesDefaults(t *testing.T) {
 		t.Fatalf("manifest not created: %v", err)
 	}
 
-	// And the seeded dir loads as exactly the two default skills.
+	// And the seeded dir loads with all default skills present.
 	got, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load after seed: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("want 2 seeded skills, got %d (%+v)", len(got), ids(got))
+	if len(got) != wantDefaultSkillCount {
+		t.Fatalf("want %d seeded skills, got %d (%+v)", wantDefaultSkillCount, len(got), ids(got))
 	}
 	byID := map[string]bool{}
 	for _, s := range got {
 		byID[s.ID] = true
 	}
-	if !byID["frontend-design"] || !byID["skill-creator"] {
-		t.Fatalf("missing expected default ids: %v", ids(got))
+	for _, want := range []string{"frontend-design", "skill-creator", "code-styleguides"} {
+		if !byID[want] {
+			t.Fatalf("missing expected default id %q: %v", want, ids(got))
+		}
 	}
 }
 
@@ -64,8 +71,8 @@ func TestSeedIsIdempotent(t *testing.T) {
 		t.Fatalf("Seed #2: %v", err)
 	}
 	got, _ := Load(dir)
-	if len(got) != 2 {
-		t.Fatalf("idempotent seed should keep 2 skills, got %d", len(got))
+	if len(got) != wantDefaultSkillCount {
+		t.Fatalf("idempotent seed should keep %d skills, got %d", wantDefaultSkillCount, len(got))
 	}
 }
 
