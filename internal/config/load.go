@@ -614,10 +614,13 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 	if c.Continuation.MaxWallTimeMinutes <= 0 {
 		c.Continuation.MaxWallTimeMinutes = defaults.Continuation.MaxWallTimeMinutes
 	}
-	if c.Continuation.MaxNoProgressTurns <= 0 {
+	// A negative value is an EXPLICIT "disable this loop guard" (used to
+	// observe a model's raw behavior). Only an unset/zero value falls back to
+	// the default; a negative survives and turns the guard off in the loop.
+	if c.Continuation.MaxNoProgressTurns == 0 {
 		c.Continuation.MaxNoProgressTurns = defaults.Continuation.MaxNoProgressTurns
 	}
-	if c.Continuation.MaxIdenticalToolCalls <= 0 {
+	if c.Continuation.MaxIdenticalToolCalls == 0 {
 		c.Continuation.MaxIdenticalToolCalls = defaults.Continuation.MaxIdenticalToolCalls
 	}
 	if c.Continuation.MaxWaitSeconds <= 0 {

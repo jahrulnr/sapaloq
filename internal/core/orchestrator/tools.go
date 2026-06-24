@@ -33,7 +33,10 @@ var desktopTools = []string{
 
 // askTools: orchestrator coordinates and may assess lightly before delegating.
 // It also gets exec so simple host tasks (e.g. "read /etc/hosts", "run `id`")
-// don't require spawning a plan/agent.
+// don't require spawning a plan/agent. exec_async is also offered so Ask can
+// launch long-running or potentially-hanging commands without blocking the
+// turn loop; exec_status / exec_result / exec_cancel are part of the same
+// async-exec workflow.
 var askTools = append(append([]string{
 	"sapaloq_spawn_plan",
 	"sapaloq_spawn_agent",
@@ -45,6 +48,10 @@ var askTools = append(append([]string{
 	"sapaloq_wait_events",
 	"sapaloq_stop",
 	"exec",
+	"exec_async",
+	"exec_status",
+	"exec_result",
+	"exec_cancel",
 }, readOnlyAssessmentTools...), desktopTools...)
 
 // scribeTools: a named sub-agent that captures notes into the user's storage by
@@ -62,9 +69,15 @@ var scribeTools = append(append([]string{}, readOnlyAssessmentTools...),
 )
 
 // planTools: planner. Assessment + exec (so it can investigate the host while
-// planning) + write/read its own plan markdown.
+// planning) + write/read its own plan markdown. exec_async + status/result/
+// cancel are also offered so a planner can launch a long probe (e.g. a build
+// or a network check) without hanging its own turn loop.
 var planTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"exec",
+	"exec_async",
+	"exec_status",
+	"exec_result",
+	"exec_cancel",
 	"write_plan",
 	"read_plan",
 	"request_clarification",
@@ -74,8 +87,15 @@ var planTools = append(append([]string{}, readOnlyAssessmentTools...),
 )
 
 // agentTools: full executor. Assessment + exec + write/edit/delete + lifecycle.
+// The async exec tools (exec_async / exec_status / exec_result / exec_cancel)
+// let the agent stay alive when a single command would otherwise wedge its
+// turn loop — see prompts/agent.md and tools_async_exec.go.
 var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"exec",
+	"exec_async",
+	"exec_status",
+	"exec_result",
+	"exec_cancel",
 	"write_file",
 	"create_file",
 	"edit_file",
@@ -283,6 +303,41 @@ func init() {
 			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
 		},
 		"required":["command"]
+	}`)
+
+	reg("exec_async", `{
+		"type":"object",
+		"properties":{
+			"command":{"type":"string","description":"Any shell command to run on the host with full access. Returns immediately with a job_id; poll exec_status / exec_result to fetch the output. Use this for long-running or potentially-hanging commands (servers, watchers, network calls)."},
+			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded)."},
+			"timeout_seconds":{"type":"integer","description":"Per-job timeout enforced by the host (default 60, max 600)."}
+		},
+		"required":["command"]
+	}`)
+
+	reg("exec_status", `{
+		"type":"object",
+		"properties":{
+			"job_id":{"type":"string","description":"The job_id returned by exec_async."}
+		},
+		"required":["job_id"]
+	}`)
+
+	reg("exec_result", `{
+		"type":"object",
+		"properties":{
+			"job_id":{"type":"string","description":"The job_id returned by exec_async."},
+			"wait_seconds":{"type":"integer","description":"How long to block waiting for the job to finish (default 30, max 300). Use a small value in a poll loop, or a larger one-shot value when you are willing to wait. If the job is still running after the wait, the response is {status:'running', waited_ms, hint} — call exec_cancel(job_id) or sapaloq_fail_task if it has been too long."}
+		},
+		"required":["job_id"]
+	}`)
+
+	reg("exec_cancel", `{
+		"type":"object",
+		"properties":{
+			"job_id":{"type":"string","description":"The job_id returned by exec_async. The host kills the process and the job is marked cancelled; partial output (if any) is returned."}
+		},
+		"required":["job_id"]
 	}`)
 
 	reg("read_image", `{

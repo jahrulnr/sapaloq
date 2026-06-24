@@ -48,7 +48,7 @@ func DefaultCommands() CommandsConfig {
 			{
 				ID:          "reset",
 				Prefix:      "/reset",
-				Pattern:     `/reset(?:\s+|$)`,
+				Pattern:     `/(reset|clear)(?:\s+|$)`,
 				Label:       "Reset",
 				Description: "Start a fresh active chat session",
 				Category:    "commands",

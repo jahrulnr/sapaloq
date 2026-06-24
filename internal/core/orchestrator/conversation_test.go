@@ -13,6 +13,58 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
+// TestLooksLikeTransientTransport4xx pins the regression that motivated this
+// classifier: a provider returning 401/403/404 (auth / model not found /
+// forbidden) must NOT be retried. Otherwise a wrong API key or a non-existent
+// model name burns the full retry budget before the user gets a chance to
+// read the error, and the agent appears to hang for 4 attempts.
+//
+// The first bug surfaced in chat-1782224023561155198: provider blackbox
+// returned 404 for model "blackboxai/anthropic/claude-opus-4.8" but the
+// orchestrator retried 4 times (mixing transient transport errors with
+// deterministic 4xx), so the widget stayed in "submitting" state for ~7
+// minutes and the user could not stop it from the UI.
+func TestLooksLikeTransientTransport4xx(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want bool
+		why  string
+	}{
+		// The real production errors from the stuck chat above. Both must
+		// NOT be classified as transient (the agent should fail fast).
+		{
+			msg:  `provider-bridge: upstream status 401: {"error":{"message":"blackbox.Error: AuthenticationError: Vercel_ai_gatewayException - Authentication failed. Create an API key and set in AI_GATEWAY_API_KEY environment variable","code":"401"}}`,
+			want: false,
+			why:  "401 AuthenticationError must fail fast",
+		},
+		{
+			msg:  `provider-bridge: upstream status 404: {"error":{"message":"blackbox.Error: NotFoundError: Vercel_ai_gatewayException - Not Found","code":"404"}}`,
+			want: false,
+			why:  "404 NotFoundError (model missing) must fail fast",
+		},
+
+		// Other 4xx with deterministic causes — same treatment.
+		{"provider-bridge: upstream status 403: forbidden", false, "403 forbidden is deterministic"},
+		{"provider-bridge: upstream status 400: invalid request", false, "400 invalid request is deterministic"},
+		{"provider-bridge: upstream status 400: maximum context length exceeded", false, "context overflow is its own path (compaction), not transient retry"},
+		{"provider-bridge: upstream status 400: rate limit exceeded", false, "rate limit is deterministic on this turn (cannot recover by retrying the same request)"},
+		{"provider-bridge: SSE idle timeout: no data from upstream", true, "SSE idle IS transient (real flaky network/upstream hang)"},
+		{"connection reset by peer", true, "transport-level reset is transient"},
+		{"provider-bridge: upstream status 502: bad gateway", true, "5xx IS transient"},
+		{"provider-bridge: upstream status 503: service unavailable", true, "5xx IS transient"},
+		{"provider-bridge: upstream status 504: gateway timeout", true, "5xx IS transient"},
+		{"provider-bridge: upstream status 429: too many requests", true, "429 IS transient (with backoff)"},
+		{"EOF", true, "premature EOF is transient"},
+		{"i/o timeout", true, "I/O timeout is transient"},
+	}
+	for _, tc := range cases {
+		got := looksLikeTransientTransport(tc.msg)
+		if got != tc.want {
+			t.Errorf("looksLikeTransientTransport(%q) = %v, want %v (%s)", tc.msg, got, tc.want, tc.why)
+		}
+	}
+}
+
 type sequenceBridge struct {
 	requests []bridge.Request
 }
@@ -237,7 +289,7 @@ func TestRunConversationInjectsUsageReadout(t *testing.T) {
 	// The 2nd request's last message is the continuation we built after turn 1
 	// (which made exactly one tool call).
 	got := fake.requests[1].Messages[len(fake.requests[1].Messages)-1].Content
-	if !strings.Contains(got, "[Usage]") {
+	if !strings.Contains(got, "--\n\nUsage") {
 		t.Fatalf("continuation missing usage readout: %q", got)
 	}
 	if !strings.Contains(got, "tool-calls so far 1") {
@@ -324,6 +376,41 @@ func TestRunConversationStopsIdenticalToolLoop(t *testing.T) {
 	}
 }
 
+// TestDisabledIdenticalToolGuardLetsLoopRun proves a negative
+// MaxIdenticalToolCalls disables the identical-tool loop guard: the same
+// repeating bridge that trips the guard above now runs until the (still
+// enforced) MaxToolCalls resource cap instead. This is the "observe raw model
+// behavior" escape hatch — the loop-breaker is off, but real resource caps
+// still bound the run.
+func TestDisabledIdenticalToolGuardLetsLoopRun(t *testing.T) {
+	orch := &Orchestrator{memoryDir: t.TempDir(), vision: make(map[string]bool)}
+	if err := orch.writeTask(taskRecord{ID: "task-1", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	oc := config.DefaultOrchestratorConfig()
+	oc.Continuation.MaxIdenticalToolCalls = -1 // explicitly disabled
+	oc.Continuation.MaxToolCalls = 3           // resource cap still bounds the run
+	oc = oc.WithDefaults()                     // must NOT resurrect the -1
+	if oc.Continuation.MaxIdenticalToolCalls != -1 {
+		t.Fatalf("WithDefaults resurrected disabled guard: %d", oc.Continuation.MaxIdenticalToolCalls)
+	}
+	snap := providerSnapshot{
+		cfg:   config.Config{Orchestrator: oc},
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    &repeatingToolBridge{},
+	}
+	out := make(chan bridge.StreamEvent, 64)
+	go func() {
+		for range out {
+		}
+	}()
+	_, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "loop"}}, nil)
+	close(out)
+	if err == nil || !strings.Contains(err.Error(), "tool-call budget") {
+		t.Fatalf("expected tool-call budget stop (guard disabled), got err = %v", err)
+	}
+}
+
 type repeatingToolBridge struct{}
 
 func (b *repeatingToolBridge) ID() string              { return "repeat" }
@@ -361,7 +448,7 @@ func TestRunTurnLoopUnlimitedTurnsStillBoundedByGuards(t *testing.T) {
 		runID:             "actor-unlimited",
 		tools:             []string{"sapaloq_get_task_status"},
 		sink:              chatSink{o: o, out: out},
-		finishOnNoTool:    false,            // executor: only a terminal tool finishes it
+		finishOnNoTool:    false,                // executor: only a terminal tool finishes it
 		maxInferenceTurns: unlimitedTurnsBudget, // < 0 → no turn ceiling
 		dispatch: func(context.Context, parse.ToolCall) turnOutcome {
 			return turnOutcome{text: "status", handled: true}

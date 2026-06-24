@@ -85,7 +85,7 @@
       {
         "id": "reset",
         "prefix": "/reset",
-        "pattern": "/reset(?:\\s+|$)",
+        "pattern": "/(reset|clear)(?:\\s+|$)",
         "label": "Reset",
         "description": "Start a fresh active chat session",
         "category": "commands",
@@ -115,7 +115,7 @@
     "continuation": {
       "maxInferenceTurns": 128,
       "maxToolCalls": 512,
-      "maxParallelTools": 8,
+      "maxParallelTools": 40,
       "maxWallTimeMinutes": 30,
       "maxNoProgressTurns": 5,
       "maxIdenticalToolCalls": 5,

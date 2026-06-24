@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-23 (Context-SOP memory subsystem: index-first prefetch + learning queue)
+> Last updated: 2026-06-24 (async-exec: fix "close of closed channel" panic when a cancel races command completion)
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -18,7 +18,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 4 | File + exec tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`, `exec`) | ✅ | `tools_workspace.go`; flat unrestricted surface (any path; no workspace sandbox). Mutating file tools gated to `task-runner`; `exec` available in every mode |
 | 5 | In-place edit / delete / glob tools | ✅ | `tools_workspace.go` (`toolEditFile`, `toolDeleteFile`, `toolGlob`) — added 2026-06-20 |
 | 6 | `read_file` binary guard + line-range read | ✅ | `tools_workspace.go` (`toolReadFile`: NUL/non-printable sniff + `offset`/`limit` line range) — added 2026-06-20 |
-| 7 | Plan artifact + handoff | ✅ | `subagent.go` (`write_plan`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment |
+| 7 | Plan artifact + handoff | ✅ | `subagent.go` (`write_plan`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment. `ask.md` now states the delegation action order (spawn tool call first, then acknowledge) so a context-sensitive model doesn't narrate the hand-off and END turn without emitting the spawn call |
 | 8 | Plan iteration (revise before finishing) | 🟡 | `write_plan_markdown` is non-terminal; planner can rewrite + read its own plan. Ask prompt requires user review before passing `plan_task_id`, but no approval-gate UI/state machine yet; no post-handoff agent amend |
 | 9 | Clarification loop | ✅ | Two-way: `request_clarification` pauses, `sapaloq_answer_clarification` resumes the paused sub-agent loop (transcript replayed, answer nudge injected). `tasks.go`, `subagent.go`, `tools.go`, `session.go` |
 | 10 | Vault audit log | ✅ | `internal/vault`, wired via `Orchestrator.auditTool` (`chat.go`) at Ask + sub-agent chokepoints; cursor-bridge logs undeclared calls |
@@ -41,6 +41,72 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` — schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` — size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` — the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
+
+---
+
+## Implemented this session (2026-06-24) — async-exec cancel/complete race fix
+
+- **`tools_async_exec.go`: no more `close of closed channel` panic.** CI
+  (`go test ./...`, PR #9) intermittently panicked in `asyncExecRegistry.execute`
+  → `close(job.Done)`. Root cause: when a `cancel()` lands at the same moment the
+  command finishes naturally, both `cancel()` and `execute()` reach a terminal
+  state and each closed `job.Done` → double close. Fix: funnel every close
+  through `job.closeDone()` (a `sync.Once`), and—because a cancel can also land
+  between `spawn()` and the goroutine starting—`execute()` now bails out early if
+  the job is no longer `queued` (it was already cancelled), so it never
+  resurrects a terminal job to `running` or launches the command. Regression:
+  `TestAsyncExecCancelRaceNoDoubleClose` hammers concurrent cancels against a
+  near-instant command; passes under `go test -race -count=5`. `tools_async_exec.go`,
+  `tools_async_exec_test.go`.
+
+## Implemented this session (2026-06-24) — Shell-rc credential autoload
+
+- **`internal/shellenv` (`LoadOnce`).** At boot `sapaloq-core` now sources the
+  user's shell rc — `~/.bashrc` then `~/.zshrc` (Linux only) — and folds the
+  relevant, not-already-set env vars into the process environment before the
+  credential loader runs. Fixes the systemd `--user`/XDG-autostart case where no
+  login shell runs, so a token exported only in the shell rc was invisible and
+  the loader fell through to `.env`/vscdb. Conservative by design: best-effort
+  and silent on any failure (missing shell, missing rc, non-zero source,
+  timeout), 3s per-shell timeout so a hanging rc can't freeze startup, an
+  allowlist of key prefixes (`SAPALOQ_/CURSOR_/BLACKBOX_/OPENAI_/ANTHROPIC_/`
+  `KIMI_/MOONSHOT_/OPENROUTER_`) so unrelated shell vars (PATH, prompt, …) never
+  leak in, and it never overrides an already-set variable. Resulting priority:
+  process env > shell rc > `.env` > vscdb. Hooked once at the top of
+  `cmd/sapaloq-core/main.go`; covered by `internal/shellenv/shellenv_test.go`.
+
+## Implemented this session (2026-06-24) — Ask delegation ordering (planner→agent hand-off stall)
+
+- **Live simulate suite (`internal/core/orchestrator/simulate_live_test.go`).**
+  Three role-isolated integration tests run the loop against a REAL
+  OpenAI-compatible LLM (Blackbox) in exactly one role while mocking the others
+  via a `roleRoutingBridge` (real bridge for the role under test, scripted mock
+  for the rest — role detected from the assembled system prompt). Mode 1
+  (`…OrchestratorPlannerAgentRoundTrip`) is the live regression for the ask.md
+  fix: it asserts the orchestrator actually emits `sapaloq_spawn_plan` then,
+  after approval, `sapaloq_spawn_agent` (real tool calls, not narration). Mode 2
+  (`…PlannerToolingToPlanSummary`) and Mode 3 (`…AgentReadPlanWorkSummary`) run
+  the planner/agent on real sandboxed tooling (temp-dir fixtures). All three are
+  gated by `SAPALOQ_BLACKBOX_E2E=1` + a token in the configured env var, so
+  `go test ./...` stays green offline (they `t.Skip`). Verified green live
+  against `blackboxai/anthropic/claude-sonnet-4.5` (Mode 1 68s, Mode 2 20s,
+  Mode 3 8s). Env overrides: `BLACKBOX_MODEL`, `BLACKBOX_ENDPOINT` (a bare
+  `…/v1` is auto-completed to `/chat/completions`), `BLACKBOX_CREDENTIALS_ENV`.
+
+- **`ask.md`: spawn-before-acknowledge ordering.** Added one declarative
+  sentence at the head of the delegation paragraph: *"When you decide to
+  delegate (including after an approved plan), emit the
+  `sapaloq_spawn_agent`/`sapaloq_spawn_plan` tool call first in that same turn,
+  then acknowledge to the user."* Root cause of the observed planner→agent
+  stall — a context-sensitive model (MiniMax) read the existing *"reply with a
+  short acknowledgement … and END your turn"* line as permission to narrate the
+  delegation (*"oke aku delegasikan ke agent"*) and end the turn **without**
+  emitting the spawn tool call. The Ask role finishes naturally on a tool-less
+  turn (`runTurnLoop` `finishOnNoTool: true`), so there is no executor-style
+  nudge to catch this; fixing it in the prompt is the correct, minimal change.
+  Deliberately a plain ordering statement (no scolding / "narration is not
+  action" framing) to avoid shifting the persona tone. `internal/prompts/defaults/ask.md`,
+  `docs/PROMPT-BUILDER-SOP.md`.
 
 ---
 
@@ -108,6 +174,119 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   withheld ordinary text when the attempt's stream ends. The genuine transcript
   note (`calledToolsNote`) is untouched — only the model's *echo* is stripped.
   `called_tools_filter.go` (+ `_test.go`), `conversation.go`.
+
+## Implemented this session (2026-06-23) — dedicated internal `tool` message role (fix `[job job-` echo)
+
+- **Symptom.** A compliant non-native model (MiniMax) re-ran a sub-agent task
+  itself, called `create_file`, succeeded — then **echoed the entire raw tool
+  result verbatim** into the answer channel (~11.5k chars: whole HTML file dump
+  + job metadata), instead of summarizing. Seen as the `[job job-…]` / `[Tool
+  results]` block bleeding into the response and progress `.jsonl`.
+- **Root cause.** Tool output was fed back to the model under role **`user`**,
+  framed `"[Tool results]\n[job <id>] <raw>"`. The model couldn't tell a *tool
+  observation* apart from a *user request to forward*, and the template-looking
+  framing invited a verbatim copy.
+- **Fix — semantic `tool` role + wire-safe mapping.** The live continuation that
+  carries tool output is now appended under a dedicated internal **`tool`** role
+  (a tool-less nudge stays `user`). The framing is neutral and anti-echo
+  (`"Tool output observed (for your reasoning only — summarize … do not copy
+  verbatim)"`), and the meaningless `[job <id>]` prefix is dropped. Because
+  OpenAI/Claude reserve role `tool` for native function-calling (needs
+  `tool_call_id`), the **wire layer** collapses `tool`/`error` → `user` via a
+  single `wireRole` helper used by both `buildOpenAIMessages` and
+  `buildClaudeMessages` — one source of truth for live + replay (the old forced
+  `tool→assistant` map in `session.go` replay was removed). `extractImages` now
+  also treats a `tool` turn as a valid vision source so `read_image` markdown
+  still becomes real vision input. Cursor bridge already maps non-assistant
+  roles to user; `lastUserMessage` updated to count a `tool` turn too.
+  `tool_batch.go`, `conversation.go`, `bridges/provider/types.go`,
+  `orchestrator/session.go`, `bridges/cursor/bridge.go` (+ `wire_role_test.go`,
+  `tools_image_test.go`). `go build/vet/test ./...` green.
+
+## Implemented this session (2026-06-23) — strip leaked `[Tool: …]` labels + teach tool-call format in the executor prompt
+
+- **Root cause (orch-task-…103).** MiniMax-M3 emitted real **native** `tool_calls`
+  (2× `exec` ran) but ALSO wrote a bare announce label `[Tool: exec]` into its
+  `content`. That label leaked into `response_delta` because `calledToolsFilter`
+  only stripped `[Called tools: …]`, not `[Tool: …]`. The model then **saw
+  `[Tool: exec]` in its own prior turn, mistook it for the tool-call syntax**,
+  and started emitting bare `[Tool: create_file]` / `[Tool: sapaloq_fail_task]`
+  labels **without** a `{args}` body. The bridge leak-scanner only recovers
+  `[Tool: name]{args}` (args object required), so the bare labels parsed as
+  plain text → zero execution → the model self-diagnosed *"being interpreted as
+  narrating"* and spiralled `[Tool: sapaloq_fail_task]` ×hundreds until the turn
+  cap. A self-inflicted imitation loop: our leaked marker taught the model the
+  wrong format.
+- **Fix 1 — generalize the visible-text filter.** `called_tools_filter.go` now
+  strips **both** `[Called tools: ` and `[Tool: ` markers (new
+  `calledToolsMarkers []string` + `classifyMarker`), keeping the same
+  stateful, split-delta-safe, skip-to-`]` logic. This removes the noise from
+  the UI **and** breaks the imitation loop (the model never sees the bad
+  pattern echoed back). Ordinary `[`-prose and look-alikes (`[Toolbar]`,
+  `[Tools]`, `[Toolkit]`) pass through untouched. Tests:
+  `called_tools_filter_test.go` (+4 cases: single, split, byte-at-a-time,
+  false-positive prose).
+- **Fix 2 — teach the format in the system prompt (`prompts/defaults/agent.md`).**
+  Added a concise "How to call tools" section: tools are invoked ONLY via the
+  structured tool-call channel; narrating intent is not action (emit the call in
+  the same turn); every turn must make concrete progress (a real tool call, or
+  `sapaloq_complete_task`/`sapaloq_fail_task`). This is the follow-up contract
+  moved from the runtime nudge into the prompt (per the IDE/goclaw posture).
+  Deliberately does NOT name the `[Tool: …]` / `[Called tools: …]` syntax: once
+  Fix 1 strips those from the visible stream the model never sees them echoed
+  back, so there is nothing to imitate — and naming the bad form in the prompt
+  would only risk introducing it. Auto-upgrades on disk for unmodified copies
+  via the prompts manifest. `go build/vet/test ./...` green.
+
+## Implemented this session (2026-06-23) — wrap-up nudge for tool-less executor turns (goclaw posture, no new guard)
+
+- **Context.** A `task-runner` (`orch-task-1782195669271620510.jsonl`) finished
+  all real work (2× `exec`, 3× `create_file` — index.html/style.css/script.js
+  all written, all native `tool_calls`, source `openai_inline`), then on the
+  verification turn narrated *"Saya panggil tool sekarang."* dozens of times
+  **without ever emitting another tool call**, never reaching
+  `sapaloq_complete_task`, until the turn cap. The exact-hash no-progress guard
+  did not catch it (MiniMax varied its wording every turn → hash differs →
+  counter resets) and the user had set `maxNoProgressTurns`/`maxIdenticalToolCalls`
+  to `-1` (disabled) to observe raw behavior, so nothing cut the loop.
+- **Studied goclaw** (`/apps/other/goclaw`) for comparison: it ends a run the
+  instant a response has zero (native) tool calls (`len(resp.ToolCalls)==0 →
+  BreakLoop`, `pipeline/think_stage.go`), so "narrate without acting" is
+  structurally impossible there; its only nudges are **budget/wrap-up** prompts
+  at 70%/90% of `MaxIterations` ("wrap up immediately"). SapaLOQ deliberately
+  keeps `finishOnNoTool=false` for `task-runner` (it must signal completion via
+  a terminal tool), so we cannot adopt goclaw's "tool-less = done" rule — but we
+  can adopt its **nudge posture**.
+- **Change (this step, deliberately NO new guard — guards have caused more bugs
+  than they fixed in this project's history).** Rewrote the existing tool-less
+  continuation nudge in `conversation.go` from a neutral list-of-options
+  reminder into a **wrap-up directive**: it now states that narrating intent is
+  not a tool call, and pushes the model to act in THIS turn — emit exactly one
+  tool call, or call `sapaloq_complete_task`/`sapaloq_fail_task` — explicitly
+  telling it NOT to reply with another plain-text intention to act. No counter,
+  no threshold, no behavior change to the gate; same single `user` message slot.
+  `conversation.go`. `go build/vet/test ./...` green.
+
+## Implemented this session (2026-06-23) — loop guards are config-disablable (`<0` = off)
+
+- **Context.** A `task-runner` sub-agent (`orch-task-1782191154831828869.jsonl`)
+  narrated *"saya akan membuat file secara paralel"* ~80× **without ever
+  emitting another tool call**, then died on `loop detected: no observable
+  progress`. This only happens in **agent** mode, not chat, because
+  `finishOnNoTool = record.Role != "task-runner"` (`subagent.go`) — task-runner
+  is the only role whose tool-less turn does NOT end the run, so it loops until
+  a guard fires. The exact-hash no-progress guard barely caught it because the
+  model varied its wording every turn (hash differs → counter resets).
+- **Change (this step).** Make the two loop-breakers **disablable via config**
+  so a model's raw behavior can be observed without the breaker cutting in:
+  `continuation.maxNoProgressTurns` and `continuation.maxIdenticalToolCalls`
+  now treat **any value `< 0` as "guard off"** in `conversation.go` (both
+  checks are now `> 0 && …`). `WithDefaults` only backfills the default when the
+  value is **exactly `0`** (unset), so a negative survives instead of being
+  resurrected to `5` (`internal/config/load.go`). Genuine resource caps
+  (`maxToolCalls`, idle wall-time) stay enforced. `conversation.go`,
+  `config/load.go` (+ `conversation_test.go`
+  `TestDisabledIdenticalToolGuardLetsLoopRun`). `go build/vet/test ./...` green.
 
 ## Implemented this session (2026-06-23) — docs: context window vs output cap
 
