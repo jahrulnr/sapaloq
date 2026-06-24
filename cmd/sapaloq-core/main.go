@@ -18,6 +18,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/ipc"
 	"github.com/jahrulnr/sapaloq/internal/platform"
 	"github.com/jahrulnr/sapaloq/internal/platform/freedesktop"
+	"github.com/jahrulnr/sapaloq/internal/shellenv"
 )
 
 // version is the build version, stamped at release time via
@@ -45,6 +46,13 @@ func main() {
 		fmt.Printf("sapaloq-core %s\n", version)
 		return
 	}
+	// Fold the user's shell rc (~/.bashrc then ~/.zshrc) into the process
+	// environment before anything reads credentials. Under systemd --user /
+	// XDG autostart there is no login shell, so tokens exported only in the
+	// shell rc would otherwise be invisible. Best-effort + silent on any
+	// failure; never overrides an already-set variable. (.env is still handled
+	// later by the credential loader, ranking below shell rc.)
+	shellenv.LoadOnce()
 	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
 		printUsage()
 		if len(os.Args) >= 2 && isHelpArg(os.Args[1]) {

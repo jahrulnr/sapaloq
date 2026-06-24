@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-24 (ask.md: spawn-before-acknowledge ordering to fix planner→agent hand-off narration-without-spawn stall)
+> Last updated: 2026-06-24 (async-exec: fix "close of closed channel" panic when a cancel races command completion)
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -43,6 +43,37 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` — the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
 
 ---
+
+## Implemented this session (2026-06-24) — async-exec cancel/complete race fix
+
+- **`tools_async_exec.go`: no more `close of closed channel` panic.** CI
+  (`go test ./...`, PR #9) intermittently panicked in `asyncExecRegistry.execute`
+  → `close(job.Done)`. Root cause: when a `cancel()` lands at the same moment the
+  command finishes naturally, both `cancel()` and `execute()` reach a terminal
+  state and each closed `job.Done` → double close. Fix: funnel every close
+  through `job.closeDone()` (a `sync.Once`), and—because a cancel can also land
+  between `spawn()` and the goroutine starting—`execute()` now bails out early if
+  the job is no longer `queued` (it was already cancelled), so it never
+  resurrects a terminal job to `running` or launches the command. Regression:
+  `TestAsyncExecCancelRaceNoDoubleClose` hammers concurrent cancels against a
+  near-instant command; passes under `go test -race -count=5`. `tools_async_exec.go`,
+  `tools_async_exec_test.go`.
+
+## Implemented this session (2026-06-24) — Shell-rc credential autoload
+
+- **`internal/shellenv` (`LoadOnce`).** At boot `sapaloq-core` now sources the
+  user's shell rc — `~/.bashrc` then `~/.zshrc` (Linux only) — and folds the
+  relevant, not-already-set env vars into the process environment before the
+  credential loader runs. Fixes the systemd `--user`/XDG-autostart case where no
+  login shell runs, so a token exported only in the shell rc was invisible and
+  the loader fell through to `.env`/vscdb. Conservative by design: best-effort
+  and silent on any failure (missing shell, missing rc, non-zero source,
+  timeout), 3s per-shell timeout so a hanging rc can't freeze startup, an
+  allowlist of key prefixes (`SAPALOQ_/CURSOR_/BLACKBOX_/OPENAI_/ANTHROPIC_/`
+  `KIMI_/MOONSHOT_/OPENROUTER_`) so unrelated shell vars (PATH, prompt, …) never
+  leak in, and it never overrides an already-set variable. Resulting priority:
+  process env > shell rc > `.env` > vscdb. Hooked once at the top of
+  `cmd/sapaloq-core/main.go`; covered by `internal/shellenv/shellenv_test.go`.
 
 ## Implemented this session (2026-06-24) — Ask delegation ordering (planner→agent hand-off stall)
 

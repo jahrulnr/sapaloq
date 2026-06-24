@@ -68,8 +68,14 @@ type asyncExecJob struct {
 	// Cancel is populated only in-process; it is dropped from JSON.
 	Cancel context.CancelFunc `json:"-"`
 	// Done is closed when Status is terminal. Pollers select on this channel
-	// instead of busy-waiting on the status field.
+	// instead of busy-waiting on the status field. Both execute() (natural
+	// finish) and cancel() can reach the terminal state, so the close is
+	// funnelled through doneOnce to avoid a double-close panic when a cancel
+	// races the command's own completion.
 	Done chan struct{} `json:"-"`
+	// doneOnce guards exactly one close(Done) across the execute()/cancel()
+	// race. Never serialized.
+	doneOnce sync.Once `json:"-"`
 	// mu guards the live mutable fields (Status, Output, Error, ExitCode,
 	// StartedAt, CompletedAt) so concurrent status / result / cancel calls
 	// never see a torn write. The on-disk file is written after releasing mu.
@@ -114,6 +120,14 @@ func (j *asyncExecJob) snapshotOf() asyncExecSnapshot {
 		StartedAt:   j.StartedAt,
 		CompletedAt: j.CompletedAt,
 	}
+}
+
+// closeDone closes the Done channel exactly once, even when execute() and
+// cancel() both reach a terminal state for the same job (a cancel racing the
+// command's natural completion). Without this funnel the second close panics
+// with "close of closed channel".
+func (j *asyncExecJob) closeDone() {
+	j.doneOnce.Do(func() { close(j.Done) })
 }
 
 // terminal reports whether the job has reached a final state. The terminal
@@ -207,6 +221,15 @@ func (r *asyncExecRegistry) execute(ctx context.Context, job *asyncExecJob, cmd,
 	defer cancel()
 	started := time.Now().UTC()
 	job.mu.Lock()
+	// A cancel can land between spawn() and this goroutine getting scheduled:
+	// it would have already flipped Status to a terminal value (and closed
+	// Done). Do NOT resurrect it to "running" or launch the command — bail out
+	// so the job stays terminal and Done stays closed exactly once.
+	if job.Status != asyncExecQueued {
+		job.mu.Unlock()
+		job.closeDone() // no-op if already closed by the canceller
+		return
+	}
 	job.Status = asyncExecRunning
 	job.StartedAt = &started
 	job.mu.Unlock()
@@ -245,7 +268,7 @@ func (r *asyncExecRegistry) execute(ctx context.Context, job *asyncExecJob, cmd,
 		job.ExitCode = 0
 	}
 	job.mu.Unlock()
-	close(job.Done)
+	job.closeDone()
 	r.persist(job)
 	// Keep completed jobs queryable for a short window, then drop them from
 	// the in-memory map. The on-disk JSON survives the full retention so an
@@ -322,7 +345,11 @@ func (r *asyncExecRegistry) cancel(id string) (asyncExecSnapshot, bool) {
 		job.Error = "cancelled by host"
 		job.mu.Unlock()
 		r.persist(job)
-		close(job.Done)
+		// Funnelled close: execute() may also be transitioning this job to a
+		// terminal state right now (the cancel raced the command finishing),
+		// and it closes Done too. closeDone() makes whichever loses the race a
+		// no-op instead of a double-close panic.
+		job.closeDone()
 	} else {
 		job.mu.Unlock()
 	}

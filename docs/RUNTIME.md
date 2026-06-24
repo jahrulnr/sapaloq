@@ -178,7 +178,7 @@ Debug output goes to **stderr**; chat events stay on stdout. Env: `SAPALOQ_DEBUG
 | `CURSOR_MACHINE_ID` | — | Machine id for checksum headers |
 | `CURSOR_STATE_VSCDB` | auto | Override IDE `state.vscdb` path |
 
-Without explicit env vars, `sapaloq-core` autoloads from `.env` then Cursor IDE `state.vscdb` — same priority as [cursor-bridge credential-loader](https://github.com/jahrulnr/cursor-bridge/tree/master/packages/credential-loader).
+Without explicit env vars, `sapaloq-core` first sources the user's shell rc (`~/.bashrc` then `~/.zshrc`, Linux only — needed under systemd `--user`/autostart where no login shell runs), then autoloads from `.env`, then Cursor IDE `state.vscdb` — broadly the same priority as the [cursor-bridge credential-loader](https://github.com/jahrulnr/cursor-bridge/tree/master/packages/credential-loader) with the shell-rc step added in front of `.env` (`internal/shellenv`). Shell-rc import is best-effort, silent on failure, allowlisted by key prefix, and never overrides an already-set variable.
 
 `chat` output prefixes: `[thinking]`, `[response]`, `[tool]`, `[error]`, `[done]`.
 

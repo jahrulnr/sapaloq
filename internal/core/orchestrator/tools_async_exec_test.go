@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -335,4 +336,42 @@ func containsString(slice []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestAsyncExecCancelRaceNoDoubleClose is the regression for the CI panic
+// "close of closed channel" (tools_async_exec.go execute → close(job.Done)).
+// When a cancel lands at the same moment the command finishes on its own, both
+// cancel() and execute() reach the terminal state and used to close job.Done
+// twice. The close is now funnelled through job.closeDone() (sync.Once); this
+// test hammers the race so `go test -race` would have caught the original bug.
+func TestAsyncExecCancelRaceNoDoubleClose(t *testing.T) {
+	r := newTestRegistry(t)
+	for i := 0; i < 50; i++ {
+		// A near-instant command so the natural completion in execute() races
+		// the cancel() below for the terminal transition.
+		job := r.spawn(context.Background(), "run-race", "sess-race", `printf 'x'`, "", 5)
+
+		var wg sync.WaitGroup
+		// Several concurrent cancels also exercise cancel()'s own idempotency.
+		for c := 0; c < 3; c++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, _ = r.cancel(job.ID)
+			}()
+		}
+		wg.Wait()
+
+		// The job must still reach a terminal state with Done closed exactly
+		// once (no panic). Either completed or cancelled is acceptable
+		// depending on who won the race.
+		select {
+		case <-job.Done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("job %s never reached terminal state", job.ID)
+		}
+		if !job.terminal() {
+			t.Fatalf("job %s Done closed but status not terminal: %s", job.ID, job.snapshotOf().Status)
+		}
+	}
 }
