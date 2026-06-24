@@ -302,3 +302,51 @@ func TestStripReasoningFromText(t *testing.T) {
 		t.Errorf("plain text must pass through, got thinking=%q cleaned=%q", thinking, cleaned)
 	}
 }
+
+func TestStripTemplateLeakTokens(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"plain answer", "plain answer"},
+		{"answer[/ask]", "answer"},
+		{"[ask]hi[/ask]", "hi"},
+		{"a<|im_end|>b<|im_start|>c", "abc"},
+		{"line[/tool][/assistant] end", "line end"},
+		// No bracket/angle char: fast-path no-op.
+		{"no markers here", "no markers here"},
+	}
+	for _, c := range cases {
+		if got := StripTemplateLeakTokens(c.in); got != c.want {
+			t.Errorf("StripTemplateLeakTokens(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestLeakScanSurvivesTemplateTokens proves that once leaked template markers
+// are stripped from the content (as the bridge does before leak-scanning), a
+// multi-call inline batch interleaved with stray markers still reassembles into
+// every individual tool call instead of being derailed by the noise.
+func TestLeakScanSurvivesTemplateTokens(t *testing.T) {
+	known := func(n string) bool { return n == "list_dir" }
+	raw := `[ask]{"name":"list_dir","arguments":{"path":"/a"}}[/ask]` +
+		`{"name":"list_dir","arguments":{"path":"/b"}}<|im_end|>`
+	clean := StripTemplateLeakTokens(raw)
+
+	var got []string
+	from := 0
+	for {
+		tc, next, ok := ParseToolCallLeakFrom(clean, from, known)
+		if !ok {
+			break
+		}
+		got = append(got, tc.Name+":"+string(tc.Arguments))
+		from = next
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 reassembled calls, got %d: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], `"/a"`) || !strings.Contains(got[1], `"/b"`) {
+		t.Errorf("calls not reassembled in order: %v", got)
+	}
+}

@@ -291,8 +291,9 @@ Credentials **never** in config.json — env, `.env`, or IDE `state.vscdb` only.
 Autoload priority (ported from `@cursor-bridge/credential-loader`):
 
 1. `SAPALOQ_CURSOR_TOKEN` or `CURSOR_ACCESS_TOKEN` + optional `CURSOR_MACHINE_ID` in process env
-2. `.env` in cwd, then `~/.config/sapaloq/.env`
-3. `~/.config/Cursor/User/globalStorage/state.vscdb` (`cursorAuth/accessToken`, `storage.serviceMachineId`)
+2. **Shell rc** — at boot `sapaloq-core` sources `~/.bashrc` then `~/.zshrc` (Linux only) and folds the relevant, not-already-set vars (`SAPALOQ_*`, `CURSOR_*`, `BLACKBOX_*`, `OPENAI_*`, `ANTHROPIC_*`, `KIMI_*`, `MOONSHOT_*`, `OPENROUTER_*`) into the process env. This matters under systemd `--user`/XDG autostart, where there is no login shell so rc exports would otherwise be invisible. Best-effort, silent on any failure, never overrides an already-set var, short timeout so a hanging rc can't freeze startup (`internal/shellenv`).
+3. `.env` in cwd, then `~/.config/sapaloq/.env`
+4. `~/.config/Cursor/User/globalStorage/state.vscdb` (`cursorAuth/accessToken`, `storage.serviceMachineId`)
 
 Override vscdb path: `CURSOR_STATE_VSCDB`. Ghost mode default on unless `CURSOR_GHOST_MODE=false`.
 

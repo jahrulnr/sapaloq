@@ -168,8 +168,101 @@ func (s *Store) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role, enabled, priority DESC)`,
+		// skills_index is the SapaLOQ-local skills registry (id → triggers/path/
+		// max_tokens). Populated at boot from skills/*.md so the assembler reads
+		// paths from the index rather than walking the filesystem per turn.
+		`CREATE TABLE IF NOT EXISTS skills_index (
+			id TEXT PRIMARY KEY,
+			triggers TEXT NOT NULL DEFAULT '[]',
+			path TEXT NOT NULL DEFAULT '',
+			max_tokens INTEGER NOT NULL DEFAULT 0,
+			priority INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL
+		)`,
+		// prefetch_rules maps an intent to the fact kinds / skills / config keys
+		// the ingress pipeline should prefetch, plus bandit-style telemetry
+		// (hit_count/success_rate) that drives rule tuning.
+		`CREATE TABLE IF NOT EXISTS prefetch_rules (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			intent_pattern TEXT NOT NULL,
+			namespace TEXT NOT NULL DEFAULT 'default',
+			fact_kinds TEXT NOT NULL DEFAULT '[]',
+			skill_ids TEXT NOT NULL DEFAULT '[]',
+			config_keys TEXT NOT NULL DEFAULT '[]',
+			hit_count INTEGER NOT NULL DEFAULT 0,
+			success_count INTEGER NOT NULL DEFAULT 0,
+			success_rate REAL NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_prefetch_rules_intent ON prefetch_rules(intent_pattern, namespace)`,
+		// prompt_slices indexes dynamic system-prompt templates (role +
+		// conditions + template_path), populated from prompt/slices/*.md at boot.
+		`CREATE TABLE IF NOT EXISTS prompt_slices (
+			id TEXT PRIMARY KEY,
+			role TEXT NOT NULL DEFAULT '',
+			conditions TEXT NOT NULL DEFAULT '{}',
+			template_path TEXT NOT NULL,
+			token_budget INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL
+		)`,
+		// learning_queue holds async learning events drained by the
+		// memory-janitor; rows with processed_at IS NULL are pending.
+		`CREATE TABLE IF NOT EXISTS learning_queue (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_kind TEXT NOT NULL,
+			payload TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL,
+			processed_at TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_learning_queue_unprocessed ON learning_queue(processed_at, id)`,
+		// hot_cache is an optional restart warm-up / repeat-within-5-min serve,
+		// bounded by expires_at (expired rows pruned lazily on read).
+		`CREATE TABLE IF NOT EXISTS hot_cache (
+			cache_key TEXT PRIMARY KEY,
+			payload TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		// prefetch_log is telemetry for prefetch rule tuning — one row per ingress.
+		`CREATE TABLE IF NOT EXISTS prefetch_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL DEFAULT '',
+			intent TEXT NOT NULL DEFAULT '',
+			confidence REAL NOT NULL DEFAULT 0,
+			deep_check_used INTEGER NOT NULL DEFAULT 0,
+			task_success INTEGER,
+			latency_ms INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+
+	// Context-SOP memory columns on facts (additive). The original schema was
+	// (kind, content, created_at); these let a fact be addressed as a typed,
+	// namespaced key/value with confidence + soft-delete (obsolete_at). An
+	// existing DB created before this change is upgraded here idempotently;
+	// a fresh DB also lands here (the CREATE TABLE above is the bare schema).
+	factCols := []struct{ name, ddl string }{
+		{"namespace", "namespace TEXT NOT NULL DEFAULT 'default'"},
+		{"key", "key TEXT"},
+		{"value", "value TEXT"},
+		{"confidence", "confidence REAL NOT NULL DEFAULT 1.0"},
+		{"obsolete_at", "obsolete_at TEXT"},
+		{"updated_at", "updated_at TEXT"},
+	}
+	for _, c := range factCols {
+		if err := s.addColumnIfMissing(ctx, "facts", c.name, c.ddl); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_facts_namespace_kind ON facts(namespace, kind, obsolete_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_facts_key ON facts(namespace, kind, key)`,
+	} {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
@@ -181,6 +274,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	// ftsEnabled false and degrade to a LIKE scan — never hard-fail Open.
 	s.ftsEnabled = s.probeFTS5(ctx)
 	if s.ftsEnabled {
+		// Whether facts_fts already existed before this Open. When it didn't but
+		// the facts table already holds rows (legacy DB, or facts written on a
+		// build without FTS5), the inverted index would be empty/stale and the
+		// sync triggers only fire on future writes — so we must rebuild it from
+		// the content table. A COUNT(*) on an external-content FTS table reflects
+		// the content table, not the index, so it can't be used to detect this.
+		ftsExisted := s.tableExists(ctx, "facts_fts")
 		ftsStmts := []string{
 			`CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(content, content='facts', content_rowid='id')`,
 			`CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
@@ -202,8 +302,65 @@ func (s *Store) migrate(ctx context.Context) error {
 				break
 			}
 		}
+		// Backfill: if facts_fts was created fresh this Open but the facts table
+		// already had rows, the inverted index is empty (triggers only fire on
+		// future writes). Rebuild it from the content table so legacy rows are
+		// searchable. On a DB where facts_fts already existed this is skipped.
+		if s.ftsEnabled && !ftsExisted {
+			var factCount int
+			_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM facts`).Scan(&factCount)
+			if factCount > 0 {
+				if _, err := s.db.ExecContext(ctx, `INSERT INTO facts_fts(facts_fts) VALUES('rebuild')`); err != nil {
+					// A failed rebuild shouldn't break Open; SearchFacts still
+					// has the LIKE fallback for misses.
+					s.ftsEnabled = false
+				}
+			}
+		}
 	}
 	return nil
+}
+
+// addColumnIfMissing runs `ALTER TABLE <table> ADD COLUMN <ddl>` only when the
+// column is not already present, so the additive migration is idempotent across
+// boots and safe on a DB created before the column existed. SQLite has no
+// `ADD COLUMN IF NOT EXISTS`, so presence is checked via PRAGMA table_info.
+func (s *Store) addColumnIfMissing(ctx context.Context, table, column, ddl string) error {
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			ctype      string
+			notnull    int
+			dfltValue  sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &primaryKey); err != nil {
+			return err
+		}
+		if name == column {
+			return rows.Close()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_ = rows.Close()
+	_, err = s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, ddl))
+	return err
+}
+
+// tableExists reports whether a table (or virtual table) with the given name is
+// registered in sqlite_master.
+func (s *Store) tableExists(ctx context.Context, name string) bool {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n)
+	return err == nil && n > 0
 }
 
 // probeFTS5 reports whether the underlying SQLite build supports FTS5. It

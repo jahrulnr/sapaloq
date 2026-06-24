@@ -80,6 +80,8 @@ type toolArgs struct {
 	Message        string   `json:"message"`
 	Priority       string   `json:"priority"`
 	CorrelationID  string   `json:"correlation_id"`
+	JobID          string   `json:"job_id"`         // exec_status / exec_result / exec_cancel
+	WaitSeconds    int      `json:"wait_seconds"`   // exec_result: optional poll window (0 = immediate)
 }
 
 func parseToolArgs(raw json.RawMessage) toolArgs {

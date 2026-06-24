@@ -170,6 +170,6 @@ func actorEventsPrompt(events []actorControlEvent) string {
 		}
 		fmt.Fprintf(&b, "- %s from %s: %s\n", ev.Kind, source, ev.Message)
 	}
-	b.WriteString("Apply relevant steering before continuing. If it conflicts with completed work, explain the conflict through sapaloq_send_steering.")
+	b.WriteString("Apply relevant steering before continuing. If it conflicts with completed work, explain the conflict through `sapaloq_send_steering`.")
 	return strings.TrimSpace(b.String())
 }

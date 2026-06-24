@@ -113,7 +113,7 @@ async function sendText(text: string, visibleText = text, attachments: Attachmen
     finalizeLiveStream(res);
     await bindLatestGroupTurnID();
     renderUsage(res.usage as ChatUsage | undefined);
-    if (text.trim() === '/reset') {
+    if (text.trim() === '/reset' || text.trim() === '/clear') {
       await restoreChatHistory();
     }
     void runPing();

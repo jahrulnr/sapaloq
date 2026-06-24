@@ -127,7 +127,7 @@ Details: [docs/RUNTIME.md](./docs/RUNTIME.md) · widget spike: [docs/development
 | `service install\|uninstall\|start\|stop\|status` | Manage the systemd `--user` background service (see [Service](#service-systemd---user)) |
 | `help` | Usage |
 
-Env: `SAPALOQ_CONFIG`, `SAPALOQ_CURSOR_TOKEN`, `CURSOR_ACCESS_TOKEN`, `CURSOR_MACHINE_ID`. Credentials autoload from `.env` or Cursor IDE `state.vscdb` (see [docs/BRIDGE.md](./docs/BRIDGE.md#credentials)).
+Env: `SAPALOQ_CONFIG`, `SAPALOQ_CURSOR_TOKEN`, `CURSOR_ACCESS_TOKEN`, `CURSOR_MACHINE_ID`. Credentials autoload from your shell rc (`~/.bashrc` then `~/.zshrc`, Linux), then `.env`, then Cursor IDE `state.vscdb` (see [docs/BRIDGE.md](./docs/BRIDGE.md#credentials)).
 
 Slash commands in chat: **`/settings` only** (MVP). Example:
 

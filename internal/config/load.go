@@ -22,6 +22,7 @@ type Config struct {
 	Feedback      FeedbackConfig     `json:"feedback,omitempty"`
 	Storage       StorageConfig      `json:"storage,omitempty"`
 	Skills        SkillsConfig       `json:"skills,omitempty"`
+	Memory        MemoryConfig       `json:"memory,omitempty"`
 	Platform      PlatformConfig     `json:"platform,omitempty"`
 	Nodes         NodesConfig        `json:"nodes,omitempty"`
 	Prompts       PromptsConfig      `json:"prompts,omitempty"`
@@ -258,6 +259,45 @@ func (f FeedbackConfig) WithDefaults() FeedbackConfig {
 		f.MaxNegativeSlicesPerTurn = 10
 	}
 	return f
+}
+
+// MemoryConfig controls the Context-SOP index-first prefetch layer: whether a
+// bounded memory packet (facts from companion.db) is injected into the Ask
+// prompt each turn, the confidence at/above which the model is told not to
+// explore the filesystem (anti-deep-check), and how long an assembled packet is
+// cached for an immediate repeat. An absent block uses safe defaults (enabled).
+type MemoryConfig struct {
+	// PrefetchEnabled toggles the prefetch block injection. Because the JSON
+	// zero value of a bool is false, an entirely-absent block is treated as
+	// enabled (see WithDefaults), matching the skills/feedback convention.
+	PrefetchEnabled bool `json:"prefetchEnabled"`
+	// PrefetchConfidenceThreshold is the [0,1] confidence at/above which the
+	// prefetch block adds an anti-deep-check directive. Default 0.7.
+	PrefetchConfidenceThreshold float64 `json:"prefetchConfidenceThreshold,omitempty"`
+	// HotCacheTTLSeconds is how long an assembled prefetch packet is cached so an
+	// immediate repeat is served fast. Default 300 (5 min); 0 → default.
+	HotCacheTTLSeconds int `json:"hotCacheTtlSeconds,omitempty"`
+	// internalSet records that WithDefaults already enabled an unset block, so a
+	// caller can distinguish "explicitly disabled" from "unset".
+	internalSet bool `json:"-"`
+}
+
+// WithDefaults fills sane memory-prefetch defaults. A fully-unset block
+// (PrefetchEnabled=false and no threshold/TTL) is treated as enabled so an
+// older config without a memory block still gets the feature; an explicit
+// {"prefetchEnabled": false} disables it.
+func (m MemoryConfig) WithDefaults() MemoryConfig {
+	if !m.PrefetchEnabled && m.PrefetchConfidenceThreshold == 0 && m.HotCacheTTLSeconds == 0 && !m.internalSet {
+		m.PrefetchEnabled = true
+	}
+	m.internalSet = true
+	if m.PrefetchConfidenceThreshold <= 0 || m.PrefetchConfidenceThreshold > 1 {
+		m.PrefetchConfidenceThreshold = 0.7
+	}
+	if m.HotCacheTTLSeconds <= 0 {
+		m.HotCacheTTLSeconds = 300
+	}
+	return m
 }
 
 // SubAgentsConfig models the per-role sub-agent settings from config.json.
@@ -574,10 +614,13 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 	if c.Continuation.MaxWallTimeMinutes <= 0 {
 		c.Continuation.MaxWallTimeMinutes = defaults.Continuation.MaxWallTimeMinutes
 	}
-	if c.Continuation.MaxNoProgressTurns <= 0 {
+	// A negative value is an EXPLICIT "disable this loop guard" (used to
+	// observe a model's raw behavior). Only an unset/zero value falls back to
+	// the default; a negative survives and turns the guard off in the loop.
+	if c.Continuation.MaxNoProgressTurns == 0 {
 		c.Continuation.MaxNoProgressTurns = defaults.Continuation.MaxNoProgressTurns
 	}
-	if c.Continuation.MaxIdenticalToolCalls <= 0 {
+	if c.Continuation.MaxIdenticalToolCalls == 0 {
 		c.Continuation.MaxIdenticalToolCalls = defaults.Continuation.MaxIdenticalToolCalls
 	}
 	if c.Continuation.MaxWaitSeconds <= 0 {

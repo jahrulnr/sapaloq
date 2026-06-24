@@ -1,7 +1,7 @@
 # SapaLOQ — Provider Bridge (OpenAI / Claude / Kimi)
 
 > **Multi-model LLM bridge** — speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
-> Last updated: 2026-06-22 (inline tool-call reassembly across content deltas; labeled `[Tool: name]` / bare `name {args}` recovery; raw control-char tolerance for multi-line args)
+> Last updated: 2026-06-23 (documented `contextWindow` (input) vs `maxTokens` (output) knobs + 1M/128k example; clarified `[Called tools: …]` is a suppressed orchestrator note, not a recoverable inline call)
 
 Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -223,35 +223,73 @@ Cursor itself can pick which upstream model to use (GPT, Claude, Kimi) — the m
 
 ---
 
-## Context window
+## Context window & output cap
 
-The bridge truncates the conversation before sending it to the model, keeping the most recent turns and always preserving the leading system message.
+There are **two separate token knobs** per provider entry. They are easy to
+confuse, so be precise:
+
+| Field | Bounds | What it limits | Default | Wire mapping |
+|-------|--------|----------------|---------|--------------|
+| `contextWindow` | **input** | The conversation the bridge *sends* to the model in one turn (prompt + history). | `1,000,000` | none — used locally to truncate before the request |
+| `maxTokens` | **output** | The most tokens the model may *generate* back in one turn. | `0` (unset) | `max_completion_tokens` (openai/kimi) · `max_tokens` (claude) |
+
+`contextWindow` is the **input budget**; `maxTokens` is the **output budget**.
+They are independent — `contextWindow` does **not** reserve room for the output.
+
+### Example: 1M context, 128k output
 
 ```json
 {
-  "providers": [
-    {
-      "key": "claude",
-      "driver": "provider-bridge",
-      "endpoint": "https://api.anthropic.com/v1/messages",
-      "credentialsEnv": "ANTHROPIC_API_KEY",
-      "parser": "claude",
-      "authScheme": "x-api-key",
-      "contextWindow": 200000
-    }
-  ]
+  "key": "openai",
+  "driver": "provider-bridge",
+  "endpoint": "https://api.openai.com/v1/chat/completions",
+  "model": "gpt-5",
+  "credentialsEnv": "OPENAI_API_KEY",
+  "parser": "openai",
+  "authScheme": "bearer",
+  "contextWindow": 1000000,
+  "maxTokens": 131072
 }
 ```
 
-**Default:** `DefaultContextWindow = 1,000,000`. Per-entry override via the entry's `contextWindow` field.
+> **128k = 131072** (128 × 1024). `1M = 1000000`.
 
-**Truncation rule:**
+### `contextWindow` (input truncation)
 
-- Estimate each message's tokens as `len(content) / 4`.
-- Drop the oldest non-system messages until the total fits inside the window.
-- System message (role = `"system"` at index 0) is always preserved.
+The bridge truncates the conversation before sending it, keeping the most recent
+turns and always preserving the leading system message.
 
-Set `contextWindow: 0` to disable truncation (rare; the bridge will forward the full conversation regardless of size).
+- **Default:** `DefaultContextWindow = 1,000,000`. Per-entry override via
+  `contextWindow`.
+- **Truncation rule:**
+  - Estimate each message's tokens as `len(content) / 4`.
+  - Drop the oldest non-system messages until the total fits inside the window.
+  - The system message (role = `"system"` at index 0) is always preserved.
+- Set `contextWindow: 0` to disable truncation (rare; the bridge forwards the
+  full conversation regardless of size).
+
+> **If the model's physical context is a *shared* input+output budget** (e.g. a
+> "1M total" model), set `contextWindow` a bit *below* that total so there is
+> room for the output. For a 1M-total model wanting 128k output, use
+> `contextWindow: 900000`, `maxTokens: 131072`. SapaLOQ does not subtract
+> `maxTokens` from `contextWindow` for you — pick the input budget with the
+> output in mind.
+
+### `maxTokens` (output cap)
+
+Bounds what the model may generate in a single turn. Per-parser behavior:
+
+- **openai / kimi:** sent as `max_completion_tokens`, **only when `maxTokens > 0`**.
+  Left unset (`0`) → the field is omitted and the provider uses its own default.
+- **claude:** the Anthropic API *requires* `max_tokens`, so the bridge always
+  sends it — **defaulting to `8192`** when `maxTokens` is unset, and using your
+  value when set.
+
+### How to set these
+
+- Edit the provider entry in `~/.config/sapaloq/config.json` (under
+  `llmBridge.providers[]`) directly, **or**
+- Use the `/settings` command in the widget to patch config fields live.
 
 ---
 
@@ -274,7 +312,7 @@ Failures surface as config-load errors before the orchestrator starts.
 ```
 internal/bridges/provider/
 ├── bridge.go      → bridge.Bridge impl (Complete → WireOptions → goroutine)
-├── detect.go      → DetectParser/AuthScheme/APIVersion/ContextWindow/...
+├── detect.go      → DetectParser/AuthScheme/APIVersion/ContextWindow/MaxTokens/...
 │                    entry-level resolver with model-name sniff + endpoint fallback
 ├── context.go     → FitMessagesToContext — drops oldest non-system messages
 │                    when the conversation exceeds the configured window
@@ -354,6 +392,16 @@ not an envelope:
 Both reuse the string-aware brace matcher and the moving-frontier streaming
 logic, so a labeled call whose large args object (or the label itself) is split
 across deltas is still reassembled into a single `EventToolCall`.
+
+**Not the same as `[Called tools: …]`.** Do not confuse the recoverable forms
+above with a `[Called tools: name, …]` line. The latter is **not** a tool call
+the model is trying to make — it is an *internal* transcript note the
+orchestrator itself appends (`calledToolsNote`, the anti double-spawn record),
+which some models then echo back as prose. It carries no args object, so this
+scanner correctly ignores it; instead the orchestrator's `calledToolsFilter`
+(`internal/core/orchestrator/called_tools_filter.go`) strips that echo from the
+visible `response_delta` stream so it never reaches the user or the persisted
+assistant message.
 
 **Raw control-char tolerance.** A model that writes a multi-line argument inline
 (e.g. an `exec` heredoc whose body is a whole HTML file) embeds **real newline
