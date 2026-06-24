@@ -91,7 +91,7 @@ func HasReasoningLeak(text string) bool {
 // NOTE: this scans `text` as a single string, so it only reassembles a tool
 // call that is fully present in `text`. During streaming a large inline call is
 // split across many content deltas, so callers must accumulate the content and
-// scan the buffer (see ParseToolCallLeakFrom) — scanning one delta at a time
+// scan the buffer (see ParseToolCallLeakFrom) - scanning one delta at a time
 // never sees a balanced {...} for a big argument (e.g. a whole HTML file) and
 // silently loses it. `known`, when non-nil, restricts matches to recognised
 // tool names so a JSON blob inside file content (that merely has name+arguments
@@ -124,7 +124,7 @@ func ParseToolCallLeakFrom(text string, from int, known func(string) bool) (pars
 		if label, labelStart, hasLabel := toolLabelBefore(text, i, known); hasLabel {
 			obj, ok := scanOneJSONObject(text, i)
 			if !ok {
-				// args object still streaming — keep the partial from the
+				// args object still streaming - keep the partial from the
 				// label so the next delta can complete it.
 				return parse.ToolCall{}, labelStart, false
 			}
@@ -151,7 +151,7 @@ func ParseToolCallLeakFrom(text string, from int, known func(string) bool) (pars
 	}
 	// No complete object matched. If the buffer ends with a partial bracketed
 	// label (an unclosed `[...` whose '{' has not arrived yet), back the scan
-	// frontier off to that '[' so the label is retained for the next delta —
+	// frontier off to that '[' so the label is retained for the next delta -
 	// otherwise we'd advance past it and never recognise the call once its
 	// args object finally streams in.
 	if open := strings.LastIndexByte(text, '['); open >= from && !strings.ContainsAny(text[open:], "{]") {
@@ -170,7 +170,7 @@ func ParseToolCallLeakFrom(text string, from int, known func(string) bool) (pars
 // On a match it returns the tool name and the index where the label begins (so
 // a streaming caller can retain the whole label+partial-args for the next
 // delta). The bare form requires `known` to confirm the token is a real tool
-// name — otherwise any `word {` in prose would be misread. The bracketed form
+// name - otherwise any `word {` in prose would be misread. The bracketed form
 // is unambiguous enough to accept without `known`, but still honours it when
 // provided.
 func toolLabelBefore(text string, brace int, known func(string) bool) (name string, start int, ok bool) {
@@ -202,7 +202,7 @@ func toolLabelBefore(text string, brace int, known func(string) bool) (name stri
 		}
 		return n, open, true
 	}
-	// Bare form: ...NAME{ — walk back over a single tool-name token.
+	// Bare form: ...NAME{ - walk back over a single tool-name token.
 	end := j + 1
 	k := j
 	for k >= 0 && isToolNameByte(text[k]) {
@@ -240,7 +240,7 @@ func isASCIISpace(b byte) bool {
 }
 
 // isToolNameByte reports whether b is a valid character inside a tool-name
-// token (letters, digits, underscore — matching the snake_case tool ids used
+// token (letters, digits, underscore - matching the snake_case tool ids used
 // throughout SapaLOQ such as read_file, web_search, sapaloq_complete_task).
 func isToolNameByte(b byte) bool {
 	return b == '_' ||
@@ -273,7 +273,7 @@ type scannedObject struct {
 // ignored, so a tool argument whose value is a file body containing `{`/`}`
 // (HTML/CSS/JS) does not cause the object to close early. Without this, content
 // braces miscount depth, the scan ends mid-object, and the (now invalid) JSON
-// is rejected — silently dropping the tool call. This was the root cause of the
+// is rejected - silently dropping the tool call. This was the root cause of the
 // "big tool call lost" bug.
 func scanOneJSONObject(text string, start int) (scannedObject, bool) {
 	depth := 0
@@ -351,7 +351,7 @@ func decodeLooseToolJSON(s string) (name string, args json.RawMessage, ok bool) 
 		Parameters json.RawMessage `json:"parameters"`
 	}
 	// Repair raw control bytes (see looksLikeToolJSON) so a multi-line argument
-	// value decodes — and so the Arguments we hand downstream are valid JSON
+	// value decodes - and so the Arguments we hand downstream are valid JSON
 	// that parseToolArgs can unmarshal.
 	if err := json.Unmarshal(parse.RepairControlCharsInJSON([]byte(s)), &raw); err != nil {
 		return "", nil, false

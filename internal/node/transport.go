@@ -1,6 +1,6 @@
 // Package node defines the transport abstraction for routing sub-agent spawns
 // to remote execution nodes (see docs/NODES.md). Local nodes run in-process and
-// do not use a Transport; remote nodes receive only a bounded context packet —
+// do not use a Transport; remote nodes receive only a bounded context packet -
 // NEVER the memory bus or companion.db.
 //
 // The interface is intentionally minimal so it is fully unit-testable via the
@@ -11,7 +11,7 @@ package node
 import "context"
 
 // SpawnEnvelope is the bounded payload sent to a remote node. It carries only
-// what the remote needs to execute — no memory bus, no full chat history.
+// what the remote needs to execute - no memory bus, no full chat history.
 type SpawnEnvelope struct {
 	SubAgentID   string `json:"sub_agent_id"`
 	Role         string `json:"role"`

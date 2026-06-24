@@ -1,4 +1,4 @@
-# CIE 1931 — Standard Observer, XYZ, and Color Matching Functions
+# CIE 1931 - Standard Observer, XYZ, and Color Matching Functions
 
 **Primary Standard Data:** CIE 1931 colour-matching functions, 2 degree observer
 **DOI:** [doi.org/10.25039/CIE.DS.xvudnb9b](https://doi.org/10.25039/CIE.DS.xvudnb9b)

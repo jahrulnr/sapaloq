@@ -1,6 +1,6 @@
-# SapaLOQ — Provider Bridge (OpenAI / Claude / Kimi)
+# SapaLOQ - Provider Bridge (OpenAI / Claude / Kimi)
 
-> **Multi-model LLM bridge** — speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
+> **Multi-model LLM bridge** - speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
 > Last updated: 2026-06-23 (documented `contextWindow` (input) vs `maxTokens` (output) knobs + 1M/128k example; clarified `[Called tools: …]` is a suppressed orchestrator note, not a recoverable inline call)
 
 Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
@@ -9,7 +9,7 @@ Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE
 
 ## Why this exists
 
-OpenRouter, TokenRouter, OpenAI, Claude, Kimi, and many other inference providers expose roughly the same surface — HTTP POST + Server-Sent Events — but the request body and per-line event shape differ:
+OpenRouter, TokenRouter, OpenAI, Claude, Kimi, and many other inference providers expose roughly the same surface - HTTP POST + Server-Sent Events - but the request body and per-line event shape differ:
 
 | Provider | Wire | Auth header | Tool calls | Thinking |
 |----------|------|-------------|------------|----------|
@@ -26,7 +26,7 @@ The catch with OpenRouter/TokenRouter: their endpoint is OpenAI-shaped, but the 
 
 ## Recommended: providers array
 
-Every available provider is one self-contained entry in `llmBridge.providers`. The active entry is selected via `llmBridge.providerKey`. **Cursor is a first-class provider** in the same array — it just uses a different `driver` (RE proxy) instead of direct API access.
+Every available provider is one self-contained entry in `llmBridge.providers`. The active entry is selected via `llmBridge.providerKey`. **Cursor is a first-class provider** in the same array - it just uses a different `driver` (RE proxy) instead of direct API access.
 
 ```json
 {
@@ -72,7 +72,7 @@ Every available provider is one self-contained entry in `llmBridge.providers`. T
 }
 ```
 
-Same `providers` array holds cursor (RE proxy) and the direct OpenAI / Claude / Kimi entries. Switching providers is just changing `providerKey` — no driver indirection.
+Same `providers` array holds cursor (RE proxy) and the direct OpenAI / Claude / Kimi entries. Switching providers is just changing `providerKey` - no driver indirection.
 
 To switch at runtime via `/settings`, just patch `providerKey` and the next chat picks up the new entry.
 
@@ -86,7 +86,7 @@ To switch at runtime via `/settings`, just patch `providerKey` and the next chat
 | `provider-bridge` | Direct HTTP to OpenAI / Anthropic / Moonshot API | Whatever the endpoint supports |
 | `local-llama` | Local llama.cpp sidecar | Whatever you serve |
 
-Each cursor entry talks to `api2.cursor.sh` and lets Cursor pick the upstream. Each provider-bridge entry talks directly to the upstream API. The choice is yours — many users have both for fallback.
+Each cursor entry talks to `api2.cursor.sh` and lets Cursor pick the upstream. Each provider-bridge entry talks directly to the upstream API. The choice is yours - many users have both for fallback.
 
 ---
 
@@ -94,18 +94,18 @@ Each cursor entry talks to `api2.cursor.sh` and lets Cursor pick the upstream. E
 
 `internal/bridges/provider/detect.go` resolves the parser, auth scheme, and API version from one entry. Order:
 
-1. **Explicit `entry.Parser`** — `"openai"`, `"claude"` / `"anthropic"`, `"kimi"` / `"moonshot"`.
-2. **Model name sniff** — Anthropic/Moonshot family markers (`claude`/`opus`/`sonnet`/`haiku`/`kimi`/`moonshot`).
-3. **Endpoint URL substring** — `anthropic`/`claude` → Claude, `moonshot`/`kimi` → Kimi, else OpenAI.
-4. **Default** — OpenAI parser, `bearer` auth, 1,000,000 context window.
+1. **Explicit `entry.Parser`** - `"openai"`, `"claude"` / `"anthropic"`, `"kimi"` / `"moonshot"`.
+2. **Model name sniff** - Anthropic/Moonshot family markers (`claude`/`opus`/`sonnet`/`haiku`/`kimi`/`moonshot`).
+3. **Endpoint URL substring** - `anthropic`/`claude` → Claude, `moonshot`/`kimi` → Kimi, else OpenAI.
+4. **Default** - OpenAI parser, `bearer` auth, 1,000,000 context window.
 
 `authScheme` follows: explicit `entry.AuthScheme` → parser-derived (claude → x-api-key, others → bearer).
 
 `apiVersion`: explicit `entry.APIVersion` → caller applies default `"2023-06-01"` (used by the Claude wire layer only).
-| — | — | `claude-opus-4.8` | `openrouter.ai` | `claude` (model wins) |
-| — | — | `gpt-5` | `openrouter.ai` | `openai` (model) |
-| — | — | — | `api.openai.com` | `openai` (endpoint) |
-| — | — | — | (any other) | `openai` (default) |
+| - | - | `claude-opus-4.8` | `openrouter.ai` | `claude` (model wins) |
+| - | - | `gpt-5` | `openrouter.ai` | `openai` (model) |
+| - | - | - | `api.openai.com` | `openai` (endpoint) |
+| - | - | - | (any other) | `openai` (default) |
 
 ---
 
@@ -131,7 +131,7 @@ These snippets show one entry each. Add them to the `llmBridge.providers` array 
 
 `reasoningEffort` maps to OpenAI's `reasoning_effort` parameter (`low` | `medium` | `high`).
 
-### OpenRouter — Claude model
+### OpenRouter - Claude model
 
 ```json
 {
@@ -147,7 +147,7 @@ These snippets show one entry each. Add them to the `llmBridge.providers` array 
 
 The `parser: "claude"` is required because OpenRouter returns Claude wire format for Claude models, even though its endpoint is OpenAI-shaped.
 
-### OpenRouter — GPT-5
+### OpenRouter - GPT-5
 
 ```json
 {
@@ -219,7 +219,7 @@ Kimi is OpenAI-compatible at the wire level. When `reasoningEffort` is non-empty
 }
 ```
 
-Cursor itself can pick which upstream model to use (GPT, Claude, Kimi) — the model name in the entry is the default. The RE client handles wire format translation.
+Cursor itself can pick which upstream model to use (GPT, Claude, Kimi) - the model name in the entry is the default. The RE client handles wire format translation.
 
 ---
 
@@ -230,11 +230,11 @@ confuse, so be precise:
 
 | Field | Bounds | What it limits | Default | Wire mapping |
 |-------|--------|----------------|---------|--------------|
-| `contextWindow` | **input** | The conversation the bridge *sends* to the model in one turn (prompt + history). | `1,000,000` | none — used locally to truncate before the request |
+| `contextWindow` | **input** | The conversation the bridge *sends* to the model in one turn (prompt + history). | `1,000,000` | none - used locally to truncate before the request |
 | `maxTokens` | **output** | The most tokens the model may *generate* back in one turn. | `0` (unset) | `max_completion_tokens` (openai/kimi) · `max_tokens` (claude) |
 
 `contextWindow` is the **input budget**; `maxTokens` is the **output budget**.
-They are independent — `contextWindow` does **not** reserve room for the output.
+They are independent - `contextWindow` does **not** reserve room for the output.
 
 ### Example: 1M context, 128k output
 
@@ -272,7 +272,7 @@ turns and always preserving the leading system message.
 > "1M total" model), set `contextWindow` a bit *below* that total so there is
 > room for the output. For a 1M-total model wanting 128k output, use
 > `contextWindow: 900000`, `maxTokens: 131072`. SapaLOQ does not subtract
-> `maxTokens` from `contextWindow` for you — pick the input budget with the
+> `maxTokens` from `contextWindow` for you - pick the input budget with the
 > output in mind.
 
 ### `maxTokens` (output cap)
@@ -282,7 +282,7 @@ Bounds what the model may generate in a single turn. Per-parser behavior:
 - **openai / kimi:** sent as `max_completion_tokens`, **only when `maxTokens > 0`**.
   Left unset (`0`) → the field is omitted and the provider uses its own default.
 - **claude:** the Anthropic API *requires* `max_tokens`, so the bridge always
-  sends it — **defaulting to `8192`** when `maxTokens` is unset, and using your
+  sends it - **defaulting to `8192`** when `maxTokens` is unset, and using your
   value when set.
 
 ### How to set these
@@ -314,7 +314,7 @@ internal/bridges/provider/
 ├── bridge.go      → bridge.Bridge impl (Complete → WireOptions → goroutine)
 ├── detect.go      → DetectParser/AuthScheme/APIVersion/ContextWindow/MaxTokens/...
 │                    entry-level resolver with model-name sniff + endpoint fallback
-├── context.go     → FitMessagesToContext — drops oldest non-system messages
+├── context.go     → FitMessagesToContext - drops oldest non-system messages
 │                    when the conversation exceeds the configured window
 ├── wire.go        → runSSE loop, HTTP request builder, body marshalling
 ├── handlers.go    → per-line SSE dispatch (openai / kimi / claude)
@@ -356,8 +356,8 @@ Upstream SSE line
 ```
 
 **Inline tool-call reassembly (`leakScanner`).** Some models (notably MiniMax)
-emit a tool call inline in the *content* channel — `{"name":"...","arguments":{...}}`
-— instead of the native `tool_calls` field. When the argument is large (e.g. a
+emit a tool call inline in the *content* channel - `{"name":"...","arguments":{...}}`
+- instead of the native `tool_calls` field. When the argument is large (e.g. a
 whole HTML/CSS/JS file body), the JSON is streamed split across **many** content
 deltas, so scanning one delta at a time never sees a balanced `{...}` and the
 call is silently lost (this caused multi-turn task failures where only small
@@ -380,11 +380,11 @@ inline (the role prompts instruct calls as `read_file {"path":"..."}`,
 `exec {"command":"..."}`), where the trailing `{...}` is the **arguments** body,
 not an envelope:
 
-- **Bracketed** — `[Tool: <name>]\n{args}`. Accepted even without a declared
+- **Bracketed** - `[Tool: <name>]\n{args}`. Accepted even without a declared
   list (the label is unambiguous), but still gated by `DeclaredTools` when one
   is set. This was the orch-chat leak: `[Tool: exec]\n{"command":"ls ..."}`
   surfaced as a `response_delta` because no parser recognised it.
-- **Bare** — `<name> {args}` where `<name>` is a snake_case token. Accepted
+- **Bare** - `<name> {args}` where `<name>` is a snake_case token. Accepted
   **only** when `<name>` is in `DeclaredTools`, so prose like `the object {...}`
   is never misread; a name that is only a suffix of a longer word (`prefixexec`)
   is rejected too.
@@ -395,7 +395,7 @@ across deltas is still reassembled into a single `EventToolCall`.
 
 **Not the same as `[Called tools: …]`.** Do not confuse the recoverable forms
 above with a `[Called tools: name, …]` line. The latter is **not** a tool call
-the model is trying to make — it is an *internal* transcript note the
+the model is trying to make - it is an *internal* transcript note the
 orchestrator itself appends (`calledToolsNote`, the anti double-spawn record),
 which some models then echo back as prose. It carries no args object, so this
 scanner correctly ignores it; instead the orchestrator's `calledToolsFilter`
@@ -407,12 +407,12 @@ assistant message.
 (e.g. an `exec` heredoc whose body is a whole HTML file) embeds **real newline
 bytes** inside the JSON string value. Per the JSON spec a literal control byte
 (U+0000–U+001F) in a string is invalid, so `encoding/json` would reject the whole
-call and it was silently lost — the tool then saw empty args, returned "command
+call and it was silently lost - the tool then saw empty args, returned "command
 is required", and the model wrongly concluded its content had been
 "stripped/filtered" (and burned turns on base64/chunking workarounds). The
 reassembler and `parseToolArgs` now run the candidate through
 `parse.RepairControlCharsInJSON`, which escapes raw control bytes **inside string
-literals** (`\n`, `\r`, `\t`, `\u00XX`) while leaving structure untouched — a
+literals** (`\n`, `\r`, `\t`, `\u00XX`) while leaving structure untouched - a
 no-op for already-valid JSON. So a multi-line inline call is recognised and its
 stored `Arguments` are valid JSON that downstream unmarshalling accepts.
 
@@ -451,7 +451,7 @@ To add a brand-new wire format:
 4. Add an `AccumulatorNewProvider` under `internal/parse/tools/provider/`.
 5. Cover the new format with `httptest`-based tests in `wire_test.go`.
 
-The bridge file itself does not need to change — it dispatches on `opts.Parser`.
+The bridge file itself does not need to change - it dispatches on `opts.Parser`.
 
 ---
 
@@ -483,5 +483,5 @@ The provider bridge serializes those canonical names into OpenAI/Claude/Kimi too
 
 - **Single inference backend per stream.** Each Complete call goes to one configured endpoint. Multi-model orchestration (e.g. Claude for thinking, GPT for tools) is the orchestrator's job.
 - **No provider-specific tool schemas.** `declaredTools` is a name list; the bridge sends `additionalProperties: true` schemas. If you need strict parameter validation, build a custom `*ToolParser` adapter.
-- **Tool calls in a single message only.** The bridge does not yet route tool results back to the model in a multi-turn loop — that's the orchestrator's responsibility.
+- **Tool calls in a single message only.** The bridge does not yet route tool results back to the model in a multi-turn loop - that's the orchestrator's responsibility.
 - **No fallback / retry.** If the upstream returns 5xx the bridge surfaces an `EventError` and stops. The orchestrator decides whether to retry.

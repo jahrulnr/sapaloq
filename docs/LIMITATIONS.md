@@ -1,7 +1,7 @@
-# SapaLOQ — Limitations (No Solution)
+# SapaLOQ - Limitations (No Solution)
 
-> Hal-hal yang **tidak bisa diselesaikan** hanya dengan arsitektur — tradeoff produk, batas OS, atau fisika network.
-> Untuk yang **bisa** dimitigasi (boot FSM, offline queue, doctor CLI), lihat [RUNTIME.md](./RUNTIME.md) — **bukan** file ini.
+> Hal-hal yang **tidak bisa diselesaikan** hanya dengan arsitektur - tradeoff produk, batas OS, atau fisika network.
+> Untuk yang **bisa** dimitigasi (boot FSM, offline queue, doctor CLI), lihat [RUNTIME.md](./RUNTIME.md) - **bukan** file ini.
 > Last updated: 2026-06-19
 
 Related: [VISION.md](./VISION.md) · [RUNTIME.md](./RUNTIME.md)
@@ -32,10 +32,10 @@ Tanpa LLM (cloud atau local):
 
 - Orchestrator **tidak bisa** reasoning NL
 - `/settings` natural language **tidak jalan**
-- Clarification auto-answer butuh index saja — **terbatas**
+- Clarification auto-answer butuh index saja - **terbatas**
 - Research sub-agent **mati total**
 
-Yang masih jalan offline: tulis file (scribe), GNOME tools lokal, baca SQLite — **bukan** companion pintar.
+Yang masih jalan offline: tulis file (scribe), GNOME tools lokal, baca SQLite - **bukan** companion pintar.
 
 Local LLM fallback = **partial**, bukan parity penuh (quality, RAM, battery).
 
@@ -45,7 +45,7 @@ Sub-agent agresif + research + multi-turn = biaya & quota provider. SapaLOQ tida
 
 ### Connection flap mid-stream (Hard limit · partial)
 
-Stream putus saat generation — user dapat partial response. Retry tidak bisa "unsay" apa yang sudah user baca. Idempotency tool **partial**; conversational continuity **tidak perfect**.
+Stream putus saat generation - user dapat partial response. Retry tidak bisa "unsay" apa yang sudah user baca. Idempotency tool **partial**; conversational continuity **tidak perfect**.
 
 ---
 
@@ -57,19 +57,19 @@ Notifikasi GNOME, reminder, email event **saat sapaloq-core tidak jalan** → **
 
 OS tidak menyediakan replay buffer unlimited untuk third-party companion. Setelah boot: hanya event **baru**.
 
-Scheduled `delay_start` yang fire saat core mati → **miss** kecuali persist + catch-up on boot (mitigasi partial — lihat RUNTIME; **miss window tetap ada**).
+Scheduled `delay_start` yang fire saat core mati → **miss** kecuali persist + catch-up on boot (mitigasi partial - lihat RUNTIME; **miss window tetap ada**).
 
 ### Login → session ready delay (Hard limit)
 
-Antara power-on dan `graphical-session` + D-Bus + network ready: **5–60+ detik** tanpa companion. Tidak eliminable — urutan boot OS.
+Antara power-on dan `graphical-session` + D-Bus + network ready: **5–60+ detik** tanpa companion. Tidak eliminable - urutan boot OS.
 
 ### Sleep / suspend (Hard limit)
 
-Lid close / suspend: in-memory state hilang; D-Bus reconnect quirks. Wake resume **partial** — task `running` bisa orphan; full "seolah tidak pernah pause" **tidak guaranteed**.
+Lid close / suspend: in-memory state hilang; D-Bus reconnect quirks. Wake resume **partial** - task `running` bisa orphan; full "seolah tidak pernah pause" **tidak guaranteed**.
 
 ### Hard power loss (Hard limit · partial)
 
-Crash mid-write: SQLite WAL usually survives; jsonl line bisa corrupt **satu event**. Tidak ada exactly-once semantics tanpa distributed consensus — **overkill** untuk SapaLOQ.
+Crash mid-write: SQLite WAL usually survives; jsonl line bisa corrupt **satu event**. Tidak ada exactly-once semantics tanpa distributed consensus - **overkill** untuk SapaLOQ.
 
 ---
 
@@ -79,11 +79,11 @@ Crash mid-write: SQLite WAL usually survives; jsonl line bisa corrupt **satu eve
 
 Worker (`cursor-agent`, GoClaw) **tidak otomatis** tahu companion memory. User harus explicit handoff packet. **Tidak ada solusi** tanpa melanggar misi isolasi.
 
-Same rule for **outer-machine nodes**: no live memory bus — context packet at spawn only ([NODES.md](./NODES.md#memory-policy-local-vs-remote)).
+Same rule for **outer-machine nodes**: no live memory bus - context packet at spawn only ([NODES.md](./NODES.md#memory-policy-local-vs-remote)).
 
 ### Dua otak, dua truth (By design)
 
-Companion ingat desktop/personal; worker ingat repo/coding. **Tidak sync** — user bisa lihat jawaban bertentangan antar produk.
+Companion ingat desktop/personal; worker ingat repo/coding. **Tidak sync** - user bisa lihat jawaban bertentangan antar produk.
 
 ### No full settings UI (By design · mitigated)
 
@@ -101,7 +101,7 @@ LLM down + config corrupt masih perlu manual edit/CLI doctor. Doctor mitigates *
 
 **MVP adapter:** GNOME on Ubuntu/Pop!/Debian. **Product direction:** portable via [PLATFORM.md](./PLATFORM.md).
 
-KDE, Windows, CentOS desktop = **later adapters** — same core, different `internal/platform` impl.
+KDE, Windows, CentOS desktop = **later adapters** - same core, different `internal/platform` impl.
 
 ### Per-adapter limits (Hard limit)
 
@@ -111,7 +111,7 @@ Beberapa app: silent notif, empty body, privacy redaction. SapaLOQ **tidak bisa*
 
 ### Wayland / compositor variance (Hard limit)
 
-Always-on-top HUD behavior beda per compositor: **GNOME Wayland** tidak punya layer-shell — pakai GJS shim atau manual toggle; **KDE/Sway** pakai gtk-layer-shell. Multi-monitor & fractional scaling tetap variance. **Click-through** di area transparan: GTK `input_shape` (M5a validated), bukan otomatis di semua toolkit.
+Always-on-top HUD behavior beda per compositor: **GNOME Wayland** tidak punya layer-shell - pakai GJS shim atau manual toggle; **KDE/Sway** pakai gtk-layer-shell. Multi-monitor & fractional scaling tetap variance. **Click-through** di area transparan: GTK `input_shape` (M5a validated), bukan otomatis di semua toolkit.
 
 ### Draggable widget panel positioning on multi-monitor (Hard limit · GNOME/Linux)
 
@@ -137,7 +137,7 @@ Screenshot, clipboard first-use → user must approve. Automation **tidak fully 
 
 ### Flatpak sandbox vs full D-Bus (Hard limit)
 
-Sandboxed SapaLOQ = **less** GNOME access. Full power = native package — tradeoff security vs capability; **keduanya tidak perfect**.
+Sandboxed SapaLOQ = **less** GNOME access. Full power = native package - tradeoff security vs capability; **keduanya tidak perfect**.
 
 ---
 
@@ -145,7 +145,7 @@ Sandboxed SapaLOQ = **less** GNOME access. Full power = native package — trade
 
 ### Strict anti context poisoning vs fast task switch (By design)
 
-User loncat task cepat → orchestrator block/park. **UX friction intentional** — tidak bisa "poisoning-free" dan "zero friction switch" sekaligus.
+User loncat task cepat → orchestrator block/park. **UX friction intentional** - tidak bisa "poisoning-free" dan "zero friction switch" sekaligus.
 
 ### Orchestrator slim vs full awareness (Hard limit)
 
@@ -172,11 +172,11 @@ Node di VPS/EC2 = network partition, latency, trust boundary. Progress/clarifica
 | **Latency** | Every fact read/write = RTT; prefetch & anti-deep-check collapse |
 | **Stale memory** | Remote cache diverges; orchestrator reads truth A, remote acts on B |
 | **Conflict** | Concurrent writes across machines without distributed consensus |
-| **Complexity** | CRDT/sync/replication = product baru — violates single-binary less-deps |
+| **Complexity** | CRDT/sync/replication = product baru - violates single-binary less-deps |
 
-**Policy:** shared memory bus = **same machine only** (`wrapper: local`, same-host Docker optional with shared volume — still risky, default off).
+**Policy:** shared memory bus = **same machine only** (`wrapper: local`, same-host Docker optional with shared volume - still risky, default off).
 
-Remote nodes receive **scoped context packet only** at spawn + return **results/progress** — tidak live query ke SQLite orchestrator. Learning promotion happens **local** after task done.
+Remote nodes receive **scoped context packet only** at spawn + return **results/progress** - tidak live query ke SQLite orchestrator. Learning promotion happens **local** after task done.
 
 See [NODES.md](./NODES.md#memory-policy-local-vs-remote).
 
@@ -208,7 +208,7 @@ Tool/thinking wire formats differ per provider ([BRIDGE.md](./BRIDGE.md)). Curso
 
 ### Tool poisoning (Backend-dependent)
 
-Cursor-like backends may emit **fake tool names** — requires coercion layer. OpenAI/Claude direct APIs usually clean. Gemini/Copilot paths **may** need cursor-like sanitizer — probe at connect, not assume.
+Cursor-like backends may emit **fake tool names** - requires coercion layer. OpenAI/Claude direct APIs usually clean. Gemini/Copilot paths **may** need cursor-like sanitizer - probe at connect, not assume.
 
 ---
 
@@ -216,16 +216,16 @@ Cursor-like backends may emit **fake tool names** — requires coercion layer. O
 
 | Idea | Why no |
 |------|--------|
-| Redis/Rabbit for reliability | User chose single binary — different failure profile, not elimination of network/offline limits |
+| Redis/Rabbit for reliability | User chose single binary - different failure profile, not elimination of network/offline limits |
 | Sync companion memory to cursor-agent | Violates isolation mission |
-| Shared SQLite memory bus across remote nodes | Stale memory + sync complexity — use context packet instead |
+| Shared SQLite memory bus across remote nodes | Stale memory + sync complexity - use context packet instead |
 | Replay all missed OS notifications after boot | OS/API does not provide |
 | Zero LLM latency | Physics |
 | Settings UI "just in case" | Violates config-by-agent mission unless scope change |
 | Full Cursor ToolCall parity on companion | Explicit non-goal |
 | Require 9router as runtime dependency | Built-in compat bridges instead |
-| Derive Cursor thinking from 9router transport | Skips thinking channel — see RE-CURSOR-THINKING-TOOLS.md |
-| One universal tool/thinking parser | Formats differ — per-provider parsers required |
+| Derive Cursor thinking from 9router transport | Skips thinking channel - see RE-CURSOR-THINKING-TOOLS.md |
+| One universal tool/thinking parser | Formats differ - per-provider parsers required |
 
 ---
 
@@ -262,4 +262,4 @@ SapaLOQ **is not**:
 - [ ] How aggressive proactive catch-up on boot (accept miss vs fake catch-up)
 - [ ] Minimum CLI/doctor for no-UI recovery
 
-Perubahan scope di atas **bisa mengurangi** beberapa limit — tapi menambah misi baru.
+Perubahan scope di atas **bisa mengurangi** beberapa limit - tapi menambah misi baru.

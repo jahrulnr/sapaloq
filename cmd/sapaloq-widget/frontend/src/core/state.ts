@@ -38,7 +38,7 @@ export function setCompose(c: ComposeBox | null) { _compose = c; }
 // Task ids whose spoken-completion bubble has already been rendered this
 // session. The orchestrator stamps response_delta completions with task_id and
 // may re-publish a terminal transition, so we render at most one bubble per
-// task — preventing the duplicate "Task … selesai/gagal" assistant bubble.
+// task - preventing the duplicate "Task … selesai/gagal" assistant bubble.
 export const spokenTaskIDs = new Set<string>();
 export const taskBubbles = new Map<string, HTMLElement>();
 export const taskStatuses = new Map<string, string>();

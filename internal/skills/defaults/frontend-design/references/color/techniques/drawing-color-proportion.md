@@ -1,8 +1,8 @@
-# Struggling To Pick Colors? Learn This! — The Color Proportion Pyramid
+# Struggling To Pick Colors? Learn This! - The Color Proportion Pyramid
 
 ## Overview
 
-A 20+ year professional illustrator explains color proportion through a pyramid/layer-cake model. The key insight: most of your image should be neutral — vivid colors work BECAUSE they're rare. 42 minutes with real painting and cinema examples.
+A 20+ year professional illustrator explains color proportion through a pyramid/layer-cake model. The key insight: most of your image should be neutral - vivid colors work BECAUSE they're rare. 42 minutes with real painting and cinema examples.
 
 ## The Color Proportion Pyramid
 
@@ -23,7 +23,7 @@ Imagine your image's color distribution as a pyramid:
 
 > "The majority of an image often comprises subdued, neutral tones, which set the stage for vibrant accents to stand out."
 
-Most beginners do the opposite — they saturate everything, which creates conflict and visual noise. Professionals use mostly neutrals, with vivid color as strategic emphasis.
+Most beginners do the opposite - they saturate everything, which creates conflict and visual noise. Professionals use mostly neutrals, with vivid color as strategic emphasis.
 
 ## How The Pyramid Works
 
@@ -47,7 +47,7 @@ Most beginners do the opposite — they saturate everything, which creates confl
 ### Layer 4: Accents (smallest proportion)
 
 - The most vivid, intense touches
-- Where the eye goes — the focal point
+- Where the eye goes - the focal point
 - Works BECAUSE everything else is restrained
 
 ## Two Strategies for Application
@@ -60,7 +60,7 @@ Most beginners do the opposite — they saturate everything, which creates confl
 
 ### Strategy 2: Adjust on the fly
 
-- If an image feels "off" — check the proportion
+- If an image feels "off" - check the proportion
 - Usually the problem is too much saturation across too large an area
 - Desaturate the majority, keep vivid color only where it matters
 - "Pull back to push forward"
@@ -69,15 +69,15 @@ Most beginners do the opposite — they saturate everything, which creates confl
 
 Color proportion serves the read order:
 
-1. **First read** — overall shape/silhouette (value contrast)
-2. **Second read** — major color areas (the tonic)
-3. **Third read** — details and accents (the payoff)
+1. **First read** - overall shape/silhouette (value contrast)
+2. **Second read** - major color areas (the tonic)
+3. **Third read** - details and accents (the payoff)
 
-If saturated color is everywhere, there's no hierarchy — the eye doesn't know where to go.
+If saturated color is everywhere, there's no hierarchy - the eye doesn't know where to go.
 
 ## Key Quotes
 
-> "Color proportion is not about choosing the right colors — it's about choosing the right AMOUNTS."
+> "Color proportion is not about choosing the right colors - it's about choosing the right AMOUNTS."
 
 > "If everything is special, nothing is special."
 
@@ -85,11 +85,11 @@ If saturated color is everywhere, there's no hierarchy — the eye doesn't know 
 
 ## Connection to Other References
 
-- **Farges's Dominant-Tonic-Accent** — same concept, different vocabulary (dominant=neutrals, tonic=mid, accent=vivid)
-- **60-30-10 rule** — a specific ratio version of this pyramid
-- **Aladdin analysis (J. Holt)** — "peacemaker colors" = the neutral pyramid base
-- **Color Nerd harmony lecture** — character (chroma+lightness) matters more than hue
-- **Harvey Rayner** — "a little color goes a long way"
+- **Farges's Dominant-Tonic-Accent** - same concept, different vocabulary (dominant=neutrals, tonic=mid, accent=vivid)
+- **60-30-10 rule** - a specific ratio version of this pyramid
+- **Aladdin analysis (J. Holt)** - "peacemaker colors" = the neutral pyramid base
+- **Color Nerd harmony lecture** - character (chroma+lightness) matters more than hue
+- **Harvey Rayner** - "a little color goes a long way"
 
 ## Links
 

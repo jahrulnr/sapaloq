@@ -19,12 +19,12 @@ const maxAutoClarifyAnswers = 2
 // atau forward ke user"). When a sub-agent pauses on awaiting_clarification the
 // worker goroutine has already exited cleanly (no blocking, no stall) and the
 // question is kept off the UI while this mediator runs. It lets an independent
-// decision actor — reusing the SAME inference engine as a normal turn — answer
+// decision actor - reusing the SAME inference engine as a normal turn - answer
 // the question itself from conversation context:
 //
 //   - If the chat LLM is confident it calls sapaloq_answer_clarification, which
 //     (via handleAskTool) writes the answer and resumes the task in the
-//     background. Vendor-to-vendor, with chat as the mediator — exactly the
+//     background. Vendor-to-vendor, with chat as the mediator - exactly the
 //     designed loop, and no new bespoke machinery.
 //   - If it is not confident (or the auto-answer budget is spent), the decision
 //     is explicitly escalated to the UI orchestrator, which is the sole writer
@@ -76,7 +76,7 @@ func (o *Orchestrator) runClarificationResolver(sessionID string, record taskRec
 
 	system := "You are the orchestrator mediating between the user and a background sub-agent. " +
 		"A sub-agent is paused and needs a decision to continue. " +
-		"If — and ONLY if — you can answer confidently from the conversation context and the user's evident intent, " +
+		"If - and ONLY if - you can answer confidently from the conversation context and the user's evident intent, " +
 		"call `sapaloq_answer_clarification` with task_id=\"" + record.ID + "\" and a clear answer. "
 
 	user := fmt.Sprintf("Background task `%s` (%s) asks:\n\n%s\n\nTask goal was: %s",

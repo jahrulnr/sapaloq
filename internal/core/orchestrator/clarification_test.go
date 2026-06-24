@@ -66,7 +66,7 @@ func waitForCalls(t *testing.T, br *countingBridge, n int) {
 // TestClarificationResolverRunsThenDefersToUser proves the event-driven
 // clarification loop: the orchestrator reuses the chat engine to TRY to answer a
 // sub-agent's question itself. Here it is "not confident" (no tool call), so it
-// correctly defers to the user — the task is NOT resumed, and nothing blocks.
+// correctly defers to the user - the task is NOT resumed, and nothing blocks.
 func TestClarificationResolverRunsThenDefersToUser(t *testing.T) {
 	br := &countingBridge{}
 	o := newClarifyOrchestrator(t, br)
@@ -95,7 +95,7 @@ func TestClarificationAutoAnswerBudget(t *testing.T) {
 	}
 	waitForCalls(t, br, maxAutoClarifyAnswers)
 
-	// The next call must be gated (budget spent) — no additional inference.
+	// The next call must be gated (budget spent) - no additional inference.
 	o.resolveClarification("s1", rec)
 	time.Sleep(50 * time.Millisecond)
 	if br.callCount() != maxAutoClarifyAnswers {

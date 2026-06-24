@@ -11,7 +11,7 @@ import (
 
 // TestParseToolArgsRawNewlines is the regression for the orch-task heredoc
 // failure: a model emitted exec arguments whose "command" value contained RAW
-// (unescaped) newline bytes — invalid JSON. parseToolArgs used to ignore the
+// (unescaped) newline bytes - invalid JSON. parseToolArgs used to ignore the
 // unmarshal error and return an empty command, so exec answered "command is
 // required" and the model wrongly concluded its content was stripped. With the
 // control-char repair, the full multi-line command must survive.
@@ -61,7 +61,7 @@ func TestToolExecWritesMultilineFileViaHeredoc(t *testing.T) {
 // RAW newline bytes (mimicking what a model emits inline), exercising the
 // repair path in parseToolArgs.
 func jsonObjectWithCommand(cmd string) string {
-	// Intentionally NOT json.Marshal — we want the raw, technically-invalid
+	// Intentionally NOT json.Marshal - we want the raw, technically-invalid
 	// control bytes inside the string value, exactly like the upstream bug.
 	return "{\"command\":\"" + strings.ReplaceAll(cmd, "\"", "\\\"") + "\"}"
 }

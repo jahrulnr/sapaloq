@@ -14,7 +14,7 @@ import (
 // newTestRegistry builds a registry rooted at a tempdir so tests do not pollute
 // the user's state dir. The tempdir is cleaned up by t.Cleanup. The cleanup
 // also cancels every in-flight job and waits up to 2s for the goroutine to
-// finish writing its terminal state — otherwise the TempDir RemoveAll races
+// finish writing its terminal state - otherwise the TempDir RemoveAll races
 // the persist() call and fails on "directory not empty" on slow disks.
 func newTestRegistry(t *testing.T) *asyncExecRegistry {
 	t.Helper()
@@ -291,7 +291,7 @@ func TestAsyncExecToolsAreOfferedToAgent(t *testing.T) {
 }
 
 // TestAsyncExecToolsAreOfferedToPlannerAndAsk guards the planner + ask
-// surfaces — the same hang-protection can help there too (a planner that
+// surfaces - the same hang-protection can help there too (a planner that
 // shells out to a long probe should not freeze).
 func TestAsyncExecToolsAreOfferedToPlannerAndAsk(t *testing.T) {
 	for _, role := range []string{"planner", "ask"} {

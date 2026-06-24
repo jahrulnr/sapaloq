@@ -12,12 +12,12 @@ import (
 // WorkerHandle is the live, observable identity of one running sub-agent
 // (planner / task-runner / scribe / ask-delegated). It answers the question the
 // orchestrator previously could not: "is this agent healthy, or has it
-// silently wedged?" — by exposing a PID, a phase, and a heartbeat the watchdog
+// silently wedged?" - by exposing a PID, a phase, and a heartbeat the watchdog
 // monitors.
 //
 // PID is os.Getpid() today (every in-process worker shares the core's PID).
 // The field is deliberately first-class so a future upgrade to real subprocess
-// workers (via internal/node Transport) only has to populate a distinct PID —
+// workers (via internal/node Transport) only has to populate a distinct PID -
 // no consumer or schema change required.
 type WorkerHandle struct {
 	ID            string    `json:"id"`
@@ -97,7 +97,7 @@ func (r *workerRegistry) heartbeat(id, phase string) {
 }
 
 // setPhase updates only the human-readable phase label for observability. It
-// does NOT advance the heartbeat — liveness is owned by the structural ticker
+// does NOT advance the heartbeat - liveness is owned by the structural ticker
 // in runBackgroundTask so a long but legitimate operation (a slow tool, slow
 // stream) never looks stalled. No-op for unknown ids.
 func (r *workerRegistry) setPhase(id, phase string) {
@@ -155,7 +155,7 @@ func (r *workerRegistry) snapshot() []WorkerHandle {
 }
 
 // stalled returns the live workers whose last heartbeat is older than
-// staleAfter — i.e. wedged goroutines masquerading as in_progress.
+// staleAfter - i.e. wedged goroutines masquerading as in_progress.
 func (r *workerRegistry) stalled(staleAfter time.Duration) []WorkerHandle {
 	if r == nil {
 		return nil

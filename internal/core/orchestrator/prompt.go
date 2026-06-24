@@ -4,8 +4,8 @@ package orchestrator
 // per-turn system-block builders that the orchestrator composes for both the
 // chat (Ask) role and the sub-agent roles (planner / task-runner / scribe).
 // Before this file existed, those pieces were scattered across session.go,
-// runtime_context.go, and subagent.go, which made it hard to see — in one
-// place — exactly what every model invocation actually sees as its system
+// runtime_context.go, and subagent.go, which made it hard to see - in one
+// place - exactly what every model invocation actually sees as its system
 // surface. Concentrating them here also keeps each builder next to its
 // neighbours, so a new role, a new system block, or a new persona layer is
 // added in one obvious spot.
@@ -27,7 +27,7 @@ package orchestrator
 // session.go keeps session lifecycle (ActiveSession, DeleteTurn, SubmitFeedback,
 // ContextUsage, handleSlash, compactActiveSession). subagent.go keeps the
 // sub-agent inference engine and the tool dispatcher. runtime_context.go is
-// gone — its two functions moved here. Persona / role / runtime / negative /
+// gone - its two functions moved here. Persona / role / runtime / negative /
 // prefetch / skills blocks are no longer assembled in three different files.
 
 import (
@@ -54,8 +54,8 @@ import (
 // Orchestrator constructed directly in tests). This is the single source of
 // truth for every mode's system prompt.
 //
-// SapaLOQ's shared persona (persona.md) — its core character, applicable to
-// every kind of work — is prepended to whatever role prompt is resolved, so
+// SapaLOQ's shared persona (persona.md) - its core character, applicable to
+// every kind of work - is prepended to whatever role prompt is resolved, so
 // ask/planner/agent/scribe (and any future role) all carry the same "how to
 // carry yourself" baseline without duplicating it into each role file. The
 // persona itself is never wrapped around itself, and a missing/empty persona
@@ -286,12 +286,12 @@ func (o *Orchestrator) skillsBlock(ctx context.Context, userMsg string) string {
 // These are the literal strings the MODEL sees between tool turns. They were
 // previously inlined in conversation.go's runTurnLoop; collecting them here
 // (next to the role/persona prompts and the system blocks) gives one obvious
-// place to audit and retune the wording the model is actually fed — the whole
+// place to audit and retune the wording the model is actually fed - the whole
 // point of this file. Each builder is pure and returns exactly what the loop
 // used to assemble inline, so behavior is unchanged.
 
 // toolObservationBody frames the tool results that are fed back to the model.
-// Tool output is an OBSERVATION the model should reason over and summarize —
+// Tool output is an OBSERVATION the model should reason over and summarize -
 // not a script to copy. A compliant non-native model (e.g. MiniMax) treated
 // the old "[Tool results]\n…" framing as a template to echo and dumped the raw
 // output (whole files, job metadata) straight into the user-facing answer.
@@ -313,7 +313,7 @@ func continueWithResultsSuffix() string {
 }
 
 // usageReadout is a small, honest, ~1-line self-awareness note of how much work
-// the model has done so far. Purely informational — the budgets are set
+// the model has done so far. Purely informational - the budgets are set
 // generously and do not cage the model; this just helps it pace itself.
 func usageReadout(inferenceTurn, toolCalls int) string {
 	return fmt.Sprintf("\n\n--\n\nUsage turn %d · tool-calls so far %d", inferenceTurn, toolCalls)
@@ -321,7 +321,7 @@ func usageReadout(inferenceTurn, toolCalls int) string {
 
 // calledToolsNote renders an explicit, in-transcript record of the tools the
 // assistant invoked on a turn, e.g. "Called tools: sapaloq_spawn_agent". It
-// is appended to the assistant message so the model sees proof that it acted —
+// is appended to the assistant message so the model sees proof that it acted -
 // the text delta stream alone does not include the tool_call. Duplicate names
 // in the same turn are listed once with a ×N count to stay compact. Returns ""
 // when no tools were called. (Echoes of this note are stripped back out by
@@ -381,7 +381,7 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 	}
 	// Index-first prefetch (Context-SOP Fase 1): assemble a bounded memory
 	// packet from companion.db and inject it as a system block so the model has
-	// the right facts before acting — and, when confidence is high, a directive
+	// the right facts before acting - and, when confidence is high, a directive
 	// not to explore the filesystem first. Best-effort: a low-confidence/empty
 	// packet renders "" and is skipped.
 	if block := o.prefetchBlock(ctx, sessionID, latestUserMessage); block != "" {
@@ -392,7 +392,7 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 	}
 	for _, turn := range turns {
 		role := turn.Role
-		// Thinking turns are persisted for the UI only — never replay reasoning
+		// Thinking turns are persisted for the UI only - never replay reasoning
 		// back into the model's context window.
 		if role == "thinking" {
 			continue

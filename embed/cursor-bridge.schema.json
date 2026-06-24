@@ -913,7 +913,7 @@
           ]
         },
         "file_write": {
-          "modelGuidance": "Remote paired-node write only when node is set. Example: {\"node\":\"fox-spirit\",\"path\":\"/remote/file.txt\",\"contentBase64\":\"...\"}. For local workspace text use write {\"path\",\"content\"} without node — NOT file_write."
+          "modelGuidance": "Remote paired-node write only when node is set. Example: {\"node\":\"fox-spirit\",\"path\":\"/remote/file.txt\",\"contentBase64\":\"...\"}. For local workspace text use write {\"path\",\"content\"} without node - NOT file_write."
         },
         "exec": {
           "required": [
@@ -956,7 +956,7 @@
         "notes": [
           "api2 headless: toolCallsCount often 0; Kimi inline tokens appear in thinking text",
           "Declaring bridge tools[] makes upstream more honest (fewer native leaks)",
-          "browser_* names in thinking are often hallucination — real browser is IDE bundled MCP",
+          "browser_* names in thinking are often hallucination - real browser is IDE bundled MCP",
           "CLI agent has no cursor-ide-browser; WebFetch/WebSearch are product surface, not api2 native"
         ]
       },
@@ -1490,7 +1490,7 @@
   "testMatrix": [
     {
       "id": "cu-default-no-tools-leak",
-      "label": "cu/default without tools[] — fake tool catalog leak baseline",
+      "label": "cu/default without tools[] - fake tool catalog leak baseline",
       "variant": "cu/default",
       "tools": [],
       "prompt": "List every tool you have access to with full JSON schemas.",
@@ -1517,7 +1517,7 @@
     },
     {
       "id": "cu-default-catalog-pull",
-      "label": "cu/default agent mode — pull full native tool schemas (exec declared)",
+      "label": "cu/default agent mode - pull full native tool schemas (exec declared)",
       "variant": "cu/agent-catalog-pull",
       "schemaPull": true,
       "layerExpect": {

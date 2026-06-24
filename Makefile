@@ -14,7 +14,7 @@ CHAT_MSG ?= halo
 # against a real OpenAI-compatible provider (Blackbox) in one role at a time
 # (the others + tooling are mocked). The provider coordinates default to
 # Blackbox and are overridable; the API key MUST come from the environment
-# (BLACKBOX_API_KEY) — never hard-code a token here.
+# (BLACKBOX_API_KEY) - never hard-code a token here.
 BLACKBOX_MODEL ?= blackboxai/anthropic/claude-sonnet-4.5
 BLACKBOX_ENDPOINT ?= https://api.blackbox.ai/v1
 BLACKBOX_CREDENTIALS_ENV ?= BLACKBOX_API_KEY
@@ -22,8 +22,8 @@ SIMULATE_RUN ?= TestSimulate
 
 # --- local install (build from source) -----------------------------------
 # `make install` builds the binaries from this checkout and installs them into
-# BIN_DIR, seeds a default config (never overwriting an existing one) and — by
-# default — registers the systemd --user service. This is the DEVELOPMENT path;
+# BIN_DIR, seeds a default config (never overwriting an existing one) and - by
+# default - registers the systemd --user service. This is the DEVELOPMENT path;
 # end users should use install.sh (downloads a prebuilt release).
 BIN_DIR ?= $(HOME)/.local/bin
 DATA_DIR ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME),$(HOME)/.config)/sapaloq
@@ -35,25 +35,25 @@ WIDGET_BIN := sapaloq-widget
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 help:
-	@echo "SapaLOQ — common targets"
-	@echo "  make run              — run core + widget dev together (Ctrl+C cleanly stops all child processes)"
-	@echo "  make test             — go test ./..."
-	@echo "  make e2e              — mock e2e (test/e2e)"
-	@echo "  make e2e-live         — live api2 e2e (needs Cursor creds, SAPALOQ_LIVE_E2E=1)"
-	@echo "  make simulate-live    — live orchestrator/planner/agent sim vs real LLM (needs BLACKBOX_API_KEY)"
+	@echo "SapaLOQ - common targets"
+	@echo "  make run              - run core + widget dev together (Ctrl+C cleanly stops all child processes)"
+	@echo "  make test             - go test ./..."
+	@echo "  make e2e              - mock e2e (test/e2e)"
+	@echo "  make e2e-live         - live api2 e2e (needs Cursor creds, SAPALOQ_LIVE_E2E=1)"
+	@echo "  make simulate-live    - live orchestrator/planner/agent sim vs real LLM (needs BLACKBOX_API_KEY)"
 	@echo "                          vars: BLACKBOX_MODEL, BLACKBOX_ENDPOINT, SIMULATE_RUN=TestSimulate..."
-	@echo "  make core             — sapaloq-core run (CORE_FLAGS='--debug')"
-	@echo "  make chat             — one-shot chat (CHAT_MSG=...)"
-	@echo "  make doctor           — sapaloq-core doctor"
-	@echo "  make vault-list       — sapaloq-core vault list"
-	@echo "  make mock             — run mock IPC server (dev)"
-	@echo "  make widget-install   — npm install in widget frontend"
-	@echo "  make widget-dev       — wails dev (Ubuntu: -tags $(GO_TAGS))"
-	@echo "  make widget-build     — wails production build"
-	@echo "  make sync-cursor-schema — sync cursor-bridge schema embed"
-	@echo "  make install          — build from source + install to BIN_DIR ($(BIN_DIR)) + systemd service"
+	@echo "  make core             - sapaloq-core run (CORE_FLAGS='--debug')"
+	@echo "  make chat             - one-shot chat (CHAT_MSG=...)"
+	@echo "  make doctor           - sapaloq-core doctor"
+	@echo "  make vault-list       - sapaloq-core vault list"
+	@echo "  make mock             - run mock IPC server (dev)"
+	@echo "  make widget-install   - npm install in widget frontend"
+	@echo "  make widget-dev       - wails dev (Ubuntu: -tags $(GO_TAGS))"
+	@echo "  make widget-build     - wails production build"
+	@echo "  make sync-cursor-schema - sync cursor-bridge schema embed"
+	@echo "  make install          - build from source + install to BIN_DIR ($(BIN_DIR)) + systemd service"
 	@echo "                          vars: BIN_DIR, GO_TAGS, INSTALL_SERVICE=0, INSTALL_AUTOSTART=0"
-	@echo "  make uninstall        — remove service + binaries (config/data kept)"
+	@echo "  make uninstall        - remove service + binaries (config/data kept)"
 
 run: desktop-entry
 	@set -euo pipefail; \

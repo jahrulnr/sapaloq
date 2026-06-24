@@ -4,7 +4,7 @@ Three complementary resources on building color palettes for pixel art and game 
 
 ---
 
-## 1. Slynyrd — Color Ramps & the Mondo Palette
+## 1. Slynyrd - Color Ramps & the Mondo Palette
 
 **Source:** https://www.slynyrd.com/blog/2018/1/10/pixelblog-1-color-palettes
 **Author:** Raymond Schlitter
@@ -33,7 +33,7 @@ The single most important pixel art color technique: **shift hue across a color 
 
 ---
 
-## 2. OpenGameArt — Xenodrogen Method
+## 2. OpenGameArt - Xenodrogen Method
 
 **Source:** https://opengameart.org/content/chapter-5-color-palettes
 
@@ -50,7 +50,7 @@ This mirrors actual outdoor lighting: blue sky fills shadows, yellow sun hits hi
 
 ### The Xenodrogen Method
 
-Hue, saturation, and brightness must each vary in a **single consistent direction** — their rates of change must also be consistent.
+Hue, saturation, and brightness must each vary in a **single consistent direction** - their rates of change must also be consistent.
 
 - Valid: 1, 5, 5, 12 (accelerating)
 - Invalid: 2, 3, 2, 1, 4 ("yoyo" effect)
@@ -68,7 +68,7 @@ Hue, saturation, and brightness must each vary in a **single consistent directio
 
 ---
 
-## 3. Kiwinuptuo — Hue Change Rule (Visual Guide)
+## 3. Kiwinuptuo - Hue Change Rule (Visual Guide)
 
 **Source:** Kiwinuptuo's Color Palette Tutorial (image guide by Steven Böger)
 
@@ -92,8 +92,8 @@ When building a color gradient:
 **Wood ramp:**
 | Brightest | Bright | Middle | Dark | Darkest | Outlines |
 |-----------|--------|--------|------|---------|----------|
-| Hue: +15 | +15 | 30 (start) | +15 | +15 | — |
-| Brightness: +14 | +11 | 62 (start) | +15 | +15 | — |
+| Hue: +15 | +15 | 30 (start) | +15 | +15 | - |
+| Brightness: +14 | +11 | 62 (start) | +15 | +15 | - |
 
 Outline color is always consistent across all sprites. Choose dark blue or dark purple. Can have strong saturation.
 
@@ -113,12 +113,12 @@ Outline color is always consistent across all sprites. Choose dark blue or dark 
 
 ## Universal Principles Across All Three
 
-1. **Always hue-shift** — never just adjust brightness alone
-2. **Darks → cool (blue/purple), lights → warm (yellow)** — mimics natural light
+1. **Always hue-shift** - never just adjust brightness alone
+2. **Darks → cool (blue/purple), lights → warm (yellow)** - mimics natural light
 3. **Saturation peaks in the mid-tones**, drops toward both extremes
-4. **Consistent direction** — no yoyo-ing in any parameter
-5. **Palette = identity** — consistent palette = consistent visual style
-6. **Less is more** — limited palettes force harmony
+4. **Consistent direction** - no yoyo-ing in any parameter
+5. **Palette = identity** - consistent palette = consistent visual style
+6. **Less is more** - limited palettes force harmony
 7. **Trust your eyes** over formulas
 
 ## Links

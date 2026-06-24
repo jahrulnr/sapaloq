@@ -56,7 +56,7 @@ func (a *App) startup(ctx context.Context) {
 			// reaches the webview via the per-request SendMessage/RetryChatTurn
 			// stream below. Forwarding the bus copy too delivered every live
 			// delta TWICE to the single `sapaloq:stream` listener, so the live
-			// renderer fed each character twice — the "MantMantap, agent lagi
+			// renderer fed each character twice - the "MantMantap, agent lagi
 			// jalanap" interleave / duplicated bubble. Task-stamped completions
 			// have no per-request stream, so they must come through here.
 			if event.TaskID != "" {

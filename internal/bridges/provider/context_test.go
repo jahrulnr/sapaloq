@@ -83,7 +83,7 @@ func TestFitMessagesToContextDropsOldest(t *testing.T) {
 }
 
 func TestFitMessagesToContextPreservesRecentContent(t *testing.T) {
-	// Truncation drops oldest messages first — recent user turns must
+	// Truncation drops oldest messages first - recent user turns must
 	// survive even when the budget is tight.
 	msgs := []bridge.Message{
 		{Role: "system", Content: "x"},

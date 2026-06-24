@@ -1,4 +1,4 @@
-# Cubehelix — Helical Color Scheme
+# Cubehelix - Helical Color Scheme
 
 **Source:** https://people.phy.cam.ac.uk/dag9/CUBEHELIX/
 **Author:** Dave Green (Cambridge)
@@ -10,9 +10,9 @@ A color scheme that spirals through the RGB cube along a **helical path** from b
 
 ## The Key Insight
 
-A straight diagonal through the color cube (black→white) is just grayscale. A **helix** around that diagonal adds hue variation while maintaining the brightness ramp. The helix accounts for human vision's different sensitivity to R, G, B — so perceived brightness increases smoothly even as hue changes.
+A straight diagonal through the color cube (black→white) is just grayscale. A **helix** around that diagonal adds hue variation while maintaining the brightness ramp. The helix accounts for human vision's different sensitivity to R, G, B - so perceived brightness increases smoothly even as hue changes.
 
-This is the same principle as Goethe's "edge colors" — hue, lightness, and chroma shifting together along a spiral path.
+This is the same principle as Goethe's "edge colors" - hue, lightness, and chroma shifting together along a spiral path.
 
 ## 4 Parameters
 
@@ -25,18 +25,18 @@ This is the same principle as Goethe's "edge colors" — hue, lightness, and chr
 
 ## Why It Matters
 
-- **Monotonic brightness** — no false brightness peaks (unlike rainbow colormaps where yellow looks brighter than red)
-- **Grayscale-safe** — prints correctly on B&W
-- **Full intensity range** — uses 0→1 unlike viridis/parula which use ~70%
+- **Monotonic brightness** - no false brightness peaks (unlike rainbow colormaps where yellow looks brighter than red)
+- **Grayscale-safe** - prints correctly on B&W
+- **Full intensity range** - uses 0→1 unlike viridis/parula which use ~70%
 - **4 parameters** = infinite family of perceptually valid colormaps
 - **The foundation** for matplotlib's viridis, magma, inferno, plasma (they all use helical paths)
 - Built into: matplotlib, D3.js, Culori, gnuplot, MATLAB, R, and most astronomy software
 
 ## Connection to Other Techniques
 
-- **Goethe Edge Colors** — Color Nerd's lecture shows edge color sequences are natural helices; Cubehelix formalizes this mathematically
-- **IQ Cosine Formula** — also generates smooth palettes via oscillation, but doesn't guarantee monotonic brightness
-- **Fontana/Pasma** — both kill greens and balance tones; Cubehelix achieves this via the helix geometry itself
+- **Goethe Edge Colors** - Color Nerd's lecture shows edge color sequences are natural helices; Cubehelix formalizes this mathematically
+- **IQ Cosine Formula** - also generates smooth palettes via oscillation, but doesn't guarantee monotonic brightness
+- **Fontana/Pasma** - both kill greens and balance tones; Cubehelix achieves this via the helix geometry itself
 
 ## Links
 

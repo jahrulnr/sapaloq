@@ -13,20 +13,20 @@ All perceivable hues = blends of four psychological primaries on two axes:
 - **A axis:** rosy red ↔ aqua green
 - **B axis:** yellow ↔ blue
 
-These are the "opponent axes" — the foundation of CIELAB (a*, b*) and OKLAB.
+These are the "opponent axes" - the foundation of CIELAB (a*, b*) and OKLAB.
 
 ## How It Explains Color Blindness
 
 ### Red-Green Color Blindness (most common)
 
 - Missing one cone type → can't construct the red-green contrast axis
-- **A axis disappears** — only the B axis (yellow↔blue) remains
+- **A axis disappears** - only the B axis (yellow↔blue) remains
 - All perceivable colors = yellow, blue, or desaturated versions of those
 
 ### Yellow-Blue Color Blindness (rare)
 
 - Can't construct the yellow-blue contrast axis
-- **B axis disappears** — only the A axis (pink↔green) remains
+- **B axis disappears** - only the A axis (pink↔green) remains
 - All perceivable colors = pink, green, or desaturated versions of those
 
 ### Why Orange-Blue Is the Most Accessible Color Pair

@@ -21,7 +21,7 @@ func ParseOpenAIThinking(text string) Parsed {
 				parsed.Thinking = rest[:idx]
 				parsed.Response += rest[idx+len(close):]
 			} else {
-				// Unclosed channel — treat the rest as pending thinking.
+				// Unclosed channel - treat the rest as pending thinking.
 				parsed.Thinking = rest
 				parsed.Response = parts[0]
 			}

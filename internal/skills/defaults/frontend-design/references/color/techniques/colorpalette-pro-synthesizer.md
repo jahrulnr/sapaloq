@@ -1,4 +1,4 @@
-# Color Palette Pro — A Synthesizer for Color Palettes
+# Color Palette Pro - A Synthesizer for Color Palettes
 
 **URL:** <https://colorpalette.pro/>
 **Author:** Ryan Feigenbaum
@@ -28,10 +28,10 @@ Six programmatic palette types, each producing 5–12 colors:
 
 Each palette has 4 algorithmic variations:
 
-- **Square** — Raw mathematical relationships with few perceptual adjustments
-- **Triangle** — Compensates for perceptual issues (references Bezold-Brücke effect)
-- **Circle** — Smooth progressions via white/black blending
-- **Diamond** — Tonal variations through neutral gray blending
+- **Square** - Raw mathematical relationships with few perceptual adjustments
+- **Triangle** - Compensates for perceptual issues (references Bezold-Brücke effect)
+- **Circle** - Smooth progressions via white/black blending
+- **Diamond** - Tonal variations through neutral gray blending
 
 ## Color Spaces
 
@@ -48,12 +48,12 @@ Sliders adapt based on active color space: lightness/chroma/hue for LCH; lightne
 
 ## Input Methods
 
-1. **Text input** — accepts nearly any CSS color format
-2. **Sliders** — adaptive controls per color space
-3. **Eyedropper** — browser-native (not available in Firefox/mobile)
-4. **History** — stores up to 240 previous colors; right-click to delete
-5. **Random** — curated random color selection
-6. **URL** — all settings preserved in shareable URLs
+1. **Text input** - accepts nearly any CSS color format
+2. **Sliders** - adaptive controls per color space
+3. **Eyedropper** - browser-native (not available in Firefox/mobile)
+4. **History** - stores up to 240 previous colors; right-click to delete
+5. **Random** - curated random color selection
+6. **URL** - all settings preserved in shareable URLs
 
 ## UI Mode
 
@@ -65,10 +65,10 @@ Generates application-appropriate palettes incorporating the base color:
 
 ## Export
 
-- **CSS variables** — palette values with contrast colors (white/black auto-selected)
-- **CSS file download** — complete stylesheet with custom property names
-- **Palette image** — PNG generation for design tools (Figma-compatible)
-- **Clipboard copy** — click individual color values to copy
+- **CSS variables** - palette values with contrast colors (white/black auto-selected)
+- **CSS file download** - complete stylesheet with custom property names
+- **Palette image** - PNG generation for design tools (Figma-compatible)
+- **Clipboard copy** - click individual color values to copy
 
 ## Color Naming
 
@@ -89,7 +89,7 @@ Creator notes: "The best palettes will always be those created by someone with a
 
 - Built on **Color.js**
 - No monetization
-- Described as "version 1.0 done" — no further updates planned
+- Described as "version 1.0 done" - no further updates planned
 - References Josef Albers' *Interaction of Color* (1963)
 
 ## Links

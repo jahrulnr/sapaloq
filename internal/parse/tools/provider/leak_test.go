@@ -58,7 +58,7 @@ func TestParseToolCallLeak(t *testing.T) {
 // reassembled buffer must recover it (scanning any single fragment cannot).
 func TestParseToolCallLeakReassemblesAcrossFragments(t *testing.T) {
 	// Body deliberately contains UNBALANCED braces inside the string (a CSS
-	// rule with a `{` but no matching `}` nearby, JS object literals, etc.) —
+	// rule with a `{` but no matching `}` nearby, JS object literals, etc.) -
 	// the brace scanner must be string-aware or it closes the object early and
 	// drops the call. This mirrors a real HTML/CSS/JS file argument.
 	body := strings.Repeat("body { color: red; /* } unbalanced { */ } .a{b:c} if(x){y}\n", 200)
@@ -110,7 +110,7 @@ func TestParseToolCallLeakIgnoresUnknownNames(t *testing.T) {
 
 // TestParseToolCallLabeledForms covers the inline labeled tool-call forms the
 // model is actually instructed to emit (see the role prompts), which the older
-// scanner ignored — letting them leak into the chat as a response_delta. This
+// scanner ignored - letting them leak into the chat as a response_delta. This
 // is the regression for the orch-chat "[Tool: exec]\n{...}" leak.
 func TestParseToolCallLabeledForms(t *testing.T) {
 	known := func(n string) bool { return n == "exec" || n == "read_file" || n == "create_file" }
@@ -139,10 +139,10 @@ func TestParseToolCallLabeledForms(t *testing.T) {
 			wantArg:  "\"x\":1",
 		},
 		{
-			name:     "bracketed label rejected when not a known tool",
-			in:       "[Tool: notatool]\n{\"x\":1}",
-			known:    known,
-			wantOK:   false,
+			name:   "bracketed label rejected when not a known tool",
+			in:     "[Tool: notatool]\n{\"x\":1}",
+			known:  known,
+			wantOK: false,
 		},
 		{
 			name:     "bare known-tool name before args",

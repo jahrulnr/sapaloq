@@ -113,7 +113,7 @@ function dataURIToFile(dataURI: string, fallbackName = 'dropped-image'): File | 
 // WebKitGTK, in-window image drags) populate `items` but leave `files` empty, so
 // we must read both. getAsFile() only works while the drop event is live, hence
 // this stays synchronous. As a last resort, rendered-image drags expose only a
-// URL string — convert data:image/... URIs to a File.
+// URL string - convert data:image/... URIs to a File.
 export function collectTransferFiles(transfer: DataTransfer | null): File[] {
   if (!transfer) return [];
   const files: File[] = [];

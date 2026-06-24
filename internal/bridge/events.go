@@ -26,7 +26,7 @@ const (
 	EventDecisionUpdate EventKind = "decision_update"
 	EventSteeringUpdate EventKind = "steering_update"
 	// EventTaskUpdate is a push from the orchestrator to the widget when a
-	// background sub-agent reaches a terminal (or notable) state — the
+	// background sub-agent reaches a terminal (or notable) state - the
 	// completion trigger that lets the chat surface "task done/failed" without
 	// the user polling. Carries TaskID/Role/Status plus a human Summary.
 	EventTaskUpdate EventKind = "task_update"

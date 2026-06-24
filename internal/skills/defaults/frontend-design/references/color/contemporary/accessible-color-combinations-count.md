@@ -1,6 +1,6 @@
 # How Many Hex Color Combinations Are Accessible?
 
-**Source:** Research by @mrmrs_ — https://x.com/mrmrs_/status/2034403566040088832
+**Source:** Research by @mrmrs_ - https://x.com/mrmrs_/status/2034403566040088832
 **Code:** https://github.com/mrmrs/color-contrast-rust
 **Method:** Rust brute-force across all ~281 trillion hex color pairs for six algorithms. Reported runtime: 39 hours.
 **Author:** mrmrs / mrmrs.cc
@@ -30,22 +30,22 @@ Total possible hex code pairs: **~281 trillion** (16,777,216² / 2)
 ### APCA (Advanced Perceptual Contrast Algorithm)
 
 - **APCA is significantly more restrictive** than WCAG at comparable thresholds
-- APCA 60 (roughly equivalent to WCAG AA body text): only 7.33% — vs WCAG 4.5:1 at 11.98%
+- APCA 60 (roughly equivalent to WCAG AA body text): only 7.33% - vs WCAG 4.5:1 at 11.98%
 - APCA 75 (fluent reading): only 1.57%
-- APCA 90 (preferred for body text): a mere 0.08% — only 239 billion out of 281 trillion
+- APCA 90 (preferred for body text): a mere 0.08% - only 239 billion out of 281 trillion
 
 ### What This Means for Designers
 
-- **At WCAG AA (4.5:1):** you have ~33.7 trillion valid pairs — sounds like a lot, but it's only 12% of color space
-- **At APCA 90 (best readability):** only 0.08% of pairs work — the design space is EXTREMELY constrained
-- This quantifies why accessibility-first color selection is hard — and why tools like Color Buddy's palette linting, APCA calculators, and contrast-aware palette generators are essential
+- **At WCAG AA (4.5:1):** you have ~33.7 trillion valid pairs - sounds like a lot, but it's only 12% of color space
+- **At APCA 90 (best readability):** only 0.08% of pairs work - the design space is EXTREMELY constrained
+- This quantifies why accessibility-first color selection is hard - and why tools like Color Buddy's palette linting, APCA calculators, and contrast-aware palette generators are essential
 - The jump from WCAG 3:1 to 7:1 is a 7× reduction in available pairs
 - The jump from APCA 60 to 90 is an 86× reduction
 
 ### APCA vs WCAG
 
 - WCAG's ratio is symmetric (text on background = background on text)
-- APCA is polarity-aware (light text on dark ≠ dark text on light) — which is why the numbers differ
+- APCA is polarity-aware (light text on dark ≠ dark text on light) - which is why the numbers differ
 - APCA better models actual readability, but constrains the palette more
 
 ## Method

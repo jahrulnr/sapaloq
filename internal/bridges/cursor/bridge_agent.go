@@ -20,10 +20,10 @@ import (
 // instead of the legacy chat stream.
 //
 // Three triggers, in order:
-//  1. SAPALOQ_AGENT_PATH=1 — explicit operator override (used by live tests).
-//  2. Any message content has a data:image/ URL — inline image data.
-//  3. Any message content has an http(s)://...png/jpg/webp/gif URL — remote
-//     image. We won't fetch it here (that's the caller's job — they pass
+//  1. SAPALOQ_AGENT_PATH=1 - explicit operator override (used by live tests).
+//  2. Any message content has a data:image/ URL - inline image data.
+//  3. Any message content has an http(s)://...png/jpg/webp/gif URL - remote
+//     image. We won't fetch it here (that's the caller's job - they pass
 //     bytes via req.Images) but we use the URL as a signal that vision is
 //     requested.
 func wantsAgentPath(req bridge.Request) bool {
@@ -50,7 +50,7 @@ var imageURLRe = regexp.MustCompile(`https?://[^\s"']+\.(?:png|jpg|jpeg|gif|webp
 // the OpenAI-style messages into an AgentClientMessage.RunRequest protobuf and
 // streams the AgentServerMessage response back as bridge events.
 //
-// The Agent host is selected by creds.GhostMode — privacy mode routes
+// The Agent host is selected by creds.GhostMode - privacy mode routes
 // through `agent.global.api5.cursor.sh`, non-privacy through
 // `agentn.global.api5.cursor.sh` (mirrors 9router's
 // src/lib/oauth/constants/oauth.js). Operators can override either with the
@@ -120,7 +120,7 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 	send(ctx, out, done)
 }
 
-// flattenMessages is a tiny placeholder — full Phase-6 implementation lives in
+// flattenMessages is a tiny placeholder - full Phase-6 implementation lives in
 // proto_agent.go's flattenMessages-equivalent. For now we just join user
 // messages with a newline.
 func flattenMessages(messages []bridge.Message) string {

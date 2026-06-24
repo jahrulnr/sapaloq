@@ -19,7 +19,7 @@ Practical lecture and live demo on paint mixing fundamentals. Covers hue, chroma
 - Sampled 12 hues from a printed color wheel, plotted in CIE color space (using The Artist's Helper app)
 - Colors are NOT evenly spaced: red and red-orange are nearly identical; blue, blue-violet, and violet are almost the same hue angle
 - Greens are much further apart than expected; the entire yellow-to-blue region is vastly underrepresented
-- The wheel is limited by CMYK printing gamut — violets especially are much duller than other colors
+- The wheel is limited by CMYK printing gamut - violets especially are much duller than other colors
 
 ### 2. Actual Paint Positions in Color Space
 
@@ -33,21 +33,21 @@ Practical lecture and live demo on paint mixing fundamentals. Covers hue, chroma
 - Demo: mixed 2:1 blue:yellow, 1:1, and 1:2 blue:yellow
 - The 2:1 and 1:1 mixes looked very similar, but the 1:2 was dramatically different
 - **Mixing is non-linear:** proportion of paint ≠ proportional hue change
-- Somewhere between ratios you "turn a corner" — the curve accelerates
+- Somewhere between ratios you "turn a corner" - the curve accelerates
 - Tinting strength matters: blues are concentrated/strong, yellows are weak
 
 ### 4. Chroma (Intensity)
 
-- Relative vs absolute chroma: the color wheel implies all maximums are equal — they're not
+- Relative vs absolute chroma: the color wheel implies all maximums are equal - they're not
 - Cadmium red has highest absolute chroma, then yellow, then cobalt blue
 - Warmer colors tend to have more chroma than cooler colors
-- Purple from cadmium red + cobalt blue = VERY dull — because both pigments' spectral profiles overlap poorly
+- Purple from cadmium red + cobalt blue = VERY dull - because both pigments' spectral profiles overlap poorly
 
 ### 5. Why Purple Is Dull
 
 - Cadmium red reflects mainly long wavelengths
 - Cobalt blue reflects mainly short wavelengths
-- Neither reflects much in the middle — mixing them subtractively kills chroma
+- Neither reflects much in the middle - mixing them subtractively kills chroma
 - "You're mixing two pigments that essentially cancel each other"
 - To get vivid purples: use quinacridone magenta (reflects both long AND short wavelengths) or dioxazine purple
 
@@ -68,12 +68,12 @@ Practical lecture and live demo on paint mixing fundamentals. Covers hue, chroma
 
 ## Key Takeaways for the Skill
 
-- **"Paints are not colors — colors are ideas, paints are physical substances with quirks"**
-- Tinting strength varies: blues strong, yellows weak — always need more yellow than you think
-- Mixing is non-linear — small changes in ratio can produce large or small hue shifts depending on where you are in color space
+- **"Paints are not colors - colors are ideas, paints are physical substances with quirks"**
+- Tinting strength varies: blues strong, yellows weak - always need more yellow than you think
+- Mixing is non-linear - small changes in ratio can produce large or small hue shifts depending on where you are in color space
 - The road from blue to green is much longer than from red to yellow
 - Cadmium red + cobalt blue = dull purple (spectral cancellation); use quinacridone magenta for vivid purples
-- White doesn't just lighten — it shifts hue and kills chroma
+- White doesn't just lighten - it shifts hue and kills chroma
 - Traditional color wheels are bad maps for navigating paint mixing
 
 ## Links

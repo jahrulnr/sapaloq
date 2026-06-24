@@ -43,7 +43,7 @@ type WireOptions struct {
 	// ContextWindow is the maximum input the bridge will forward, in
 	// tokens. The bridge estimates tokens as len(content)/4 and drops the
 	// oldest non-system messages when the conversation exceeds this.
-	// Zero means "use DetectContextWindow" — the bridge layer does not
+	// Zero means "use DetectContextWindow" - the bridge layer does not
 	// re-detect here so callers control the contract explicitly.
 	ContextWindow int
 }
@@ -286,7 +286,7 @@ func pumpSSE(ctx context.Context, reader *sseReader, body io.Closer, idleTimeout
 			// servers and proxies emit blank-line keep-alives between events;
 			// sseReader.ReadLine returns ("", nil) for those. Resetting on a
 			// blank line would let a stream that delivers nothing but newlines
-			// keep the connection "alive" forever — the model never responds yet
+			// keep the connection "alive" forever - the model never responds yet
 			// the idle timeout never fires (the observed "listening but
 			// receiving nothing" stall). Only real payload counts as progress.
 			if len(ln.data) > 0 {

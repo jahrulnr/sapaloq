@@ -1,11 +1,11 @@
 # CSS-Native Color Generation Technique
 
 **Author:** @meodai
-**Approach:** Generate color palettes entirely in CSS using `oklch()` + `color-mix()` — no JS color library needed for the final output.
+**Approach:** Generate color palettes entirely in CSS using `oklch()` + `color-mix()` - no JS color library needed for the final output.
 
 ## Core Idea
 
-Generate base colors in OKLCH, then use CSS `color-mix()` to interpolate between them. The browser does the perceptual mixing — no need to compute intermediate colors in JS.
+Generate base colors in OKLCH, then use CSS `color-mix()` to interpolate between them. The browser does the perceptual mixing - no need to compute intermediate colors in JS.
 
 ## Key Functions
 
@@ -121,8 +121,8 @@ oklch(89.44% 0.0087 43.21)
 
 ## Why This Approach Is Interesting
 
-1. **No color library dependency** for the final CSS — `color-mix()` and `oklch()` are native CSS
-2. **Browser does the perceptual mixing** in OKLAB — no JS computation needed for intermediates
-3. **Chroma can invert relative to lightness** — sometimes dark=vivid light=muted, sometimes the reverse
-4. **`scaleSpreadArray` is reusable** — works for any interpolation, not just color (also in RampenSau)
+1. **No color library dependency** for the final CSS - `color-mix()` and `oklch()` are native CSS
+2. **Browser does the perceptual mixing** in OKLAB - no JS computation needed for intermediates
+3. **Chroma can invert relative to lightness** - sometimes dark=vivid light=muted, sometimes the reverse
+4. **`scaleSpreadArray` is reusable** - works for any interpolation, not just color (also in RampenSau)
 5. **Blend modes** (multiply, hard-light, soft-light, plus-lighter) add another dimension of variation

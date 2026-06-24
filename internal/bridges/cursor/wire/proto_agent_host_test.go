@@ -15,7 +15,7 @@ func TestAgentHostRespectsGhostMode(t *testing.T) {
 }
 
 // TestAgentHostsDiffer sanity-checks that the privacy and non-privacy hosts
-// are distinct — otherwise the switch is a no-op.
+// are distinct - otherwise the switch is a no-op.
 func TestAgentHostsDiffer(t *testing.T) {
 	if AgentPrivacyHost == AgentNonPrivacyHost {
 		t.Fatalf("privacy and non-privacy hosts must differ, both = %q", AgentPrivacyHost)

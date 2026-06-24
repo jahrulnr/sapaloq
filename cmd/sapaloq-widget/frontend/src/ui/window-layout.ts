@@ -47,7 +47,7 @@ async function waitForWindowSize(target: { w: number; h: number }, timeoutMs = 3
         return;
       }
     } catch {
-      return; // runtime unavailable (plain browser) — don't block the UI
+      return; // runtime unavailable (plain browser) - don't block the UI
     }
     if (Date.now() >= deadline) return;
     await nextFrame();

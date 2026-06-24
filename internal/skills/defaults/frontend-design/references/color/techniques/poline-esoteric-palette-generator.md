@@ -1,6 +1,6 @@
-# Poline — Esoteric Color Palette Generator
+# Poline - Esoteric Color Palette Generator
 
-**Source:** [GitHub — meodai/poline](https://github.com/meodai/poline)
+**Source:** [GitHub - meodai/poline](https://github.com/meodai/poline)
 **Author:** meodai
 **Demo:** https://meodai.github.io/poline/
 **npm:** `poline` | **Stars:** ~1.2K
@@ -23,7 +23,7 @@
 ```javascript
 import { Poline, positionFunctions } from "poline";
 
-// Basic — random anchors
+// Basic - random anchors
 const poline = new Poline();
 poline.colorsCSS; // ["hsl(...)", ...]
 poline.colorsCSSoklch; // ["oklch(...)", ...]
@@ -75,7 +75,7 @@ Control distribution of colors along anchor paths:
 | `arcPosition`                  | Arc-like distribution            |
 | `smoothStepPosition`           | Smooth step                      |
 
-Each axis (X, Y, Z) can use a different function — creating complex distribution patterns from simple components.
+Each axis (X, Y, Z) can use a different function - creating complex distribution patterns from simple components.
 
 ## Output Formats
 
@@ -88,14 +88,14 @@ poline.colorsCSSoklch; // OKLCH CSS strings
 
 ## Key Features
 
-- **Anchor-based** — define key colors, system fills in between
-- **Position functions per axis** — independent easing on each dimension
-- **Closed loops** — seamless circular palettes
-- **Dynamic sampling** — `getColorAt(t)` for any position 0–1
-- **Hue shifting** — rotate entire palette
-- **Circle clamping** — constrain coordinates to valid color wheel
-- **Inverted lightness** — flip for alternative aesthetics
-- **Closest anchor finding** — useful for interactive tools
+- **Anchor-based** - define key colors, system fills in between
+- **Position functions per axis** - independent easing on each dimension
+- **Closed loops** - seamless circular palettes
+- **Dynamic sampling** - `getColorAt(t)` for any position 0–1
+- **Hue shifting** - rotate entire palette
+- **Circle clamping** - constrain coordinates to valid color wheel
+- **Inverted lightness** - flip for alternative aesthetics
+- **Closest anchor finding** - useful for interactive tools
 
 ## How Poline Differs from RampenSau
 

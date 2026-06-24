@@ -1,13 +1,13 @@
-# dittoTones — Generate Palettes from Design System DNA
+# dittoTones - Generate Palettes from Design System DNA
 
-**Source:** [GitHub — meodai/dittoTones](https://github.com/meodai/dittoTones)
+**Source:** [GitHub - meodai/dittoTones](https://github.com/meodai/dittoTones)
 **Author:** meodai
 **Demo:** https://meodai.github.io/dittoTones/
 **npm:** `dittotones` | **Stars:** 116
 
 ## What It Does
 
-Generates complete color palettes from a single input color by extracting the **"perceptual DNA"** — the underlying lightness and chroma curves — from established design systems (Tailwind, Radix) and applying those patterns to your custom hue. Your color, their structure.
+Generates complete color palettes from a single input color by extracting the **"perceptual DNA"** - the underlying lightness and chroma curves - from established design systems (Tailwind, Radix) and applying those patterns to your custom hue. Your color, their structure.
 
 ## The Problem
 
@@ -16,13 +16,13 @@ Design systems like Tailwind (50–950) and Radix (1–12) have carefully crafte
 ## Algorithm
 
 1. **Parse input** → OKLCH (via culori)
-2. **Detect neutrals** — low chroma? return as-is
-3. **Find nearest reference ramp** — Euclidean distance in OKLCH space
+2. **Detect neutrals** - low chroma? return as-is
+3. **Find nearest reference ramp** - Euclidean distance in OKLCH space
 4. **Select strategy:**
-   - **Exact match** — input color matches a reference shade closely
-   - **Single ramp** — one reference ramp is close enough
-   - **Blended dual-ramp** — combines two ramps when no single match is perfect
-5. **Transform** — rotate hue + correct lightness (piecewise linear interpolation) + adjust chroma (hybrid scaling: linear for delicate tones, power curves for vivid)
+   - **Exact match** - input color matches a reference shade closely
+   - **Single ramp** - one reference ramp is close enough
+   - **Blended dual-ramp** - combines two ramps when no single match is perfect
+5. **Transform** - rotate hue + correct lightness (piecewise linear interpolation) + adjust chroma (hybrid scaling: linear for delicate tones, power curves for vivid)
 
 ### Lightness Adjustment
 
@@ -73,10 +73,10 @@ const ditto = new DittoTones({ ramps: customRamps });
 
 ## Why It Matters
 
-- **"Your color, Tailwind's quality"** — get production-grade shade scales for any brand color
-- **Smart blending** — when input falls between two reference hues, blends both ramps weighted by distance
-- **Neutral awareness** — desaturated colors handled separately to avoid forced chromatic shifts
-- **OKLCH throughout** — perceptually uniform = consistent perceived contrast across all shades
+- **"Your color, Tailwind's quality"** - get production-grade shade scales for any brand color
+- **Smart blending** - when input falls between two reference hues, blends both ramps weighted by distance
+- **Neutral awareness** - desaturated colors handled separately to avoid forced chromatic shifts
+- **OKLCH throughout** - perceptually uniform = consistent perceived contrast across all shades
 
 ## Links
 

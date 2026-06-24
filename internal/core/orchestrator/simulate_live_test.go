@@ -2,8 +2,8 @@ package orchestrator
 
 // simulate_live_test.go runs the orchestrator/planner/agent loop against a REAL
 // LLM (Blackbox, an OpenAI-compatible provider) in exactly ONE role per test
-// while every OTHER role — and the tooling that would otherwise hit the network
-// or a real sub-agent — is mocked. This proves the live model behaves at each
+// while every OTHER role - and the tooling that would otherwise hit the network
+// or a real sub-agent - is mocked. This proves the live model behaves at each
 // hand-off boundary without spending tokens on the whole tree.
 //
 // Why this exists: a context-sensitive model (e.g. MiniMax) sometimes narrates
@@ -82,14 +82,14 @@ func requireBlackbox(t *testing.T) (bridge.Bridge, config.LLMBridge) {
 	}
 	entry := blackboxEntry()
 	if strings.TrimSpace(os.Getenv(entry.CredentialsEnv)) == "" {
-		t.Skipf("live Blackbox token env %s is empty — skipping", entry.CredentialsEnv)
+		t.Skipf("live Blackbox token env %s is empty - skipping", entry.CredentialsEnv)
 	}
 	br, err := provider.New(entry)
 	if err != nil {
 		t.Fatalf("build Blackbox provider bridge: %v", err)
 	}
 	if !br.Caps().LiveAPI {
-		t.Skipf("Blackbox bridge reports no LiveAPI (token env %s) — skipping", entry.CredentialsEnv)
+		t.Skipf("Blackbox bridge reports no LiveAPI (token env %s) - skipping", entry.CredentialsEnv)
 	}
 	return br, entry
 }
@@ -162,8 +162,10 @@ func newRoleRouter(real bridge.Bridge, under simRole) *roleRoutingBridge {
 	}
 }
 
-func (b *roleRoutingBridge) ID() string              { return "role-router" }
-func (b *roleRoutingBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true, LiveAPI: true} }
+func (b *roleRoutingBridge) ID() string { return "role-router" }
+func (b *roleRoutingBridge) Caps() bridge.BridgeCaps {
+	return bridge.BridgeCaps{Tools: true, LiveAPI: true}
+}
 
 func (b *roleRoutingBridge) callCount(r simRole) int {
 	b.mu.Lock()
@@ -275,7 +277,7 @@ func TestSimulateOrchestratorPlannerAgentRoundTrip(t *testing.T) {
 	plannerTask := waitForTaskWithRole(t, o, "planner", 30*time.Second)
 
 	// Turn 2: user approves the plan. The orchestrator must now spawn the
-	// agent with this plan id — again a real tool call, not narration.
+	// agent with this plan id - again a real tool call, not narration.
 	drainChat(t, o, ctx, "sim-1",
 		"Oke rencananya bagus, lanjutkan eksekusinya. (plan task id: "+plannerTask.ID+")")
 

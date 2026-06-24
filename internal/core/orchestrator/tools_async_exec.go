@@ -5,7 +5,7 @@ package orchestrator
 // loop. The history is the recurring "tool_call stuck" bug: the model issues
 // `exec`, the dispatcher blocks waiting for the command to finish, and if the
 // post-tool chat completion hangs at the provider, the agent never gets a tool
-// result back — meanwhile its heartbeat ticker keeps the worker "healthy" so
+// result back - meanwhile its heartbeat ticker keeps the worker "healthy" so
 // the watchdog never fires. The fix is to make exec a real subtask:
 //
 //   - exec_async: spawn a job and return {job_id, status:"queued"} immediately.
@@ -223,7 +223,7 @@ func (r *asyncExecRegistry) execute(ctx context.Context, job *asyncExecJob, cmd,
 	job.mu.Lock()
 	// A cancel can land between spawn() and this goroutine getting scheduled:
 	// it would have already flipped Status to a terminal value (and closed
-	// Done). Do NOT resurrect it to "running" or launch the command — bail out
+	// Done). Do NOT resurrect it to "running" or launch the command - bail out
 	// so the job stays terminal and Done stays closed exactly once.
 	if job.Status != asyncExecQueued {
 		job.mu.Unlock()
@@ -632,7 +632,7 @@ func (o *Orchestrator) toolExecResult(_ context.Context, args toolArgs) string {
 	view["waited_ms"] = elapsed.Milliseconds()
 	if !done {
 		// The job is still in flight. Tell the model explicitly so it does
-		// not loop forever — the canonical escape hatch is sapaloq_fail_task.
+		// not loop forever - the canonical escape hatch is sapaloq_fail_task.
 		view["hint"] = "job is still running. Either call exec_result again with a wait_seconds, exec_cancel(job_id) to abort, or sapaloq_fail_task with reason='tool hang' if it has been too long."
 	} else {
 		delete(view, "hint")

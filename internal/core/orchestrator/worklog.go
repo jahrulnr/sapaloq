@@ -10,7 +10,7 @@ import (
 // workerLogError appends a single timestamped line to a worker's error-only log
 // at memory/workers/<task-id>/error.log. This is deliberately separate from the
 // verbose progress JSONL: when something goes wrong, you want a short,
-// chronological, errors-only trail per agent — not to grep a firehose.
+// chronological, errors-only trail per agent - not to grep a firehose.
 //
 // It is best-effort and gated by the completion.workerErrorLog config flag:
 // a nil orchestrator, empty workersDir, or write error is silently ignored so

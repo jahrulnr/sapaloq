@@ -2,8 +2,8 @@
 
 **Specs:**
 
-- CSS Color 4 — [w3.org/TR/css-color-4](https://www.w3.org/TR/css-color-4/)
-- CSS Color 5 — [w3.org/TR/css-color-5](https://www.w3.org/TR/css-color-5/)
+- CSS Color 4 - [w3.org/TR/css-color-4](https://www.w3.org/TR/css-color-4/)
+- CSS Color 5 - [w3.org/TR/css-color-5](https://www.w3.org/TR/css-color-5/)
 
 ## What It Is
 
@@ -11,14 +11,14 @@ The canonical standards for **modern color in CSS**. If a task touches browser c
 
 They describe the **standard**, not guaranteed shipped support in every browser. For compatibility questions, treat the specs as the normative definition and check current implementation status separately.
 
-## CSS Color 4 — Key Additions
+## CSS Color 4 - Key Additions
 
 - **`lab()` / `lch()`** and **`oklab()` / `oklch()`** in CSS
 - **`color()`** for predefined spaces like `display-p3`, `a98-rgb`, `prophoto-rgb`, `rec2020`, `xyz-d50`, `xyz-d65`
 - Defined **interpolation spaces** and **gamut mapping** behavior
 - Sample conversion code, including **D65↔D50 Bradford adaptation** and **ΔE2000**
 
-## CSS Color 5 — Key Additions
+## CSS Color 5 - Key Additions
 
 - **`color-mix()`**
 - **relative color syntax**

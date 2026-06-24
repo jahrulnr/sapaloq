@@ -18,14 +18,14 @@ import (
 const defaultChatPath = "/aiserver.v1.ChatService/StreamUnifiedChatWithTools"
 
 type StreamOptions struct {
-	Endpoint     string
-	Token        string
-	MachineID    string
-	Model        string
-	Messages     []ChatMessage
-	GhostMode    bool
-	Timeout      time.Duration
-	InsecureTLS  bool // test/local: skip TLS certificate verification
+	Endpoint    string
+	Token       string
+	MachineID   string
+	Model       string
+	Messages    []ChatMessage
+	GhostMode   bool
+	Timeout     time.Duration
+	InsecureTLS bool // test/local: skip TLS certificate verification
 }
 
 type FrameHandler func(part ExtractedPart)
@@ -143,7 +143,7 @@ func StreamChat(ctx context.Context, opts StreamOptions, onFrame FrameHandler) e
 	debug.Debugf("wire: stream closed raw_bytes=%d frames=%d empty_extracts=%d trailing_buf=%d",
 		rawBytes, frameCount, emptyExtracts, len(buf))
 	if frameCount == 0 {
-		debug.Debugf("wire: no connect frames parsed — check protobuf encode or auth")
+		debug.Debugf("wire: no connect frames parsed - check protobuf encode or auth")
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-# AGENTS.md — guide for AI agents & contributors
+# AGENTS.md - guide for AI agents & contributors
 
 > Read this before editing. SapaLOQ is a **single Go binary** (orchestrator + event bus + IPC) plus a **Wails widget** (TypeScript/Vite frontend). Module: `github.com/jahrulnr/sapaloq` (Go 1.25).
 
@@ -21,7 +21,7 @@
 3. **Follow existing conventions.** Mimic surrounding style; don't introduce a
    new dependency or framework without a clear reason. Single-binary, few-deps
    is a product value (see `docs/LIMITATIONS.md`).
-4. **Never put real secrets in `config/config.example.json`** — it's a public
+4. **Never put real secrets in `config/config.example.json`** - it's a public
    template copied on first boot.
 5. **Contract first, security later.** Make the feature behave according to its
    documented contract and user expectations before adding security hardening.
@@ -67,7 +67,7 @@ change**, and always update `docs/STATUS.md` (status table row + a short
 If a change spans several areas, update each relevant doc. If you discover a doc
 that already contradicts the code, fix it as part of your change.
 
-`docs/STATUS.md` is the single source of truth for "what's implemented" — keep
+`docs/STATUS.md` is the single source of truth for "what's implemented" - keep
 its status table and the dated session notes current.
 
 ---

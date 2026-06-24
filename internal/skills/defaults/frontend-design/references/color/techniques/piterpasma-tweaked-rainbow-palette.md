@@ -1,4 +1,4 @@
-# Piter Pasma — Tweaked Rainbow Palette Formula
+# Piter Pasma - Tweaked Rainbow Palette Formula
 
 **Source:** @piterpasma (Twitter/X, Jan 19 2024)
 **Shadertoy:** https://shadertoy.com/view/lcf3Rr <!-- ⚠️ Bot-protected: open manually in a browser -->
@@ -6,7 +6,7 @@
 
 ## What It Does
 
-A single GLSL function that generates a perceptually tweaked rainbow palette. Starts from a standard HSV-like sinewave rainbow and modifies it to reduce greens and improve overall tonal consistency — similar philosophy to Harvey Rayner's Fontana approach but in a compact shader formula.
+A single GLSL function that generates a perceptually tweaked rainbow palette. Starts from a standard HSV-like sinewave rainbow and modifies it to reduce greens and improve overall tonal consistency - similar philosophy to Harvey Rayner's Fontana approach but in a compact shader formula.
 
 ## The Formula
 
@@ -27,8 +27,8 @@ vec3 colrf(float v) {
 vec3 C = .75 + .45 * sin(v + .5 * sin(v + 5.3) + vec3(-1, 0, 1.2));
 ```
 
-- Base: three sine waves offset by `vec3(-1, 0, 1.2)` — creates R, G, B phase-shifted oscillations (like IQ's cosine formula)
-- **The inner `sin(v + 5.3)`** warps the input — creates non-uniform hue spacing. This is what reduces the green band and compresses certain hue regions
+- Base: three sine waves offset by `vec3(-1, 0, 1.2)` - creates R, G, B phase-shifted oscillations (like IQ's cosine formula)
+- **The inner `sin(v + 5.3)`** warps the input - creates non-uniform hue spacing. This is what reduces the green band and compresses certain hue regions
 - `.75 + .45 *` centers the output and controls amplitude
 
 ### Step 2: Tonal Balancing
@@ -37,10 +37,10 @@ vec3 C = .75 + .45 * sin(v + .5 * sin(v + 5.3) + vec3(-1, 0, 1.2));
 C = smoothstep(0., 1., C - .4 * min3(C) - .2 * C.gbr) * .9 + .02;
 ```
 
-- `min3(C)` = minimum of R, G, B — subtracting `.4 * min3(C)` removes the "whiteness" (shared component across channels), increasing saturation
-- `- .2 * C.gbr` — subtracts a rotated version of the color from itself. This cross-channel suppression further reduces muddiness and increases contrast between channels
-- `smoothstep(0., 1., ...)` — soft clamps, preventing harsh clip artifacts
-- `* .9 + .02` — keeps values away from pure black and pure white (0.02 floor, 0.92 ceiling)
+- `min3(C)` = minimum of R, G, B - subtracting `.4 * min3(C)` removes the "whiteness" (shared component across channels), increasing saturation
+- `- .2 * C.gbr` - subtracts a rotated version of the color from itself. This cross-channel suppression further reduces muddiness and increases contrast between channels
+- `smoothstep(0., 1., ...)` - soft clamps, preventing harsh clip artifacts
+- `* .9 + .02` - keeps values away from pure black and pure white (0.02 floor, 0.92 ceiling)
 
 ## Connection to Fontana / Harvey Rayner
 
@@ -68,10 +68,10 @@ Difference: Rayner's is a multi-step pipeline with separate concerns; Pasma's is
 
 ## Key Techniques Worth Extracting
 
-1. **Inner sine warp** `sin(v + .5*sin(v + offset))` — non-uniform hue spacing without lookup tables
-2. **`min3(C)` subtraction** — removes shared whiteness = instant saturation boost
-3. **Cross-channel subtraction** `C.gbr` — rotating and subtracting channels from each other increases color purity
-4. **Floor/ceiling** via `* .9 + .02` — avoids pure black/white without clamping
+1. **Inner sine warp** `sin(v + .5*sin(v + offset))` - non-uniform hue spacing without lookup tables
+2. **`min3(C)` subtraction** - removes shared whiteness = instant saturation boost
+3. **Cross-channel subtraction** `C.gbr` - rotating and subtracting channels from each other increases color purity
+4. **Floor/ceiling** via `* .9 + .02` - avoids pure black/white without clamping
 
 ## Links
 

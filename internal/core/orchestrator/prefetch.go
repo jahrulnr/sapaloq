@@ -12,16 +12,16 @@ import (
 // PrefetchPacket is the bounded result of the index prefetch (Context-SOP Fase
 // 1): the classified intent/mode, the facts and skills the index surfaced, and
 // the anti-deep-check decision derived from Confidence. It is assembled
-// deterministically from SQLite (hot_cache → facts → FTS) — never the
-// transcript — so it survives compaction and a process restart.
+// deterministically from SQLite (hot_cache → facts → FTS) - never the
+// transcript - so it survives compaction and a process restart.
 type PrefetchPacket struct {
-	Intent        string            `json:"intent"`
-	Mode          string            `json:"mode"`
-	Namespace     string            `json:"namespace"`
-	Confidence    float64           `json:"confidence"`
-	Facts         []chatstore.Fact  `json:"facts,omitempty"`
-	AntiDeepCheck bool              `json:"anti_deep_check"`
-	FromHotCache  bool              `json:"from_hot_cache"`
+	Intent        string           `json:"intent"`
+	Mode          string           `json:"mode"`
+	Namespace     string           `json:"namespace"`
+	Confidence    float64          `json:"confidence"`
+	Facts         []chatstore.Fact `json:"facts,omitempty"`
+	AntiDeepCheck bool             `json:"anti_deep_check"`
+	FromHotCache  bool             `json:"from_hot_cache"`
 	rule          *chatstore.PrefetchRule
 }
 
@@ -112,7 +112,7 @@ func (o *Orchestrator) prefetchContext(ctx context.Context, message string) Pref
 		}
 	}
 	if strings.TrimSpace(message) != "" && len(packet.Facts) < maxPrefetchFacts {
-		// Exclude the skill index from prefetch facts — skills are injected
+		// Exclude the skill index from prefetch facts - skills are injected
 		// separately by skillsBlock.
 		if got, err := o.chat.SearchFacts(ctx, message, nil, maxPrefetchFacts); err == nil {
 			filtered := got[:0]
@@ -144,7 +144,7 @@ func (p PrefetchPacket) render() string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("Prefetched context (from memory index — trust this before exploring):")
+	b.WriteString("Prefetched context (from memory index - trust this before exploring):")
 	if len(p.Facts) > 0 {
 		for _, f := range p.Facts {
 			b.WriteString("\n- ")

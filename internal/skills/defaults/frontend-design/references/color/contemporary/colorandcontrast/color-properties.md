@@ -1,6 +1,6 @@
 # Color Properties
 
-**Source:** [Color & Contrast](https://colorandcontrast.com/) — A comprehensive guide to color for UI designers
+**Source:** [Color & Contrast](https://colorandcontrast.com/) - A comprehensive guide to color for UI designers
 
 _18 content fragments extracted from SPA bundle_
 

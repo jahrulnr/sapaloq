@@ -1,5 +1,5 @@
 // Package provider is a multi-model LLM bridge that speaks OpenAI Chat
-// Completions, Anthropic Messages, and Kimi (Moonshot) — selected automatically
+// Completions, Anthropic Messages, and Kimi (Moonshot) - selected automatically
 // from config + endpoint URL. The wire layer is the same regardless of
 // parser: HTTP/POST + Server-Sent Events; only the request body shape and
 // per-line event format differ.

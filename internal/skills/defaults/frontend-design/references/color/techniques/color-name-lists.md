@@ -1,6 +1,6 @@
-# color-name-lists — Aggregated Color Naming Systems
+# color-name-lists - Aggregated Color Naming Systems
 
-**Source:** [GitHub — meodai/color-name-lists](https://github.com/meodai/color-name-lists)
+**Source:** [GitHub - meodai/color-name-lists](https://github.com/meodai/color-name-lists)
 **Author:** meodai
 **npm:** `color-name-lists`
 **Demo:** https://codepen.io/meodai/full/vYddvLB <!-- ⚠️ Bot-protected: open manually in a browser -->
@@ -72,14 +72,14 @@ Different naming systems serve different purposes:
 Having all systems in one package enables:
 
 - **Nearest-name lookup** across multiple cultural/technical contexts
-- **Cross-referencing** — same hex value, different names in different systems
-- **Choosing the right register** — technical vs poetic vs casual naming
+- **Cross-referencing** - same hex value, different names in different systems
+- **Choosing the right register** - technical vs poetic vs casual naming
 
 ## Related Projects
 
-- **[color-description](color-description-library.md)** — hex → emotional adjectives (different approach: describes character, not names)
-- **ISCC-NBS Centroid Picker** — Peter Donahue's interactive tool for ISCC-NBS names
-- **[ISCC-NBS Circular 553](../historical/pdfs/iscc-nbs-circular-553.pdf)** — the original 1955 dictionary
+- **[color-description](color-description-library.md)** - hex → emotional adjectives (different approach: describes character, not names)
+- **ISCC-NBS Centroid Picker** - Peter Donahue's interactive tool for ISCC-NBS names
+- **[ISCC-NBS Circular 553](../historical/pdfs/iscc-nbs-circular-553.pdf)** - the original 1955 dictionary
 
 ## Links
 

@@ -34,7 +34,7 @@ var migrationSteps = []migrationStep{
 		to:   "1.1.0",
 		// 1.0.0 → 1.1.0: introduced the replaceable `prompts` block. Absent
 		// blocks are handled by WithDefaults() at load time, so this step only
-		// records the version bump (no structural rewrite is required —
+		// records the version bump (no structural rewrite is required -
 		// PromptsConfig defaults itself in). Kept as an explicit step so the
 		// chain documents the transition and stays future-proof.
 	},

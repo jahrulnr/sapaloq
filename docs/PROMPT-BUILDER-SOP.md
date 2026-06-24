@@ -1,8 +1,8 @@
-# SapaLOQ — Prompt Builder & Skills Builder SOP
+# SapaLOQ - Prompt Builder & Skills Builder SOP
 
 > Setiap spawn sub-agent dapat **system-prompt per role**.
 > Setelah task selesai: **automation-learning** (SapaLOQ) + orchestrator hooks → prompt/skill builder.
-> Learning **tidak hanya** dari interaksi user — bisa **research internet** untuk best practice.
+> Learning **tidak hanya** dari interaksi user - bisa **research internet** untuk best practice.
 > Last updated: 2026-06-24 (ask.md: spawn-before-acknowledge ordering on delegation/plan handoff)
 
 Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [FEEDBACK-SOP.md](./FEEDBACK-SOP.md)
@@ -18,8 +18,8 @@ Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.
 | **Post-task** | learning-agent (automation-learning) | Updated role prompt, skill file, facts, prefetch_rule |
 | **Research (async)** | research sub-agent | Best-practice facts + optional skill draft |
 
-Orchestrator **tidak** menulis prompt panjang sendiri — **assemble** dari index + role templates.
-learning-agent **tidak** block widget — jalan async setelah `subagent.completed`.
+Orchestrator **tidak** menulis prompt panjang sendiri - **assemble** dari index + role templates.
+learning-agent **tidak** block widget - jalan async setelah `subagent.completed`.
 
 ---
 
@@ -36,7 +36,7 @@ learning-agent **tidak** block widget — jalan async setelah `subagent.complete
 
 ```mermaid
 flowchart TB
-  subgraph pre [Pre-spawn — context-scaler]
+  subgraph pre [Pre-spawn - context-scaler]
     RT[role template roles/scribe.md]
     TS[task slice]
     SK[skills index match]
@@ -55,7 +55,7 @@ flowchart TB
     SP --> SUB[sub-agent:role]
   end
 
-  subgraph post [Post-task — learning-agent]
+  subgraph post [Post-task - learning-agent]
     SUB --> DONE[task done event]
     DONE --> LA[learning-agent]
     LA --> UP[update role prompt slice]
@@ -66,7 +66,7 @@ flowchart TB
   end
 ```
 
-### 1. Orchestrator-side (pre-spawn) — **Prompt Assembler**
+### 1. Orchestrator-side (pre-spawn) - **Prompt Assembler**
 
 Ringan, deterministic, <500ms:
 
@@ -75,7 +75,7 @@ Ringan, deterministic, <500ms:
 3. Merge task slice + prefetch + max N skills + negative/positive slices if feedback
 4. Attach as **`systemPrompt`** in spawn payload (bukan cuma user message)
 
-### 2. Learning-side (post-task) — **Prompt & Skills Builder**
+### 2. Learning-side (post-task) - **Prompt & Skills Builder**
 
 Async, boleh LLM + web:
 
@@ -88,7 +88,7 @@ Async, boleh LLM + web:
 
 ## Replaceable prompts (on-disk override)
 
-Role system-prompts are **not** hardcoded Go strings anymore — they are editable Markdown files the user can override. Implemented in `internal/prompts`.
+Role system-prompts are **not** hardcoded Go strings anymore - they are editable Markdown files the user can override. Implemented in `internal/prompts`.
 
 - **Defaults are embedded** in the binary (`internal/prompts/defaults/{ask,planner,agent,scribe,persona}.md`, `go:embed`).
 - On startup the manager **materializes** them to `~/SapaLOQ/prompts/` (configurable via `prompts.dir`) and records each file's `sha256` in `prompts.manifest.json`.
@@ -96,11 +96,11 @@ Role system-prompts are **not** hardcoded Go strings anymore — they are editab
 - Resolution order at spawn: **on-disk file → embedded default**. `Manager.Get(role)` returns the active prompt; `task-runner` aliases `agent`.
 - The Ask system prompt and `buildSubAgentMessages` (planner/task-runner/scribe) all go through `Orchestrator.systemPrompt(role)`, so editing the `.md` file changes behavior without a rebuild.
 
-> **Delegation ordering (ask.md).** The Ask delegation paragraph states the action order explicitly: when the orchestrator decides to delegate (including after an approved plan), it emits the `sapaloq_spawn_agent`/`sapaloq_spawn_plan` tool call **first in that same turn, then acknowledges** to the user. This precedes the "fire-and-forget … END your turn" guidance so a context-sensitive model does not read "acknowledge then END turn" as permission to narrate the delegation without ever emitting the spawn call (the observed planner→agent hand-off stall: *"oke aku delegasikan ke agent"* with no tool call). The note is deliberately a declarative ordering statement — no scolding/"narration is not action" framing — to keep the persona tone unchanged.
+> **Delegation ordering (ask.md).** The Ask delegation paragraph states the action order explicitly: when the orchestrator decides to delegate (including after an approved plan), it emits the `sapaloq_spawn_agent`/`sapaloq_spawn_plan` tool call **first in that same turn, then acknowledges** to the user. This precedes the "fire-and-forget … END your turn" guidance so a context-sensitive model does not read "acknowledge then END turn" as permission to narrate the delegation without ever emitting the spawn call (the observed planner→agent hand-off stall: *"oke aku delegasikan ke agent"* with no tool call). The note is deliberately a declarative ordering statement - no scolding/"narration is not action" framing - to keep the persona tone unchanged.
 
 ### Shared persona (core character)
 
-`persona.md` is a **role-agnostic character layer** — SapaLOQ's "how to carry
+`persona.md` is a **role-agnostic character layer** - SapaLOQ's "how to carry
 yourself" (contract-first but never careless with security, tidy/well-documented
 work, explore-before-change, prove-don't-just-run, honesty). It is not a mode of
 its own. `Orchestrator.systemPrompt(role)` **prepends** the resolved persona to
@@ -118,7 +118,7 @@ every role prompt:
   the same baseline without duplicating it into each role file.
 - The persona is never wrapped around itself (`systemPrompt("persona")` returns
   the bare persona), and an empty/missing persona is a no-op (role prompt
-  unchanged) — zero regression for tests that build a bare `Orchestrator`.
+  unchanged) - zero regression for tests that build a bare `Orchestrator`.
 - It is embedded + materialized like any other prompt, so users can edit
   `~/SapaLOQ/prompts/persona.md` to retune SapaLOQ's character globally.
 
@@ -166,7 +166,7 @@ variables. The same map is materialized to `~/SapaLOQ/etc/ROADMAP.md`.
 {
   "subAgentId": "sub-abc",
   "role": "scribe",
-  "systemPrompt": "<assembled — see below>",
+  "systemPrompt": "<assembled - see below>",
   "contextPacket": { "taskId": "...", "mode": "personal", "..." },
   "allowedTools": ["append_file", "read_config", "emit_progress"],
   "maxTurns": 8
@@ -206,7 +206,7 @@ You are SapaLOQ sub-agent **scribe**. Append-only writes to storage.paths by mod
 - Edit config.json
 - Cross-mode writes
 - Deep filesystem search (path id is in context packet)
-- **Guess** when boundary/intent unclear — use `ask_orchestrator`
+- **Guess** when boundary/intent unclear - use `ask_orchestrator`
 
 ## When unclear
 - Call `ask_orchestrator` with question + `options[]` if applicable
@@ -221,7 +221,7 @@ See skills/sapaloq-scribe.md
 
 ## Post-task: automation-learning (SapaLOQ)
 
-Adaptasi [automation-learning](~/.agents/skills/automation-learning/) — **companion namespace**, bukan repo path.
+Adaptasi [automation-learning](~/.agents/skills/automation-learning/) - **companion namespace**, bukan repo path.
 
 ### Trigger learning-agent
 
@@ -231,7 +231,7 @@ Adaptasi [automation-learning](~/.agents/skills/automation-learning/) — **comp
 | User 👎 or correction | Always |
 | Same intent failed 2x | Always + optional research |
 | Novel intent (no prefetch_rule) | Always + research if enabled |
-| Routine catat success | Skip (noise) — config threshold |
+| Routine catat success | Skip (noise) - config threshold |
 
 ### learning-agent responsibilities
 
@@ -250,13 +250,13 @@ Adaptasi [automation-learning](~/.agents/skills/automation-learning/) — **comp
 | `do_not_repeat` | → negative slice + role Must not |
 | `decision` | Durable workflow → skill body |
 | `touch-map` | Coupled steps → skill checklist |
-| `best_practice` | From research — **with source URL** |
+| `best_practice` | From research - **with source URL** |
 
 ---
 
 ## Internet research (best practice)
 
-**Not** on every turn — bounded async sub-agent `research`.
+**Not** on every turn - bounded async sub-agent `research`.
 
 ### When to spawn research
 
@@ -275,7 +275,7 @@ Adaptasi [automation-learning](~/.agents/skills/automation-learning/) — **comp
 
 1. Formulate 1–3 search queries from task summary (no user PII in query)
 2. Web search / fetch (rate-limited, `learning.research.maxSourcesPerTask`)
-3. Extract **actionable** bullets — not paste articles
+3. Extract **actionable** bullets - not paste articles
 4. Output:
 
 ```json
@@ -297,7 +297,7 @@ Adaptasi [automation-learning](~/.agents/skills/automation-learning/) — **comp
 ### Safety
 
 - Respect `learning.research.enabled` and mode boundary (no work secrets in personal research)
-- Cache by topic hash in SQLite — avoid re-fetch same topic within TTL
+- Cache by topic hash in SQLite - avoid re-fetch same topic within TTL
 - Store URL + fetched_at; obsolete when user marks stale
 
 ---
@@ -329,7 +329,7 @@ updatedAt: 2026-06-19
 
 Index upsert mandatory. Link skill to `prefetch_rules` for intent `catat`.
 
-Agent can also create via `/settings buatin skill ...` — same pipeline, user-initiated.
+Agent can also create via `/settings buatin skill ...` - same pipeline, user-initiated.
 
 ---
 
@@ -338,8 +338,8 @@ Agent can also create via `/settings buatin skill ...` — same pipeline, user-i
 Prefer **overlay** over mutating base role (git-friendly, auditable):
 
 ```text
-prompt/roles.d/scribe-catat.md   # auto — learning-agent
-prompt/roles/scribe.md           # human seed — jarang overwrite
+prompt/roles.d/scribe-catat.md   # auto - learning-agent
+prompt/roles/scribe.md           # human seed - jarang overwrite
 ```
 
 Overlay example (learned):
@@ -359,10 +359,10 @@ If overlay > `learning.maxOverlayLines` → memory-janitor compacts into skill b
 | Actor | Prompt builder | Skills builder | Research |
 |-------|----------------|----------------|----------|
 | **orchestrator** | Pre-spawn assemble only | Route `/settings` skill requests | Never |
-| **context-scaler** | Executes assemble formula | — | — |
+| **context-scaler** | Executes assemble formula | - | - |
 | **learning-agent** | Post-task overlay + role patch | Create/update skills | Queue research |
-| **research** | — | Propose skill draft | Execute web |
-| **memory-janitor** | Compact overlays, dedupe | Reindex skills | — |
+| **research** | - | Propose skill draft | Execute web |
+| **memory-janitor** | Compact overlays, dedupe | Reindex skills | - |
 | **User** | Via feedback | Via chat or 👍 save pattern | Explicit ask |
 
 ---

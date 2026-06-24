@@ -28,7 +28,7 @@ func newTestOrchestrator(t *testing.T) *Orchestrator {
 // TestTaskRunnerRecoversFromEmptyStream covers the silent-truncation variant of
 // the recurring stall bug: the stream connects and closes producing no text and
 // no tool call. The UNIFIED engine simply loops (a tool-less turn is allowed,
-// not a failure) with a plain continuation reminder — so an empty/truncated turn
+// not a failure) with a plain continuation reminder - so an empty/truncated turn
 // self-heals on the next turn instead of wedging the worker.
 func TestTaskRunnerRecoversFromEmptyStream(t *testing.T) {
 	fake := &scriptedBridge{turns: [][]bridge.StreamEvent{
@@ -76,7 +76,7 @@ func (b *alwaysErrorBridge) Complete(_ context.Context, _ bridge.Request) (<-cha
 
 // TestTaskRunnerRetriesTransientThenSurfaces confirms a transient transport
 // error (slow TTFB / timeout / 5xx) is RETRIED a bounded number of times rather
-// than failing the whole task on the first blip — and that a provider which
+// than failing the whole task on the first blip - and that a provider which
 // stays down still surfaces a failure instead of retrying forever.
 func TestTaskRunnerRetriesTransientThenSurfaces(t *testing.T) {
 	orig := transportRetryBaseBackoff
@@ -110,10 +110,10 @@ func TestTaskRunnerRetriesTransientThenSurfaces(t *testing.T) {
 // seen in the field (orch-task progress: a planner hit a non-recoverable
 // provider 500 yet the task was recorded `done`/"Selesai." with no plan.md, so
 // Ask narrated a plan that never existed). A planner whose only LLM call fails
-// non-recoverably must end `failed` with the provider error — never `done`.
+// non-recoverably must end `failed` with the provider error - never `done`.
 // The error string mirrors the real Blackbox gateway 500 (carries
 // "Model Group Fallbacks=None", which is classified non-transient so it is NOT
-// retried — it surfaces immediately via the hadError path).
+// retried - it surfaces immediately via the hadError path).
 func TestPlannerSurfacesProviderError(t *testing.T) {
 	fake := &alwaysErrorBridge{err: `provider-bridge: upstream status 500: {"error":{"message":"blackbox.Error: InternalServerError: Vercel_ai_gatewayException - Connection error.. Received Model Group=blackboxai/anthropic/claude-opus-4.8\nAvailable Model Group Fallbacks=None","type":"None","param":"None","code":"500"}}`}
 	o := newTestOrchestrator(t)
@@ -138,7 +138,7 @@ func TestPlannerSurfacesProviderError(t *testing.T) {
 }
 
 // TestTaskRunnerRecoversFromTransientError confirms a turn that hits a transient
-// transport error and then succeeds on retry completes normally — one blip does
+// transport error and then succeeds on retry completes normally - one blip does
 // not doom the task.
 func TestTaskRunnerRecoversFromTransientError(t *testing.T) {
 	orig := transportRetryBaseBackoff
@@ -167,18 +167,18 @@ func TestTaskRunnerRecoversFromTransientError(t *testing.T) {
 
 // TestTaskRunnerNarrationIsBoundedByTurnBudget documents the corrected design:
 // narrating ("thinking out loud") without immediately calling a tool is NORMAL,
-// healthy model behavior — it is NOT failed prematurely. A task-runner that only
+// healthy model behavior - it is NOT failed prematurely. A task-runner that only
 // ever narrates and never signals completion is bounded by the per-role turn
 // budget (maxInferenceTurns), runs that whole budget, and only then ends as a
-// failure with a clear reason. Crucially it is the legitimate budget — not a
-// bespoke "you narrated N times" guard — that bounds it, and the worker is never
+// failure with a clear reason. Crucially it is the legitimate budget - not a
+// bespoke "you narrated N times" guard - that bounds it, and the worker is never
 // killed mid-flight.
 func TestTaskRunnerNarrationIsBoundedByTurnBudget(t *testing.T) {
 	narrate := func(s string) []bridge.StreamEvent {
 		return []bridge.StreamEvent{{Kind: bridge.EventResponseDelta, Delta: s}}
 	}
 	// Far more narration turns than the budget below, each re-phrased so the
-	// no-progress hash guard never trips — only the turn budget can stop it.
+	// no-progress hash guard never trips - only the turn budget can stop it.
 	turns := make([][]bridge.StreamEvent, 0, 12)
 	phrases := []string{
 		"Saya akan membuat js/script.js sekarang.",
@@ -219,7 +219,7 @@ func TestTaskRunnerNarrationIsBoundedByTurnBudget(t *testing.T) {
 
 // TestSubAgentSinkBeatUpdatesPhaseNotHeartbeat documents the structural-liveness
 // design: the sub-agent sink's beat() only annotates the PHASE for
-// observability — it deliberately does NOT advance the heartbeat. Liveness is
+// observability - it deliberately does NOT advance the heartbeat. Liveness is
 // owned by the heartbeat ticker in runBackgroundTask, which runs for as long as
 // the worker goroutine lives. This is the fix for the recurring false-kills: a
 // long synchronous tool / slow stream no longer needs to emit events to stay

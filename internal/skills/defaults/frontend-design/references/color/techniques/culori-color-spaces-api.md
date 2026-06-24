@@ -1,4 +1,4 @@
-# Culori — Color Spaces & API Reference
+# Culori - Color Spaces & API Reference
 
 **Source:** [culorijs.org](https://culorijs.org/)
 **npm:** `culori` | **GitHub:** [culorijs/culori](https://github.com/culorijs/culori)
@@ -148,13 +148,13 @@ round(4)(0.123456789)               // → 0.1235
 
 ## Key Insights for the Skill
 
-- **30 color spaces** from one library — no need to manually implement conversions
+- **30 color spaces** from one library - no need to manually implement conversions
 - **OKLCH is the recommended default** for most tasks (perceptually uniform, intuitive cylindrical)
-- **10 different distance metrics** — use CIEDE2000 for precision, Euclidean OKLCH for speed
-- **Gamut mapping matters** — `clampChroma` (fast) vs `toGamut` (CSS L4 algorithm, more accurate)
+- **10 different distance metrics** - use CIEDE2000 for precision, Euclidean OKLCH for speed
+- **Gamut mapping matters** - `clampChroma` (fast) vs `toGamut` (CSS L4 algorithm, more accurate)
 - **Interpolation in perceptual space** prevents the RGB darkening problem
-- **CVD simulation** built in — test accessibility without external tools
-- `lab` = D50 illuminant (print), `lab65` = D65 (screen) — know which you need
+- **CVD simulation** built in - test accessibility without external tools
+- `lab` = D50 illuminant (print), `lab65` = D65 (screen) - know which you need
 
 ## Links
 

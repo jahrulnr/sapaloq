@@ -1,4 +1,4 @@
-# Albers — Interaction of Color
+# Albers - Interaction of Color
 
 **Source:** _Interaction of Color: text of the original edition with revised plate section_
 **Author:** Josef Albers

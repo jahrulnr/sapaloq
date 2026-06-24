@@ -1,6 +1,6 @@
-# Munsell — Hue, Value, Chroma
+# Munsell - Hue, Value, Chroma
 
-**Source:** _A Grammar of Color — Part 6: A Practical Description of the Munsell Color System with Suggestions for Its Use: Hue, Value, Chroma_
+**Source:** _A Grammar of Color - Part 6: A Practical Description of the Munsell Color System with Suggestions for Its Use: Hue, Value, Chroma_
 **Link:** [munsell.com/color-blog/a-grammar-of-color-definition-hue-value-chroma](https://munsell.com/color-blog/a-grammar-of-color-definition-hue-value-chroma/)
 
 ## What It Is

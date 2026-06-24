@@ -194,7 +194,7 @@ func (b *Bridge) streamMock(ctx context.Context, req bridge.Request, out chan<- 
 	message := lastUserMessage(req.Messages)
 	thinking := bridge.NewEvent(bridge.EventThinkingDelta)
 	thinking.SessionID = req.SessionID
-	thinking.Delta = "No SAPALOQ_CURSOR_TOKEN — using offline mock stream."
+	thinking.Delta = "No SAPALOQ_CURSOR_TOKEN - using offline mock stream."
 	send(ctx, out, thinking)
 
 	if strings.Contains(message, "glob") || strings.Contains(message, "tool") {

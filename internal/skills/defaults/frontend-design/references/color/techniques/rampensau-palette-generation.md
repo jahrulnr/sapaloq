@@ -1,6 +1,6 @@
-# RampenSau — Color Palette Generation via Hue Cycling
+# RampenSau - Color Palette Generation via Hue Cycling
 
-**Source:** [GitHub — meodai/rampensau](https://github.com/meodai/rampensau)
+**Source:** [GitHub - meodai/rampensau](https://github.com/meodai/rampensau)
 **Author:** meodai
 **License:** MIT
 **Demo:** https://meodai.github.io/rampensau/
@@ -16,7 +16,7 @@ Instead of picking individual colors, RampenSau generates palettes by:
 1. **Cycling through hues** with configurable rotations and easing
 2. **Modulating saturation and lightness** via range + easing curves
 3. Optionally applying **curve methods** (lamé, sine, power, linear) for organic variation
-4. Supporting **any cylindrical color space** — same generator, different output interpretation
+4. Supporting **any cylindrical color space** - same generator, different output interpretation
 
 ## API
 
@@ -76,15 +76,15 @@ colorToCSS([280, 0.6, 0.5], "hsl");
 
 ### `harveyHue(h)`
 
-Transforms hue values for a more perceptually even distribution — reduces the over-abundance of green and ultramarine in standard HSL hue wheels.
+Transforms hue values for a more perceptually even distribution - reduces the over-abundance of green and ultramarine in standard HSL hue wheels.
 
 ## Key Design Decisions
 
-- **Color space agnostic** — generates base H/S/L values; interpretation depends on target space
-- **Easing functions** control the distribution — not just linear interpolation between endpoints
+- **Color space agnostic** - generates base H/S/L values; interpretation depends on target space
+- **Easing functions** control the distribution - not just linear interpolation between endpoints
 - **Hue cycling** naturally produces harmonious palettes without needing explicit harmony rules
-- **`hStartCenter`** parameter controls where in the ramp the starting hue appears — not always at the beginning
-- **Works with OKLCH** — the recommended output space for perceptual uniformity
+- **`hStartCenter`** parameter controls where in the ramp the starting hue appears - not always at the beginning
+- **Works with OKLCH** - the recommended output space for perceptual uniformity
 
 ## Demos & Examples
 

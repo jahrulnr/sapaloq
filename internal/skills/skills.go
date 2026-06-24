@@ -26,7 +26,7 @@
 //	  # Frontend Design ...
 //
 // `name` fills ID when `id` is absent; `description` is shown above the body and
-// — when no explicit `triggers` are given — is mined for trigger keywords so the
+// - when no explicit `triggers` are given - is mined for trigger keywords so the
 // skill still fires on a relevant message. This lets a standard skill folder be
 // dropped into ~/SapaLOQ/skills and work as a default without rewriting it.
 //
@@ -241,7 +241,7 @@ func deriveTriggers(id, name, description string) []string {
 		out = append(out, tok)
 	}
 
-	// The name and its tokens are the strongest signal — always include them.
+	// The name and its tokens are the strongest signal - always include them.
 	for _, base := range []string{name, id} {
 		base = strings.TrimSpace(base)
 		if base == "" {

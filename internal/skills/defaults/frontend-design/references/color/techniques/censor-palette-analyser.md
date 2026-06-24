@@ -1,6 +1,6 @@
-# Censor — Perceptual Palette Analyser
+# Censor - Perceptual Palette Analyser
 
-**Source:** [GitHub — Quickmarble/censor](https://github.com/Quickmarble/censor)
+**Source:** [GitHub - Quickmarble/censor](https://github.com/Quickmarble/censor)
 **Author:** Quickmarble
 **License:** MIT
 **Install:** `cargo install censor-analyser`
@@ -13,7 +13,7 @@ Inspired by DawnBringer's GrafX2 Palette Analyser.
 
 ## Key Feature: CAM16UCS Throughout
 
-All widgets use **CAM16UCS** (Color Appearance Model 16, Uniform Color Space) — the most advanced perceptual color model available. More accurate than OKLAB for color distance, especially for dark colors and colors under different illuminants.
+All widgets use **CAM16UCS** (Color Appearance Model 16, Uniform Color Space) - the most advanced perceptual color model available. More accurate than OKLAB for color distance, especially for dark colors and colors under different illuminants.
 
 Configurable illuminant: D50, D55, D65, or custom color temperature (default 5500K). Preserves ICC profiles from PNG/JPEG inputs.
 
@@ -57,15 +57,15 @@ censor daemon -p 8008
 ### Palette Analysis
 
 - Indexed palette grid
-- **Close color clustering** (with lightness weighting) — finds redundant colors
-- **Internal similarity metric:** `(mean_d / min_d) / n^(2/3)` — single number for palette quality
+- **Close color clustering** (with lightness weighting) - finds redundant colors
+- **Internal similarity metric:** `(mean_d / min_d) / n^(2/3)` - single number for palette quality
 - Complementary color pairs
-- **Useful color mixes** — points maximizing distance from existing palette
+- **Useful color mixes** - points maximizing distance from existing palette
 - Acyclic check
 
 ### Perceptual
 
-- **CAM16UCS 3D cubes** (multiple angles) — see palette in perceptual space
+- **CAM16UCS 3D cubes** (multiple angles) - see palette in perceptual space
 - Lightness-sorted with neutralizers
 - Lightness-chroma bars
 - Greyscale simulation (variable weights)
@@ -83,9 +83,9 @@ censor daemon -p 8008
 
 ## Why It Matters
 
-- **CAM16UCS** is more perceptually accurate than OKLAB or CIELAB — especially for palette analysis where you need to compare colors under realistic viewing conditions
+- **CAM16UCS** is more perceptually accurate than OKLAB or CIELAB - especially for palette analysis where you need to compare colors under realistic viewing conditions
 - **Internal similarity metric** gives a single quality score for palette balance
-- **Close color detection** reveals redundancy — same insight as palette-shader's Voronoi but via a different approach
+- **Close color detection** reveals redundancy - same insight as palette-shader's Voronoi but via a different approach
 - **Useful color mixes** suggests which colors to ADD to a palette
 - **Dithering** with perceptual distance ensures best possible palette reduction
 

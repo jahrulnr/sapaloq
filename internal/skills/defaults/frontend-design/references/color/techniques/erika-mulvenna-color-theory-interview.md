@@ -9,7 +9,7 @@
 
 ## Description
 
-Interview with Erika Mulvenna — fiber artist and color educator who developed her own opponent-process-based color wheel for working with found/pre-dyed fabrics. Discussion of how color theory should build confidence, not restrict artists.
+Interview with Erika Mulvenna - fiber artist and color educator who developed her own opponent-process-based color wheel for working with found/pre-dyed fabrics. Discussion of how color theory should build confidence, not restrict artists.
 
 ## Key Points
 
@@ -25,7 +25,7 @@ Interview with Erika Mulvenna — fiber artist and color educator who developed 
 ### The Opponent Process Wheel
 
 - Couldn't find an existing color wheel based on opponent process theory
-- Worked with designers to create one — finalized recently
+- Worked with designers to create one - finalized recently
 - Based on **how we perceive color** (opponent process: red↔green, blue↔yellow) rather than pigment mixing
 - Key insight: additive (RGB) and subtractive (CMY) mixing are both **subsets of perceptual color space**
 - "Working with found color, my results are going to hit better with how you perceive it"
@@ -44,12 +44,12 @@ Interview with Erika Mulvenna — fiber artist and color educator who developed 
   2. Build confidence in your own sense of color
   3. Find tools to help explore putting colors together
 - "The effect of theory on confidence can be so damaging"
-- Lecture: "The Secret Life of the Color Wheel" — how much of the color wheel is actually scientific?
+- Lecture: "The Secret Life of the Color Wheel" - how much of the color wheel is actually scientific?
 
 ### Key Insight
 
 - Artists often blame themselves when color mixing doesn't match the wheel's predictions
-- The problem isn't the artist — it's that the tool (traditional wheel) is flawed
+- The problem isn't the artist - it's that the tool (traditional wheel) is flawed
 - Same message as Color Nerd's UFV lecture: "you're going to start assuming that you're making mistakes"
 
 ## Links

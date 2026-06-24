@@ -11,7 +11,7 @@ import (
 // Agent does read-only assessment + write/exec + task lifecycle.
 //
 // All three now share a common set of read-only assessment tools so Ask and
-// Plan are no longer "blind" — they can read files, search, list directories,
+// Plan are no longer "blind" - they can read files, search, list directories,
 // and run web research before deciding or planning.
 
 var readOnlyAssessmentTools = []string{
@@ -89,7 +89,7 @@ var planTools = append(append([]string{}, readOnlyAssessmentTools...),
 // agentTools: full executor. Assessment + exec + write/edit/delete + lifecycle.
 // The async exec tools (exec_async / exec_status / exec_result / exec_cancel)
 // let the agent stay alive when a single command would otherwise wedge its
-// turn loop — see prompts/agent.md and tools_async_exec.go.
+// turn loop - see prompts/agent.md and tools_async_exec.go.
 var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"exec",
 	"exec_async",
@@ -157,7 +157,7 @@ func (o *Orchestrator) toolsForRole(role string) []string {
 	return out
 }
 
-// knownToolSet is the union of every static role profile — the set of tool
+// knownToolSet is the union of every static role profile - the set of tool
 // names the orchestrator actually implements.
 func knownToolSet() map[string]struct{} {
 	set := map[string]struct{}{}
@@ -298,7 +298,7 @@ func init() {
 	reg("exec", `{
 		"type":"object",
 		"properties":{
-			"command":{"type":"string","description":"Any shell command to run on the host with full access. Use this to read host files too (e.g. cat/sed -n/head/tail/rg). NOTE: commands run via 'bash -lc', so syntax is POSIX/Unix (Linux & macOS); macOS BSD tools differ slightly from GNU (e.g. sed -i, date), and on Windows hosts a bash shell may be unavailable — prefer portable invocations or check the OS first."},
+			"command":{"type":"string","description":"Any shell command to run on the host with full access. Use this to read host files too (e.g. cat/sed -n/head/tail/rg). NOTE: commands run via 'bash -lc', so syntax is POSIX/Unix (Linux & macOS); macOS BSD tools differ slightly from GNU (e.g. sed -i, date), and on Windows hosts a bash shell may be unavailable - prefer portable invocations or check the OS first."},
 			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded). Defaults to the actor's persisted workspace CWD (initially ~/SapaLOQ/workspace). A cd persists for later calls by the same actor."},
 			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
 		},
@@ -327,7 +327,7 @@ func init() {
 		"type":"object",
 		"properties":{
 			"job_id":{"type":"string","description":"The job_id returned by exec_async."},
-			"wait_seconds":{"type":"integer","description":"How long to block waiting for the job to finish (default 30, max 300). Use a small value in a poll loop, or a larger one-shot value when you are willing to wait. If the job is still running after the wait, the response is {status:'running', waited_ms, hint} — call exec_cancel(job_id) or sapaloq_fail_task if it has been too long."}
+			"wait_seconds":{"type":"integer","description":"How long to block waiting for the job to finish (default 30, max 300). Use a small value in a poll loop, or a larger one-shot value when you are willing to wait. If the job is still running after the wait, the response is {status:'running', waited_ms, hint} - call exec_cancel(job_id) or sapaloq_fail_task if it has been too long."}
 		},
 		"required":["job_id"]
 	}`)
@@ -343,7 +343,7 @@ func init() {
 	reg("read_image", `{
 		"type":"object",
 		"properties":{
-			"path":{"type":"string","description":"Path to an image file on the host (absolute, ~-relative, or relative to CWD). Loads the actual image into your vision so you can SEE it — use this for local image files (png, jpeg, gif, webp). Do NOT use read_file/exec to read image bytes as text; use this instead. Requires a vision-capable model."},
+			"path":{"type":"string","description":"Path to an image file on the host (absolute, ~-relative, or relative to CWD). Loads the actual image into your vision so you can SEE it - use this for local image files (png, jpeg, gif, webp). Do NOT use read_file/exec to read image bytes as text; use this instead. Requires a vision-capable model."},
 			"max_bytes":{"type":"integer","description":"Optional cap on bytes read (default 10485760 / 10 MiB; larger files are refused)."}
 		},
 		"required":["path"]

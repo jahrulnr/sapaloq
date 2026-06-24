@@ -1,4 +1,4 @@
-# The Futur Academy — Color for Designers (Playlist)
+# The Futur Academy - Color for Designers (Playlist)
 
 **Source:** [The Futur Academy](https://www.youtube.com/@thefuturacademy) (YouTube)
 **Playlist:** https://www.youtube.com/playlist?list=PLroLjS4HDi0BLMx3d7mzROMfm7bC9ZQuc
@@ -7,7 +7,7 @@ Design-focused color tutorials. Combined 4.3M+ views across 6 videos.
 
 ---
 
-## How To Use Color — Color Basics
+## How To Use Color - Color Basics
 
 **URL:** https://www.youtube.com/watch?v=QkCVrNoqcBU
 **Duration:** 7:08 | **Views:** 621K
@@ -60,7 +60,7 @@ hello Internet it's me Greg and I'm back with more color magic know my last vide
 
 ---
 
-## How to Not Suck at Color — 5 Tips
+## How to Not Suck at Color - 5 Tips
 
 **URL:** https://www.youtube.com/watch?v=C1rQQ_YpgcI
 **Duration:** 7:52 | **Views:** 1.5M

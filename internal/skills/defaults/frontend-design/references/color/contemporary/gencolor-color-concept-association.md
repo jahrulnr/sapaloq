@@ -11,9 +11,9 @@
 
 Selecting colors that semantically match a concept (e.g., "Statue of Liberty," "quiet forest," "lively market") is laborious. Existing approaches:
 
-- **Query-based image referencing** — search Google Images, extract colors. But queried images have wildly inconsistent colors due to lighting, quality, style.
-- **Linguistic co-occurrence** — mine color-concept pairs from text corpora. But N-gram is sparse for uncommon/context-dependent concepts.
-- **Crowdsourcing** — time-consuming and resource-intensive.
+- **Query-based image referencing** - search Google Images, extract colors. But queried images have wildly inconsistent colors due to lighting, quality, style.
+- **Linguistic co-occurrence** - mine color-concept pairs from text corpora. But N-gram is sparse for uncommon/context-dependent concepts.
+- **Crowdsourcing** - time-consuming and resource-intensive.
 
 ## GenColor Framework (3 stages)
 
@@ -56,7 +56,7 @@ Selecting colors that semantically match a concept (e.g., "Statue of Liberty," "
 
 ## References of Note (from the paper)
 
-- Schloss et al. (2018) — Color inference in visual communication
-- Setlur & Stone (2016) — Linguistic approach to categorical color assignment
-- Szafir (2018) — Modeling color difference for visualization design
-- Shi et al. (2023) — De-Stijl: 2D color palette recommendation
+- Schloss et al. (2018) - Color inference in visual communication
+- Setlur & Stone (2016) - Linguistic approach to categorical color assignment
+- Szafir (2018) - Modeling color difference for visualization design
+- Shi et al. (2023) - De-Stijl: 2D color palette recommendation

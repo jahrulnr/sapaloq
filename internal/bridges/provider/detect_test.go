@@ -55,7 +55,7 @@ func TestDetectParserFromModelName(t *testing.T) {
 		{"opus-4.8", ParserClaude},
 		{"kimi-k2.6", ParserKimi},
 		{"moonshot-v1-128k", ParserKimi},
-		// Non-Anthropic/Moonshot models return "" — the caller falls through
+		// Non-Anthropic/Moonshot models return "" - the caller falls through
 		// to endpoint detection or the default.
 		{"gpt-4o-mini", ""},
 		{"MiniMax-M3", ""},

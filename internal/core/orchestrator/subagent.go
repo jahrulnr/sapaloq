@@ -35,7 +35,7 @@ const minSubAgentMaxTurns = 1
 //   - tools:        o.toolsForRole(record.Role)
 //   - dispatch:     handleSubAgentTool (terminal tools mutate record + stop)
 //   - sink:         progress JSONL + worker heartbeat (so a live stream never
-//     looks stalled to the watchdog — the recurring stall bug)
+//     looks stalled to the watchdog - the recurring stall bug)
 //   - finish:       planner/scribe finish on a tool-less turn; an executor must
 //     call a terminal tool (the shared no-progress guard bounds a
 //     model that only narrates intent)
@@ -133,7 +133,7 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	// No tools, no terminal signal, no error: an executor that never signalled
 	// completion is a failure; a non-executor (planner without a plan) is done.
 	// NOTE: we intentionally do NOT fail a planner that finished cleanly with
-	// no plan.md — a planner may legitimately answer a question without
+	// no plan.md - a planner may legitimately answer a question without
 	// producing a formal plan (see TestPlannerCompletesOnToolLessTurn). The
 	// field "halu sukses" bug was NOT this case: there the planner's LLM call
 	// failed with a provider 500, which now returns a non-nil error and is
@@ -152,13 +152,13 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 //   - An explicit per-role maxTurns in config.json always wins (honored as-is,
 //     no upper clamp; a tiny positive value is floored to minSubAgentMaxTurns).
 //   - Otherwise the EXECUTOR (task-runner) runs UNLIMITED: it does the heavy
-//     lifting (many read/edit/run/verify steps over a long task — scaffolding a
+//     lifting (many read/edit/run/verify steps over a long task - scaffolding a
 //     whole app can take hundreds of tool calls), so an arbitrary turn ceiling
 //     would force-fail a productive agent with "inference-turn budget
 //     exhausted". A genuinely stuck/looping model is still bounded by the real
-//     anomaly guards (no-progress, identical-tool, wall-time, tool-call) — none
+//     anomaly guards (no-progress, identical-tool, wall-time, tool-call) - none
 //     of which depend on the turn count.
-//   - Every other (short-lived) role — planner, scribe — falls back to the same
+//   - Every other (short-lived) role - planner, scribe - falls back to the same
 //     budget the chat loop uses (Continuation.MaxInferenceTurns, default 128).
 func (o *Orchestrator) roleMaxTurns(role string) int {
 	if roles := o.cfg.SubAgents.Roles; roles != nil {
@@ -181,7 +181,7 @@ func (o *Orchestrator) roleMaxTurns(role string) int {
 // authority (supporting exact names and `*`-suffix wildcards like `desktop_*`).
 // When the role is NOT configured (or has an empty allowlist), we fall back to
 // the original hard-coded policy: task-runner may use any tool; every other
-// role is read-only (mutating tools — write/create/edit/delete/terminal — are
+// role is read-only (mutating tools - write/create/edit/delete/terminal - are
 // denied). This preserves backward-compatible, default-deny-for-mutation
 // behavior while letting config grant capabilities to named roles.
 func (o *Orchestrator) roleAllows(role, tool string) bool {
@@ -202,7 +202,7 @@ func (o *Orchestrator) roleAllows(role, tool string) bool {
 // allowlistMatchesKnownTool reports whether a configured allowlist matches at
 // least one tool the orchestrator actually implements. A list that names only
 // abstract/aspirational tools (e.g. the doc names "exec", "write_file",
-// "gnome_*") would otherwise deny every real tool at execution — a silent,
+// "gnome_*") would otherwise deny every real tool at execution - a silent,
 // hard-to-debug failure. When nothing matches we ignore the (clearly wrong)
 // list and fall back to the static per-role policy instead.
 func allowlistMatchesKnownTool(allow []string) bool {

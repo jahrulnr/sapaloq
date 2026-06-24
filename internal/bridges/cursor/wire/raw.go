@@ -1,4 +1,4 @@
-// Package wire — raw HTTP/2 client that mirrors Node.js `http2.connect()` byte
+// Package wire - raw HTTP/2 client that mirrors Node.js `http2.connect()` byte
 // for byte. Cursor's api2 rejects Go's net/http http2 client with "User is
 // unauthorized" even with identical headers; the difference is in how Go and
 // Node serialise frames. Sending the frames directly with http2.Framer matches
@@ -129,8 +129,8 @@ func dialHTTP2(ctx context.Context, addr string, tlsCfg *tls.Config) (*h2Conn, e
 	// first frame round-trip with some h2 servers (httptest).
 	preface := []byte(http2.ClientPreface)
 	// Send preface + client SETTINGS together. Node http2 sends a
-	// non-empty SETTINGS at startup — MAX_CONCURRENT_STREAMS,
-	// INITIAL_WINDOW_SIZE, MAX_FRAME_SIZE — and we mirror that to keep
+	// non-empty SETTINGS at startup - MAX_CONCURRENT_STREAMS,
+	// INITIAL_WINDOW_SIZE, MAX_FRAME_SIZE - and we mirror that to keep
 	// servers (including Go's httptest) happy.
 	if _, err := tlsConn.Write(preface); err != nil {
 		tlsConn.Close()

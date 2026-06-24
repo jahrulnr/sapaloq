@@ -1,7 +1,7 @@
-# SapaLOQ — Context SOP & Anti-Forget
+# SapaLOQ - Context SOP & Anti-Forget
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
-> Adaptasi pola `automation-learning` untuk companion desktop — bukan repo coding.
+> Adaptasi pola `automation-learning` untuk companion desktop - bukan repo coding.
 > Last updated: 2026-06-23 (index-first prefetch + typed facts + learning queue landed; see implementation-order status table)
 
 Related: [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [VISION.md](./VISION.md) · [config.schema.json](../schema/config.schema.json)
@@ -20,27 +20,27 @@ Saat **compaction aktif** atau **low context**, agent cenderung:
 | **Static prompt** | System prompt monolit → tidak fit intent | Noise, skill salah load |
 | **No index** | Hanya grep/file walk | Latency tinggi, tidak predictable |
 
-SapaLOQ harus **prefetch context yang tepat dalam <2 detik** sebelum sub-agent jalan — bukan "cari dulu, baru kerja".
+SapaLOQ harus **prefetch context yang tepat dalam <2 detik** sebelum sub-agent jalan - bukan "cari dulu, baru kerja".
 
 ---
 
 ## Prinsip
 
-1. **Index-first, search-second** — SQLite FTS + tag index → prefetch packet; grep/fs hanya kalau confidence rendah.
-2. **Dynamic system-prompt** — assemble slice by intent/mode/task; never dump full skills catalog.
-3. **SOP terstruktur** — system-prompt, skills, memory punya lifecycle seperti automation-learning (read → work → promote → obsolete).
-4. **Anti-deep-check** — bounded exploration; default = skip explore jika prefetch hit.
-5. **Auto-learning** — memory-janitor + learning queue; kinerja membaik over time.
-6. **Compaction-safe** — durable state di index + files; transcript bukan source of truth.
-7. **Feedback shaping** — reward/penalty → `do_not_repeat` + positive/negative slices ([FEEDBACK-SOP.md](./FEEDBACK-SOP.md)).
-8. **Lifecycle certainty is durable** — task status comes from
+1. **Index-first, search-second** - SQLite FTS + tag index → prefetch packet; grep/fs hanya kalau confidence rendah.
+2. **Dynamic system-prompt** - assemble slice by intent/mode/task; never dump full skills catalog.
+3. **SOP terstruktur** - system-prompt, skills, memory punya lifecycle seperti automation-learning (read → work → promote → obsolete).
+4. **Anti-deep-check** - bounded exploration; default = skip explore jika prefetch hit.
+5. **Auto-learning** - memory-janitor + learning queue; kinerja membaik over time.
+6. **Compaction-safe** - durable state di index + files; transcript bukan source of truth.
+7. **Feedback shaping** - reward/penalty → `do_not_repeat` + positive/negative slices ([FEEDBACK-SOP.md](./FEEDBACK-SOP.md)).
+8. **Lifecycle certainty is durable** - task status comes from
    `state/tasks/<taskId>/status.json`; a missed live event or core restart must
    produce a visible snapshot/failure, never an indefinitely silent task.
-9. **Cancellation is local and immediate** — Stop is observed by the
+9. **Cancellation is local and immediate** - Stop is observed by the
    orchestrator consumer directly; it must not wait for a provider stream to
    emit another event or close its channel. Failed retry attempts are cancelled
    and abandoned, not synchronously drained.
-10. **Shared context is evented, not mutable** — Planner/Agent steering is
+10. **Shared context is evented, not mutable** - Planner/Agent steering is
     queued in a durable target inbox and folded into that actor only at a safe
     point. A decision mediator receives a bounded snapshot; it never mutates the
     foreground UI orchestrator's live message slice.
@@ -68,7 +68,7 @@ flowchart LR
   ORCH --> SUB
 ```
 
-### Fase 0 — Ingress (<100ms, no LLM if possible)
+### Fase 0 - Ingress (<100ms, no LLM if possible)
 
 | Step | Actor | Output |
 |------|-------|--------|
@@ -77,15 +77,15 @@ flowchart LR
 | Match task stack | orchestrator | `activeTaskId`, poison check |
 | Lookup prefetch rules | SQLite `prefetch_rules` | kinds, skills, config keys |
 
-### Fase 1 — Index prefetch (<500ms)
+### Fase 1 - Index prefetch (<500ms)
 
 Query order (parallel where safe):
 
-1. **Hot cache** — in-proc LRU inside sapaloq-core (`sync.Map` or bounded map)
-2. **Facts by namespace** — mode `memoryNamespace`
-3. **FTS5** — user prompt keywords + intent tags
-4. **Skills index** — trigger match → max `skills.maxLoadPerTurn` skills
-5. **Storage/apps** — intent → path id (already in config, indexed at boot)
+1. **Hot cache** - in-proc LRU inside sapaloq-core (`sync.Map` or bounded map)
+2. **Facts by namespace** - mode `memoryNamespace`
+3. **FTS5** - user prompt keywords + intent tags
+4. **Skills index** - trigger match → max `skills.maxLoadPerTurn` skills
+5. **Storage/apps** - intent → path id (already in config, indexed at boot)
 
 Output: **prefetch packet** (bounded tokens):
 
@@ -106,9 +106,9 @@ Output: **prefetch packet** (bounded tokens):
 
 `confidence >= threshold` → **skip filesystem exploration**.
 
-### Fase 2 — Dynamic system-prompt assembly
+### Fase 2 - Dynamic system-prompt assembly
 
-**Dua jalur terpisah** — lihat [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md):
+**Dua jalur terpisah** - lihat [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md):
 
 | Agent | Prompt source |
 |-------|---------------|
@@ -119,8 +119,8 @@ Layers for **orchestrator** (inject **only what applies**):
 
 | Layer | Max tokens (guide) | When |
 |-------|-------------------|------|
-| **core** | ~400 | Always — orchestrator identity, anti-poisoning, mode |
-| **mode** | ~200 | Always — boundary for active mode |
+| **core** | ~400 | Always - orchestrator identity, anti-poisoning, mode |
+| **mode** | ~200 | Always - boundary for active mode |
 | **task** | ~300 | Active task on stack |
 | **prefetch** | ~600 | Facts + config snapshot from index |
 | **skill** | ~800 each | Max N skills from prefetch (default 2) |
@@ -128,11 +128,11 @@ Layers for **orchestrator** (inject **only what applies**):
 
 **Never inject:** full `config.json`, all skills, full memory DB, other tasks' history.
 
-**Sub-agent spawn** must include assembled **`systemPrompt`** field — not reuse orchestrator prompt.
+**Sub-agent spawn** must include assembled **`systemPrompt`** field - not reuse orchestrator prompt.
 
 Template storage: `~/.config/sapaloq/prompt/roles/` + `roles.d/` + slices/ + SQLite `prompt_slices`.
 
-### Fase 3 — Context packet → sub-agent
+### Fase 3 - Context packet → sub-agent
 
 context-scaler merges prefetch + dynamic prompt slices → existing [context packet](./ORCHESTRATOR.md#context-packet-context-scaler-output).
 
@@ -144,10 +144,10 @@ Default policy (`context.antiDeepCheck`):
 
 | Condition | Action |
 |-----------|--------|
-| `prefetch.confidence >= 0.7` | **No explore** — act on prefetch |
+| `prefetch.confidence >= 0.7` | **No explore** - act on prefetch |
 | `0.4 <= confidence < 0.7` | Bounded: max 2 index queries + 1 file read |
 | `confidence < 0.4` | Bounded explore: max 3 files, 2 tool calls, 30s budget |
-| Compaction / low context flag | **Reload from index** — never replay full transcript |
+| Compaction / low context flag | **Reload from index** - never replay full transcript |
 | User repeat within 5 min | Serve **hot_cache** |
 | Sub-agent requests more context | context-scaler approves + logs to learning_queue |
 
@@ -159,7 +159,7 @@ Log every deep-check override → auto-learning adjusts prefetch rules.
 
 ## Memory kinds (companion-scoped)
 
-Adaptasi dari automation-learning — namespace = mode (`personal`, `hobby`, `work`):
+Adaptasi dari automation-learning - namespace = mode (`personal`, `hobby`, `work`):
 
 | kind | Purpose | Indexed fields |
 |------|---------|----------------|
@@ -172,7 +172,7 @@ Adaptasi dari automation-learning — namespace = mode (`personal`, `hobby`, `wo
 | `debug` | Failed attempts | do_not_repeat |
 | `decision` | Durable choices | decision, reason |
 | `obsolete` | Stale facts | obsolete_since, replacement |
-| `maintenance` | Compaction/health notes | — |
+| `maintenance` | Compaction/health notes | - |
 
 File layout (optional mirror to SQLite):
 
@@ -188,7 +188,7 @@ SQLite = **authoritative index**; markdown = human-readable source + agent appen
 
 ## SQLite index (primary store)
 
-Path: `~/SapaLOQ/memory/companion.db` — **only** persistence engine. Hot cache = in-memory in same binary; optional `hot_cache` SQLite table for restart warm-up.
+Path: `~/SapaLOQ/memory/companion.db` - **only** persistence engine. Hot cache = in-memory in same binary; optional `hot_cache` SQLite table for restart warm-up.
 
 ### Core tables
 
@@ -212,7 +212,7 @@ CREATE VIRTUAL TABLE facts_fts USING fts5(
   content='facts', content_rowid='rowid'
 );
 
--- FTS5 content table does NOT auto-sync — triggers required (M1 migration)
+-- FTS5 content table does NOT auto-sync - triggers required (M1 migration)
 CREATE TRIGGER facts_fts_ai AFTER INSERT ON facts BEGIN
   INSERT INTO facts_fts(rowid, value, tags, key, namespace, kind)
   VALUES (new.rowid, new.value, new.tags, new.key, new.namespace, new.kind);
@@ -290,7 +290,7 @@ CREATE TABLE prefetch_log (
   ts TEXT
 );
 
--- Sub-agent nodes (local + remote) — see NODES.md
+-- Sub-agent nodes (local + remote) - see NODES.md
 CREATE TABLE nodes (
   name            TEXT PRIMARY KEY,
   role            TEXT NOT NULL,
@@ -317,7 +317,7 @@ On `sapaloq-core` start:
 2. Scan `~/SapaLOQ/skills/*.md` → `skills_index`
 3. Scan `memory/files/**/*.md` → upsert `facts` + FTS
 4. Load `prompt/slices/` → `prompt_slices`
-5. Ensure `nodes` table has bootstrap row `local-default` — see [NODES.md](./NODES.md)
+5. Ensure `nodes` table has bootstrap row `local-default` - see [NODES.md](./NODES.md)
 
 Incremental: inotify on skills + memory files.
 
@@ -333,13 +333,13 @@ type WriteQueue struct {
 // Readers: any goroutine (WAL mode). Writers: one goroutine drains ch.
 ```
 
-See [LIMITATIONS.md](./LIMITATIONS.md) — mitigates partial; not infinite scale.
+See [LIMITATIONS.md](./LIMITATIONS.md) - mitigates partial; not infinite scale.
 
 ---
 
 ## Skills SOP (sapaloq-local)
 
-Skills live in `~/SapaLOQ/skills/` — **not** `~/.cursor/skills-cursor/`.
+Skills live in `~/SapaLOQ/skills/` - **not** `~/.cursor/skills-cursor/`.
 
 ### Skill file frontmatter
 
@@ -365,7 +365,7 @@ load_policy: on-intent
 | `on-mode` | Active mode match |
 | `never-auto` | User explicit `/skill name` only |
 
-Max `skills.maxLoadPerTurn` (default 2) — prevents skill dump on compaction.
+Max `skills.maxLoadPerTurn` (default 2) - prevents skill dump on compaction.
 
 ### Create skill by agent
 
@@ -377,7 +377,7 @@ User: /settings buatin skill buat reminder obat
 → optional: add prefetch_rule
 ```
 
-Same SOP pattern as Cursor "create skill" — but sapaloq-owned path + index update **mandatory**.
+Same SOP pattern as Cursor "create skill" - but sapaloq-owned path + index update **mandatory**.
 
 ---
 
@@ -385,18 +385,18 @@ Same SOP pattern as Cursor "create skill" — but sapaloq-owned path + index upd
 
 | Layer | Role |
 |-------|------|
-| **`prompt/slices/*.md`** (files) | **Editable source** — human/agent via `/settings` or learning-agent |
-| **`prompt_slices` table** | **Index cache** — populated at boot + on file change (same pattern as `skills/` → `skills_index`) |
+| **`prompt/slices/*.md`** (files) | **Editable source** - human/agent via `/settings` or learning-agent |
+| **`prompt_slices` table** | **Index cache** - populated at boot + on file change (same pattern as `skills/` → `skills_index`) |
 
 Boot sync (mandatory):
 
 1. Scan `~/.config/sapaloq/prompt/slices/` + `modes/`
 2. Upsert `prompt_slices` with `template_path`, `role`, `conditions` from frontmatter
-3. Assembler **reads paths from index** — never walk filesystem per turn
+3. Assembler **reads paths from index** - never walk filesystem per turn
 
 Runtime: inotify on `prompt/` → re-index affected rows. **Do not** edit `prompt_slices` by hand except via indexer.
 
-`roles/` and `roles.d/` are **not** in `prompt_slices` — loaded directly by role id at spawn (see [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md)).
+`roles/` and `roles.d/` are **not** in `prompt_slices` - loaded directly by role id at spawn (see [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md)).
 
 ---
 
@@ -404,7 +404,7 @@ Runtime: inotify on `prompt/` → re-index affected rows. **Do not** edit `promp
 
 ```text
 ~/.config/sapaloq/prompt/
-  core.md                 # Always — orchestrator SOP
+  core.md                 # Always - orchestrator SOP
   modes/
     personal.md
     hobby.md
@@ -432,13 +432,13 @@ On **compaction signal** (context >80% or explicit):
 
 1. Drop ephemeral + old task slices
 2. Re-query index for active task only
-3. Re-assemble — **do not** re-read all skills
+3. Re-assemble - **do not** re-read all skills
 
 ---
 
 ## Auto-learning loop
 
-Post-task **learning-agent** (automation-learning SapaLOQ) builds prompts & skills — see [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md). Optional **research** sub-agent fetches web best practices async.
+Post-task **learning-agent** (automation-learning SapaLOQ) builds prompts & skills - see [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md). Optional **research** sub-agent fetches web best practices async.
 
 ```mermaid
 flowchart TB
@@ -462,7 +462,7 @@ flowchart TB
   PR --> IX
 ```
 
-### Triggers (learning-agent — async after task done)
+### Triggers (learning-agent - async after task done)
 
 - Task completed success + `learning.buildOnSuccess` → extract patterns, maybe skill
 - User 👎 or correction → always → overlay + do_not_repeat
@@ -502,7 +502,7 @@ memory-janitor writes fact + FTS + optional markdown mirror.
 | **research** | Web best practice → facts + skill draft (async) |
 | **memory-janitor** | Drain queue; compact overlays; index sync; rule tuning |
 
-Add `intent-router` as lightweight step — can be same process as orchestrator pre-hook.
+Add `intent-router` as lightweight step - can be same process as orchestrator pre-hook.
 
 ---
 
@@ -516,11 +516,11 @@ See `config.context`, `config.memory.index`, `config.skills`, `config.learning` 
 
 Before any sub-agent spawn:
 
-1. Run ingress pipeline — **do not** manual grep skills/memory first.
-2. Check prefetch confidence — if high, **forbid** deep check.
+1. Run ingress pipeline - **do not** manual grep skills/memory first.
+2. Check prefetch confidence - if high, **forbid** deep check.
 3. Load max 2 skills from index match.
-4. Assemble dynamic prompt — log token budget used.
-5. Pass context packet only — not full history.
+4. Assemble dynamic prompt - log token budget used.
+5. Pass context packet only - not full history.
 
 After task:
 
@@ -531,7 +531,7 @@ After task:
 On compaction / session resume:
 
 1. Read active task from `tasks/` stack.
-2. Re-prefetch from SQLite — **not** transcript replay.
+2. Re-prefetch from SQLite - **not** transcript replay.
 3. Re-assemble dynamic prompt.
 
 ---
@@ -556,6 +556,6 @@ Status legend: ✅ implemented · 🟡 partial · ❌ not yet. Verify against
 
 ## Related patterns (external)
 
-- **automation-learning** (`~/.agents/skills/automation-learning/`) — repo/project memory SOP; SapaLOQ adapts same *kinds* and *read-before-work* for desktop companion namespaces.
-- **ORCHESTRATOR.md** — context packet, task stack, anti-poisoning.
-- Worker handoff — coding memory stays in worker; SapaLOQ index holds **companion-relevant** facts only.
+- **automation-learning** (`~/.agents/skills/automation-learning/`) - repo/project memory SOP; SapaLOQ adapts same *kinds* and *read-before-work* for desktop companion namespaces.
+- **ORCHESTRATOR.md** - context packet, task stack, anti-poisoning.
+- Worker handoff - coding memory stays in worker; SapaLOQ index holds **companion-relevant** facts only.

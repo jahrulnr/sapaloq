@@ -148,7 +148,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		)`,
 		// nodes registers local + remote execution targets for sub-agents
 		// (see docs/NODES.md). A bootstrapped "local-default" row preserves the
-		// existing in-proc spawn behavior. Tokens are NEVER stored here — comm
+		// existing in-proc spawn behavior. Tokens are NEVER stored here - comm
 		// specs reference auth via ENV vars. share_memory is only honored for
 		// local nodes (remote always gets a bounded context packet).
 		`CREATE TABLE IF NOT EXISTS nodes (
@@ -223,7 +223,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			expires_at TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
-		// prefetch_log is telemetry for prefetch rule tuning — one row per ingress.
+		// prefetch_log is telemetry for prefetch rule tuning - one row per ingress.
 		`CREATE TABLE IF NOT EXISTS prefetch_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL DEFAULT '',
@@ -271,13 +271,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	// FTS5 is optional with the modernc.org/sqlite build. Probe for it; if
 	// available, create facts_fts + sync triggers (mirroring
 	// migrations/001_initial.sql) so SearchFacts can MATCH. Otherwise leave
-	// ftsEnabled false and degrade to a LIKE scan — never hard-fail Open.
+	// ftsEnabled false and degrade to a LIKE scan - never hard-fail Open.
 	s.ftsEnabled = s.probeFTS5(ctx)
 	if s.ftsEnabled {
 		// Whether facts_fts already existed before this Open. When it didn't but
 		// the facts table already holds rows (legacy DB, or facts written on a
 		// build without FTS5), the inverted index would be empty/stale and the
-		// sync triggers only fire on future writes — so we must rebuild it from
+		// sync triggers only fire on future writes - so we must rebuild it from
 		// the content table. A COUNT(*) on an external-content FTS table reflects
 		// the content table, not the index, so it can't be used to detect this.
 		ftsExisted := s.tableExists(ctx, "facts_fts")

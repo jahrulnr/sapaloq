@@ -22,7 +22,7 @@ In-process sub-agent on the same machine as `sapaloq-core`.
 
 ## Auth
 
-None — same user session.
+None - same user session.
 
 ## Failure
 

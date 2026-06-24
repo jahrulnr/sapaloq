@@ -1,6 +1,6 @@
 # Color Spaces
 
-**Source:** [Color & Contrast](https://colorandcontrast.com/) — A comprehensive guide to color for UI designers
+**Source:** [Color & Contrast](https://colorandcontrast.com/) - A comprehensive guide to color for UI designers
 
 _88 content fragments extracted from SPA bundle_
 

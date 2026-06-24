@@ -28,39 +28,39 @@ Comprehensive explainer covering the entire color pipeline: from physics of ligh
 
 ### Color Spaces (comprehensive overview)
 
-- **CIE XYZ (1931)** — first complete map of visible colors; still the standard reference; not perceptually uniform
-- **CIELUV (1976)** — more perceptually uniform; used in light design/TVs; L*u*v\*
-- **CIELAB (1976)** — used in photography/textiles/graphic design; L*a*b\*
-- **LCH** — cylindrical version of Lab; Lightness/Chroma/Hue → more intuitive
-- **HSLuv** — stretches chroma to 0-100%; perceptually uniform cylindrical
-- **HSL** — RGB-based cylindrical; NOT perceptually uniform; Abney effect (blue→violet when lightening)
-- **OKLAB** — newer, better perceptual uniformity for lightness
-- **OKLCH** — cylindrical OKLAB; "better than okay"; best for color manipulation and gradients
+- **CIE XYZ (1931)** - first complete map of visible colors; still the standard reference; not perceptually uniform
+- **CIELUV (1976)** - more perceptually uniform; used in light design/TVs; L*u*v\*
+- **CIELAB (1976)** - used in photography/textiles/graphic design; L*a*b\*
+- **LCH** - cylindrical version of Lab; Lightness/Chroma/Hue → more intuitive
+- **HSLuv** - stretches chroma to 0-100%; perceptually uniform cylindrical
+- **HSL** - RGB-based cylindrical; NOT perceptually uniform; Abney effect (blue→violet when lightening)
+- **OKLAB** - newer, better perceptual uniformity for lightness
+- **OKLCH** - cylindrical OKLAB; "better than okay"; best for color manipulation and gradients
 
 ### Photography & Color Reproduction
 
 - Maxwell's RGB filter method → first color photo (Thomas Sutton)
-- Modern cameras: Bayer filter (25% R, 25% B, 50% G — eyes more sensitive to green)
+- Modern cameras: Bayer filter (25% R, 25% B, 50% G - eyes more sensitive to green)
 - White balance: correcting for light temperature (2000K warm → 10000K cool; D65 = 6500K daylight standard)
 - Color correction/grading in editing software
 
 ### Display Technologies
 
-- **Gamma correction** — compensates for non-linear luminance perception; standard gamma ≈ 2.2
+- **Gamma correction** - compensates for non-linear luminance perception; standard gamma ≈ 2.2
 - **CRT** → **LCD** (LED backlit) → **OLED** (self-emitting pixels) → **QD-OLED** (quantum dots)
-- **sRGB** — standard gamut, covers ~33% of visible colors
-- **Display P3** — wider gamut (~26% more than sRGB), Apple standard
-- **Adobe RGB** — wider for photography
-- **Rec. 2020** — widest standard, targets future displays
+- **sRGB** - standard gamut, covers ~33% of visible colors
+- **Display P3** - wider gamut (~26% more than sRGB), Apple standard
+- **Adobe RGB** - wider for photography
+- **Rec. 2020** - widest standard, targets future displays
 - HDR: wider dynamic range between darkest and brightest
 
 ### Color Psychology & Palettes
 
-- Color psychology needs CONTEXT — colors alone don't mean anything
-- Blue = trust (used by "untrustworthy companies" — ironic observation)
+- Color psychology needs CONTEXT - colors alone don't mean anything
+- Blue = trust (used by "untrustworthy companies" - ironic observation)
 - Contrast matters more than individual color choice
 - Monochromatic, complementary, analogous schemes
-- HSL wheel (RGB-based) vs LCH-based wheel — LCH is perceptually uniform
+- HSL wheel (RGB-based) vs LCH-based wheel - LCH is perceptually uniform
 - **OKLCH recommended** for all color manipulation and palette generation
 
 ### Practical Design Advice

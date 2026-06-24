@@ -64,7 +64,7 @@ func (o *Orchestrator) applyConfig(next config.Config) error {
 	o.progress = ProgressWriter{Dir: dirs.ProgressDir}
 	// Repoint runtime-state dirs unconditionally: they track DataDir and must
 	// stay consistent even when the memory DB itself did not change. Previously
-	// workersDir/workers were left dangling on reload — a latent bug.
+	// workersDir/workers were left dangling on reload - a latent bug.
 	o.stateDir = dirs.StateDir
 	o.tasksDir = dirs.TasksDir
 	o.workspaceDir = dirs.WorkspaceDir

@@ -9,8 +9,8 @@ import "strings"
 //     calledToolsNote) which some models then echo back as prose.
 //   - "[Tool: " is the announce form some models (e.g. MiniMax-M3) emit in
 //     their content alongside a real native tool_call. The bare label (no
-//     trailing "{args}" object) is NOT a recoverable inline call — the
-//     bridge's leak-scanner only recovers "[Tool: name]{args}" — so it leaks
+//     trailing "{args}" object) is NOT a recoverable inline call - the
+//     bridge's leak-scanner only recovers "[Tool: name]{args}" - so it leaks
 //     to the user as noise. Worse, the model then SEES "[Tool: name]" in its
 //     own prior turn, mistakes it for the correct tool-call syntax, and starts
 //     emitting bare "[Tool: name]" labels instead of structured calls, which
@@ -52,12 +52,12 @@ func classifyMarker(pending string) markerMatch {
 //
 // Why this exists: calledToolsNote injects a "[Called tools: name, …]" line
 // into the assistant transcript so the model has in-context proof it actually
-// called a tool (the anti double-spawn fix — the text-delta stream alone does
+// called a tool (the anti double-spawn fix - the text-delta stream alone does
 // not carry the tool_call). The unintended side effect is that some models,
 // seeing that line in their own prior turn, *imitate* it and emit a fresh
 // "[Called tools: write_file …, write_file …]" as plain prose on a later turn.
 // That echo is not a real tool call (it carries no JSON arguments, so the
-// leak-scanner cannot recover it) — it is pure noise that leaks to the user
+// leak-scanner cannot recover it) - it is pure noise that leaks to the user
 // and into the progress log. We drop it here at the single point where text
 // deltas are funnelled to the user.
 //
@@ -108,7 +108,7 @@ func (f *calledToolsFilter) feed(delta string) string {
 			switch classifyMarker(pending) {
 			case markerFull:
 				// Full marker prefix matched: switch to skip mode and discard
-				// the buffered prefix — the body + ']' are dropped too.
+				// the buffered prefix - the body + ']' are dropped too.
 				f.skipping = true
 				f.buf.Reset()
 			case markerPartial:

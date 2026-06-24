@@ -4,8 +4,8 @@
 #
 # Downloads a prebuilt release artifact from GitHub, installs the binaries into
 # a user-local bin dir (default ~/.local/bin), seeds a default config under
-# ~/.config/sapaloq (never overwriting an existing one), and — unless
-# --no-service is given — registers and starts the systemd --user service via
+# ~/.config/sapaloq (never overwriting an existing one), and - unless
+# --no-service is given - registers and starts the systemd --user service via
 # `sapaloq-core service install`.
 #
 # It does NOT clone the repo or build anything: only curl, tar and (for the

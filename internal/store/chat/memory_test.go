@@ -64,7 +64,7 @@ func TestMigrationUpgradesLegacyFacts(t *testing.T) {
 	}
 	_ = s.Close()
 
-	// Reopen: idempotent — addColumnIfMissing must not re-ALTER.
+	// Reopen: idempotent - addColumnIfMissing must not re-ALTER.
 	s2, err := Open(dir)
 	if err != nil {
 		t.Fatalf("reopen (idempotent migrate): %v", err)

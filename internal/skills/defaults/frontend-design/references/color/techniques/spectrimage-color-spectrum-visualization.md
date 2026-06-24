@@ -1,10 +1,10 @@
-# Spectrimage — Color Spectrum & Palette from an Image
+# Spectrimage - Color Spectrum & Palette from an Image
 
 **Spectrimage** (Amanda Hinton) is a client-side tool with two complementary views of an image's
 color, computed in the same pass:
 
-1. **The spectrum** — a 2D distribution chart (hue → x, lightness stacked, frequency → height).
-2. **The palette** — a 5-color extraction via K-means clustering.
+1. **The spectrum** - a 2D distribution chart (hue → x, lightness stacked, frequency → height).
+2. **The palette** - a 5-color extraction via K-means clustering.
 
 The author's own framing of why both exist:
 
@@ -13,32 +13,32 @@ The author's own framing of why both exist:
 
 i.e. the spectrum is the honest full distribution; the palette is the curated few-color read.
 
-- **Author:** Amanda Hinton — [GitHub](https://github.com/amandahinton) ·
+- **Author:** Amanda Hinton - [GitHub](https://github.com/amandahinton) ·
   [LinkedIn](https://www.linkedin.com/in/amandahinton/) ·
   [Instagram](http://instagram.com/amandadanghinton)
 - **Built at:** Recurse Center "Impossible Stuff Day"
-- **Spectrum write-up:** 2026-04-14 — <https://amandahinton.com/blog/generating-a-color-spectrum-for-an-image>
-- **Palette write-up:** 2026-05-01 — <https://amandahinton.com/blog/creating-a-color-palette-from-an-image>
+- **Spectrum write-up:** 2026-04-14 - <https://amandahinton.com/blog/generating-a-color-spectrum-for-an-image>
+- **Palette write-up:** 2026-05-01 - <https://amandahinton.com/blog/creating-a-color-palette-from-an-image>
 - **Contact:** hello@amandahinton.com
 
 ---
 
-# Part 1 — The Spectrum (the "fact")
+# Part 1 - The Spectrum (the "fact")
 
 A visualization technique for showing the *color composition* of an image as a 2D spectrum: hue
 along the horizontal axis, lightness stacked vertically, frequency as column height. Distinct
-from palette extraction — instead of reducing an image to N swatches, it shows the full
+from palette extraction - instead of reducing an image to N swatches, it shows the full
 distribution of hue × lightness × frequency in one chart.
 
-## The Core Idea (Iteration 7 — the breakthrough)
+## The Core Idea (Iteration 7 - the breakthrough)
 
 The hard part of "spectrum from an image" is that color is 3D (hue, lightness, chroma) but
 a spectrum strip is 1D. Early attempts all tried to **sort** pixels into a single line
 (median-cut quantization, hue histograms, pixel-level sorting, lightness sub-sorts) and all
-produced banding, striping, or discontinuities — the one-dimensional sorting problem.
+produced banding, striping, or discontinuities - the one-dimensional sorting problem.
 
 The breakthrough was to go 2D: **each hue gets a vertical column, painted as a linear
-gradient — tint at top, pure hue at center, shade at bottom.** This displays hue, frequency,
+gradient - tint at top, pure hue at center, shade at bottom.** This displays hue, frequency,
 and tonal range simultaneously instead of forcing everything onto one axis.
 
 Within a hue column, the tonal endpoints are derived by slicing that hue's pixels by lightness:
@@ -53,7 +53,7 @@ Within a hue column, the tonal endpoints are derived by slicing that hue's pixel
 | Horizontal position    | Hue (walks the wheel)                                |
 | Column height          | Frequency, relative to the most-populous hue         |
 | Stacked bands (top→bot)| Lightness distribution: tints up, shades down        |
-| Asymmetry about center | Tonal character — dark-dominant vs light-dominant    |
+| Asymmetry about center | Tonal character - dark-dominant vs light-dominant    |
 
 The pure-hue band straddles the horizontal axis; tints stack upward, shades downward, so a
 column that bulges upward is a light-leaning hue and one that bulges down is dark-leaning.
@@ -69,7 +69,7 @@ perceptual-uniformity problems:
 This is the standard argument for OKLCH over HSL: HSL's L is a math average (so equal-L colors
 look unequally bright), its S doesn't track perceived saturation, and its hue spacing is
 non-uniform. OKLCH's chroma being lightness-independent is what makes the chromatic/achromatic
-split (below) clean — an off-white reports near-zero chroma instead of HSL's misleadingly high
+split (below) clean - an off-white reports near-zero chroma instead of HSL's misleadingly high
 saturation.
 
 ## Binning Parameters (final implementation)
@@ -87,25 +87,25 @@ routed to a separate achromatic (lightness-only) track instead of being forced i
 
 ## Performance / Architecture
 
-- **Fully client-side** — runs in the browser, no server beyond the Canvas API.
+- **Fully client-side** - runs in the browser, no server beyond the Canvas API.
 - Images **downsampled to 300px on the longest dimension** before binning.
 - **Under 1 second** to process a 4000×3000 photo.
 
 ---
 
-# Part 2 — The Palette (the "feeling")
+# Part 2 - The Palette (the "feeling")
 
 A 5-color palette extractor for the same image, via **K-means++ clustering in OKLab**. The
-write-up documents four iterations — a good case study in the failure modes of naïve extraction.
+write-up documents four iterations - a good case study in the failure modes of naïve extraction.
 
-### Iteration 1 — RGB median-cut + ROYGBIV (abandoned)
+### Iteration 1 - RGB median-cut + ROYGBIV (abandoned)
 
 Median-cut quantization in RGB with hand-drawn ROYGBIV region partitioning. It collapsed under its
-own special-casing — *"thirteen named constants"* and *"six rules for what counts as gray"* — so
+own special-casing - *"thirteen named constants"* and *"six rules for what counts as gray"* - so
 the author scrapped it: *"move everything to OKLCH, start with a clean K-means algorithm."* The
 lesson: ad-hoc rules in RGB don't generalize; pick a perceptual space and a principled algorithm.
 
-### Iteration 2 — K-means++ in OKLCH
+### Iteration 2 - K-means++ in OKLCH
 
 - **Space:** OKLCH, chosen because *"OKLCH C is a distance from the achromatic axis"* rather than
   HSL's saturation ratio that *"blows up near black."*
@@ -115,15 +115,15 @@ lesson: ad-hoc rules in RGB don't generalize; pick a perceptual space and a prin
   **rescue pass** re-adds missed regions at **≥0.1% pixel density**.
 - **Swatch pick:** highest-chroma pixel within the cluster's typical radius.
 
-### Iteration 3 — hue-weighted distance, K = 14
+### Iteration 3 - hue-weighted distance, K = 14
 
 - **K raised to 14** (best over 12 benchmark images).
 - **Anisotropic distance:** the **chromatic plane (hue + chroma) weighted 2× vs. the lightness
-  axis** — *"Two reds at different lightnesses feel like reds to a human, but two distinct hues at
+  axis** - *"Two reds at different lightnesses feel like reds to a human, but two distinct hues at
   similar lightness feel like different colors."* (A nice perceptual-clustering insight: don't
   treat OKLab's three axes as equally important for *grouping*.)
 
-### Iteration 4 — phantom guard, mass allocation, centroid-aware selection
+### Iteration 4 - phantom guard, mass allocation, centroid-aware selection
 
 - **Phantom guard:** drop any cluster with pixel weight < **2.5%** *and* centroid chroma < **0.05**
   (kills faint ghost colors from anti-aliasing/JPEG).
@@ -132,7 +132,7 @@ lesson: ad-hoc rules in RGB don't generalize; pick a perceptual space and a prin
 - **Centroid-aware representative:**
   - centroid chroma **≥ 0.03** → pick the **highest-chroma** pixel (vivid, representative).
   - centroid chroma **< 0.03** → pick the pixel **closest to the centroid** (prevents a near-grey
-    cluster from being represented by an off-color outlier — *"sepia or mauve or sage green"*).
+    cluster from being represented by an off-color outlier - *"sepia or mauve or sage green"*).
 
 ### Final pipeline
 
@@ -143,32 +143,32 @@ guard / allocate down to 5 → **sorted by hue, achromatics last by lightness**,
 ### Palette-extraction takeaways
 
 - **Overshoot then merge.** Cluster to more centroids than you want (K=14→5) and merge by perceptual
-  distance — more robust than asking K-means for exactly N.
+  distance - more robust than asking K-means for exactly N.
 - **Weight the axes for grouping.** Equal-weight OKLab distance over-splits on lightness; doubling
   the chromatic plane matches how people group colors.
 - **Representative pixel ≠ centroid.** For chromatic clusters show the *vivid* member; for near-grey
   clusters show the *central* one. Picking the centroid color itself tends to look muddy.
 - **Guard against phantoms.** Low-mass + low-chroma clusters are almost always compression/edge
-  artifacts — drop them before they eat a palette slot.
+  artifacts - drop them before they eat a palette slot.
 
 ## Why It Matters (technique takeaways)
 
 - **Don't sort 3D color onto 1D.** Give one perceptual axis to position (hue → x) and let the
   others map to height/stacking. Generalizable to any "summarize a color field" problem.
-- **Percentile slices (20%) beat min/max** for deriving tint/pure/shade — they reject outlier
+- **Percentile slices (20%) beat min/max** for deriving tint/pure/shade - they reject outlier
   pixels (specular highlights, JPEG noise) that a true-min or true-max would latch onto.
-- **A chroma threshold is the right achromatic gate** — in OKLCH, near-greys honestly report
+- **A chroma threshold is the right achromatic gate** - in OKLCH, near-greys honestly report
   near-zero chroma, so `C ≥ 0.02` cleanly separates "has a hue" from "is grey." This is exactly
   the kind of thing HSL gets wrong (a dark saturated-looking blue and a near-grey can both show
   high S).
 - **Frequency-as-height + asymmetry-as-tone** packs three dimensions into a static chart that's
   readable at a glance.
-- **Fact vs. feeling.** Two views of the same data answer different questions — full distribution
+- **Fact vs. feeling.** Two views of the same data answer different questions - full distribution
   (spectrum) vs. curated few-color read (palette). Worth offering both when summarizing image color.
 
 ## Related
 
-- [Image Color Extraction Tools](image-color-extraction-tools.md) — peer palette extractors
+- [Image Color Extraction Tools](image-color-extraction-tools.md) - peer palette extractors
   (img-colors.com's 7 clustering algorithms, okpalette.color.pizza's OKLCH extraction, colorgram-js,
   Art Palette). Spectrimage's palette is another K-means-in-OKLab extractor; its spectrum view is
   the distinct part.

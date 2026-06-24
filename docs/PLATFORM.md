@@ -1,6 +1,6 @@
-# SapaLOQ — Platform Abstraction
+# SapaLOQ - Platform Abstraction
 
-> **Modular platform drivers** + cached **`os.json`**. LLM bridges: [BRIDGE.md](./BRIDGE.md). See [DRIVER.md](./DRIVER.md) — supersedes adapter naming in older drafts.
+> **Modular platform drivers** + cached **`os.json`**. LLM bridges: [BRIDGE.md](./BRIDGE.md). See [DRIVER.md](./DRIVER.md) - supersedes adapter naming in older drafts.
 > Last updated: 2026-06-19
 
 Related: [VISION.md](./VISION.md) · [RUNTIME.md](./RUNTIME.md) · [LIMITATIONS.md](./LIMITATIONS.md)
@@ -26,7 +26,7 @@ Related: [VISION.md](./VISION.md) · [RUNTIME.md](./RUNTIME.md) · [LIMITATIONS.
 | Orchestrator, task stack, sub-agents | ❌ |
 | Event bus, jsonl, SQLite | ❌ |
 | Config, skills, memory SOP | ❌ |
-| Widget shell (GTK/Layer Shell) | ⚠️ Linux-first; abstract later — see [UI-DECISION.md](./UI-DECISION.md) |
+| Widget shell (GTK/Layer Shell) | ⚠️ Linux-first; abstract later - see [UI-DECISION.md](./UI-DECISION.md) |
 | **Desktop automation** | ✅ per adapter |
 | **Notification watch** | ✅ per adapter (some share freedesktop) |
 | **Window/focus/screenshot** | ✅ per adapter |
@@ -80,7 +80,7 @@ type Desktop interface {
 }
 ```
 
-Orchestrator & tools call **`desktop.*`** — never import GNOME types in core.
+Orchestrator & tools call **`desktop.*`** - never import GNOME types in core.
 
 ---
 
@@ -111,7 +111,7 @@ KDE Neon, Kubuntu → **`kde` adapter** when implemented.
 
 ## GNOME today ≠ GNOME forever
 
-### Phase 1 (now) — GNOME adapter without Shell extension dependency
+### Phase 1 (now) - GNOME adapter without Shell extension dependency
 
 | Capability | Preferred | Avoid as hard dep |
 |------------|-----------|-------------------|
@@ -151,7 +151,7 @@ Config watchers:
 | `gnome_focus_window` | `desktop_focus_window` |
 | `gnome_*` in sub-agent allowlist | `desktop_*` |
 
-Role `task-runner` tools: `desktop_*` with capability check — if `CapScreenshot` missing, orchestrator says "not supported on this adapter".
+Role `task-runner` tools: `desktop_*` with capability check - if `CapScreenshot` missing, orchestrator says "not supported on this adapter".
 
 ---
 
@@ -161,13 +161,13 @@ Role `task-runner` tools: `desktop_*` with capability check — if `CapScreensho
 
 | Platform | Widget UI | Window policy (always-on-top) |
 |----------|-----------|-------------------------------|
-| **GNOME Wayland** (MVP) | Wails v2 + web frontend | Thin GJS shim `sapaloq-shell@` (`make_above`) — Layer Shell **not available** on Mutter |
+| **GNOME Wayland** (MVP) | Wails v2 + web frontend | Thin GJS shim `sapaloq-shell@` (`make_above`) - Layer Shell **not available** on Mutter |
 | **KDE / Sway / COSMIC** | Same Wails binary | gtk-layer-shell hook on WebKitGTK window |
 | **Linux X11** | Wails + web | EWMH hints / normal floating |
 | **Windows** | Wails + WebView2 (later) | Win32 topmost APIs |
-| **macOS** | Out of scope until stated | — |
+| **macOS** | Out of scope until stated | - |
 
-Widget is **thin client** to `sapaloq.sock` — separate `sapaloq-widget` binary, same IPC all platforms. GNOME Shell extension is **optional window-policy shim only**, not the UI layer.
+Widget is **thin client** to `sapaloq.sock` - separate `sapaloq-widget` binary, same IPC all platforms. GNOME Shell extension is **optional window-policy shim only**, not the UI layer.
 
 ---
 
@@ -197,7 +197,7 @@ See [config.schema.json](../schema/config.schema.json) → `platform`.
 | Debian 12 | GNOME | gnome | |
 | CentOS Stream | GNOME optional | gnome | |
 | Fedora KDE | Plasma | kde | later |
-| Windows 11 | — | windows | later |
+| Windows 11 | - | windows | later |
 
 One **sapaloq-core** binary per GOOS (linux/amd64, linux/arm64, windows/amd64).
 
@@ -217,7 +217,7 @@ One **sapaloq-core** binary per GOOS (linux/amd64, linux/arm64, windows/amd64).
 | Step | Deliverable |
 |------|-------------|
 | 1 | `internal/platform.Desktop` interface + `Capabilities` |
-| 2 | `adapters/gnome` — D-Bus notifications, portal screenshot |
+| 2 | `adapters/gnome` - D-Bus notifications, portal screenshot |
 | 3 | Rename tools/events docs → `desktop_*` / `platform.*` |
 | 4 | Auto-detect from env |
 | 5 | `adapters/freedesktop` linux fallback |

@@ -9,7 +9,7 @@
 
 ## Core Argument
 
-**Hue-first harmony models (complementary, triadic, tetradic) are useless.** Character-first models — based on lightness, chroma, and saturation rather than hue — actually predict emotional response.
+**Hue-first harmony models (complementary, triadic, tetradic) are useless.** Character-first models - based on lightness, chroma, and saturation rather than hue - actually predict emotional response.
 
 ## Why Hue-First Fails
 
@@ -19,7 +19,7 @@
 - Lime green peaks near the top of the lightness scale
 - Indigo peaks around L=30-40
 - These shapes differ per gamut (screen vs paint vs print)
-- **Geometric hue intervals ignore this reality** — choosing colors 120° apart doesn't guarantee any perceptual balance
+- **Geometric hue intervals ignore this reality** - choosing colors 120° apart doesn't guarantee any perceptual balance
 
 ### The Itten Problem
 
@@ -42,10 +42,10 @@ Instead of organizing by hue, organize by **character:**
 
 ### The Key Finding
 
-> "Hue didn't matter. A pale or muted or dark palette — no matter what hue — people responded to it as calm."
+> "Hue didn't matter. A pale or muted or dark palette - no matter what hue - people responded to it as calm."
 
 - **Calm vs energetic** = determined by chroma + lightness, NOT hue
-- "Blue is calm and red is energetic" is wrong — it's about how chromatic and how light/dark
+- "Blue is calm and red is energetic" is wrong - it's about how chromatic and how light/dark
 - **Relaxed vs intense** = same: chroma + lightness, not hue
 
 ### Shigenobu Kobayashi's _Book of Colors_
@@ -60,13 +60,13 @@ Character-first solves mood/emotion but not legibility. Same chroma, same charac
 
 ## Recommendations
 
-1. **Focus on lightness differences for legibility** — if it reads in grayscale, you're doing it right
-2. **Don't obsess over hue intervals** — they don't structure anything meaningful
-3. **Character determines communication** — choose based on what the design needs to say
-4. **Use perceptual color pickers** — OKLCH, not HSB/HSL; the default pickers in most programs force non-perceptual geometry
+1. **Focus on lightness differences for legibility** - if it reads in grayscale, you're doing it right
+2. **Don't obsess over hue intervals** - they don't structure anything meaningful
+3. **Character determines communication** - choose based on what the design needs to say
+4. **Use perceptual color pickers** - OKLCH, not HSB/HSL; the default pickers in most programs force non-perceptual geometry
 
 ## Links
 
-- **Ellen Divers** — research on character-based color harmony
-- **Shigenobu Kobayashi — _Book of Colors_** — character-based color organization
-- **OKLCH Photoshop plugin** (from RISD) — free
+- **Ellen Divers** - research on character-based color harmony
+- **Shigenobu Kobayashi - _Book of Colors_** - character-based color organization
+- **OKLCH Photoshop plugin** (from RISD) - free

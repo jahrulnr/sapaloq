@@ -92,6 +92,6 @@ func TestVaultLogsUnknownUpstreamTool(t *testing.T) {
 }
 
 func TestThinkingMentionsToolsWithoutVault(t *testing.T) {
-	// Tool names in thinking/chat text are fine — vault only applies to structured tool calls.
+	// Tool names in thinking/chat text are fine - vault only applies to structured tool calls.
 	_ = "I will use grep and read_file with input_schema parameters."
 }

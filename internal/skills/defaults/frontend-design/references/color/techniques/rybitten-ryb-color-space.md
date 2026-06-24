@@ -1,6 +1,6 @@
-# RYBitten — RYB Color Space Conversion
+# RYBitten - RYB Color Space Conversion
 
-**Source:** [GitHub — meodai/RYBitten](https://github.com/meodai/RYBitten)
+**Source:** [GitHub - meodai/RYBitten](https://github.com/meodai/RYBitten)
 **Author:** meodai
 **License:** MIT
 **npm:** `rybitten`
@@ -13,9 +13,9 @@ Lightweight JS/TS library for converting between RGB and RYB (Red-Yellow-Blue) c
 
 Despite being scientifically "wrong" as primaries (see the Color Nerd RYB vs CMY video), the RYB model remains deeply intuitive for:
 
-- **Generative art** — produces color harmonies that feel painterly
-- **Procedural palette generation** — complementary/triadic relationships match artist expectations
-- **Education** — maps to how art is traditionally taught
+- **Generative art** - produces color harmonies that feel painterly
+- **Procedural palette generation** - complementary/triadic relationships match artist expectations
+- **Education** - maps to how art is traditionally taught
 - The library acknowledges this is a pragmatic tool, not a scientific claim about primaries
 
 ## How It Works
@@ -28,7 +28,7 @@ Despite being scientifically "wrong" as primaries (see the Color Nerd RYB vs CMY
 
 ## 26 Historical Color Gamuts
 
-The killer feature — preset cubes from major color theorists:
+The killer feature - preset cubes from major color theorists:
 
 | Key       | Author/System                      | Year |
 | --------- | ---------------------------------- | ---- |
@@ -83,9 +83,9 @@ fill(0, 255, 0); // yellow in RYB (not green!)
 
 ## Connection to the Knowledge Base
 
-- Relates to [RYB vs CMY Color Wheels](../historical/ryb-vs-cmy-color-wheels.md) — this library lets you work WITH the RYB model despite its scientific limitations
+- Relates to [RYB vs CMY Color Wheels](../historical/ryb-vs-cmy-color-wheels.md) - this library lets you work WITH the RYB model despite its scientific limitations
 - The historical cubes connect to [Ostwald](../historical/ostwald-color-wheel.md), [Bezold](../historical/what-happened-to-indigo.md), [Amy Sawyer](../historical/amy-sawyer-forgotten-color-theorist.md)
-- Itten's system critiqued in [CSA — Itten's Seven Contrasts](../historical/itten-seven-contrasts-critical-review.md)
+- Itten's system critiqued in [CSA - Itten's Seven Contrasts](../historical/itten-seven-contrasts-critical-review.md)
 
 ## Links
 

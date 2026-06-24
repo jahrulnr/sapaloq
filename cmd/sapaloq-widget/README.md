@@ -1,6 +1,6 @@
 # sapaloq-widget
 
-Wails v2 thin client — FAB bottom-left + popup chat shell. Talks to `sapaloq-core` over unix socket (`sapaloq.sock`).
+Wails v2 thin client - FAB bottom-left + popup chat shell. Talks to `sapaloq-core` over unix socket (`sapaloq.sock`).
 
 M5a spike validated: frameless transparency, GTK input shape (click-through), IPC ping to mock core.
 
@@ -30,9 +30,9 @@ make widget-build
 The cross-platform icon master is `build/appicon.png`. The HUD uses the tighter
 `frontend/src/assets/images/orb-core.png` crop of the same network-core artwork.
 
-- `build/appicon.png` — Wails source and macOS app icon
-- `build/windows/icon.ico` — Windows multi-resolution icon
-- `build/linux/sapaloq.png` — Linux hicolor icon installed by `make install`
+- `build/appicon.png` - Wails source and macOS app icon
+- `build/windows/icon.ico` - Windows multi-resolution icon
+- `build/linux/sapaloq.png` - Linux hicolor icon installed by `make install`
   and `install.sh`
 
 The Linux dev window also embeds `build/appicon.png`, so `make run` shows the

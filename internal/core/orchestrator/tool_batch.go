@@ -32,7 +32,7 @@ func (o *Orchestrator) executeToolBatch(ctx context.Context, runID, sessionID st
 			// Emit only the tool's own output. The internal job ID
 			// ("[job job-…]") is meaningless to the model and, when echoed
 			// back by a non-native model, leaked raw into the user-facing
-			// answer — so it is intentionally dropped here.
+			// answer - so it is intentionally dropped here.
 			text = append(text, result.outcome.text)
 		}
 		stop = stop || result.outcome.stop

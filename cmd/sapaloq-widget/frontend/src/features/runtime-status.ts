@@ -16,7 +16,7 @@ function roleLabel(role: string) {
 }
 
 // A worker that has reached a terminal outcome (done/failed/stopped) or whose
-// phase says it has wound down (finalizing/exited) is NOT live work — it must
+// phase says it has wound down (finalizing/exited) is NOT live work - it must
 // not keep the pill blinking. Only genuinely-running phases map to 'active'.
 function isSettled(actor: ActorRuntimeStatus) {
   const status = (actor.status || '').toLowerCase();

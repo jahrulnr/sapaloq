@@ -42,18 +42,18 @@ Burnt sienna (dark AND pigmented):
 
 ## The Principle
 
-> "Skin gets more pigmented as it gets darker — so mixing black is just not going to work."
+> "Skin gets more pigmented as it gets darker - so mixing black is just not going to work."
 
-The chroma curve of human skin tones bends OUTWARD, not inward. To darken while following this curve, you need pigments that are both dark AND chromatic — not just dark.
+The chroma curve of human skin tones bends OUTWARD, not inward. To darken while following this curve, you need pigments that are both dark AND chromatic - not just dark.
 
 ## Why This Matters Beyond Cosmetics
 
 This is the same principle as:
 
-- **Paint mixing non-linearity** — adding black to yellow doesn't make dark yellow, it makes olive/green (shifts hue + kills chroma)
-- **Color Nerd's UFV lecture** — "white doesn't just lighten, it shifts hue and kills chroma"; same applies to black in reverse
-- **The mixing path geometry** — paths through color space are curved, not straight lines through the neutral axis
-- **The Color Proportion Pyramid** — most people assume darkening = adding black; it's actually = shifting along the skin tone curve
+- **Paint mixing non-linearity** - adding black to yellow doesn't make dark yellow, it makes olive/green (shifts hue + kills chroma)
+- **Color Nerd's UFV lecture** - "white doesn't just lighten, it shifts hue and kills chroma"; same applies to black in reverse
+- **The mixing path geometry** - paths through color space are curved, not straight lines through the neutral axis
+- **The Color Proportion Pyramid** - most people assume darkening = adding black; it's actually = shifting along the skin tone curve
 
 ## Links
 

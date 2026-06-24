@@ -77,7 +77,7 @@ func NotificationStreamEvent(ev platform.NotificationEvent) bridge.StreamEvent {
 		line = ev.AppName + ": " + ev.Summary
 	}
 	if ev.Body != "" {
-		line += " — " + ev.Body
+		line += " - " + ev.Body
 	}
 	se := bridge.NewEvent(bridge.EventStatus)
 	se.Status = "notification"

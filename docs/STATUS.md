@@ -1,4 +1,4 @@
-# SapaLOQ — Implementation Status
+# SapaLOQ - Implementation Status
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
@@ -16,8 +16,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 2 | Sub-agent tool loop + per-role profiles | ✅ | `subagent.go` (`runSubAgentLoop`, `handleSubAgentTool`), `tools.go` (`toolsForRole`); `maxTurns` read from config (`roleMaxTurns`). Role policy is checked before shared-tool dispatch, so undeclared/provider-poisoned calls cannot bypass the role allowlist |
 | 3 | Assessment tools (read/search/list_dir, web_search/fetch) | ✅ | `tools_workspace.go`, `tools_web.go`, dispatch in `tools_dispatch.go` |
 | 4 | File + exec tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`, `exec`) | ✅ | `tools_workspace.go`; flat unrestricted surface (any path; no workspace sandbox). Mutating file tools gated to `task-runner`; `exec` available in every mode |
-| 5 | In-place edit / delete / glob tools | ✅ | `tools_workspace.go` (`toolEditFile`, `toolDeleteFile`, `toolGlob`) — added 2026-06-20 |
-| 6 | `read_file` binary guard + line-range read | ✅ | `tools_workspace.go` (`toolReadFile`: NUL/non-printable sniff + `offset`/`limit` line range) — added 2026-06-20 |
+| 5 | In-place edit / delete / glob tools | ✅ | `tools_workspace.go` (`toolEditFile`, `toolDeleteFile`, `toolGlob`) - added 2026-06-20 |
+| 6 | `read_file` binary guard + line-range read | ✅ | `tools_workspace.go` (`toolReadFile`: NUL/non-printable sniff + `offset`/`limit` line range) - added 2026-06-20 |
 | 7 | Plan artifact + handoff | ✅ | `subagent.go` (`write_plan`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment. `ask.md` now states the delegation action order (spawn tool call first, then acknowledge) so a context-sensitive model doesn't narrate the hand-off and END turn without emitting the spawn call |
 | 8 | Plan iteration (revise before finishing) | 🟡 | `write_plan_markdown` is non-terminal; planner can rewrite + read its own plan. Ask prompt requires user review before passing `plan_task_id`, but no approval-gate UI/state machine yet; no post-handoff agent amend |
 | 9 | Clarification loop | ✅ | Two-way: `request_clarification` pauses, `sapaloq_answer_clarification` resumes the paused sub-agent loop (transcript replayed, answer nudge injected). `tasks.go`, `subagent.go`, `tools.go`, `session.go` |
@@ -36,21 +36,21 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 22 | Skills system | 🟡 | Scan + trigger/FTS match + bounded injection done; learning-agent skill *writing* still deferred |
 | 23 | Nodes (remote sub-agents) | 🟡 | nodes table + local-default bootstrap + role/priority picker + local spawn routing (no behavior change) + remote Transport (ws) behind a connect probe + fake for tests; full remote execution wiring (envelope→runSubAgentLoop bridge) + /settings node CRUD still deferred |
 | 24 | Driver / Platform (GNOME / D-Bus notifications, `desktop_*`) | 🟡 | `internal/platform` abstraction + headless + freedesktop/gnome D-Bus adapter (behind session-bus probe) + `desktop_notify`/`desktop_dnd_status` + notify→bus bridge; window/screenshot/clipboard still deferred |
-| 25 | Replaceable per-mode system prompts (Ask/planner/agent/scribe) | ✅ | `internal/prompts` — embedded defaults materialized to `~/SapaLOQ/prompts` with a sha256 manifest; user edits preserved, unmodified files upgraded when the shipped default changes. Wired via `Orchestrator.systemPrompt` in `session.go` (Ask) + `subagent.go` (planner/agent/scribe). `config.prompts.{enabled,dir}` |
+| 25 | Replaceable per-mode system prompts (Ask/planner/agent/scribe) | ✅ | `internal/prompts` - embedded defaults materialized to `~/SapaLOQ/prompts` with a sha256 manifest; user edits preserved, unmodified files upgraded when the shipped default changes. Wired via `Orchestrator.systemPrompt` in `session.go` (Ask) + `subagent.go` (planner/agent/scribe). `config.prompts.{enabled,dir}` |
 | 26 | Host command tool (`exec`) | ✅ | Run any command anywhere (any path; optional `cwd`), also reads any host file via cat/sed/head/tail/rg; available in **every** mode via the shared dispatcher. `tools_workspace.go` (`toolExec`), in `askTools`/`planTools`/`agentTools`, dispatched in `tools_dispatch.go`. Merged the former `system_exec` + `terminal_run` into one flat `exec` (2026-06-21) |
-| 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` — schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
-| 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` — size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
-| 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` — the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
+| 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` - schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
+| 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
+| 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` - the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
 
 ---
 
-## Implemented this session (2026-06-24) — failed sub-agent reported as "done" ("halu sukses")
+## Implemented this session (2026-06-24) - failed sub-agent reported as "done" ("halu sukses")
 
 - **`runTurnLoop` now propagates a non-recoverable stream error.** Field repro
   (progress files `orch-task-…`): a **planner** hit a provider 500
   (`blackbox … Vercel_ai_gateway … Model Group Fallbacks=None`, classified
   non-transient so not retried), yet the task was recorded
-  `task_status:"done"` / `summary:"Selesai."` with **no plan.md** — so Ask then
+  `task_status:"done"` / `summary:"Selesai."` with **no plan.md** - so Ask then
   narrated a plan that never existed (looked like the model "hallucinating",
   but the orchestrator had told it the planner succeeded). Root cause: the
   `hadError` branch in `runTurnLoop` (`conversation.go`) emitted the
@@ -64,11 +64,11 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   provider message as the reason. Regression: `TestPlannerSurfacesProviderError`
   (uses the exact real Blackbox 500 string; asserts `failed`, reason carries
   the error, and it is NOT retried). Existing `TestPlannerCompletesOnToolLessTurn`
-  still green — a planner that finishes *cleanly* (no error) with no plan is
+  still green - a planner that finishes *cleanly* (no error) with no plan is
   still `done` by design. `conversation.go`, `chat.go`,
   `subagent_stream_retry_test.go`.
 
-## Implemented this session (2026-06-24) — shellenv interactive-shell fix (token in `~/.bashrc` was invisible)
+## Implemented this session (2026-06-24) - shellenv interactive-shell fix (token in `~/.bashrc` was invisible)
 
 - **`internal/shellenv` now sources rc with an interactive shell (`bash -ic`/`zsh -ic`).**
   Symptom: after `make install` the core still logged `provider-bridge: token env
@@ -84,29 +84,29 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   export and asserts the var is still captured (`shellenv_test.go`).
   `internal/shellenv/shellenv.go`.
 
-## Implemented this session (2026-06-24) — async-exec cancel/complete race fix
+## Implemented this session (2026-06-24) - async-exec cancel/complete race fix
 
 - **`tools_async_exec.go`: no more `close of closed channel` panic.** CI
   (`go test ./...`, PR #9) intermittently panicked in `asyncExecRegistry.execute`
   → `close(job.Done)`. Root cause: when a `cancel()` lands at the same moment the
   command finishes naturally, both `cancel()` and `execute()` reach a terminal
   state and each closed `job.Done` → double close. Fix: funnel every close
-  through `job.closeDone()` (a `sync.Once`), and—because a cancel can also land
-  between `spawn()` and the goroutine starting—`execute()` now bails out early if
+  through `job.closeDone()` (a `sync.Once`), and-because a cancel can also land
+  between `spawn()` and the goroutine starting-`execute()` now bails out early if
   the job is no longer `queued` (it was already cancelled), so it never
   resurrects a terminal job to `running` or launches the command. Also reordered
   `execute()`'s terminal path to `r.persist(job)` **before** `job.closeDone()`:
   waiters treat a closed `Done` as "finished", and closing it before the final
-  on-disk write let a waiter (or `t.TempDir()` cleanup) race the write — the
+  on-disk write let a waiter (or `t.TempDir()` cleanup) race the write - the
   flaky `TestAsyncExecWaitBlocksUntilDone` "directory not empty". Regression:
   `TestAsyncExecCancelRaceNoDoubleClose` hammers concurrent cancels against a
   near-instant command; passes under `go test -race -count=5`. `tools_async_exec.go`,
   `tools_async_exec_test.go`.
 
-## Implemented this session (2026-06-24) — Shell-rc credential autoload
+## Implemented this session (2026-06-24) - Shell-rc credential autoload
 
 - **`internal/shellenv` (`LoadOnce`).** At boot `sapaloq-core` now sources the
-  user's shell rc — `~/.bashrc` then `~/.zshrc` (Linux only) — and folds the
+  user's shell rc - `~/.bashrc` then `~/.zshrc` (Linux only) - and folds the
   relevant, not-already-set env vars into the process environment before the
   credential loader runs. Fixes the systemd `--user`/XDG-autostart case where no
   login shell runs, so a token exported only in the shell rc was invisible and
@@ -119,13 +119,13 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   process env > shell rc > `.env` > vscdb. Hooked once at the top of
   `cmd/sapaloq-core/main.go`; covered by `internal/shellenv/shellenv_test.go`.
 
-## Implemented this session (2026-06-24) — Ask delegation ordering (planner→agent hand-off stall)
+## Implemented this session (2026-06-24) - Ask delegation ordering (planner→agent hand-off stall)
 
 - **Live simulate suite (`internal/core/orchestrator/simulate_live_test.go`).**
   Three role-isolated integration tests run the loop against a REAL
   OpenAI-compatible LLM (Blackbox) in exactly one role while mocking the others
   via a `roleRoutingBridge` (real bridge for the role under test, scripted mock
-  for the rest — role detected from the assembled system prompt). Mode 1
+  for the rest - role detected from the assembled system prompt). Mode 1
   (`…OrchestratorPlannerAgentRoundTrip`) is the live regression for the ask.md
   fix: it asserts the orchestrator actually emits `sapaloq_spawn_plan` then,
   after approval, `sapaloq_spawn_agent` (real tool calls, not narration). Mode 2
@@ -142,7 +142,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   delegate (including after an approved plan), emit the
   `sapaloq_spawn_agent`/`sapaloq_spawn_plan` tool call first in that same turn,
   then acknowledge to the user."* Root cause of the observed planner→agent
-  stall — a context-sensitive model (MiniMax) read the existing *"reply with a
+  stall - a context-sensitive model (MiniMax) read the existing *"reply with a
   short acknowledgement … and END your turn"* line as permission to narrate the
   delegation (*"oke aku delegasikan ke agent"*) and end the turn **without**
   emitting the spawn tool call. The Ask role finishes naturally on a tool-less
@@ -154,7 +154,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
-## Implemented this session (2026-06-23) — Context-SOP memory subsystem (index-first prefetch + learning queue)
+## Implemented this session (2026-06-23) - Context-SOP memory subsystem (index-first prefetch + learning queue)
 
 - **`facts` upgraded to the typed memory schema (additive, idempotent).** The
   original `(kind, content, created_at)` table now also carries
@@ -166,7 +166,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   `facts_fts` on a DB that already held `facts` rows left the inverted index
   empty (triggers only fire on future writes, and a `COUNT(*)` on an
   external-content FTS table reflects the content table, so it can't detect the
-  gap) — now a fresh-this-Open `facts_fts` with existing rows triggers a
+  gap) - now a fresh-this-Open `facts_fts` with existing rows triggers a
   `'rebuild'`. `internal/store/chat/{store.go,facts.go}`, `migrations/001_initial.sql`.
 - **Six Context-SOP index tables added** (`store.go` migrate mirrors
   `001_initial.sql`): `skills_index`, `prefetch_rules`, `prompt_slices`,
@@ -201,28 +201,28 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   confidence gating, hot-cache repeat, rule kind-narrowing, config-disable,
   promote drain, feedback drain). `go build/vet/test ./...` green.
 
-## Implemented this session (2026-06-23) — suppress echoed [Called tools: …] leak
+## Implemented this session (2026-06-23) - suppress echoed [Called tools: …] leak
 
 - **Stopped the `[Called tools: …]` note leaking into the response stream.**
   Root cause: `calledToolsNote` (anti double-spawn) injects a
   `"[Called tools: name, …]"` line into the assistant *transcript* so the model
   has in-context proof it called a tool. Some models then *imitate* that line on
   a later turn and emit `[Called tools: write_file …, write_file …]` as plain
-  prose — not a real tool call (no JSON args, so the leak-scanner can't recover
+  prose - not a real tool call (no JSON args, so the leak-scanner can't recover
   it), which streamed straight to the user and the progress `.jsonl`.
 - **Fix.** New stateful `calledToolsFilter` (`called_tools_filter.go`) sits at
   the single `EventResponseDelta` funnel in `conversation.go`: it withholds a
   trailing fragment that could still grow into the marker (it splits across
-  deltas — observed `"…paralel.[Called tools:"` / `" write_file …"` / `"]"`),
+  deltas - observed `"…paralel.[Called tools:"` / `" write_file …"` / `"]"`),
   drops the whole `[Called tools: …]` span once complete, and flushes any
   withheld ordinary text when the attempt's stream ends. The genuine transcript
-  note (`calledToolsNote`) is untouched — only the model's *echo* is stripped.
+  note (`calledToolsNote`) is untouched - only the model's *echo* is stripped.
   `called_tools_filter.go` (+ `_test.go`), `conversation.go`.
 
-## Implemented this session (2026-06-23) — dedicated internal `tool` message role (fix `[job job-` echo)
+## Implemented this session (2026-06-23) - dedicated internal `tool` message role (fix `[job job-` echo)
 
 - **Symptom.** A compliant non-native model (MiniMax) re-ran a sub-agent task
-  itself, called `create_file`, succeeded — then **echoed the entire raw tool
+  itself, called `create_file`, succeeded - then **echoed the entire raw tool
   result verbatim** into the answer channel (~11.5k chars: whole HTML file dump
   + job metadata), instead of summarizing. Seen as the `[job job-…]` / `[Tool
   results]` block bleeding into the response and progress `.jsonl`.
@@ -230,15 +230,15 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   framed `"[Tool results]\n[job <id>] <raw>"`. The model couldn't tell a *tool
   observation* apart from a *user request to forward*, and the template-looking
   framing invited a verbatim copy.
-- **Fix — semantic `tool` role + wire-safe mapping.** The live continuation that
+- **Fix - semantic `tool` role + wire-safe mapping.** The live continuation that
   carries tool output is now appended under a dedicated internal **`tool`** role
   (a tool-less nudge stays `user`). The framing is neutral and anti-echo
-  (`"Tool output observed (for your reasoning only — summarize … do not copy
+  (`"Tool output observed (for your reasoning only - summarize … do not copy
   verbatim)"`), and the meaningless `[job <id>]` prefix is dropped. Because
   OpenAI/Claude reserve role `tool` for native function-calling (needs
   `tool_call_id`), the **wire layer** collapses `tool`/`error` → `user` via a
   single `wireRole` helper used by both `buildOpenAIMessages` and
-  `buildClaudeMessages` — one source of truth for live + replay (the old forced
+  `buildClaudeMessages` - one source of truth for live + replay (the old forced
   `tool→assistant` map in `session.go` replay was removed). `extractImages` now
   also treats a `tool` turn as a valid vision source so `read_image` markdown
   still becomes real vision input. Cursor bridge already maps non-assistant
@@ -247,7 +247,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   `orchestrator/session.go`, `bridges/cursor/bridge.go` (+ `wire_role_test.go`,
   `tools_image_test.go`). `go build/vet/test ./...` green.
 
-## Implemented this session (2026-06-23) — strip leaked `[Tool: …]` labels + teach tool-call format in the executor prompt
+## Implemented this session (2026-06-23) - strip leaked `[Tool: …]` labels + teach tool-call format in the executor prompt
 
 - **Root cause (orch-task-…103).** MiniMax-M3 emitted real **native** `tool_calls`
   (2× `exec` ran) but ALSO wrote a bare announce label `[Tool: exec]` into its
@@ -261,7 +261,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   narrating"* and spiralled `[Tool: sapaloq_fail_task]` ×hundreds until the turn
   cap. A self-inflicted imitation loop: our leaked marker taught the model the
   wrong format.
-- **Fix 1 — generalize the visible-text filter.** `called_tools_filter.go` now
+- **Fix 1 - generalize the visible-text filter.** `called_tools_filter.go` now
   strips **both** `[Called tools: ` and `[Tool: ` markers (new
   `calledToolsMarkers []string` + `classifyMarker`), keeping the same
   stateful, split-delta-safe, skip-to-`]` logic. This removes the noise from
@@ -270,7 +270,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   `[Tools]`, `[Toolkit]`) pass through untouched. Tests:
   `called_tools_filter_test.go` (+4 cases: single, split, byte-at-a-time,
   false-positive prose).
-- **Fix 2 — teach the format in the system prompt (`prompts/defaults/agent.md`).**
+- **Fix 2 - teach the format in the system prompt (`prompts/defaults/agent.md`).**
   Added a concise "How to call tools" section: tools are invoked ONLY via the
   structured tool-call channel; narrating intent is not action (emit the call in
   the same turn); every turn must make concrete progress (a real tool call, or
@@ -278,14 +278,14 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   moved from the runtime nudge into the prompt (per the IDE/goclaw posture).
   Deliberately does NOT name the `[Tool: …]` / `[Called tools: …]` syntax: once
   Fix 1 strips those from the visible stream the model never sees them echoed
-  back, so there is nothing to imitate — and naming the bad form in the prompt
+  back, so there is nothing to imitate - and naming the bad form in the prompt
   would only risk introducing it. Auto-upgrades on disk for unmodified copies
   via the prompts manifest. `go build/vet/test ./...` green.
 
-## Implemented this session (2026-06-23) — wrap-up nudge for tool-less executor turns (goclaw posture, no new guard)
+## Implemented this session (2026-06-23) - wrap-up nudge for tool-less executor turns (goclaw posture, no new guard)
 
 - **Context.** A `task-runner` (`orch-task-1782195669271620510.jsonl`) finished
-  all real work (2× `exec`, 3× `create_file` — index.html/style.css/script.js
+  all real work (2× `exec`, 3× `create_file` - index.html/style.css/script.js
   all written, all native `tool_calls`, source `openai_inline`), then on the
   verification turn narrated *"Saya panggil tool sekarang."* dozens of times
   **without ever emitting another tool call**, never reaching
@@ -299,25 +299,25 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   structurally impossible there; its only nudges are **budget/wrap-up** prompts
   at 70%/90% of `MaxIterations` ("wrap up immediately"). SapaLOQ deliberately
   keeps `finishOnNoTool=false` for `task-runner` (it must signal completion via
-  a terminal tool), so we cannot adopt goclaw's "tool-less = done" rule — but we
+  a terminal tool), so we cannot adopt goclaw's "tool-less = done" rule - but we
   can adopt its **nudge posture**.
-- **Change (this step, deliberately NO new guard — guards have caused more bugs
+- **Change (this step, deliberately NO new guard - guards have caused more bugs
   than they fixed in this project's history).** Rewrote the existing tool-less
   continuation nudge in `conversation.go` from a neutral list-of-options
   reminder into a **wrap-up directive**: it now states that narrating intent is
-  not a tool call, and pushes the model to act in THIS turn — emit exactly one
-  tool call, or call `sapaloq_complete_task`/`sapaloq_fail_task` — explicitly
+  not a tool call, and pushes the model to act in THIS turn - emit exactly one
+  tool call, or call `sapaloq_complete_task`/`sapaloq_fail_task` - explicitly
   telling it NOT to reply with another plain-text intention to act. No counter,
   no threshold, no behavior change to the gate; same single `user` message slot.
   `conversation.go`. `go build/vet/test ./...` green.
 
-## Implemented this session (2026-06-23) — loop guards are config-disablable (`<0` = off)
+## Implemented this session (2026-06-23) - loop guards are config-disablable (`<0` = off)
 
 - **Context.** A `task-runner` sub-agent (`orch-task-1782191154831828869.jsonl`)
   narrated *"saya akan membuat file secara paralel"* ~80× **without ever
   emitting another tool call**, then died on `loop detected: no observable
   progress`. This only happens in **agent** mode, not chat, because
-  `finishOnNoTool = record.Role != "task-runner"` (`subagent.go`) — task-runner
+  `finishOnNoTool = record.Role != "task-runner"` (`subagent.go`) - task-runner
   is the only role whose tool-less turn does NOT end the run, so it loops until
   a guard fires. The exact-hash no-progress guard barely caught it because the
   model varied its wording every turn (hash differs → counter resets).
@@ -332,13 +332,13 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   `config/load.go` (+ `conversation_test.go`
   `TestDisabledIdenticalToolGuardLetsLoopRun`). `go build/vet/test ./...` green.
 
-## Implemented this session (2026-06-23) — docs: context window vs output cap
+## Implemented this session (2026-06-23) - docs: context window vs output cap
 
 - **Documented the two token knobs in `docs/PROVIDER-BRIDGE.md`.** Expanded the
   "Context window" section into "Context window & output cap": a table
-  distinguishing `contextWindow` (**input** budget — local truncation, default
+  distinguishing `contextWindow` (**input** budget - local truncation, default
   1,000,000, `len/4` estimate, system msg preserved, `0` disables) from
-  `maxTokens` (**output** budget — `max_completion_tokens` for openai/kimi sent
+  `maxTokens` (**output** budget - `max_completion_tokens` for openai/kimi sent
   only when >0, `max_tokens` for claude always sent and defaulting to 8192).
   Added a concrete "1M context / 128k output" entry example (128k = 131072), the
   caveat that `contextWindow` is input-only (set it below a *shared* total budget
@@ -346,19 +346,19 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   `/settings`). Verified against `internal/bridges/provider/{detect.go,wire.go,context.go}`.
   No code change. `docs/{PROVIDER-BRIDGE.md,STATUS.md}`.
 
-## Implemented this session (2026-06-23) — Linux taskbar icon (WM_CLASS + .desktop)
+## Implemented this session (2026-06-23) - Linux taskbar icon (WM_CLASS + .desktop)
 
 - **Fixed the generic taskbar icon + dev binary name under `make run`.** The
   app-bar showed a placeholder icon and the title `Sapaloq-widget-dev-linux-amd64`.
   Root cause (verified against Wails v2.12.0 source): Wails never sets `WM_CLASS`
-  on Linux — only `g_set_prgname` + `gtk_window_set_icon`. GNOME Shell ignores
+  on Linux - only `g_set_prgname` + `gtk_window_set_icon`. GNOME Shell ignores
   the in-window icon for the dock; it matches the window to a `.desktop` entry by
   `WM_CLASS`/`StartupWMClass`. With WM_CLASS defaulting to the binary name and no
   registered `.desktop`, GNOME fell back to the generic icon. Fix has two halves:
   (1) set **`WM_CLASS = sapaloq`** via CGO (`g_set_prgname` + `gdk_set_program_class`)
   in `cmd/sapaloq-widget/input_shape_linux.go`, called from `main.go` before
   `wails.Run` (no-op stub on non-Linux); (2) ship `build/linux/sapaloq.desktop`
-  (`Icon=sapaloq`, `StartupWMClass=sapaloq`) and install it + the hicolor icon —
+  (`Icon=sapaloq`, `StartupWMClass=sapaloq`) and install it + the hicolor icon -
   a new `make desktop-entry` target (which `make run` now depends on, so dev runs
   get the right icon), plus `make install`/`install.sh` (Exec rewritten to the
   installed widget) and uninstall removal in both. `release.yml` now stages the
@@ -366,14 +366,14 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   `cmd/sapaloq-widget/{input_shape_linux.go,input_shape_stub.go,main.go,build/linux/sapaloq.desktop}`,
   `Makefile`, `install.sh`, `.github/workflows/release.yml`, `docs/{UI-DECISION.md,STATUS.md}`.
 
-## Implemented this session (2026-06-23) — shared persona (core character)
+## Implemented this session (2026-06-23) - shared persona (core character)
 
-- **`persona.md` — SapaLOQ's core character, prepended to every role.** Ported the
+- **`persona.md` - SapaLOQ's core character, prepended to every role.** Ported the
   *working principles* of `AGENTS.md` into a general, role-agnostic persona that
   applies to all work (coding, note-taking, research): contract-first **but with
   baseline security woven in** (no secret exposure, no casual destruction,
   parameterized queries / escaped-validated untrusted input, sanitized
-  user-supplied paths/commands — no SQL injection), "work is a craft" tidiness
+  user-supplied paths/commands - no SQL injection), "work is a craft" tidiness
   (clear naming, *why*-comments at non-obvious points, structured notes),
   explore-before-change, prove-don't-just-compile, follow conventions, and
   honesty (don't claim un-done work, ask when ambiguous). It is **not** a mode:
@@ -385,7 +385,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   `~/SapaLOQ/prompts/persona.md`). `internal/prompts/{defaults/persona.md,prompts.go,prompts_test.go}`,
   `core/orchestrator/{session.go,persona_test.go}`, `docs/{PROMPT-BUILDER-SOP.md,STATUS.md}`.
 
-## Implemented this session (2026-06-23) — network-core widget identity
+## Implemented this session (2026-06-23) - network-core widget identity
 
 - Kept near-black/graphite/gunmetal as the structural base, then added controlled
   cyan, blue, indigo, magenta, and amber accents for focus and energy. User
@@ -412,7 +412,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
-## Implemented this session (2026-06-22) — runtime telemetry + persistent workspace
+## Implemented this session (2026-06-22) - runtime telemetry + persistent workspace
 
 - Added a compact mission-control telemetry rail below the widget header:
   current model/provider, always-visible Planner and Agent slots, live phase,
@@ -439,7 +439,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
-## Implemented this session (2026-06-22) — parallel tool actors + steering
+## Implemented this session (2026-06-22) - parallel tool actors + steering
 
 - Provider tool calls are accumulated for the full inference turn and submitted
   to `toolJobScheduler`, rather than executed synchronously inside the stream
@@ -466,7 +466,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
-## Fixed this session (2026-06-22) — Stop waited for a stuck provider stream
+## Fixed this session (2026-06-22) - Stop waited for a stuck provider stream
 
 - **Root cause.** The shared inference loop used `for ev := range stream`.
   Cancelling the active generation only cancelled its context; the consumer
@@ -487,18 +487,18 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
-## Fixed this session (2026-06-21) — chat race: duplicated / interleaved assistant bubble
+## Fixed this session (2026-06-21) - chat race: duplicated / interleaved assistant bubble
 
 Regression introduced by the "error auto-follows to chat" note below: that change
 made `cmd/sapaloq-widget/app.go`'s `watchEvents` forward **all** `EventResponseDelta`
 from the bus to `sapaloq:stream`. But a **live chat turn's** `response_delta` is
 ALSO published on the bus, and it already reaches the webview via the per-request
 `SendMessage`/`RetryChatTurn` stream. So every live delta was delivered **twice**
-to the single `sapaloq:stream` listener and fed into the live renderer twice —
+to the single `sapaloq:stream` listener and fed into the live renderer twice -
 producing a duplicated bubble and character interleave ("MantMantap, agent lagi
 jalanap").
 
-- **Root fix — forward only spoken-completion deltas from `watch`.** Completion
+- **Root fix - forward only spoken-completion deltas from `watch`.** Completion
   deltas are the *only* `response_delta`s that have no per-request stream, and the
   orchestrator now stamps them with `TaskID` (`completion.go`). `watchEvents`
   forwards a `response_delta` **only when `event.TaskID != ""`**; live-turn deltas
@@ -514,14 +514,14 @@ jalanap").
 - **Note on the native fail message.** "executor stopped without calling
   sapaloq_complete_task or sapaloq_fail_task after 2 idle nudges" is a **native**
   Go watchdog error (`subagent.go`, `const maxIdleNudges = 2`), not an LLM/provider
-  error — expected when a `task-runner` narrates intent without calling a tool.
+  error - expected when a `task-runner` narrates intent without calling a tool.
 - **Verify:** `go build/vet/test ./...` + `-race` orchestrator green; widget
   `tsc --noEmit` green. Widget binary must be rebuilt (`make run` / `make
   widget-build`) for the `app.go` + `main.ts` changes to take effect.
 
 ---
 
-## Fixed this session (2026-06-22) — multi-line tool args (raw newlines) silently dropped → wasted token loops
+## Fixed this session (2026-06-22) - multi-line tool args (raw newlines) silently dropped → wasted token loops
 
 - **Bug.** A sub-agent tried to write `index.html` via `exec` with a heredoc
   whose body had **real line breaks** (`cat > f <<X\n<!DOCTYPE html>\n…\nX`). The
@@ -536,7 +536,7 @@ jalanap").
   so a multi-line inline call was rejected outright.
 - **Fix.** New `parse.RepairControlCharsInJSON` (`internal/parse/jsonrepair.go`)
   escapes raw control bytes (`\n`, `\r`, `\t`, `\u00XX`) **inside JSON string
-  literals** while leaving structure untouched — a no-op for already-valid JSON.
+  literals** while leaving structure untouched - a no-op for already-valid JSON.
   `parseToolArgs` and `handleAskTool` (`tasks.go`) now retry unmarshal through it
   instead of swallowing the error; `leak.go`'s `looksLikeToolJSON`,
   `decodeLooseToolJSON`, and `normalizeArgs` validate/decode against the repaired
@@ -548,7 +548,7 @@ jalanap").
 
 ---
 
-## Fixed this session (2026-06-22) — inline `[Tool: name]` / bare `name {args}` tool calls leaked into chat
+## Fixed this session (2026-06-22) - inline `[Tool: name]` / bare `name {args}` tool calls leaked into chat
 
 - **Bug.** A model emitted its tool call inline in the *content* channel as
   `[Tool: exec]\n{"command":"ls -lah /tmp/profile/"}` (orch-chat
@@ -571,19 +571,19 @@ jalanap").
 
 ---
 
-## Implemented this session (2026-06-22) — stop caging the model: structural liveness + no-limit budgets
+## Implemented this session (2026-06-22) - stop caging the model: structural liveness + no-limit budgets
 
 The recurring "worker stalled / task failed" pain was traced to two separate
 mistakes, both now corrected:
 
-- **Real fix — structural worker liveness.** Sub-agent heartbeat used to be
+- **Real fix - structural worker liveness.** Sub-agent heartbeat used to be
   event-driven (emitted from inside the inference loop), so a legitimate long
   synchronous tool/stream produced no heartbeat and the watchdog false-killed a
   *healthy* worker. Liveness is now a ticker in `runBackgroundTask` tied to the
   goroutine's life; `subagentSink.beat` only annotates phase (`workers.setPhase`),
   never the heartbeat. The watchdog now only catches a genuinely wedged goroutine.
   `tasks.go`, `worker.go`, `turnloop.go`, `subagent.go`.
-- **Reverted bad guard — narration is NOT a failure.** A short-lived
+- **Reverted bad guard - narration is NOT a failure.** A short-lived
   `maxToollessTurns` guard failed a run when the model "narrated without calling
   a tool". That penalised healthy thinking-before-acting (frontier models do this
   too). Removed entirely; a tool-less turn just gets a plain, non-coercive
@@ -603,11 +603,11 @@ mistakes, both now corrected:
 - **Why a run still ended at "30 turns" before this change:** `task-1782110368069272648`
   was productive (wrote a real 19 KB `index.html`) but spent 3 turns because the
   model wrote the big file via `exec`+heredoc which truncated at 502 bytes, then
-  recovered with `python3 -c`. Not a stall, not a weak model — just an arbitrary
+  recovered with `python3 -c`. Not a stall, not a weak model - just an arbitrary
   turn cap that has now been lifted.
 - **Transient transport retry (was: timeout → instant fail, no retry).**
   `task-1782112420468169101` failed with `Post .../v1/chat/completions:
-  net/http: timeout awaiting response headers` — one slow provider request
+  net/http: timeout awaiting response headers` - one slow provider request
   killed the whole task because only image-rejection and context-overflow had
   retry paths. Added a third `EventError` branch: a transient transport error
   (timeout / reset / EOF / `5xx` / `429`) retries the same turn with exponential
@@ -616,19 +616,19 @@ mistakes, both now corrected:
   request, context overflow) are not retried here. `conversation.go`
   (`looksLikeTransientTransport`), `subagent_stream_retry_test.go`
   (`TestTaskRunnerRetriesTransientThenSurfaces`, `TestTaskRunnerRecoversFromTransientError`).
-- **Inline tool-call reassembly — the real "files never written" root cause.**
+- **Inline tool-call reassembly - the real "files never written" root cause.**
   `task-1782117165538175015` failed after 39 turns: the model wrote a real
   diagnosis ("tool invocations were not emitted when file content contained
   patterns the parser interpreted as tool-call syntax"), and the progress log
-  proved it — of 7 parsed calls, all were *small* (`mkdir` ×5, `update_progress`,
+  proved it - of 7 parsed calls, all were *small* (`mkdir` ×5, `update_progress`,
   `fail_task`); not one carried HTML/CSS/JS. Cause: MiniMax emits big tool calls
   inline in the **content** channel, streamed across many deltas, and
-  `emitText`→`ParseToolCallLeak` scanned **one delta at a time** — a balanced
+  `emitText`→`ParseToolCallLeak` scanned **one delta at a time** - a balanced
   `{...}` for a large argument never appears in a single delta, so the call was
   lost as text. Fix: a per-stream `leakScanner` (`bridge.go`) accumulates content
   and scans the buffer from a moving frontier, emitting each reassembled call as
   a real `EventToolCall`. `scanOneJSONObject` is now **string-aware** (braces
-  inside a JSON string value no longer close the object early — essential for
+  inside a JSON string value no longer close the object early - essential for
   file bodies), and matches are **gated to `DeclaredTools`** to avoid misreading
   JSON inside file content. `leak.go` (`ParseToolCallLeakFrom`), `bridge.go`
   (`leakScanner`), `handlers.go` flow; tests `leak_test.go`
@@ -639,7 +639,7 @@ mistakes, both now corrected:
 
 ---
 
-## Implemented this session (2026-06-21) — error auto-follows to chat + configurable inference timeout
+## Implemented this session (2026-06-21) - error auto-follows to chat + configurable inference timeout
 
 Two issues seen when a sub-agent failed: the orchestrator looked "silent" (only
 a passive task card, no chat follow-up), and the failure itself was an opaque
@@ -653,7 +653,7 @@ a passive task card, no chat follow-up), and the failure itself was an opaque
   `EventResponseDelta`; `frontend/src/main.ts` renders an idle `response_delta`
   (no turn in flight) as a new assistant bubble. So a sub-agent that finishes or
   fails AFTER the chat turn closed now speaks into the conversation, not just a
-  card. **(Superseded by the race fix above — `watch` now forwards only
+  card. **(Superseded by the race fix above - `watch` now forwards only
   `TaskID`-stamped completion deltas, never live-turn deltas, to avoid a
   double-delivered/interleaved bubble.)**
 - **Inference request timeout is configurable; default raised 120s → 600s.**
@@ -673,13 +673,13 @@ a passive task card, no chat follow-up), and the failure itself was an opaque
 
 ---
 
-## Implemented this session (2026-06-21) — fire-and-forget delegation (no chat freeze)
+## Implemented this session (2026-06-21) - fire-and-forget delegation (no chat freeze)
 
 Follow-up to the completion fix: delegation no longer blocks the chat.
 
 - **`waitForTaskChange` ignores non-terminal progress** (`tasks.go`). It used to
   return on any `UpdatedAt` bump, so an agent calling `sapaloq_update_task_progress`
-  woke the orchestrator with "changed to in_progress", which tended to re-wait —
+  woke the orchestrator with "changed to in_progress", which tended to re-wait -
   freezing the ring at "working" in a wait→progress→wait loop. It now ends only
   on a terminal state or a real status *transition*; pure progress is surfaced
   live as a task card via the watch stream instead.
@@ -693,7 +693,7 @@ Follow-up to the completion fix: delegation no longer blocks the chat.
 
 ---
 
-## Implemented this session (2026-06-21) — worker health + event-driven completion that speaks
+## Implemented this session (2026-06-21) - worker health + event-driven completion that speaks
 
 Fixes the "after delegating to planner/agent we never know if it finished"
 bug observed in the widget (agent spawned → `sapaloq_wait` → "still in_progress"
@@ -710,7 +710,7 @@ bug observed in the widget (agent spawned → `sapaloq_wait` → "still in_progr
   inspection. (PID field is first-class so a future real-subprocess upgrade via
   `internal/node` Transport needs no consumer/schema change.)
 - **Per-worker error-only log.** `worklog.go` writes
-  `state/workers/<task-id>/error.log` (errors only — separate from the verbose
+  `state/workers/<task-id>/error.log` (errors only - separate from the verbose
   progress JSONL) on inference errors, task failure, and stalls. Gated by
   `completion.workerErrorLog` (default on).
 - **Event-driven completion now SPEAKS.** `completion.go`
@@ -735,7 +735,7 @@ bug observed in the widget (agent spawned → `sapaloq_wait` → "still in_progr
 
 ---
 
-## Implemented this session (2026-06-21) — flat unrestricted tool surface
+## Implemented this session (2026-06-21) - flat unrestricted tool surface
 
 - **Removed the `workspace_`/`system_`/`terminal_` prefixes.** The split between
   boundary-rooted `workspace_*` tools and an "unrestricted" `system_exec` was an
@@ -758,7 +758,7 @@ bug observed in the widget (agent spawned → `sapaloq_wait` → "still in_progr
   tools_workspace.go,tools_system.go,tools_dispatch.go,subagent.go}`,
   `internal/config/{migrate.go,migrate_test.go}`, `internal/prompts/defaults/*`.
 
-## Audit this session (2026-06-21) — architecture remediation
+## Audit this session (2026-06-21) - architecture remediation
 
 - Completed a full docs/config/runtime audit and added
   [REMEDIATION-PLAN.md](./REMEDIATION-PLAN.md). The audit preserves
@@ -773,7 +773,7 @@ bug observed in the widget (agent spawned → `sapaloq_wait` → "still in_progr
 - Plan → Agent binding no longer guesses from the latest session plan. Agent
   receives a plan only through an explicit validated `plan_task_id`.
 
-## Implemented this session (2026-06-21) — durable sub-agent certainty
+## Implemented this session (2026-06-21) - durable sub-agent certainty
 
 - Reconstructed `task-1782049903924067527`: provider/tool turns succeeded, but
   `/tmp/profile/index.html` was never created; the executor only narrated its
@@ -794,71 +794,71 @@ bug observed in the widget (agent spawned → `sapaloq_wait` → "still in_progr
   separation, durable snapshots, and restart recovery;
   `test/e2e/ipc_test.go` checks late watcher catch-up.
 
-## Implemented this session (2026-06-21) — thinking persistence + widget polish
+## Implemented this session (2026-06-21) - thinking persistence + widget polish
 
-- **Reasoning now persists across restarts.** Previously the thinking stream was render-only — killing/restarting the core lost it from history. `runConversation` now accumulates `EventThinkingDelta` into an optional `*strings.Builder` (`thinkingOut`); `SendChat`/`RetryChat` persist it as a `chat_turns` row with role `"thinking"` (token estimate 0) **before** the assistant turn. The thinking turn is **show-only**: excluded from the LLM context window (`contextMessages` skips `role=="thinking"`) and from the compaction summary, so reasoning never gets replayed back into the model. Widget `renderTurn` rebuilds it via a new `appendThinkingBubble` (collapsed, re-expandable). `conversation.go`, `chat.go`, `session.go`, `conversation_test.go` (`TestRunConversationCapturesThinking`), `cmd/sapaloq-widget/frontend/src/main.ts`.
+- **Reasoning now persists across restarts.** Previously the thinking stream was render-only - killing/restarting the core lost it from history. `runConversation` now accumulates `EventThinkingDelta` into an optional `*strings.Builder` (`thinkingOut`); `SendChat`/`RetryChat` persist it as a `chat_turns` row with role `"thinking"` (token estimate 0) **before** the assistant turn. The thinking turn is **show-only**: excluded from the LLM context window (`contextMessages` skips `role=="thinking"`) and from the compaction summary, so reasoning never gets replayed back into the model. Widget `renderTurn` rebuilds it via a new `appendThinkingBubble` (collapsed, re-expandable). `conversation.go`, `chat.go`, `session.go`, `conversation_test.go` (`TestRunConversationCapturesThinking`), `cmd/sapaloq-widget/frontend/src/main.ts`.
 - **Live vs finished thinking are now visually distinct.** A settled reasoning bubble was indistinguishable from a streaming one. `flushStream` now adds `is-done` + relabels `thinking`→`thought`; CSS renders the done state with the pulse hidden, a steady green `✓`, and a calm green pill tint. `main.ts`, `style.css`.
 - **Removed the "Ask, route, delegate" empty-state card.** It didn't scroll with content, vanished after hide→reopen, and only cramped the panel. Dropped the template block + its CSS. `main.ts`, `style.css`.
 
-## Implemented this session (2026-06-21) — context-token accounting fix + shadow removal
+## Implemented this session (2026-06-21) - context-token accounting fix + shadow removal
 
-- **Bug: context usage (topbar `N/1M`) under-counted, which also made auto-compaction trigger late.** `ContextUsage` sums `token_estimate` over `chat_turns`, but tool calls/results — though they ARE sent to the model (appended to `cleanMessages` and replayed via `contextMessages`, which maps `tool`→`assistant`) — were never `AppendTurn`'d, so they cost 0 in the accounting. `runConversation` now persists each tool-results message as a `"tool"` turn with a real `estimateTextTokens` estimate (using the outer non-cancelable ctx so a wall-time timeout doesn't drop the record; nil-`chat` guarded for tests). This fixes both the displayed usage **and** the start-of-turn auto-compact, which reads that same DB usage against `autoCompactPercent`. `core/orchestrator/conversation.go`, `store/chat/store_test.go` (`TestUsageCountsAllRolesIncludingToolTurns`).
+- **Bug: context usage (topbar `N/1M`) under-counted, which also made auto-compaction trigger late.** `ContextUsage` sums `token_estimate` over `chat_turns`, but tool calls/results - though they ARE sent to the model (appended to `cleanMessages` and replayed via `contextMessages`, which maps `tool`→`assistant`) - were never `AppendTurn`'d, so they cost 0 in the accounting. `runConversation` now persists each tool-results message as a `"tool"` turn with a real `estimateTextTokens` estimate (using the outer non-cancelable ctx so a wall-time timeout doesn't drop the record; nil-`chat` guarded for tests). This fixes both the displayed usage **and** the start-of-turn auto-compact, which reads that same DB usage against `autoCompactPercent`. `core/orchestrator/conversation.go`, `store/chat/store_test.go` (`TestUsageCountsAllRolesIncludingToolTurns`).
 - **Also count fixed prompt overhead.** `Orchestrator.ContextUsage` now adds the Ask system prompt + negative-guidance block token estimate on top of the turn sum (and recomputes `percent`), since that overhead is sent every request but never stored as turns. The chat store's `Usage` stays pure (turns only); the overhead is layered in the orchestrator wrapper. `core/orchestrator/session.go`.
 
-## Implemented this session (2026-06-21) — sub-agent "kepentok" fix + completion trigger
+## Implemented this session (2026-06-21) - sub-agent "kepentok" fix + completion trigger
 
 Root cause of sub-agents stalling ("kepentok") with no continuation, plus the missing "speak"-style event that should tell chat (Ask) a sub-agent finished. Three interconnected bugs:
 
-- **Bug #1 — live config `allowedTools` named non-existent tools (the root cause).** `sapaloq-config/config.json` `subAgents.roles[task-runner/planner/scribe].allowedTools` used abstract doc names (`gnome_*`, `exec`, `write_file`, `mcp:*`, `emit_progress`, `ask_orchestrator`) that match **no** registered Go tool. Because `roleAllows` treats a present allowlist as authoritative, this silently default-denied **every real tool**, so the agent could never act (jsonl evidence: `workspace_list_dir` → "skip workspace_*, pakai system_exec" → denied → tool-less turn → premature done). Fixed the live config to real tool names (`workspace_*`, `terminal_run`, `system_exec`, `read_image`, `web_search`/`web_fetch`, `desktop_*`, `sapaloq_*`). `config.example.json` was already correct from 2026-06-20; the live config had drifted.
-- **Defense-in-depth in code.** `roleAllows` now calls a new `allowlistMatchesKnownTool()` — if a configured allowlist matches **zero** registered tools (typo/drift), it falls back to the static per-role default policy + warns, so a broken config can never again silently disarm an agent. `subagent.go`, `subagent_completion_test.go` (`TestRoleAllowsFallsBackOnUnknownAllowlist`, `TestRoleAllowsHonorsValidAllowlist`).
-- **Bug #2 — task-runner finished prematurely on a tool-less turn.** `runSubAgentLoop` previously set `Status="done"` whenever a turn had no tool calls. For `task-runner` that's wrong when it merely narrated intent. Added `idleNudges`/`maxIdleNudges=2`: a tool-less task-runner turn injects a bounded nudge to act or call `sapaloq_complete_task`/`sapaloq_fail_task`; if it still does neither, the task fails explicitly. `planner`/`scribe` retain natural no-tool completion. `subagent.go`, `subagent_completion_test.go`.
-- **Bug #3 — completion trigger ("speak" event) was config/doc-only.** Lifecycle updates now publish end-to-end and are durable. Success is always visible in chat regardless of `notifyUserOnDone`; late/reconnected watchers receive `status.json` snapshots before live events, and widget cards update in place by task id. `tasks.go`, `ipc/server.go`, `main.ts`, `subagent_completion_test.go`, `test/e2e/ipc_test.go`.
-- **Note — `thinking` token=0 is intentional, not a bug.** Thinking turns are skipped in `contextMessages` (never replayed to the LLM) and excluded from the compaction summary, so they genuinely don't consume the window; leaving their estimate at 0 is correct. Sub-agent loop tool accounting is out of scope here (sub-agents track their own task records, not `chat_turns`).
-- **Removed the popup drop shadow entirely.** The transparent window (`overflow:hidden`) hard-clips any outer shadow at the edge, leaving a thin ragged line that looked worse than none — especially on light backgrounds. Depth now comes from the border + inset top highlight; dock padding reverted to `10px`. `cmd/sapaloq-widget/frontend/src/style.css`.
+- **Bug #1 - live config `allowedTools` named non-existent tools (the root cause).** `sapaloq-config/config.json` `subAgents.roles[task-runner/planner/scribe].allowedTools` used abstract doc names (`gnome_*`, `exec`, `write_file`, `mcp:*`, `emit_progress`, `ask_orchestrator`) that match **no** registered Go tool. Because `roleAllows` treats a present allowlist as authoritative, this silently default-denied **every real tool**, so the agent could never act (jsonl evidence: `workspace_list_dir` → "skip workspace_*, pakai system_exec" → denied → tool-less turn → premature done). Fixed the live config to real tool names (`workspace_*`, `terminal_run`, `system_exec`, `read_image`, `web_search`/`web_fetch`, `desktop_*`, `sapaloq_*`). `config.example.json` was already correct from 2026-06-20; the live config had drifted.
+- **Defense-in-depth in code.** `roleAllows` now calls a new `allowlistMatchesKnownTool()` - if a configured allowlist matches **zero** registered tools (typo/drift), it falls back to the static per-role default policy + warns, so a broken config can never again silently disarm an agent. `subagent.go`, `subagent_completion_test.go` (`TestRoleAllowsFallsBackOnUnknownAllowlist`, `TestRoleAllowsHonorsValidAllowlist`).
+- **Bug #2 - task-runner finished prematurely on a tool-less turn.** `runSubAgentLoop` previously set `Status="done"` whenever a turn had no tool calls. For `task-runner` that's wrong when it merely narrated intent. Added `idleNudges`/`maxIdleNudges=2`: a tool-less task-runner turn injects a bounded nudge to act or call `sapaloq_complete_task`/`sapaloq_fail_task`; if it still does neither, the task fails explicitly. `planner`/`scribe` retain natural no-tool completion. `subagent.go`, `subagent_completion_test.go`.
+- **Bug #3 - completion trigger ("speak" event) was config/doc-only.** Lifecycle updates now publish end-to-end and are durable. Success is always visible in chat regardless of `notifyUserOnDone`; late/reconnected watchers receive `status.json` snapshots before live events, and widget cards update in place by task id. `tasks.go`, `ipc/server.go`, `main.ts`, `subagent_completion_test.go`, `test/e2e/ipc_test.go`.
+- **Note - `thinking` token=0 is intentional, not a bug.** Thinking turns are skipped in `contextMessages` (never replayed to the LLM) and excluded from the compaction summary, so they genuinely don't consume the window; leaving their estimate at 0 is correct. Sub-agent loop tool accounting is out of scope here (sub-agents track their own task records, not `chat_turns`).
+- **Removed the popup drop shadow entirely.** The transparent window (`overflow:hidden`) hard-clips any outer shadow at the edge, leaving a thin ragged line that looked worse than none - especially on light backgrounds. Depth now comes from the border + inset top highlight; dock padding reverted to `10px`. `cmd/sapaloq-widget/frontend/src/style.css`.
 - **Removed the orb (collapsed/non-popup mode) drop shadow.** `.orb-body` had `box-shadow: 0 14px 30px …` whose lower half got clipped by the transparent window edge, leaving a gray smudge under the orb on light backgrounds. Dropped the outer shadow, kept the inset rim highlight; depth/glow still come from `.orb-aura`/`.orb-ring`/`.orb-specular`. Verified on a forced-white background. `cmd/sapaloq-widget/frontend/src/style.css`.
 - **Unified the composer into a single pill (ChatGPT-style).** The compose bar used to be three separate bordered boxes in a flex row (`.compose-wrap` + standalone `.attach-btn` + gradient `.send-btn`), which read as disjointed/garish. Restructured the markup so `＋`, the textarea, and the send button now live inside one rounded `.compose-wrap` via a new `.compose-row`; `＋` is a flat ghost icon and send is a flat solid circle using `--accent` (dropped the yellow→cyan gradient and the outer glow; `stop` state is now solid `--danger`). All element ids preserved so the attachment/send handlers are untouched. Verified visually against `tmp/gpt*.png`. `cmd/sapaloq-widget/frontend/src/main.ts`, `cmd/sapaloq-widget/frontend/src/style.css`.
-- **Replaced raw Unicode glyphs with inline stroke SVG icons.** The composer buttons rendered bare text glyphs (`＋`, `↗`, `■`) that looked stiff/"icon-y". Swapped them for self-authored inline SVGs (no external sprite sheet or icon font — the same approach as the orb's `.sapa-glyph`): a rounded plus for attach, an arrow-up for send (matching ChatGPT), and a filled rounded square for the streaming/stop state. `setSubmittingUI()` now swaps `button.innerHTML` between `ICON_SEND`/`ICON_STOP` consts instead of setting `<span>.textContent`. SVG sizing/colour comes from `.attach-btn svg`/`.send-btn svg` rules (`fill:none; stroke:currentColor; stroke-linecap/linejoin:round`; stop variant uses `fill:currentColor`). NB: ChatGPT's exported `*.svg` are just `<use href="…/sprites-core-….svg#id">` references into a proprietary CDN sprite sheet — not usable directly, hence the inline approach. `cmd/sapaloq-widget/frontend/src/main.ts`, `cmd/sapaloq-widget/frontend/src/style.css`.
-- **Fixed the drag overlay getting stuck when a drag passes over SapaLOQ but is dropped on another app.** The "Lepas untuk attach file" overlay (`#popup.is-dragging-file`) is gated by a `dragDepth` counter, but a drag that merely hovers over the widget and drops elsewhere gives us no terminating event (no `drop` here, an unreliable final `dragleave`, no `dragend` for external sources) — and the `document`-level `dragover` even incremented the counter with no matching clear, so the overlay latched on. Added safety-nets in `main.ts`: (1) an idle timer re-armed on every `dragover` that force-clears after ~220ms once `dragover` stops firing (the pointer has left the window) — the primary fix for WebKitGTK/cross-app drops; (2) a `document` `dragleave` that force-clears when leaving to a null `relatedTarget` or to coordinates at/outside the viewport; (3) a `window` `dragend` force-clear for in-webview drag sources. The timer is cleared on real drops/`OnFileDrop`. Verified: an armed overlay auto-clears when no further `dragover` arrives, and genuine drops still attach. `cmd/sapaloq-widget/frontend/src/main.ts`.
-- **Taught the model how attachments work (so it stops hunting on disk).** A user attaches `skills-lock.json` and asks "where is this stored?"; the Ask orchestrator ran `workspace_list_dir .`, didn't find it, then guessed random dirs and asked the user back — because no system prompt ever explained that attachments are inlined into the message (`<!--sapaloq-attachment:…-->\n--- file: <name> (<mime>) ---\n<content>\n--- end file: <name> ---`, images as `![name](data:…)`), not saved to disk. Added an attachment-guidance paragraph to `ask.md` (recognise the inline block; do NOT search the workspace / run system_exec to find it; if asked where it's "stored", explain it's inline context and offer to write it to a path) plus a shorter note to `agent.md`/`planner.md` for tasks that carry inlined attachments. Pure prompt change; embedded defaults auto-upgrade unmodified on-disk copies via the prompts manifest. `internal/prompts/defaults/{ask,agent,planner}.md`.
-- **Stopped tool-result turns from leaking into the chat.** The backend now persists tool results as `role:"tool"` turns (`[Tool results]\n…`) purely so they count toward context usage — they're internal/context-only. But the frontend `renderTurn()` only special-cased `thinking`/`user`/`error` and dumped everything else (incl. `tool`) into a `message--assistant` bubble, so after a stop→rerun the history reload surfaced a raw `[Tool results]\n.blackbox/\n.git/…` bubble. Added an early `if (turn.role === 'tool') return;` guard and made the final branch an explicit `else if (turn.role === 'assistant')` (so any future unknown role is skipped rather than leaked). `cmd/sapaloq-widget/frontend/src/main.ts`.
-- **Auto-growing composer textarea + expand toggle (ChatGPT-style).** The textarea had no JS autosize — it was clamped at `max-height:110px` so multi-line input scrolled internally and only the last ~2 lines showed. Added `autosizeCompose()` (sets `height:auto` then `height:scrollHeight`, clamped by CSS `--compose-max: clamp(96px,38vh,300px)`) wired to the `input` event plus `editText()`/slash-apply/submit-reset. Once content overflows the cap, `.is-tall` reveals a new `#compose-expand` button (diagonal in/out arrow SVG) at the pill's top-right; clicking it toggles `.compose-wrap.expanded` which raises the cap to `--compose-max-tall: 72vh` (composer takes most of the popup, message list shrinks) and swaps the icon to a collapse glyph. `resetComposeSize()` clears the expanded/tall state + height after send. In-window expand (not OS fullscreen) since the widget is a small floating window. Verified visually: textarea grows line-by-line, the toggle appears at threshold, and expand/collapse works. `cmd/sapaloq-widget/frontend/src/main.ts`, `cmd/sapaloq-widget/frontend/src/style.css`.
+- **Replaced raw Unicode glyphs with inline stroke SVG icons.** The composer buttons rendered bare text glyphs (`＋`, `↗`, `■`) that looked stiff/"icon-y". Swapped them for self-authored inline SVGs (no external sprite sheet or icon font - the same approach as the orb's `.sapa-glyph`): a rounded plus for attach, an arrow-up for send (matching ChatGPT), and a filled rounded square for the streaming/stop state. `setSubmittingUI()` now swaps `button.innerHTML` between `ICON_SEND`/`ICON_STOP` consts instead of setting `<span>.textContent`. SVG sizing/colour comes from `.attach-btn svg`/`.send-btn svg` rules (`fill:none; stroke:currentColor; stroke-linecap/linejoin:round`; stop variant uses `fill:currentColor`). NB: ChatGPT's exported `*.svg` are just `<use href="…/sprites-core-….svg#id">` references into a proprietary CDN sprite sheet - not usable directly, hence the inline approach. `cmd/sapaloq-widget/frontend/src/main.ts`, `cmd/sapaloq-widget/frontend/src/style.css`.
+- **Fixed the drag overlay getting stuck when a drag passes over SapaLOQ but is dropped on another app.** The "Lepas untuk attach file" overlay (`#popup.is-dragging-file`) is gated by a `dragDepth` counter, but a drag that merely hovers over the widget and drops elsewhere gives us no terminating event (no `drop` here, an unreliable final `dragleave`, no `dragend` for external sources) - and the `document`-level `dragover` even incremented the counter with no matching clear, so the overlay latched on. Added safety-nets in `main.ts`: (1) an idle timer re-armed on every `dragover` that force-clears after ~220ms once `dragover` stops firing (the pointer has left the window) - the primary fix for WebKitGTK/cross-app drops; (2) a `document` `dragleave` that force-clears when leaving to a null `relatedTarget` or to coordinates at/outside the viewport; (3) a `window` `dragend` force-clear for in-webview drag sources. The timer is cleared on real drops/`OnFileDrop`. Verified: an armed overlay auto-clears when no further `dragover` arrives, and genuine drops still attach. `cmd/sapaloq-widget/frontend/src/main.ts`.
+- **Taught the model how attachments work (so it stops hunting on disk).** A user attaches `skills-lock.json` and asks "where is this stored?"; the Ask orchestrator ran `workspace_list_dir .`, didn't find it, then guessed random dirs and asked the user back - because no system prompt ever explained that attachments are inlined into the message (`<!--sapaloq-attachment:…-->\n--- file: <name> (<mime>) ---\n<content>\n--- end file: <name> ---`, images as `![name](data:…)`), not saved to disk. Added an attachment-guidance paragraph to `ask.md` (recognise the inline block; do NOT search the workspace / run system_exec to find it; if asked where it's "stored", explain it's inline context and offer to write it to a path) plus a shorter note to `agent.md`/`planner.md` for tasks that carry inlined attachments. Pure prompt change; embedded defaults auto-upgrade unmodified on-disk copies via the prompts manifest. `internal/prompts/defaults/{ask,agent,planner}.md`.
+- **Stopped tool-result turns from leaking into the chat.** The backend now persists tool results as `role:"tool"` turns (`[Tool results]\n…`) purely so they count toward context usage - they're internal/context-only. But the frontend `renderTurn()` only special-cased `thinking`/`user`/`error` and dumped everything else (incl. `tool`) into a `message--assistant` bubble, so after a stop→rerun the history reload surfaced a raw `[Tool results]\n.blackbox/\n.git/…` bubble. Added an early `if (turn.role === 'tool') return;` guard and made the final branch an explicit `else if (turn.role === 'assistant')` (so any future unknown role is skipped rather than leaked). `cmd/sapaloq-widget/frontend/src/main.ts`.
+- **Auto-growing composer textarea + expand toggle (ChatGPT-style).** The textarea had no JS autosize - it was clamped at `max-height:110px` so multi-line input scrolled internally and only the last ~2 lines showed. Added `autosizeCompose()` (sets `height:auto` then `height:scrollHeight`, clamped by CSS `--compose-max: clamp(96px,38vh,300px)`) wired to the `input` event plus `editText()`/slash-apply/submit-reset. Once content overflows the cap, `.is-tall` reveals a new `#compose-expand` button (diagonal in/out arrow SVG) at the pill's top-right; clicking it toggles `.compose-wrap.expanded` which raises the cap to `--compose-max-tall: 72vh` (composer takes most of the popup, message list shrinks) and swaps the icon to a collapse glyph. `resetComposeSize()` clears the expanded/tall state + height after send. In-window expand (not OS fullscreen) since the widget is a small floating window. Verified visually: textarea grows line-by-line, the toggle appears at threshold, and expand/collapse works. `cmd/sapaloq-widget/frontend/src/main.ts`, `cmd/sapaloq-widget/frontend/src/style.css`.
 
-## Implemented this session (2026-06-21) — `read_image` (local image → vision)
+## Implemented this session (2026-06-21) - `read_image` (local image → vision)
 
-- **New `read_image` tool in every mode.** Until now the model could only see images via widget attachments; it could not open a local image file. `read_image {"path":"..."}` reads a host image (png/jpeg/gif/webp), base64-encodes it, and returns inline `![name](data:<mime>;base64,…)` markdown. Because the orchestrator's `extractImages` scans messages for exactly that markdown and attaches the decoded picture to `bridge.Request.Images`, the result becomes **real vision input on the next turn** (the same channel widget attachments use) — not base64 text. Added to `readOnlyAssessmentTools` (so it propagates to Ask/plan/agent/scribe + `knownToolSet`) with a `reg()` schema; dispatched via `runSharedTool`. Ask parity: `runConversation` now re-extracts images from each appended tool-results message (replacing `images = nil`) and re-applies the `visionAllowed` guard; Plan/Agent already re-extract every turn. Mime resolved by extension map (+ `http.DetectContentType` fallback), 10 MiB cap, bypasses the text-oriented `looksBinary` guard. `core/orchestrator/{tools_system.go,tools.go,tools_dispatch.go,conversation.go,tools_image_test.go}`, `internal/prompts/defaults/{ask,planner,agent}.md`, `docs/{BLUEPRINT.md,STATUS.md}`.
+- **New `read_image` tool in every mode.** Until now the model could only see images via widget attachments; it could not open a local image file. `read_image {"path":"..."}` reads a host image (png/jpeg/gif/webp), base64-encodes it, and returns inline `![name](data:<mime>;base64,…)` markdown. Because the orchestrator's `extractImages` scans messages for exactly that markdown and attaches the decoded picture to `bridge.Request.Images`, the result becomes **real vision input on the next turn** (the same channel widget attachments use) - not base64 text. Added to `readOnlyAssessmentTools` (so it propagates to Ask/plan/agent/scribe + `knownToolSet`) with a `reg()` schema; dispatched via `runSharedTool`. Ask parity: `runConversation` now re-extracts images from each appended tool-results message (replacing `images = nil`) and re-applies the `visionAllowed` guard; Plan/Agent already re-extract every turn. Mime resolved by extension map (+ `http.DetectContentType` fallback), 10 MiB cap, bypasses the text-oriented `looksBinary` guard. `core/orchestrator/{tools_system.go,tools.go,tools_dispatch.go,conversation.go,tools_image_test.go}`, `internal/prompts/defaults/{ask,planner,agent}.md`, `docs/{BLUEPRINT.md,STATUS.md}`.
 
-## Implemented this session (2026-06-21) — drop redundant `system_read_file`
+## Implemented this session (2026-06-21) - drop redundant `system_read_file`
 
-- **Removed `system_read_file`, keeping only `system_exec`.** The read tool was redundant: `system_exec` (full host access) already covers any file read via `cat`/`sed -n`/`head`/`tail`/`rg`, so two host tools just widened the tool surface. `system_exec`'s schema/prompt now note it also reads files, plus a **cross-platform caveat** (runs via `bash -lc`/Unix syntax — mind macOS BSD vs GNU flags, and Windows hosts that may lack bash). Removed `toolSystemReadFile` + its byte-cap consts (`looksBinary` stays — it's shared by `workspace_*`), the `system_read_file` schema + dispatch case + allowlist entries, and updated the default prompts. `core/orchestrator/{tools_system.go,tools_system_test.go,tools.go,tools_dispatch.go}`, `internal/prompts/defaults/{ask,planner,agent}.md`, `config/config.example.json`, `docs/{BLUEPRINT.md,STATUS.md}`.
+- **Removed `system_read_file`, keeping only `system_exec`.** The read tool was redundant: `system_exec` (full host access) already covers any file read via `cat`/`sed -n`/`head`/`tail`/`rg`, so two host tools just widened the tool surface. `system_exec`'s schema/prompt now note it also reads files, plus a **cross-platform caveat** (runs via `bash -lc`/Unix syntax - mind macOS BSD vs GNU flags, and Windows hosts that may lack bash). Removed `toolSystemReadFile` + its byte-cap consts (`looksBinary` stays - it's shared by `workspace_*`), the `system_read_file` schema + dispatch case + allowlist entries, and updated the default prompts. `core/orchestrator/{tools_system.go,tools_system_test.go,tools.go,tools_dispatch.go}`, `internal/prompts/defaults/{ask,planner,agent}.md`, `config/config.example.json`, `docs/{BLUEPRINT.md,STATUS.md}`.
 
-## Implemented this session (2026-06-21) — docs sync + AGENTS.md
+## Implemented this session (2026-06-21) - docs sync + AGENTS.md
 
 - **Synced outdated design docs** to match the code shipped this session: `docs/RUNTIME.md` (vault is now dual-purpose `undeclared`+`executed` audit, added a Rotation & retention subsection + `config.vault.*`; config schema migration marked implemented), `docs/BLUEPRINT.md` (added a `vault` config-domain row + an unrestricted host-tools `system_read_file`/`system_exec` defaults row; noted replaceable on-disk prompts), `docs/PROMPT-BUILDER-SOP.md` (new "Replaceable prompts (on-disk override)" section + `config.prompts.*`). Bumped each doc's `Last updated`.
-- **Added `AGENTS.md`** at the repo root: build/test gate (`go build/vet/test ./...` + frontend `npm run build`), conventions, a project map, and a **"Keep docs in sync (REQUIRED)"** table mapping each code area → the doc(s) to update — so future agents update the relevant docs (and STATUS.md) alongside behavior changes.
+- **Added `AGENTS.md`** at the repo root: build/test gate (`go build/vet/test ./...` + frontend `npm run build`), conventions, a project map, and a **"Keep docs in sync (REQUIRED)"** table mapping each code area → the doc(s) to update - so future agents update the relevant docs (and STATUS.md) alongside behavior changes.
 
-## Implemented this session (2026-06-21) — vault rotation + widget emoji/render fixes
+## Implemented this session (2026-06-21) - vault rotation + widget emoji/render fixes
 
-- **Vault audit-log rotation/retention:** the tool-call vault (`vault/tool-calls.jsonl`) was append-only and unbounded — and now logs both `reason="undeclared"` (provider anomalies, e.g. cursor's server-hardcoded tools) *and* `reason="executed"` (full orchestrator tool-audit), so it grows during normal use. Added size-based numbered rotation directly in `vault.Writer.Append` (best-effort: a rotation error falls back to plain append so an audit write is never lost): when the primary would exceed `MaxBytes` it cascades `tool-calls.jsonl` → `.1` → `.2` …, dropping the oldest beyond `KeepFiles`. New `Options{MaxBytes,KeepFiles}` + `NewWithOptions` with defaults 5 MiB / keep 3 (`New` still works = defaults, so the cursor-bridge writer inherits rotation). New `ReadRecent(path,limit)` reads across rotated siblings so stats/CLI still see recent history after a rotation. New `config.vault.{maxLogBytes,keepRotatedFiles}` (absent block = defaults), wired in `chat.go`. `internal/vault/{vault.go,read.go,rotate_test.go}`, `config/load.go`, `core/orchestrator/chat.go`, `config/config.example.json`.
+- **Vault audit-log rotation/retention:** the tool-call vault (`vault/tool-calls.jsonl`) was append-only and unbounded - and now logs both `reason="undeclared"` (provider anomalies, e.g. cursor's server-hardcoded tools) *and* `reason="executed"` (full orchestrator tool-audit), so it grows during normal use. Added size-based numbered rotation directly in `vault.Writer.Append` (best-effort: a rotation error falls back to plain append so an audit write is never lost): when the primary would exceed `MaxBytes` it cascades `tool-calls.jsonl` → `.1` → `.2` …, dropping the oldest beyond `KeepFiles`. New `Options{MaxBytes,KeepFiles}` + `NewWithOptions` with defaults 5 MiB / keep 3 (`New` still works = defaults, so the cursor-bridge writer inherits rotation). New `ReadRecent(path,limit)` reads across rotated siblings so stats/CLI still see recent history after a rotation. New `config.vault.{maxLogBytes,keepRotatedFiles}` (absent block = defaults), wired in `chat.go`. `internal/vault/{vault.go,read.go,rotate_test.go}`, `config/load.go`, `core/orchestrator/chat.go`, `config/config.example.json`.
 
 - **Widget emoji rendering (bundled color font):** the host had no emoji font (`fc-list` empty), so model-emitted emoji (✅/❌ in tables, etc.) rendered as blank/tofu even after we stopped stripping them. Bundled a self-hosted color emoji font the Firefox/WhatsApp way: `TwemojiColor.woff2` (Twemoji SVGinOT→woff2, 3.36 MB, MIT + CC-BY-4.0) in `frontend/src/assets/fonts`, a `@font-face` (`"Twemoji SapaLOQ"`) with a `unicode-range` scoped to emoji/symbol ranges, prepended to the base/chat/monospace `font-family` stacks. Vite fingerprints + emits it into `dist/assets`, embedded into the binary via the existing `//go:embed all:frontend/dist`. `cmd/sapaloq-widget/frontend/src/style.css`, `assets/fonts/{TwemojiColor.woff2,TWEMOJI-LICENSE.md}`.
 
-- **Widget render bug fixes (`main.ts`):** (1) `sanitizeDisplayText` no longer strips emoji/pictographs (it was blanking ✅/❌ table cells) — only trailing whitespace is trimmed; (2) empty/whitespace-only `response_delta`s no longer spawn a blank assistant bubble, and `flushStream` drops an assistant bubble with no visible rendered text (new `hasVisibleText` helper) so 👍/👎 feedback controls never attach to an empty response. Both fixes also cover the batch/fallback `renderEvents` path.
+- **Widget render bug fixes (`main.ts`):** (1) `sanitizeDisplayText` no longer strips emoji/pictographs (it was blanking ✅/❌ table cells) - only trailing whitespace is trimmed; (2) empty/whitespace-only `response_delta`s no longer spawn a blank assistant bubble, and `flushStream` drops an assistant bubble with no visible rendered text (new `hasVisibleText` helper) so 👍/👎 feedback controls never attach to an empty response. Both fixes also cover the batch/fallback `renderEvents` path.
 
-## Implemented this session (2026-06-21) — new-proposal.md
+## Implemented this session (2026-06-21) - new-proposal.md
 
-- **Replaceable per-mode system prompts:** new `internal/prompts` package — the Ask/planner/agent/scribe system prompts now ship as embedded Markdown defaults that are materialized to `config.prompts.dir` (current default `~/SapaLOQ/prompts`) alongside a `prompts.manifest.json` sha256 manifest. "Updateable if non-modified": on each boot an on-disk file whose hash still matches the recorded shipped hash is transparently upgraded when the embedded default changes, while any user edit is always preserved (never clobbered). Resolution goes through `Orchestrator.systemPrompt(role)` (on-disk → embedded default), replacing the previously hardcoded inline strings in `session.go` (Ask) and `subagent.go` (`buildSubAgentMessages`). New `PromptsConfig{enabled,dir}` (absent block treated as enabled, like skills). `internal/prompts/{prompts.go,prompts_test.go,defaults/*.md}`, `config/load.go`, `core/orchestrator/{chat.go,session.go,subagent.go}`, `config/config.example.json`.
+- **Replaceable per-mode system prompts:** new `internal/prompts` package - the Ask/planner/agent/scribe system prompts now ship as embedded Markdown defaults that are materialized to `config.prompts.dir` (current default `~/SapaLOQ/prompts`) alongside a `prompts.manifest.json` sha256 manifest. "Updateable if non-modified": on each boot an on-disk file whose hash still matches the recorded shipped hash is transparently upgraded when the embedded default changes, while any user edit is always preserved (never clobbered). Resolution goes through `Orchestrator.systemPrompt(role)` (on-disk → embedded default), replacing the previously hardcoded inline strings in `session.go` (Ask) and `subagent.go` (`buildSubAgentMessages`). New `PromptsConfig{enabled,dir}` (absent block treated as enabled, like skills). `internal/prompts/{prompts.go,prompts_test.go,defaults/*.md}`, `config/load.go`, `core/orchestrator/{chat.go,session.go,subagent.go}`, `config/config.example.json`.
 
-- **Unrestricted host tools (no workspace sandbox):** by explicit user design SapaLOQ is no longer "kebiri" to the workspace root. New `system_read_file` (read ANY path — e.g. `/etc/hosts`; binary-guarded, byte-capped, supports offset/limit line ranges) and `system_exec` (run ANY shell command anywhere with full access, optional `cwd`, timeout-guarded). Both are offered in **every** mode (Ask, planner, agent) via the shared-tool dispatcher so simple host tasks don't require spawning a plan/agent. The boundary-rooted `workspace_*` tools are unchanged for scoped, safe project edits. `core/orchestrator/tools_system.go` (+ `tools_system_test.go`), `tools.go` (`unrestrictedSystemTools` added to askTools/planTools/agentTools/knownToolSet + JSON schemas), `tools_dispatch.go`, `tools_workspace.go` (`Cwd` arg), `config/config.example.json` (orchestrator/planner/task-runner allowlists).
+- **Unrestricted host tools (no workspace sandbox):** by explicit user design SapaLOQ is no longer "kebiri" to the workspace root. New `system_read_file` (read ANY path - e.g. `/etc/hosts`; binary-guarded, byte-capped, supports offset/limit line ranges) and `system_exec` (run ANY shell command anywhere with full access, optional `cwd`, timeout-guarded). Both are offered in **every** mode (Ask, planner, agent) via the shared-tool dispatcher so simple host tasks don't require spawning a plan/agent. The boundary-rooted `workspace_*` tools are unchanged for scoped, safe project edits. `core/orchestrator/tools_system.go` (+ `tools_system_test.go`), `tools.go` (`unrestrictedSystemTools` added to askTools/planTools/agentTools/knownToolSet + JSON schemas), `tools_dispatch.go`, `tools_workspace.go` (`Cwd` arg), `config/config.example.json` (orchestrator/planner/task-runner allowlists).
 
-- **Config schema migration / versioning:** new `internal/config/migrate.go` — `CurrentSchemaVersion` (now `1.1.0`) + a tolerant semver comparator and an ordered, additive/idempotent `migrationSteps` chain that operates on the decoded raw map (old JSON formats are always preserved). `Load` now decodes to a raw map, runs `migrateRaw` (lower → upgrade & persist atomically via `SaveRaw`, equal → no-op, higher → load as-is for forward-compat), then binds the struct; mandatory fields that come out empty are caught by the existing `LLMBridge.Validate`. `config/{migrate.go,migrate_test.go,load.go}`, `config.example.json` (`schemaVersion` → 1.1.0).
+- **Config schema migration / versioning:** new `internal/config/migrate.go` - `CurrentSchemaVersion` (now `1.1.0`) + a tolerant semver comparator and an ordered, additive/idempotent `migrationSteps` chain that operates on the decoded raw map (old JSON formats are always preserved). `Load` now decodes to a raw map, runs `migrateRaw` (lower → upgrade & persist atomically via `SaveRaw`, equal → no-op, higher → load as-is for forward-compat), then binds the struct; mandatory fields that come out empty are caught by the existing `LLMBridge.Validate`. `config/{migrate.go,migrate_test.go,load.go}`, `config.example.json` (`schemaVersion` → 1.1.0).
 
 ## Implemented earlier this session (2026-06-21)
 
-- **Nodes (roadmap #8 / #7 in this list):** new `nodes` SQLite table (+ `idx_nodes_role`) in the inline migrate, with `internal/store/chat/nodes.go` CRUD (`UpsertNode`/`GetNode`/`ListNodes`/`NodesForRole`/`SetNodeEnabled`/`TouchNode`; created_at preserved across upserts; capabilities JSON; tokens never stored). Orchestrator bootstraps an idempotent `local-default` node in `New` (+ writes a comm-spec template) so spawns always have a routable in-proc target. New `pickNode` (hint → highest-priority enabled role/`*` node → local-default; nil-store safe) and spawns now record the chosen `Node` on `taskRecord` — with only local-default configured, behavior is unchanged (regression-tested). New `internal/node` package: a minimal `Transport` interface + bounded `SpawnEnvelope` (with `EnforceRemoteInvariants` stripping memory-bus keys + forcing `NoMemoryBus`), a `FakeTransport` for network-free unit tests, and a real `WSTransport` (gorilla/websocket, Bearer auth header from ENV, connect-probe → fallback). New `NodesConfig` (`allowRemoteRoles`/`requireTlsRemote`/`allowSharedMemoryRemote`/`fallbackToLocalOnRemoteFail`). Deferred: wiring a remote envelope back into the sub-agent loop + `/settings` node CRUD. `store/chat/{store.go,nodes.go,nodes_test.go}`, `core/orchestrator/{nodes.go,nodes_test.go,tasks.go,chat.go}`, `internal/node/{transport,fake,ws,node_test}.go`, `config/load.go`.
+- **Nodes (roadmap #8 / #7 in this list):** new `nodes` SQLite table (+ `idx_nodes_role`) in the inline migrate, with `internal/store/chat/nodes.go` CRUD (`UpsertNode`/`GetNode`/`ListNodes`/`NodesForRole`/`SetNodeEnabled`/`TouchNode`; created_at preserved across upserts; capabilities JSON; tokens never stored). Orchestrator bootstraps an idempotent `local-default` node in `New` (+ writes a comm-spec template) so spawns always have a routable in-proc target. New `pickNode` (hint → highest-priority enabled role/`*` node → local-default; nil-store safe) and spawns now record the chosen `Node` on `taskRecord` - with only local-default configured, behavior is unchanged (regression-tested). New `internal/node` package: a minimal `Transport` interface + bounded `SpawnEnvelope` (with `EnforceRemoteInvariants` stripping memory-bus keys + forcing `NoMemoryBus`), a `FakeTransport` for network-free unit tests, and a real `WSTransport` (gorilla/websocket, Bearer auth header from ENV, connect-probe → fallback). New `NodesConfig` (`allowRemoteRoles`/`requireTlsRemote`/`allowSharedMemoryRemote`/`fallbackToLocalOnRemoteFail`). Deferred: wiring a remote envelope back into the sub-agent loop + `/settings` node CRUD. `store/chat/{store.go,nodes.go,nodes_test.go}`, `core/orchestrator/{nodes.go,nodes_test.go,tasks.go,chat.go}`, `internal/node/{transport,fake,ws,node_test}.go`, `config/load.go`.
 
-- **Platform / desktop driver (roadmap #7 / #6 in this list):** new `internal/platform` package — an OS-agnostic `Desktop` interface (`NotifySend`/`NotifyWatch`/`DNDEnabled`/`Info`/`Capabilities`), a `Capability` set + `Has` helper, and a pure `ResolveAdapterID`/`Detect` (env-driven: `XDG_CURRENT_DESKTOP`/`DESKTOP_SESSION`/GOOS, config `platform.adapter`/`detectOrder`/`allowFallback`, factory registry + headless fallback). Always-available `internal/platform/headless` adapter (no caps, closed watch channel) keeps CI/non-Linux green. `internal/platform/freedesktop` adapter implements the `org.freedesktop.Notifications` D-Bus spec for `NotifySend` (urgency hints) + best-effort eavesdrop `NotifyWatch`, constructed behind a `dbus.SessionBus()` probe (falls back to headless when no bus); the `gnome` adapter reuses it. New `desktop_notify` + `desktop_dnd_status` tools (schemas + Ask + sub-agent dispatch) gated by the active adapter's capabilities. Core wires a notify-watch→bus bridge publishing `sapaloq.v1.platform.notification`. Uses the already-present `godbus/dbus/v5` (no new dependency). `internal/platform/{desktop,capability,detect}.go` + tests, `internal/platform/headless/*`, `internal/platform/freedesktop/notify.go`, `config/load.go` (`PlatformConfig`), `core/orchestrator/{chat.go,tools.go,tools_desktop.go,tasks.go,subagent.go,tools_workspace.go}` + `tools_desktop_test.go`, `cmd/sapaloq-core/main.go`, `config/config.example.json`.
+- **Platform / desktop driver (roadmap #7 / #6 in this list):** new `internal/platform` package - an OS-agnostic `Desktop` interface (`NotifySend`/`NotifyWatch`/`DNDEnabled`/`Info`/`Capabilities`), a `Capability` set + `Has` helper, and a pure `ResolveAdapterID`/`Detect` (env-driven: `XDG_CURRENT_DESKTOP`/`DESKTOP_SESSION`/GOOS, config `platform.adapter`/`detectOrder`/`allowFallback`, factory registry + headless fallback). Always-available `internal/platform/headless` adapter (no caps, closed watch channel) keeps CI/non-Linux green. `internal/platform/freedesktop` adapter implements the `org.freedesktop.Notifications` D-Bus spec for `NotifySend` (urgency hints) + best-effort eavesdrop `NotifyWatch`, constructed behind a `dbus.SessionBus()` probe (falls back to headless when no bus); the `gnome` adapter reuses it. New `desktop_notify` + `desktop_dnd_status` tools (schemas + Ask + sub-agent dispatch) gated by the active adapter's capabilities. Core wires a notify-watch→bus bridge publishing `sapaloq.v1.platform.notification`. Uses the already-present `godbus/dbus/v5` (no new dependency). `internal/platform/{desktop,capability,detect}.go` + tests, `internal/platform/headless/*`, `internal/platform/freedesktop/notify.go`, `config/load.go` (`PlatformConfig`), `core/orchestrator/{chat.go,tools.go,tools_desktop.go,tasks.go,subagent.go,tools_workspace.go}` + `tools_desktop_test.go`, `cmd/sapaloq-core/main.go`, `config/config.example.json`.
 
-- **Skills system (roadmap #6 / #8 in this list):** new `internal/skills` package — `Load` scans `~/SapaLOQ/skills/*.md` (minimal YAML frontmatter: `id`, `triggers`, `priority`, `maxBodyLines` + Markdown body; malformed/no-id files skipped, missing dir inert), `Match` does case-insensitive trigger-substring matching, `SortByRelevance` orders by priority + caps, `Render` emits a bounded `### <id>` block. New `SkillsConfig` (`enabled`/`dir`/`maxLoadPerTurn`/`maxBodyLines`, absent-block treated as enabled like feedback). Orchestrator loads skills in `New`, best-effort indexes bodies into `facts` (kind=`skill`) for a secondary FTS signal, and injects a config-bounded `skillsBlock` into the Ask prompt right after the negative-guidance block (`session.go`). Seed skill at `examples/skills/sapaloq-scribe.md`. Scope: scan + match + inject only — learning-agent skill *writing* remains deferred. `internal/skills/{skills.go,skills_test.go}`, `config/load.go`, `core/orchestrator/{chat.go,session.go,skills_test.go}`, `config/config.example.json`.
+- **Skills system (roadmap #6 / #8 in this list):** new `internal/skills` package - `Load` scans `~/SapaLOQ/skills/*.md` (minimal YAML frontmatter: `id`, `triggers`, `priority`, `maxBodyLines` + Markdown body; malformed/no-id files skipped, missing dir inert), `Match` does case-insensitive trigger-substring matching, `SortByRelevance` orders by priority + caps, `Render` emits a bounded `### <id>` block. New `SkillsConfig` (`enabled`/`dir`/`maxLoadPerTurn`/`maxBodyLines`, absent-block treated as enabled like feedback). Orchestrator loads skills in `New`, best-effort indexes bodies into `facts` (kind=`skill`) for a secondary FTS signal, and injects a config-bounded `skillsBlock` into the Ask prompt right after the negative-guidance block (`session.go`). Seed skill at `examples/skills/sapaloq-scribe.md`. Scope: scan + match + inject only - learning-agent skill *writing* remains deferred. `internal/skills/{skills.go,skills_test.go}`, `config/load.go`, `core/orchestrator/{chat.go,session.go,skills_test.go}`, `config/config.example.json`.
 
 ## Implemented this session (2026-06-20)
 
@@ -869,20 +869,20 @@ Root cause of sub-agents stalling ("kepentok") with no continuation, plus the mi
 - **Tool audit:** every orchestrator-executed tool is appended to `vault/tool-calls.jsonl` (`reason: executed`). `chat.go`, `subagent.go`.
 - **Config consumed:** `subAgents.roles[].maxTurns` is now read (`roleMaxTurns`); `config.example.json` `allowedTools` aligned to real tool names. `internal/config/load.go`, `subagent.go`.
 - **Tool upgrade (cursor-style):** `read_file` gains binary detection + line-range (`offset`/`limit`); new `edit_file` (precise string replace), `delete_file`, `glob_file_search`. Plan made iterable. `tools_workspace.go`, `tools.go`, `subagent.go`.
-- **SQLite facts + FTS (roadmap #1):** activated the dead `001_initial.sql` design inline — `facts` table plus an FTS5-probed `facts_fts` virtual table + sync triggers, with a safe LIKE fallback when FTS5 is unavailable. New `facts.go` (`AddFact`/`SearchFacts`/`RecentFacts`/`DeleteFact`, FTS-query sanitizer). `store/chat/store.go`, `facts.go`, `facts_test.go`.
+- **SQLite facts + FTS (roadmap #1):** activated the dead `001_initial.sql` design inline - `facts` table plus an FTS5-probed `facts_fts` virtual table + sync triggers, with a safe LIKE fallback when FTS5 is unavailable. New `facts.go` (`AddFact`/`SearchFacts`/`RecentFacts`/`DeleteFact`, FTS-query sanitizer). `store/chat/store.go`, `facts.go`, `facts_test.go`.
 - **Clarification resume (roadmap #4):** sub-agents can now be answered and resumed. `taskRecord` keeps a capped `Transcript` + `Answer`; new `sapaloq_answer_clarification` tool finds the awaiting task, sets the answer, flips status back to `in_progress`, and re-spawns the loop (transcript replayed, answer nudge appended). `tasks.go`, `subagent.go`, `tools.go`, `session.go`, `clarification_test.go`.
 - **Feedback loop 👍/👎 (roadmap #2):** new `feedback_events` table + `AddFeedback`/`RecentDoNotRepeat`; a 👎 with a correction also stores a `do_not_repeat` fact. The Ask prompt now injects a short, config-bounded negative-guidance block (`feedback.maxNegativeSlicesPerTurn`). New IPC `submit_feedback` op + orchestrator `SubmitFeedback` (no-op when disabled) + widget 👍/👎 controls with an inline correction box. `store/chat/feedback.go`, `config/load.go` (`FeedbackConfig`), `session.go`, `ipc/{protocol,server}.go`, `cmd/sapaloq-widget/{app,ipc}.go`, `frontend/src/{main.ts,style.css}`, `feedback_test.go`.
 - **Event bus: WAL + replay + topic routing (roadmap #5):** the in-proc bus now supports dot-delimited topic patterns (`*` one segment, `**` the rest) via `SubscribeTopics`/`matchTopic`, a non-blocking JSON-lines WAL (`NewWithWAL`) with seq monotonic across restarts, and `Replay(since, fn)`. Boot wiring in `newEventBus` enables the WAL from `events.bus.walPath` and logs replayable counts when `replayOnBoot` is set. `Subscribe` stays receive-all so the widget `watch` is unaffected. `internal/bus/bus.go`, `bus_test.go`, `config/load.go` (`BusConfig` WAL fields), `cmd/sapaloq-core/main.go`.
-- **Named sub-agents + allowedTools enforcement (roadmap #3):** the per-tool hard-coded `role != "task-runner"` gates are replaced by a generic, config-driven `roleAllows(role, tool)` — `subAgents.roles[].allowedTools` (with `*`-suffix wildcards) is authoritative when present, otherwise the original default-deny-for-mutation policy applies. `toolsForRole` is now a method that offers only allowed+registered tools. New spawnable `scribe` role (`sapaloq_spawn_scribe`) with a boundary-safe `scribe_write_note` that appends timestamped notes only to declared `storage.paths` (resolved by intent/id/mode). `internal/config/load.go` (`StorageConfig`), `subagent.go`, `tools.go`, `tasks.go`, `scribe.go`, `config.example.json` (scribe + orchestrator allowedTools aligned to real tool names), `scribe_test.go`.
+- **Named sub-agents + allowedTools enforcement (roadmap #3):** the per-tool hard-coded `role != "task-runner"` gates are replaced by a generic, config-driven `roleAllows(role, tool)` - `subAgents.roles[].allowedTools` (with `*`-suffix wildcards) is authoritative when present, otherwise the original default-deny-for-mutation policy applies. `toolsForRole` is now a method that offers only allowed+registered tools. New spawnable `scribe` role (`sapaloq_spawn_scribe`) with a boundary-safe `scribe_write_note` that appends timestamped notes only to declared `storage.paths` (resolved by intent/id/mode). `internal/config/load.go` (`StorageConfig`), `subagent.go`, `tools.go`, `tasks.go`, `scribe.go`, `config.example.json` (scribe + orchestrator allowedTools aligned to real tool names), `scribe_test.go`.
 
 ---
 
-## Roadmap (deliberately deferred — each is a large feature)
+## Roadmap (deliberately deferred - each is a large feature)
 
 1. **Context-SOP intelligence:** run `migrations/001_initial.sql`, build `facts`/`facts_fts`, prefetch + anti-deep-check, intent-router.
 2. **Feedback/RL layer:** `feedback_events` table, widget 👍/👎, positive/negative prompt slices, `do_not_repeat`, `learning_queue`, contextual bandit on prefetch rules.
 3. **Named sub-agents:** make scribe / memory-janitor / intent-router / boundary-guard / event-watcher / research actually spawnable; enforce `allowedTools`/`toolPolicy` from config.
-4. **Clarification resume:** two-way — answer a paused sub-agent and continue its loop.
+4. **Clarification resume:** two-way - answer a paused sub-agent and continue its loop.
 5. **Event bus completion:** topic-pattern matcher ✅, jsonl WAL ✅, replay-on-boot ✅, completion trigger (`EventTaskUpdate` → bus → widget `watch`) ✅ (2026-06-21). Remaining: a socket-level bus *publish* op for external producers.
 6. **Platform/Driver:** GNOME/D-Bus notifications, `desktop_*` tools, `os.json` detect/cache.
 7. **Nodes:** remote sub-agent registry + transport.

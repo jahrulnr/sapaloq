@@ -4,7 +4,7 @@ package wire
 // to discover the default model name and any UI nudges. It lives on
 // `aiserver.v1.AiService/GetDefaultModelNudgeData` under api2.cursor.sh.
 //
-// We do not currently decode the response shape — Cursor's server picks a
+// We do not currently decode the response shape - Cursor's server picks a
 // model id (e.g. "default") and our bridge falls back to the explicit
 // model id supplied by the caller. This stub is here so callers (e.g. a
 // future "auto-detect default model" flow, or telemetry-free mode
@@ -26,9 +26,10 @@ const (
 // length (0 = no payload).
 //
 // Connect-RPC unary framing spec: https://connectrpc.com/docs/protocol/
-//   1 byte  : envelope flag (0 = proto, 1 = JSON, 2 = JSON+compression, 6 = gzip+proto)
-//   4 bytes : big-endian uint32 length of the message that follows
-//   N bytes : the message itself (here: empty)
+//
+//	1 byte  : envelope flag (0 = proto, 1 = JSON, 2 = JSON+compression, 6 = gzip+proto)
+//	4 bytes : big-endian uint32 length of the message that follows
+//	N bytes : the message itself (here: empty)
 func BuildNudgeRequestBody() []byte {
 	return []byte{
 		0x00,                   // flag = 0 (raw protobuf, no compression)

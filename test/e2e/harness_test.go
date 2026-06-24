@@ -260,7 +260,7 @@ func firstStreamError(responses []ipc.Response) string {
 func assertLiveChatResult(t *testing.T, responses []ipc.Response) {
 	t.Helper()
 	if isMockStream(responses) {
-		t.Fatal("fell back to mock stream — live credentials not used")
+		t.Fatal("fell back to mock stream - live credentials not used")
 	}
 	seen := eventKinds(responses)
 	if seen[bridge.EventError] > 0 {

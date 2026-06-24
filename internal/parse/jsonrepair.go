@@ -7,13 +7,13 @@ import (
 
 // RepairControlCharsInJSON makes a JSON byte slice tolerant of RAW (unescaped)
 // control characters inside string literals. Models routinely emit tool-call
-// arguments whose string values contain real line breaks — e.g. a heredoc body
+// arguments whose string values contain real line breaks - e.g. a heredoc body
 // `{"command":"cat > f <<X\n<html>\n…\nX"}` where the "\n" are actual newline
 // bytes, not the two-character escape. Per the JSON spec a literal control byte
 // (U+0000–U+001F) inside a string is INVALID, so encoding/json rejects it with
 // `invalid character '\n' in string literal` and the value is lost. SapaLOQ
 // then silently parsed empty arguments, the tool reported "command is
-// required", and the model — seeing an empty result — concluded its content was
+// required", and the model - seeing an empty result - concluded its content was
 // "stripped/filtered" and burned turns on base64/chunking workarounds.
 //
 // This walks the bytes and, while INSIDE a string literal, rewrites each raw
