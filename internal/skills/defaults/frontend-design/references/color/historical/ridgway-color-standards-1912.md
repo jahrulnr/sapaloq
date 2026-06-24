@@ -135,7 +135,7 @@ from every standpoint, and that practically all authoritative
 works on the subject of color have been carefully
 consulted.[2]
 
-Plan.—The scientific arrangement of
+Plan.-The scientific arrangement of
 colors in this work is based essentially on the suggestions of
 Professor J. H. Pillsbury for a scheme of color standards,[3]which have also been the basis of
 several other efforts toward the same end, as the plates in Milton
@@ -144,7 +144,7 @@ charts of standard colors, Klinkseick and Valette's "Code des
 Couleurs," etc.; but while all these present a scientifically arranged
 color-scheme and more or less adequate[2]number of colors they all fail
 to supply a ready or convenient means of identifying and designating
-the colors—the principal utility of a work of this kind. It is in the
+the colors-the principal utility of a work of this kind. It is in the
 latter respect that the present work is believed to meet, more nearly
 than any other at least, this essential requirement, and in this
 consists whatever originality may be claimed for it.
@@ -160,7 +160,7 @@ orange-red and red-orange to orange; orange through yellow-orange and
 orange-yellow to yellow; yellow through green-yellow and yellow-green
 to green; green through blue-green and green-blue to blue; blue
 through violet-blue and blue-violet to violet; and violet through
-red-violet and violet-red to red—the starting-point—with
+red-violet and violet-red to red-the starting-point-with
 intermediate connecting hues. In the solar spectrum, both prismatic
 and grating, but especially the former, the spaces between the
 adjoining distinct colors are very unequal; therefore for the present
@@ -216,7 +216,7 @@ represented[5]by the middle horizontal line of color-squares on Plates
 I-XII(together with an equal number of intermediates represented by
 blank spaces), requiring a separate curve and consequently different
 relative proportions of the two component colors for each series of
-hues—that is, the series from red to orange, orange to yellow, yellow
+hues-that is, the series from red to orange, orange to yellow, yellow
 to green, green to blue, blue to violet, and violet to red,
 respectively; but the progressive increments of white in the scales of
 tints, black in those of shades, and neutral gray in the several
@@ -312,7 +312,7 @@ the middle horizontal row being designated by number alone.
 
 #### Color Names
 
-Color Names.—While it is true that the naming of colors as
+Color Names.-While it is true that the naming of colors as
 usually employed has so little to do with the purely technical aspects
 of chromatology or color-physics that, as Von Bezold
 remarks[16]"we are in reality dealing with the
@@ -488,7 +488,7 @@ burnished metallic, matt-metallic, etc.
 
 #### Color Terms
 
-Color Terms.—No other person has presented so forcibly the
+Color Terms.-No other person has presented so forcibly the
 urgent need for reform in popular nomenclature nor stated so clearly
 and concisely its shortcomings and the simple remedy, as Mr. Milton
 Bradley, from one of whose educational pamphlets on the
@@ -522,9 +522,9 @@ Indeed the standardization of color terms is almost if not quite as
 important, in the interest of educational progress, as that of the
 colors themselves and their names; therefore, to make easy a clear
 understanding of the specific meaning of each, the following
-definitions are given:—
+definitions are given:-
 
-Color.—The term of widest application, being the only one
+Color.-The term of widest application, being the only one
 which can be used to cover the entire range of chromatic
 manifestation; that is to say, the spectrum colors (together with
 those between violet and red, not shown in the spectrum) with all
@@ -534,7 +534,7 @@ orange, yellow, green, blue, and violet), which are sometimes
 distinguished asfundamental colorsorspectrum
 colors.
 
-Hue.—While often used interchangeably or synonymously with
+Hue.-While often used interchangeably or synonymously with
 color, the termhueis more properly restricted by special
 application to those lying between any contiguous pair of spectrum
 colors (also between violet and purple and between purple and red); as
@@ -543,17 +543,17 @@ of red; a yellowhueof orange; a greenishhueof
 yellow; a bluishhueof green; a violethueof blue,
 etc.
 
-Tint.—Any color (pure or broken) weakened by high
+Tint.-Any color (pure or broken) weakened by high
 illumination or (in the case of pigments) by[17]admixture of white, or
 (in the case of dyes or washes) by excess of aqueous or other liquid
 medium; as, a deep, medium, light, pale or delicate (pallid)tintof red. The term cannot correctly be used in any other
 sense.
 
-Shade.—Any color (pure or broken) darkened by shadow or (in
+Shade.-Any color (pure or broken) darkened by shadow or (in
 the case of pigments) by admixture of black; exactly the opposite oftint; as a medium, dark, or very dark (dusky)shadeof
 red.
 
-Tone.—"Each step in a color scale is a tone of that
+Tone.-"Each step in a color scale is a tone of that
 color."[20]The term tone cannot, however,
 be properly applied to a step in the spectrum scale, in which each
 contiguous pair of the six distinct spectrum or "fundamental"colorsare connected byhues. Hencetone[21]is exclusively applicable to the
@@ -564,7 +564,7 @@ from the darkest shade to the palest tint. Each one of the colored
 blocks in the vertical scales of the plates in this work represents a
 separate tone of that color.
 
-Scale.—A linear series of colors showing a gradual
+Scale.-A linear series of colors showing a gradual
 transition from one to another, or a similar series of tones of one
 color. The first is achromatic
 scale[22](or scale of colors and hues) and
@@ -595,14 +595,14 @@ for these scales of reduced or "broken" colors, but they may, for
 present convenience, be termedreducedorbroken
 scales.
 
-Full Color.—A color corresponding in intensity with its
+Full Color.-A color corresponding in intensity with its
 manifestation in the solar spectrum.
 
-[19]Pure Color.—A color corresponding in purity with (or, in
+[19]Pure Color.-A color corresponding in purity with (or, in
 the case of material colors, closely approximating to) one of the
 spectrum colors.
 
-Broken Color.—Any one of the spectrum colors or hues dulled
+Broken Color.-Any one of the spectrum colors or hues dulled
 or reduced in purity by admixture (in any proportion) of neutral gray,
 or varying relative proportions of both black and white; also produced
 by admixture of certain spectrum colors, as red with green, orange
@@ -611,11 +611,11 @@ numerous in Nature than the pure spectrum colors, and include the
 almost infinite variations of brown, russet, citrine, olive, drab,
 etc. They are often called dull or neutral colors.
 
-Fundamental Colors.—The six psychologically distinct colors
+Fundamental Colors.-The six psychologically distinct colors
 of the solar spectrum; Red, Orange, Yellow, Green, Blue, and
 Violet.
 
-Primary Colors.—Theoretically, any of the spectrum colors
+Primary Colors.-Theoretically, any of the spectrum colors
 which cannot be made by mixture of two other colors. According to the
 generally accepted Young-Helmholtz theory, the primary colors are red,
 green, and violet: orange and yellow resulting from a mixture of red
@@ -628,33 +628,33 @@ violet, exactly as yellow results from mixture of red and green or
 blue from green or violet, green being, in fact, the only spectrum
 color that cannot be made by mixture of other colors.[24]
 
-[20]Chroma.—Degree of freedom from white light; purity,
+[20]Chroma.-Degree of freedom from white light; purity,
 intensity or fullness of color.
 
-Luminosity.—Degree of brightness or clearness. The relative
+Luminosity.-Degree of brightness or clearness. The relative
 luminosity of the spectrum colors is as follows: [Yellow
 (brightest)?], orange yellow; orange; greenish-yellow, yellow-green,
 and green; orange-red; red and blue (equal); violet-blue, blue-violet,
 violet.[25]
 
-Warm Colors.—The colors nearer the red end of the spectrum
+Warm Colors.-The colors nearer the red end of the spectrum
 or those of longer wave-lengths (red, orange, and yellow, and
 connecting hues) "and combinations in which they
 predominate."[26]
 
-Cool, or Cold, Colors.—The colors nearer the violet end of
+Cool, or Cold, Colors.-The colors nearer the violet end of
 the spectrum or those of shorter wave-length, especially blue and
 green-blue. "But it is, perhaps, questionable whether green and violet
 may be termed either warm or cool."
 
-Complementary Color.—"As white light is the sum of all
+Complementary Color.-"As white light is the sum of all
 color, if we take from white light a given color the remaining color
 is the complement of the given color." When any two colors or hues
 which when combined in proper proportion on the color-wheel produce,
 by rotation, neutral gray, these two colors each represent the
 complementary of the other.
 
-Constants of Color.—The constants of color are numbers
+Constants of Color.-The constants of color are numbers
 which measure (1) the wave-length, (2) the chroma, and (3) the
 luminosity.
 
@@ -738,7 +738,7 @@ as in the tone scales of pure colors.
 
 DIFFERENT TONES OF CARBON GRAY.
 
-Note.—The percentages given in the preceding tables may not in all cases be precisely
+Note.-The percentages given in the preceding tables may not in all cases be precisely
 those actually contained in the colors on the Plates, since absolute precision
 in reproduction is hardly possible. All that can be claimed is a reasonably
 close approximation to the ideal.
@@ -749,35 +749,35 @@ PREPARATION OF THE MAXWELL DISKS, REPRESENTING THE THIRTY-SIX COLORS
 OF THE PURE SPECTRUM SCALE, FORMING THE BASIS OF THE COLOR-SCHEME OF
 THIS WORK.[29]
 
-Red.—Devoe'sgeranium lake(dry), its orange hue
+Red.-Devoe'sgeranium lake(dry), its orange hue
 neutralized by a wash ofrhodamin b.(Crocein scarlet b.washed withrhodamin b.produces practically the same
 fine red.)
 
-Hues between red and orange.—Crocein scarlet b.withgold orange.
+Hues between red and orange.-Crocein scarlet b.withgold orange.
 
-Orange.—Gold orangewithorange g.
+Orange.-Gold orangewithorange g.
 
-Hues between orange and yellow.—Orange g.withauramin.
+Hues between orange and yellow.-Orange g.withauramin.
 
-Yellow.—Auramin, rather dilute. (The best substitute
+Yellow.-Auramin, rather dilute. (The best substitute
 among pigments is a fine quality ofzinc yellow, as
 Hatfield's.)
 
-Hues between yellow and green.—Auraminwashed withlight green.
+Hues between yellow and green.-Auraminwashed withlight green.
 
-Green.—Auramin(very dilute) washed withlight
+Green.-Auramin(very dilute) washed withlight
 green. (The auramin should be applied first, because
 it "sets" or becomes fast quickly, while the light green
 does not, but is largely removed by overwashes of the
 yellow, thus rendering it very difficult to get the desired
 hue.)
 
-Hues between green and blue.—Methyl green; the same
+Hues between green and blue.-Methyl green; the same
 washed withlight blue(Diamond Dye); for the hues
 nearer blue,light bluewashed with Winsor and Newton'spermanent blueornew blue(the least violet-hued
 of the artificial ultramarines).
 
-Blue.—Light bluewashed withpermanent blueornew blue. (Although the color is nearer that of the
+Blue.-Light bluewashed withpermanent blueornew blue. (Although the color is nearer that of the
 artificial ultramarines named, it is useless to apply the latter
 first,[27]for overwashes of the light blue merely sink through and darken
 the color without improving the hue. A moderately saturated solution
@@ -785,12 +785,12 @@ of the light blue should be applied first, and when this is dry
 covered with one or more rather thin washes of the permanent blue or
 new blue).
 
-Hues between blue and violet.—Winsor and Newton'spermanent blueand some of the more violet-hued artificial
+Hues between blue and violet.-Winsor and Newton'spermanent blueand some of the more violet-hued artificial
 ultramarines, the hues nearer violet washed withcrystal violetorgentian violet.
 
-Violet.—Crystal violet.
+Violet.-Crystal violet.
 
-Hues between violet and red.—Methyl violet 1b.washed
+Hues between violet and red.-Methyl violet 1b.washed
 withrhodamin b.; for hues nearer red,rhodamin b.with
 Devoe'sgeranium red(dry) orcrocein scarlet b.
 
@@ -804,7 +804,7 @@ colored must be carefully protected from light when not
 in actual use andneverexposed to direct sunlight. The
 artificial ultramarines are, of course, permanent, and so,
 practically, are crocein scarlet, gold orange, orange g.,
-and auramin—that is to say, are not materially affected
+and auramin-that is to say, are not materially affected
 by the action of light except after very prolonged exposure,
 though the last named undergoes a change of hue;
 but the green and violet aniline dyes are all very evanescent,
@@ -822,7 +822,7 @@ OF COLORS" (1886) CANNOT BE MATCHED BY COLORS IN
 THE PRESENT WORK. THEY ARE INTERMEDIATES, EITHER AS TO
 HUE OR TONE (SOMETIMES BOTH), AND WOULD FALL IN UNCOLORED
 SPACES, AS INDICATED BY THE NUMERALS AND LETTERS APPENDED
-TO EACH:—
+TO EACH:-
 
 #### A FEW OF THE MODERN BOOKS ON THE SUBJECT
 
@@ -830,7 +830,7 @@ OF COLOR WHICH THE AUTHOR OF THIS
 WORK HAS FOUND MOST USEFUL
 
 Bradley, Milton, author of "Color in the Schoolroom" and
-"Color in the Kindergarden."—Elementary Color. With an
+"Color in the Kindergarden."-Elementary Color. With an
 Introduction by Henry Lafavour, Ph. D., Professor of Physics,
 Williams College. Milton Bradley and Co., Springfield, Mass.
 [1895]. Small 8vo., pp. [i]-iv, [1]-128; colored frontispiece
@@ -846,42 +846,42 @@ subject. It is therefore most heartily recommended to the
 student as a preliminary, at least, to the study of more technical
 works on color.
 
-Bradley, Milton.—The Evolution of a Practical System of
+Bradley, Milton.-The Evolution of a Practical System of
 Color Education based on Spectrum Standards. Milton Bradley
 Co., Springfield, Mass. Pamphlet, 8vo., pp. 8.
 
-Bradley, Milton.—A Few Practical Suggestions relating to
+Bradley, Milton.-A Few Practical Suggestions relating to
 Color Standards and the Present Status of Elementary Color
 Instruction in the United States. Milton Bradley Co., Springfield,
 Mass. Pamphlet, small 8vo., pp. 16.
 
-Bradley, Milton.—Some Criticisms of Popular Color Definitions,
+Bradley, Milton.-Some Criticisms of Popular Color Definitions,
 and Suggestions for a Better Color Nomenclature. Milton
 Bradley Co., Springfield, Mass., 1898. Pamphlet, 12mo., pp. 15.
 
-Bradley, Milton.—The Bradley Color Scheme, with Suggestions
+Bradley, Milton.-The Bradley Color Scheme, with Suggestions
 to Teachers. Milton Bradley Co., Springfield, Mass. Pamphlet,
 12mo., pp. 45.
 
 Church, A. H., F. R. S., etc., Professor of Chemistry in the
-Royal Academy of Arts in London.—The Chemistry of Paints
+Royal Academy of Arts in London.-The Chemistry of Paints
 and Painting. Third edition, revised and enlarged. London:
 Seeley and Co. Small 8vo., pp. [i-vii] viii-xx, 1-355. An invaluable
 work which should be consulted by every painter.
 
-Hurst, George H., F. C. S., etc.—Colour: A Handbook of
+Hurst, George H., F. C. S., etc.-Colour: A Handbook of
 the Theory of Colour. With ten coloured plates and seventy-two
 illustrations. London: Scott, Greenwood & Co., 1900., 8vo.,
 160 pp.
 
-[43]Rood, Ogden N.—Students' Text-book of Color; or Modern
+[43]Rood, Ogden N.-Students' Text-book of Color; or Modern
 Chromatics, with applications to Art and Industry. New York:
 D. Appleton and Company, 1903. Small 8vo., pp. [i-v] vi-viii,
 [9] 10-329; 1 colored plate (frontispiece) and 130 original illustrations.
 
 (One of the best technical works on the physics of color.)
 
-Vanderpoel, Emily Noyes.—Color Problems. A Practical
+Vanderpoel, Emily Noyes.-Color Problems. A Practical
 Manual for the Lay Student of Color. With one hundred and
 seventeen colored plates. Longmans, Green and Co., New York,
 London and Bombay. 1903. Small 8vo., pp., [i-vi] vii-xv, [1-2]
@@ -891,7 +891,7 @@ The colored plates of this excellent work illustrate the physics
 and psychology of color, color harmonies, and kindred subjects,
 but have no relation to color nomenclature.
 
-Jorgensen, Charles Julius.—The Mastery of Color. A simple
+Jorgensen, Charles Julius.-The Mastery of Color. A simple
 and perfect color system, based upon the spectral colors, for
 educational and practical use in the Arts and Crafts. Published
 by the Author. Milwaukee, 1906. 8vo., 2 vols., one of text, the
@@ -974,7 +974,7 @@ chromatic scale, seepages 26, 27.)
 
 [12]In fixing the exact
 position or wave-length of the spectrum colors considerable latitude
-is allowable, the element of "personal equation"—that is, difference
+is allowable, the element of "personal equation"-that is, difference
 in the conception of different persons as to just where the reddest
 red, greenest green, etc., are located, accounting for the
 considerable disagreement among chromatologists as to the

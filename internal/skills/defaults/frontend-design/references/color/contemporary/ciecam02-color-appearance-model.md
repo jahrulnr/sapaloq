@@ -1,4 +1,4 @@
-# CIECAM02 — Color Appearance Model
+# CIECAM02 - Color Appearance Model
 
 **Source:** _The CIECAM02 Color Appearance Model_
 **Authors:** Nathan Moroney, Mark D. Fairchild, R. W. G. Hunt, Changjun Li, M. Ronnier Luo, Todd Newman

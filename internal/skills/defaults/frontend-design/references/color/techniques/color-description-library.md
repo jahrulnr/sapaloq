@@ -1,6 +1,6 @@
-# color-description — Human-Readable Color Descriptions
+# color-description - Human-Readable Color Descriptions
 
-**Source:** [GitHub — words/color-description](https://github.com/words/color-description)
+**Source:** [GitHub - words/color-description](https://github.com/words/color-description)
 **License:** MIT
 **npm:** `color-description`
 
@@ -27,17 +27,17 @@ cd.getColorFamily();
 
 | Method                        | Returns                                           |
 | ----------------------------- | ------------------------------------------------- |
-| `new ColorDescription(color)` | Constructor — accepts hex, RGB, HSL, named colors |
+| `new ColorDescription(color)` | Constructor - accepts hex, RGB, HSL, named colors |
 | `.getDescriptiveList()`       | Array of descriptive adjectives                   |
 | `.getColorFamily()`           | Color category name (e.g., "red", "blue")         |
 | `.color`                      | Getter/setter for current color                   |
 
 ## Data Sources
 
-- **Color psychology** — colorpsychology.org, academic research, Wikipedia
-- **HSL/HSV hue wheels** — 24 named hues
-- **Curated adjective databases** — from human color perception studies
-- **Western perspective** — reflects contemporary English color associations (culturally specific)
+- **Color psychology** - colorpsychology.org, academic research, Wikipedia
+- **HSL/HSV hue wheels** - 24 named hues
+- **Curated adjective databases** - from human color perception studies
+- **Western perspective** - reflects contemporary English color associations (culturally specific)
 
 ## Relevance to Color Naming
 
@@ -46,7 +46,7 @@ This library approaches color from the **linguistic/emotional** side rather than
 - ISCC-NBS: "What IS this color?" → "vivid yellowish green"
 - color-description: "How does this color FEEL?" → "lush, vibrant, bold"
 
-Both perspectives useful for color naming tasks — technical precision vs emotional resonance.
+Both perspectives useful for color naming tasks - technical precision vs emotional resonance.
 
 ## Links
 

@@ -1,4 +1,4 @@
-# M5a spike — Wails widget + IPC
+# M5a spike - Wails widget + IPC
 
 Validates [UI-DECISION.md](../UI-DECISION.md) assumptions before M5b.
 
@@ -18,7 +18,7 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 ```
 
-**Ubuntu 24.04:** Wails v2 needs build tag `webkit2_41` (4.0 package unavailable). `wails doctor` may still warn — ignore if build succeeds.
+**Ubuntu 24.04:** Wails v2 needs build tag `webkit2_41` (4.0 package unavailable). `wails doctor` may still warn - ignore if build succeeds.
 
 ```bash
 wails build -tags webkit2_41
@@ -48,7 +48,7 @@ wails build -tags webkit2_41
 
 ## Run
 
-Terminal 1 — mock core:
+Terminal 1 - mock core:
 
 ```bash
 cd /apps/workspace/sapaloq/cmd/sapaloq-mock
@@ -56,7 +56,7 @@ go run .
 # listens on /tmp/sapaloq-spike.sock
 ```
 
-Terminal 2 — widget:
+Terminal 2 - widget:
 
 ```bash
 export PATH="$PATH:$(go env GOPATH)/bin"

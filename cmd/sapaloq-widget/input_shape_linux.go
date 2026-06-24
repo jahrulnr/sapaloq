@@ -86,7 +86,7 @@ static void sapaloq_schedule_shape(int w, int h, int circle) {
 }
 
 // sapaloq_set_program_class fixes the WM_CLASS GNOME (and other shells) use to
-// match a window to its .desktop entry — and therefore to its taskbar icon.
+// match a window to its .desktop entry - and therefore to its taskbar icon.
 //
 // Wails never sets WM_CLASS on Linux: it only calls g_set_prgname() and
 // gtk_window_set_icon(). GNOME Shell ignores gtk_window_set_icon for the

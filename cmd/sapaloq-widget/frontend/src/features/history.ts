@@ -14,7 +14,7 @@ import {
 function renderTurn(turn: ChatTurn) {
   if (!turn.content) return;
   // "tool" turns ([Tool results]…) are persisted only so they count toward
-  // context usage — they are internal and must never surface as a chat bubble.
+  // context usage - they are internal and must never surface as a chat bubble.
   if (turn.role === 'tool') return;
   if (turn.role === 'thinking') {
     appendThinkingBubble(turn.content);

@@ -7,7 +7,7 @@
 // later boot, if the on-disk file still matches the shipped hash (user did not
 // touch it) and the embedded default changed, the file is transparently
 // upgraded to the new default. If the user modified the file, their version is
-// always kept — SapaLOQ never clobbers user edits.
+// always kept - SapaLOQ never clobbers user edits.
 package prompts
 
 import (

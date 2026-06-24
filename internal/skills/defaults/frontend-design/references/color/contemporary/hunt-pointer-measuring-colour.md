@@ -1,4 +1,4 @@
-# Hunt & Pointer — Measuring Colour
+# Hunt & Pointer - Measuring Colour
 
 **Source:** _Measuring Colour_
 **Authors:** R. W. G. Hunt, M. R. Pointer

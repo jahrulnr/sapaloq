@@ -13,7 +13,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/vault"
 )
 
-const usageText = `SapaLOQ core — orchestrator, IPC, cursor-bridge brain.
+const usageText = `SapaLOQ core - orchestrator, IPC, cursor-bridge brain.
 
 Usage:
   sapaloq-core [--debug|-d] [--verbose|-v] <command> [args]
@@ -38,8 +38,8 @@ Commands:
   help                Show this help
 
 Environment:
-  SAPALOQ_DEBUG           1/true — same as --debug
-  SAPALOQ_VERBOSE         1/true — same as --verbose
+  SAPALOQ_DEBUG           1/true - same as --debug
+  SAPALOQ_VERBOSE         1/true - same as --verbose
   SAPALOQ_CONFIG          Path to config.json (default: ~/.config/sapaloq/config.json)
   SAPALOQ_CURSOR_TOKEN    Cursor API token (optional if autoload succeeds)
   CURSOR_ACCESS_TOKEN     Same as above (cursor-bridge convention)

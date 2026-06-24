@@ -46,7 +46,7 @@ func parserFromString(s string) ParserKind {
 // DetectParser chooses the parser for one provider entry. Order:
 //
 //  1. Explicit entry.Parser when non-empty.
-//  2. Model name sniff — Anthropic/Moonshot family markers.
+//  2. Model name sniff - Anthropic/Moonshot family markers.
 //  3. Endpoint URL substring.
 //  4. Default to openai (covers OpenAI, OpenRouter, TokenRouter, etc.).
 func DetectParser(entry config.LLMBridge) ParserKind {

@@ -1,4 +1,4 @@
-# DesignBook — Reactive Design Token Architecture Spec
+# DesignBook - Reactive Design Token Architecture Spec
 
 **Author:** @meodai
 **Source:** Original specification / local note

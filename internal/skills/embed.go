@@ -22,7 +22,7 @@ var defaultFS embed.FS
 
 // seedManifestName is the sha256 manifest recording the hash SapaLOQ shipped for
 // each seeded file, enabling "upgrade-if-unmodified" without clobbering user
-// edits — the same contract the prompts package uses.
+// edits - the same contract the prompts package uses.
 const seedManifestName = "skills.manifest.json"
 
 // Seed materializes the embedded default skills into dir. For each shipped file
@@ -36,7 +36,7 @@ const seedManifestName = "skills.manifest.json"
 //
 // The manifest itself lives at <dir>/skills.manifest.json. Seed is idempotent
 // (safe to call every boot) and best-effort: a disk error is returned but must
-// not be treated as fatal by callers — skill seeding never breaks startup.
+// not be treated as fatal by callers - skill seeding never breaks startup.
 func Seed(dir string) error {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {

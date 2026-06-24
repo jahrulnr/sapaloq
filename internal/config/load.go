@@ -68,7 +68,7 @@ type PromptsConfig struct {
 }
 
 // WithDefaults fills sane prompt defaults. A fully-unset block (enabled=false,
-// no dir) is treated as enabled with the default dir — mirroring the skills
+// no dir) is treated as enabled with the default dir - mirroring the skills
 // config convention so an older config without a prompts block still gets the
 // feature.
 func (p PromptsConfig) WithDefaults() PromptsConfig {
@@ -142,7 +142,7 @@ func (p PlatformConfig) WithDefaults() PlatformConfig {
 // read-only context (no tool grants, no execution).
 type SkillsConfig struct {
 	// Enabled toggles the whole feature. Because the JSON zero value of a bool
-	// is false, callers treat an entirely-absent skills block as enabled — see
+	// is false, callers treat an entirely-absent skills block as enabled - see
 	// WithDefaults / the absentEnabled handling at the call site.
 	Enabled bool `json:"enabled"`
 	// Dir is the skills directory (supports ~). Default ~/SapaLOQ/skills.
@@ -154,8 +154,8 @@ type SkillsConfig struct {
 }
 
 // WithDefaults fills sane skill defaults and clamps bounds. A fully-unset block
-// (no dir, no limits, enabled=false) is treated as enabled — mirroring the
-// feedback config convention — so an older config without a skills block still
+// (no dir, no limits, enabled=false) is treated as enabled - mirroring the
+// feedback config convention - so an older config without a skills block still
 // gets the feature. An explicit {"enabled": false} disables it.
 func (s SkillsConfig) WithDefaults() SkillsConfig {
 	if !s.Enabled && strings.TrimSpace(s.Dir) == "" && s.MaxLoadPerTurn == 0 && s.MaxBodyLines == 0 {
@@ -249,7 +249,7 @@ type FeedbackConfig struct {
 
 // FeedbackWithDefaults fills sane defaults: feedback enabled, 1 negative slice.
 // Because the JSON zero value of a bool is false, callers should treat an
-// entirely-absent feedback block as "enabled" — handled here by only enabling
+// entirely-absent feedback block as "enabled" - handled here by only enabling
 // defaults when the struct looks unset.
 func (f FeedbackConfig) WithDefaults() FeedbackConfig {
 	if f.MaxNegativeSlicesPerTurn <= 0 {
@@ -322,7 +322,7 @@ type RuntimeConfig struct {
 	BinaryName string `json:"binaryName"`
 }
 
-// LLMBridge is one provider entry — the smallest unit of bridge configuration.
+// LLMBridge is one provider entry - the smallest unit of bridge configuration.
 // Each entry is self-contained: which driver, which endpoint, which
 // credentials, and (for provider-bridge entries) which wire format + auth
 // scheme + API version. Key is required when the entry is part of a
@@ -362,7 +362,7 @@ type LLMBridge struct {
 	// Sonnet 4, Gemini 2.5 Pro, GPT-5 family).
 	ContextWindow int `json:"contextWindow,omitempty"`
 	// SupportsImages is a tri-state vision-capability cache. nil means
-	// "unknown — try sending images and learn from the response"; a non-nil
+	// "unknown - try sending images and learn from the response"; a non-nil
 	// value records what the orchestrator discovered at runtime (false after
 	// the upstream rejected an image request with a 400, true after a
 	// successful image turn). Persisted so a model proven text-only is never
@@ -377,11 +377,21 @@ type LLMBridge struct {
 	// once a stream is open. RequestTimeoutSec is a generous *whole-request*
 	// cap (600s) so a long generation is not truncated; but if the upstream
 	// accepts the connection and then goes silent mid-stream, the request-level
-	// cap is far too long — the worker health watchdog (StaleAfterSec, default
+	// cap is far too long - the worker health watchdog (StaleAfterSec, default
 	// 180s) fires first and the sub-agent's work is lost. This per-event idle
 	// cap detects a wedged/hung stream quickly and surfaces an actionable error
 	// so the sub-agent loop can retry the turn. 0 → DefaultStreamIdleTimeoutSec.
 	StreamIdleTimeoutSec int `json:"streamIdleTimeoutSec,omitempty"`
+	// MaxRetries bounds how many times the provider-bridge re-sends a request
+	// when the upstream fails *before* the SSE stream starts - a connection
+	// error or a retryable status (408, 429, 5xx). Some gateways (e.g. the
+	// Vercel AI Gateway behind api.blackbox.ai routing Anthropic models) fail
+	// transiently with `500 Connection error` and no fallback; a single retry
+	// usually lands on a healthy node. This mirrors the OpenAI SDK's default
+	// retry behaviour that keeps the official CLI stable on the same endpoint.
+	// Retries only ever fire pre-stream, so emitted deltas are never
+	// duplicated. 0 → DefaultMaxRetries; negative disables retries.
+	MaxRetries int `json:"maxRetries,omitempty"`
 }
 
 // DefaultRequestTimeoutSec is the per-inference-request timeout when a provider
@@ -422,7 +432,34 @@ func (b LLMBridge) StreamIdleTimeout() time.Duration {
 	return idle
 }
 
-// LLMBridgeRoot is the top-level llmBridge config block — registry of
+// DefaultMaxRetries is the number of times the provider-bridge re-sends a
+// request after a transient pre-stream failure when an entry doesn't set one.
+// Matches the resilience of the official Blackbox CLI (OpenAI SDK maxRetries),
+// which keeps the same flaky-gateway-routed Anthropic models stable.
+const DefaultMaxRetries = 5
+
+// MaxRetriesCap is an upper bound on the resolved retry count so a misconfigured
+// value can't turn a hard upstream outage into a very long retry storm.
+const MaxRetriesCap = 10
+
+// ResolveMaxRetries returns the number of pre-stream retries for this provider.
+// 0 → DefaultMaxRetries; a negative value disables retries (0 returned); values
+// above MaxRetriesCap are clamped.
+func (b LLMBridge) ResolveMaxRetries() int {
+	n := b.MaxRetries
+	switch {
+	case n < 0:
+		return 0
+	case n == 0:
+		return DefaultMaxRetries
+	case n > MaxRetriesCap:
+		return MaxRetriesCap
+	default:
+		return n
+	}
+}
+
+// LLMBridgeRoot is the top-level llmBridge config block - registry of
 // available providers plus bridge-management metadata that applies across
 // all providers (coercion, fallback, community bridge).
 type LLMBridgeRoot struct {
@@ -489,7 +526,7 @@ func (r LLMBridgeRoot) Validate() error {
 }
 
 // ActiveProvider returns the provider entry selected by ProviderKey.
-// It does not perform Validate first — callers should Validate during
+// It does not perform Validate first - callers should Validate during
 // config load.
 func (r LLMBridgeRoot) ActiveProvider() (LLMBridge, error) {
 	for _, p := range r.Providers {

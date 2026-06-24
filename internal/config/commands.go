@@ -123,7 +123,11 @@ func (c CommandsConfig) SuggestWithProviders(query string, providers []LLMBridge
 	c = c.WithDefaults()
 	needle := "/" + strings.TrimPrefix(query, "/")
 	out := make([]CommandEntry, 0, len(c.Registry)+len(providers))
-	if strings.HasPrefix(needle, "/model ") {
+	// Argument suggestions kick in as soon as the command name is fully typed
+	// (e.g. "/model"), not only after a trailing space ("/model "). The needle
+	// after the command name - empty when there is no space yet - filters the
+	// candidates by prefix.
+	if needle == "/model" || strings.HasPrefix(needle, "/model ") {
 		providerNeedle := strings.TrimSpace(strings.TrimPrefix(needle, "/model"))
 		for _, provider := range providers {
 			if provider.Key == "" || !strings.HasPrefix(provider.Key, providerNeedle) {
@@ -141,7 +145,7 @@ func (c CommandsConfig) SuggestWithProviders(query string, providers []LLMBridge
 		}
 		return out
 	}
-	if strings.HasPrefix(needle, "/thinking ") {
+	if needle == "/thinking" || strings.HasPrefix(needle, "/thinking ") {
 		levelNeedle := strings.TrimSpace(strings.TrimPrefix(needle, "/thinking"))
 		for _, level := range ThinkingLevels {
 			if levelNeedle != "" && !strings.HasPrefix(level, levelNeedle) {

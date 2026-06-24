@@ -1,7 +1,7 @@
-# SapaLOQ — Feedback, Penalty & Behavioral Shaping
+# SapaLOQ - Feedback, Penalty & Behavioral Shaping
 
 > Apakah RL masuk akal? **Full RL on model weights: tidak (MVP).**
-> **RL-inspired feedback loop + positive/negative behavioral slices: ya — ini yang kita pakai.**
+> **RL-inspired feedback loop + positive/negative behavioral slices: ya - ini yang kita pakai.**
 > Last updated: 2026-06-19
 
 Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md)
@@ -14,7 +14,7 @@ Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.
 |----------|-------------|-----|
 | **PPO / RLHF fine-tune** model companion | ❌ MVP | Mahal, butuh infra training, data volume, drift |
 | **Reward signal + index update** | ✅ Core | Cepat, lokal, auditable, fits SQLite |
-| **Positive/negative prompt slices** | ✅ Core | Analog t2i negative prompt — **behavioral**, bukan weight |
+| **Positive/negative prompt slices** | ✅ Core | Analog t2i negative prompt - **behavioral**, bukan weight |
 | **Good/bad exemplars** (Codex-style) | ✅ Core | Proven di coding agents; cheap at inference |
 | **Contextual bandit** on prefetch rules | ✅ Later | Lightweight "RL" tanpa sentuh weights |
 | **Explicit user penalty** (👎, "salah") | ✅ Core | Ground truth preference |
@@ -26,7 +26,7 @@ t2i:  prompt + negative_prompt  →  steer diffusion
 SapaLOQ:  positive_slice + negative_slice + prefetched do_not_repeat  →  steer LLM behavior
 ```
 
-Bukan train ulang model — **conditioning** at prompt-time + **durable memory** of what user hates.
+Bukan train ulang model - **conditioning** at prompt-time + **durable memory** of what user hates.
 
 ---
 
@@ -34,7 +34,7 @@ Bukan train ulang model — **conditioning** at prompt-time + **durable memory**
 
 ```mermaid
 flowchart TB
-  subgraph inference [Inference-time — setiap turn]
+  subgraph inference [Inference-time - setiap turn]
     POS[positive_slice.md]
     NEG[negative_slice.md]
     DNR[do_not_repeat facts]
@@ -44,22 +44,22 @@ flowchart TB
     DNR --> DP
   end
 
-  subgraph post [Post-turn — feedback]
+  subgraph post [Post-turn - feedback]
     FB[user feedback signal]
     LQ[learning_queue]
     FB --> LQ
   end
 
-  subgraph tune [Periodic — memory-janitor]
+  subgraph tune [Periodic - memory-janitor]
     LQ --> IX[(SQLite facts + prefetch_rules)]
     PL[prefetch_log telemetry]
     PL --> IX
   end
 ```
 
-1. **Prompt-time shaping** — positive/negative exemplars + `do_not_repeat` (immediate)
-2. **Episode feedback** — user 👍/👎, "salah", correction → reward/penalty event
-3. **Rule tuning** — contextual bandit on prefetch_rules (slow, optional)
+1. **Prompt-time shaping** - positive/negative exemplars + `do_not_repeat` (immediate)
+2. **Episode feedback** - user 👍/👎, "salah", correction → reward/penalty event
+3. **Rule tuning** - contextual bandit on prefetch_rules (slow, optional)
 
 ---
 
@@ -91,7 +91,7 @@ Store in `feedback_events` table + mirror hot cases to `learning_queue`.
 
 ## Codex-style good/bad exemplars
 
-Codex tidak pakai RL — pakai **paired examples** in system prompt:
+Codex tidak pakai RL - pakai **paired examples** in system prompt:
 
 - **High-quality plans** vs **Low-quality plans**
 - **Good preambles** vs (implicit) verbose/wrong patterns
@@ -120,12 +120,12 @@ context-scaler loads slices by **intent + recent penalties**:
   "positiveSlices": ["delegate-fast", "mode-boundary"],
   "negativeSlices": ["no-deep-check"],
   "doNotRepeat": [
-    "2026-06-18: wrote to work-inbox while mode=personal — user corrected"
+    "2026-06-18: wrote to work-inbox while mode=personal - user corrected"
   ]
 }
 ```
 
-Max 1 positive + 1 negative exemplar block per turn (token budget) — like t2i keeping negative prompt short.
+Max 1 positive + 1 negative exemplar block per turn (token budget) - like t2i keeping negative prompt short.
 
 ### Example pair (companion /settings)
 
@@ -143,7 +143,7 @@ User: matiin read notification
 Orchestrator: "Let me search your config..." → reads 5 files → asks clarifying questions → still not patched
 ```
 
-Agent-created skills can append good/bad pairs when user corrects — same SOP as automation-learning `do_not_repeat`.
+Agent-created skills can append good/bad pairs when user corrects - same SOP as automation-learning `do_not_repeat`.
 
 ---
 
@@ -157,7 +157,7 @@ When user penalizes:
   "payload": {
     "namespace": "personal",
     "kind": "debug",
-    "do_not_repeat": "spawn task-runner for simple catat — use scribe",
+    "do_not_repeat": "spawn task-runner for simple catat - use scribe",
     "context": { "intent": "catat", "subAgent": "task-runner", "taskId": "task-019" },
     "reward": -1,
     "userQuote": "keknya kepanjangan, catat aja langsung"
@@ -180,13 +180,13 @@ memory-janitor:
 
 Full RL: update policy π(a|s). Kita **tidak** update LLM weights.
 
-**Contextual bandit** on discrete actions — cukup untuk SapaLOQ:
+**Contextual bandit** on discrete actions - cukup untuk SapaLOQ:
 
 - **State:** intent, mode, confidence, time of day
 - **Actions:** which sub-agent, which prefetch_rule, which skill pair
 - **Reward:** user feedback + task success + latency penalty
 
-Algorithm: **ε-greedy** or ** Thompson sampling** on `prefetch_rules.success_rate` — simple, no GPU.
+Algorithm: **ε-greedy** or ** Thompson sampling** on `prefetch_rules.success_rate` - simple, no GPU.
 
 ```sql
 -- Already in prefetch_rules
@@ -203,7 +203,7 @@ This is "RL-flavored" without training infrastructure.
 | Don't | Why |
 |-------|-----|
 | Fine-tune local LLM on every 👎 | Overfit, forget, expensive |
-| Huge negative prompt dump | Context bloat — same failure as skill dump |
+| Huge negative prompt dump | Context bloat - same failure as skill dump |
 | Silent penalty without user confirm on harsh -1 | False positives poison index |
 | Penalize orchestrator for user task switch | Wrong attribution |
 | Store raw angry transcript as fact | Noise; extract structured `do_not_repeat` only |
@@ -214,12 +214,12 @@ This is "RL-flavored" without training infrastructure.
 
 See `config.feedback` in [config.schema.json](../schema/config.schema.json):
 
-- `explicitSignalsEnabled` — 👍/👎 in widget
-- `implicitSignalsEnabled` — telemetry rewards
-- `maxNegativeSlicesPerTurn` — default 1
-- `maxPositiveSlicesPerTurn` — default 1
-- `banditTunePrefetch` — contextual bandit on/off
-- `penaltyRequiresStructuredExtract` — janitor must parse fix, not raw rant
+- `explicitSignalsEnabled` - 👍/👎 in widget
+- `implicitSignalsEnabled` - telemetry rewards
+- `maxNegativeSlicesPerTurn` - default 1
+- `maxPositiveSlicesPerTurn` - default 1
+- `banditTunePrefetch` - contextual bandit on/off
+- `penaltyRequiresStructuredExtract` - janitor must parse fix, not raw rant
 
 ---
 
@@ -259,6 +259,6 @@ See `config.feedback` in [config.schema.json](../schema/config.schema.json):
 
 ## Referensi
 
-- Codex `default.md` — high-quality vs low-quality paired examples (plans, preambles)
-- automation-learning — `do_not_repeat`, `obsolete`, promotion SOP
-- CONTEXT-SOP — prefetch_log, learning_queue (already the substrate)
+- Codex `default.md` - high-quality vs low-quality paired examples (plans, preambles)
+- automation-learning - `do_not_repeat`, `obsolete`, promotion SOP
+- CONTEXT-SOP - prefetch_log, learning_queue (already the substrate)

@@ -1,6 +1,6 @@
 /* Bundled color emoji font (Twemoji SVGinOT → woff2). Self-hosted so emoji
-   (✅ ❌ ✓ ✗ and everything else) render identically on every host — including
-   Linux/WebKitGTK boxes with no system emoji font installed — the same way
+   (✅ ❌ ✓ ✗ and everything else) render identically on every host - including
+   Linux/WebKitGTK boxes with no system emoji font installed - the same way
    Firefox/WhatsApp ship their own emoji set instead of relying on the OS.
    Vite fingerprints + emits this into dist/assets, which the widget binary
    embeds via //go:embed all:frontend/dist. License: MIT + CC-BY-4.0 (Twemoji),
@@ -663,7 +663,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   animation: stream-caret 0.9s steps(2, start) infinite;
 }
 /* Reasoning bubble: a compact "••• thinking" pill that expands into a soft
-   card showing the full reasoning. Never hidden — only toggled. */
+   card showing the full reasoning. Never hidden - only toggled. */
 .message--thinking {
   width: max-content;
   max-width: 100%;
@@ -707,7 +707,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 /* While streaming the dots pulse; once flushed they rest. */
 .message--thinking:not(.message--streaming) .status-pulse i { animation-play-state: paused; opacity: 0.5; }
 
-/* Finished reasoning: clearly distinct from a live "thinking" bubble — the
+/* Finished reasoning: clearly distinct from a live "thinking" bubble - the
    pulsing dots are replaced by a steady ✓, and the pill takes a calm green
    tint so a settled "thought" never looks like it is still thinking. */
 .message--thinking.is-done .thinking-toggle {
@@ -1094,7 +1094,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 }
 .attach-btn:active,
 .send-btn:active { transform: scale(0.92); }
-/* Flat ghost: just an icon, no box — keeps the pill clean like ChatGPT's "+". */
+/* Flat ghost: just an icon, no box - keeps the pill clean like ChatGPT's "+". */
 .attach-btn {
   width: 34px;
   height: 34px;
@@ -1103,7 +1103,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   background: transparent;
 }
 .attach-btn:hover { color: var(--ink); background: oklch(100% 0 0 / 0.08); }
-/* Flat solid circle, no gradient, no glow — calm and cohesive inside the pill. */
+/* Flat solid circle, no gradient, no glow - calm and cohesive inside the pill. */
 .send-btn {
   width: 34px;
   height: 34px;
@@ -1143,7 +1143,10 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
 }
+.slash-popover:empty { display: none; }
 .slash-item {
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -1155,6 +1158,11 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   cursor: pointer;
 }
 .slash-item:hover { border-color: oklch(100% 0 0 / 0.36); background: oklch(23% 0.009 255 / 0.99); }
+.slash-item.is-active {
+  border-color: var(--accent, oklch(72% 0.17 255));
+  background: oklch(26% 0.02 255 / 0.99);
+  box-shadow: 0 0 0 1px var(--accent, oklch(72% 0.17 255 / 0.6)), 0 14px 28px oklch(0% 0 0 / 0.34);
+}
 .slash-item strong { display: block; font-size: 0.78rem; }
 .slash-item span { display: block; margin-top: 2px; color: var(--muted); font-size: 0.7rem; }
 

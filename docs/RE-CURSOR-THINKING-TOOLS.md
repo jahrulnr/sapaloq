@@ -1,6 +1,6 @@
-# SapaLOQ — RE: Cursor Thinking & Tools (L0 Ground Truth)
+# SapaLOQ - RE: Cursor Thinking & Tools (L0 Ground Truth)
 
-> Reverse-engineering notes dari **sumber langsung** — bukan dari 9router.
+> Reverse-engineering notes dari **sumber langsung** - bukan dari 9router.
 > 9router **skip/collapse** thinking Cursor; jangan jadi referensi behavior thinking.
 > Last updated: 2026-06-19
 
@@ -18,7 +18,7 @@ Artefak workspace: `cursor-agent-toolcall-spec.json` · `cursor-agent-toolcall-i
 | **L0** | `cursor-agent` CLI bundle (`agent.v1.*` protobuf) | ToolCall 49 variants, thinking message fields |
 | **L0.5** | `cursor-bridge.schema.json` | kimiTokens, leakMarkers, coercion, probe test matrix |
 | **L0.5** | `natural-probes-report.json`, `layered-regression-report.json` | Live probe snapshots |
-| **❌ Bukan truth** | 9router `open-sse/executors/cursor.js` | Transport adapter — **membuang** pre-tag thinking, tidak emit `reasoning_content` |
+| **❌ Bukan truth** | 9router `open-sse/executors/cursor.js` | Transport adapter - **membuang** pre-tag thinking, tidak emit `reasoning_content` |
 
 Regenerate / audit:
 
@@ -39,14 +39,14 @@ Per frame, `extractTextFromResponse` mengembalikan **salah satu**:
 
 | Frame kind | Protobuf | Output |
 |------------|----------|--------|
-| Tool call | Field `TOOL_CALL` (1) → `ClientSideToolV2Call` | `{ toolCall }` — no text/thinking |
+| Tool call | Field `TOOL_CALL` (1) → `ClientSideToolV2Call` | `{ toolCall }` - no text/thinking |
 | Chat delta | Field `RESPONSE` (2) → nested | `{ text?, thinking? }` |
 
 Nested response:
 
 | Subfield | Field # | Isi |
 |----------|---------|-----|
-| `RESPONSE_TEXT` | — | Visible assistant text |
+| `RESPONSE_TEXT` | - | Visible assistant text |
 | `THINKING` | 25 | Nested message |
 | `THINKING_TEXT` | 1 (dalam THINKING) | Reasoning blob (string) |
 
@@ -56,16 +56,16 @@ Request side: `THINKING_LEVEL` (field 49) maps dari `reasoning_effort` (`medium`
 
 ---
 
-## Thinking — struktur blob
+## Thinking - struktur blob
 
 ### Segmen dalam `THINKING_TEXT`
 
 Live probes (`natural-probes-report.json`, model `default` / Auto) menunjukkan pola:
 
 ```text
-[pre-tag — internal monologue, often English]
+[pre-tag - internal monologue, often English]
 </think>
-[post-tag — visible reply ke user, bisa ID/EN]
+[post-tag - visible reply ke user, bisa ID/EN]
 <｜tool▁calls▁begin｜> ... <｜tool▁calls▁end｜>   ← optional, Kimi inline tools
 ```
 
@@ -89,7 +89,7 @@ Dari bundle `~/.local/share/cursor-agent/versions/*/`:
 | Proto `Thinking` message: `redacted_thinking`, `is_last_thinking_chunk` | Streaming chunks; redacted vs visible split |
 | `--show-thinking` | Hanya dengan `--output-format json` |
 | Hook `afterAgentThought` | Thinking text terpisah dari response |
-| UI `thinkingContent`, `showThinkingBlocks` | Channel sendiri di product — **bukan** collapse ke content |
+| UI `thinkingContent`, `showThinkingBlocks` | Channel sendiri di product - **bukan** collapse ke content |
 
 CLI **tidak** memakai pola "ambil hanya post-`</think>` lalu buang sisanya" seperti adapter proxy.
 
@@ -97,9 +97,9 @@ CLI **tidak** memakai pola "ambil hanya post-`</think>` lalu buang sisanya" sepe
 
 ```go
 type CursorThinkingParts struct {
-    PreRedacted   string // internal — default: widget ring only, jangan index memory
+    PreRedacted   string // internal - default: widget ring only, jangan index memory
     PostRedacted  string // visible assistant prefix
-    KimiToolTail  string // inline tool section — delegate ke tools/kimi parser
+    KimiToolTail  string // inline tool section - delegate ke tools/kimi parser
 }
 
 func ParseCursorThinking(raw string) CursorThinkingParts
@@ -113,13 +113,13 @@ func ParseCursorThinking(raw string) CursorThinkingParts
 
 ---
 
-## Tools — tiga jalur (Cursor api2)
+## Tools - tiga jalur (Cursor api2)
 
 ### 1. Protobuf `ClientSideToolV2Call` (structured)
 
 - Frame field `TOOL_CALL` (1)
 - Fields: `toolCallId`, `toolName`, `rawArgs`, `isLast`, optional MCP nested params
-- Native di IDE/CLI agent loop — client-side execution, result dikirim balik ke cloud
+- Native di IDE/CLI agent loop - client-side execution, result dikirim balik ke cloud
 - Referensi variant map: `cursor-agent-toolcall-spec.json` (49 oneof `agent.v1.ToolCall`)
 
 ### 2. Kimi inline tokens (sering di Auto)
@@ -145,9 +145,9 @@ Args format:
 
 **Auto/default:** `toolCallsCount: 0` di protobuf + Kimi inline di text = **normal**, bukan parse failure.
 
-### 3. Tool names in thinking (informational — not vaulted)
+### 3. Tool names in thinking (informational - not vaulted)
 
-Model often mentions native tool names (`grep`, `read_file`, …) in **thinking** (pre-tag). That is **normal** — SapaLOQ streams thinking as-is and does **not** filter prose.
+Model often mentions native tool names (`grep`, `read_file`, …) in **thinking** (pre-tag). That is **normal** - SapaLOQ streams thinking as-is and does **not** filter prose.
 
 Structured tool calls are separate:
 
@@ -156,15 +156,15 @@ Structured tool calls are separate:
 
 Calls outside `llmBridge.declaredTools` → **`vault/tool-calls.jsonl`** for review (alias fixes, surface expansion). See [BRIDGE.md](./BRIDGE.md#vault-undeclared-tool-calls).
 
-Schema `leakMarkers` in cursor-bridge monorepo remain reference material for upstream audits — **SapaLOQ runtime does not use them as filters**.
+Schema `leakMarkers` in cursor-bridge monorepo remain reference material for upstream audits - **SapaLOQ runtime does not use them as filters**.
 
 ---
 
-## Model `default` / Auto — behavior khusus
+## Model `default` / Auto - behavior khusus
 
 | Aspek | Behavior |
 |-------|----------|
-| Upstream model id | `"default"` (server picks backend — often Kimi-class) |
+| Upstream model id | `"default"` (server picks backend - often Kimi-class) |
 | Protobuf tools | Often absent (`toolCallsCount: 0`) |
 | Inline Kimi tools | Common after visible reply segment |
 | Thinking-heavy | Long pre-tag, short or zero `RESPONSE_TEXT` |
@@ -191,7 +191,7 @@ Schema: `cursor-bridge.schema.json` → `clients.cursorAgent.tools` + `bundledMc
 
 ## Anti-pattern: jangan tiru 9router untuk thinking
 
-9router `CursorExecutor` (transport layer — **bukan** Cursor spec):
+9router `CursorExecutor` (transport layer - **bukan** Cursor spec):
 
 | Behavior 9router | Masalah |
 |------------------|---------|
@@ -212,7 +212,7 @@ Schema: `cursor-bridge.schema.json` → `clients.cursorAgent.tools` + `bundledMc
 3. Parse Kimi inline dari **gabungan** thinking+content setelah segment split
 4. Vault structured calls outside `declaredTools`; do **not** filter thinking prose for tool names
 
-9router boleh tetap referensi untuk **Kimi arg normalization** (`normalizeCursorToolCallArguments`) — bukan thinking lifecycle.
+9router boleh tetap referensi untuk **Kimi arg normalization** (`normalizeCursorToolCallArguments`) - bukan thinking lifecycle.
 
 ---
 
@@ -277,10 +277,10 @@ Vectors live: `cursor-bridge/schema/test-vectors/` + probe reports in monorepo.
 
 | Idea | Why |
 |------|-----|
-| Derive thinking behavior from 9router | Skips channel — documented above |
+| Derive thinking behavior from 9router | Skips channel - documented above |
 | Treat `content` only for tool leak audit | Structured calls + vault; thinking prose is fine |
 | Assume Auto emits OpenAI `tool_calls[]` | Kimi inline is normal |
-| Store pre-tag thinking in companion memory | Privacy + poisoning — ring/stream only unless user opts in |
+| Store pre-tag thinking in companion memory | Privacy + poisoning - ring/stream only unless user opts in |
 
 ---
 

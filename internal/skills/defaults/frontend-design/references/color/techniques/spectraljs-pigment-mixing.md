@@ -1,13 +1,13 @@
-# Spectral.js — Realistic Pigment Color Mixing
+# Spectral.js - Realistic Pigment Color Mixing
 
-**Source:** [GitHub — rvanwijnen/spectral.js](https://github.com/rvanwijnen/spectral.js)
+**Source:** [GitHub - rvanwijnen/spectral.js](https://github.com/rvanwijnen/spectral.js)
 **Author:** Ronald van Wijnen
 **License:** MIT
 **Demo:** https://spectraljs.com/
 
 ## What It Does
 
-Lightweight JavaScript library for **realistic color mixing based on Kubelka-Munk theory**. Unlike RGB blending (which darkens mid-gradients), it simulates how actual pigments interact with light — producing colors that behave like real paint mixing.
+Lightweight JavaScript library for **realistic color mixing based on Kubelka-Munk theory**. Unlike RGB blending (which darkens mid-gradients), it simulates how actual pigments interact with light - producing colors that behave like real paint mixing.
 
 ## How It Works (Pipeline)
 
@@ -50,11 +50,11 @@ blue.tintingStrength = 0.35; // reduce blue's dominance in mixes
 
 ## Key Features
 
-- **Kubelka-Munk spectral mixing** — physically-based, not RGB averaging
-- **Tinting strength control** — model dominant vs weak pigments
-- **GLSL shader support** — GPU-accelerated mixing (2–4 colors)
+- **Kubelka-Munk spectral mixing** - physically-based, not RGB averaging
+- **Tinting strength control** - model dominant vs weak pigments
+- **GLSL shader support** - GPU-accelerated mixing (2–4 colors)
 - **Multiple color spaces:** sRGB, linear RGB, XYZ, OKLab, OKLCh
-- **Smart gamut mapping** — OKLCh chroma reduction for out-of-gamut colors
+- **Smart gamut mapping** - OKLCh chroma reduction for out-of-gamut colors
 - **deltaE** calculations for perceptual color comparison
 - **Lazy memoization** for performance
 - **64-bit floating point** precision
@@ -67,9 +67,9 @@ blue.tintingStrength = 0.35; // reduce blue's dominance in mixes
 
 ## Related Projects
 
-- **Mixbox** — commercial spectral mixing library (closed source); Spectral.js is the open-source alternative
-- **FocalPaint** — iPad app using similar Kubelka-Munk approach
-- **Hello, Mixbox** — interactive K-M visualization in OKLAB
+- **Mixbox** - commercial spectral mixing library (closed source); Spectral.js is the open-source alternative
+- **FocalPaint** - iPad app using similar Kubelka-Munk approach
+- **Hello, Mixbox** - interactive K-M visualization in OKLAB
 
 ## Technical References
 

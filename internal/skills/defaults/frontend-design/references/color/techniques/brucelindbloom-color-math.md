@@ -1,4 +1,4 @@
-# Bruce Lindbloom — Color Science Math & Calculators
+# Bruce Lindbloom - Color Science Math & Calculators
 
 **Source:** http://www.brucelindbloom.com/
 **Author:** Bruce Lindbloom
@@ -38,19 +38,19 @@ All the math for converting between color spaces:
 ### Key Technical Details
 
 - **sRGB = D65**, ICC profiles = D50 → chromatic adaptation needed between them
-- **Bradford method** — considered best chromatic adaptation; used in Adobe Photoshop
-- **Linear RGB required** — all matrix math requires linearized (gamma-decoded) RGB, not sRGB
-- **CIE L\* continuity study** — analysis of the L\* function's mathematical properties
+- **Bradford method** - considered best chromatic adaptation; used in Adobe Photoshop
+- **Linear RGB required** - all matrix math requires linearized (gamma-decoded) RGB, not sRGB
+- **CIE L\* continuity study** - analysis of the L\* function's mathematical properties
 
-## Lab Gamut Display — How It Works
+## Lab Gamut Display - How It Works
 
-The Lab gamut = ALL physically possible surface colors (non-fluorescing materials, D50 illuminant). Not just sRGB — every color any material could ever produce.
+The Lab gamut = ALL physically possible surface colors (non-fluorescing materials, D50 illuminant). Not just sRGB - every color any material could ever produce.
 
 **Construction:** For every possible spectral reflectance (0–1 at each wavelength) → integrate with CIE 2° observer → XYZ → Lab → plot. The boundary of all points = the gamut.
 
 **Square pulse method** for finding surface colors: sweep binary pulses of increasing width through the spectrum (1,480 samples at 0.25nm), with wrap-around. Join resulting Lab points into triangle mesh.
 
-**Key insight — integer Lab encoding wastes ~2/3 of space:** TIFF/ICC/Photoshop use a*,b* range [-128,127]. Some real colors are excluded (lobes bulge outside), while most encodable values can never physically occur.
+**Key insight - integer Lab encoding wastes ~2/3 of space:** TIFF/ICC/Photoshop use a*,b* range [-128,127]. Some real colors are excluded (lobes bulge outside), while most encodable values can never physically occur.
 
 **What the shape reveals:** yellow extends FAR further in chroma than blue; gamut is wildly asymmetric; maximum chroma varies dramatically with lightness+hue. This is why gamut mapping is necessary.
 
@@ -58,7 +58,7 @@ The Lab gamut = ALL physically possible surface colors (non-fluorescing material
 
 - **The math reference** when implementing color conversions from scratch
 - **Chromatic adaptation** is critical when converting between D50 (print) and D65 (screen) workflows
-- **RGB/XYZ matrices** are the foundation — every color library uses these
+- **RGB/XYZ matrices** are the foundation - every color library uses these
 - The Lab gamut visualization shows why gamut mapping is necessary (not all perceptually valid colors are displayable)
 
 ## Links

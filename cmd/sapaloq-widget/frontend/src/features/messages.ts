@@ -122,7 +122,7 @@ export function clearMessages() {
   resetMessageSeq();
   setUserGroup(0);
   // The DOM is wiped (e.g. history restore renders completions from persisted
-  // turns instead), so the live spoken-completion dedupe set must reset too —
+  // turns instead), so the live spoken-completion dedupe set must reset too -
   // otherwise a task spoken before the clear would be suppressed if it legitly
   // re-arrives live afterwards.
   spokenTaskIDs.clear();

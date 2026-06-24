@@ -1,4 +1,4 @@
-# SapaLOQ — Development Blueprint (Proposal)
+# SapaLOQ - Development Blueprint (Proposal)
 
 > **Unified synthesis** of all SapaLOQ architecture docs. Single book for implementers, reviewers, and future contributors.
 > Last updated: 2026-06-22 (runtime telemetry UI, config/data split, persistent workspace) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
@@ -11,19 +11,19 @@
 | Field                    | Value                                                 |
 | ------------------------ | ----------------------------------------------------- |
 | **Version**              | 0.1.0-proposal                                        |
-| **Status**               | M0 — docs complete, code not started                  |
+| **Status**               | M0 - docs complete, code not started                  |
 | **Audience**             | Core implementers, product owner, future contributors |
 | **Language**             | Indonesian / English mix (matches source docs)        |
 | **Authoritative config** | [config.schema.json](../schema/config.schema.json)    |
-| **This file**            | Synthesis only — modular docs remain source of detail |
+| **This file**            | Synthesis only - modular docs remain source of detail |
 
 
 ### How to read this document
 
-1. **Executives / new readers** — Part I (summary) + Part XVII (limitations) + Part XVIII (roadmap).
-2. **Implementers** — Part IV (architecture) → Part V–XIII (subsystems) → Part XIX (Go layout) → Part XX (testing).
-3. **Integrators (LLM / platform)** — Part X (platform) + Part XI (bridge) + Appendix A (events).
-4. **Ops / packaging** — Part XIII (runtime) + Part XV (filesystem) + systemd section in Part XIII.
+1. **Executives / new readers** - Part I (summary) + Part XVII (limitations) + Part XVIII (roadmap).
+2. **Implementers** - Part IV (architecture) → Part V–XIII (subsystems) → Part XIX (Go layout) → Part XX (testing).
+3. **Integrators (LLM / platform)** - Part X (platform) + Part XI (bridge) + Appendix A (events).
+4. **Ops / packaging** - Part XIII (runtime) + Part XV (filesystem) + systemd section in Part XIII.
 
 When this blueprint and a modular doc disagree, **modular doc wins** until explicitly revised here.
 
@@ -50,24 +50,24 @@ When this blueprint and a modular doc disagree, **modular doc wins** until expli
 
 ---
 
-## Part I — Executive Summary
+## Part I - Executive Summary
 
 ### Elevator pitch
 
-> **SapaLOQ** — portable desktop companion (HUD + memory + platform adapter), GNOME first — dengan handoff opsional ke coding agent. Satu binary Go, SQLite + jsonl, zero Redis. Widget agent = orchestrator saja; pekerjaan berat ke sub-agent.
+> **SapaLOQ** - portable desktop companion (HUD + memory + platform adapter), GNOME first - dengan handoff opsional ke coding agent. Satu binary Go, SQLite + jsonl, zero Redis. Widget agent = orchestrator saja; pekerjaan berat ke sub-agent.
 
-User merasakan *presence* agent di desktop (ring animasi, thinking, tool feedback) tanpa membuka IDE — sambil tetap bisa **handoff** ke worker (`cursor-agent`, GoClaw) kalau butuh coding berat.
+User merasakan *presence* agent di desktop (ring animasi, thinking, tool feedback) tanpa membuka IDE - sambil tetap bisa **handoff** ke worker (`cursor-agent`, GoClaw) kalau butuh coding berat.
 
 ### Problem
 
 
 | Pain                         | Detail                                                                                                        |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Agent coding ≠ companion** | `cursor-agent` / IDE optimized untuk repo tasks — terlalu berat untuk "catat ini", remind, desktop automation |
+| **Agent coding ≠ companion** | `cursor-agent` / IDE optimized untuk repo tasks - terlalu berat untuk "catat ini", remind, desktop automation |
 | **Memory campur**            | Shared transcript dengan coding agent → context poisoning, mode leak (personal vs work)                       |
 | **Compaction failures**      | Agent lupa skills, deep-check repo, over-read files saat context penuh                                        |
 | **No ambient presence**      | User harus buka terminal/IDE untuk "agent feel"                                                               |
-| **Settings UI overhead**     | Companion config berubah sering — agent-editable JSON lebih natural                                           |
+| **Settings UI overhead**     | Companion config berubah sering - agent-editable JSON lebih natural                                           |
 
 
 ### Solution
@@ -89,16 +89,16 @@ Core runtime: **orchestrator-only widget** → spawn sub-agents dengan context p
 
 ### Key differentiators
 
-1. **Isolasi penuh** dari agent-cli — bukan wrapper, bukan shared session.
-2. **Orchestrator + sub-agent** — widget koordinasi; workers agresif & parallel.
-3. **Context SOP** — index-first prefetch, dynamic system-prompt, anti-deep-check.
-4. **Config-by-agent** — `/settings ...` → sub-agent patch `config.json`; **no settings UI**.
-5. **Single binary** — goroutine + in-proc bus + SQLite; no Redis/Rabbit/MQTT.
-6. **Platform abstraction** — GNOME first adapter; portable `desktop_`* tools.
-7. **LLM bridge layer** — built-in parsers (tools/thinking); cursor-bridge coercion; **NOT** 9router dep.
-8. **Remote nodes** — sub-agent on VPS/Docker; **no shared memory** to outer machines.
-9. **RL-inspired feedback** — positive/negative slices + bandit on prefetch — **not** weight training.
-10. **Honest limitations** — documented hard limits; no fake "always aware" marketing.
+1. **Isolasi penuh** dari agent-cli - bukan wrapper, bukan shared session.
+2. **Orchestrator + sub-agent** - widget koordinasi; workers agresif & parallel.
+3. **Context SOP** - index-first prefetch, dynamic system-prompt, anti-deep-check.
+4. **Config-by-agent** - `/settings ...` → sub-agent patch `config.json`; **no settings UI**.
+5. **Single binary** - goroutine + in-proc bus + SQLite; no Redis/Rabbit/MQTT.
+6. **Platform abstraction** - GNOME first adapter; portable `desktop_`* tools.
+7. **LLM bridge layer** - built-in parsers (tools/thinking); cursor-bridge coercion; **NOT** 9router dep.
+8. **Remote nodes** - sub-agent on VPS/Docker; **no shared memory** to outer machines.
+9. **RL-inspired feedback** - positive/negative slices + bandit on prefetch - **not** weight training.
+10. **Honest limitations** - documented hard limits; no fake "always aware" marketing.
 
 ### What we're NOT building
 
@@ -117,7 +117,7 @@ See [LIMITATIONS.md](./LIMITATIONS.md) for hard limits with no engineering solut
 
 ---
 
-## Part II — Product Vision & UX
+## Part II - Product Vision & UX
 
 ### Floating HUD widget
 
@@ -139,9 +139,9 @@ Referensi visual: floating orb/FAB pojok layar (squircle, neon blue), expandable
 
 - Chat companion (bukan agent transcript).
 - Mode companion (bukan clone `--mode` cursor-agent 1:1):
-  - **Chat** — ngobrol + desktop automation.
-  - **Automate** — fokus `desktop_`* actions.
-  - **Handoff** — siapkan packet ke worker agent, buka terpisah.
+  - **Chat** - ngobrol + desktop automation.
+  - **Automate** - fokus `desktop_`* actions.
+  - **Handoff** - siapkan packet ke worker agent, buka terpisah.
 
 ### Ring states (animator)
 
@@ -163,7 +163,7 @@ Config: `widget.ringAnimations`, `widget.mirrorSubAgentActivity`.
 
 ```mermaid
 flowchart LR
-  subgraph sapaloq [SapaLOQ — same machine]
+  subgraph sapaloq [SapaLOQ - same machine]
     W[Widget HUD]
     O[Orchestrator Ask]
     SA[Sub-agents]
@@ -171,7 +171,7 @@ flowchart LR
     W --> O --> SA --> DB
   end
 
-  subgraph worker [Worker — explicit only]
+  subgraph worker [Worker - explicit only]
     CA[cursor-agent / GoClaw]
     CM[~/.cursor memory]
   end
@@ -198,7 +198,7 @@ User flow:
 2. User taps **Handoff** atau says "buka di agent".
 3. SapaLOQ writes `bridge/handoff/<uuid>.json` (consumeOnce).
 4. Worker dibuka terpisah (terminal `agent`, IDE, GoClaw).
-5. Widget optional **mirror-worker** ring state — **no** transcript ingest.
+5. Widget optional **mirror-worker** ring state - **no** transcript ingest.
 
 ### Config-by-agent (no settings UI)
 
@@ -223,14 +223,14 @@ Semua preference mutasi via chat + `/settings` sub-agent. Schema validation agai
 | work     | `~/Documents/sapaloq/work`     | `work`          |
 
 
-Default `orchestrator.defaultMode: auto` — infer from active app, time, user hint.
-`allowCrossModeRead: false` — boundary-guard blocks cross-mode leaks unless user confirms.
+Default `orchestrator.defaultMode: auto` - infer from active app, time, user hint.
+`allowCrossModeRead: false` - boundary-guard blocks cross-mode leaks unless user confirms.
 
 ---
 
-## Part III — Architecture Principles
+## Part III - Architecture Principles
 
-Fifteen numbered principles dengan rationale — anchor untuk semua design decisions.
+Fifteen numbered principles dengan rationale - anchor untuk semua design decisions.
 
 
 | #   | Principle                           | Rationale                                                          |
@@ -246,9 +246,9 @@ Fifteen numbered principles dengan rationale — anchor untuk semua design decis
 | 9   | **Platform adapter swap**           | Core never imports GNOME types; `desktop_`* uniform tools          |
 | 10  | **Two driver families**             | Platform (`os.json`) ≠ LLM bridge (`llmBridge.driver`)             |
 | 11  | **Per-provider parsers**            | Tool/thinking formats differ; wrong parser = silent tool loss      |
-| 12  | **Local shared memory only**        | Remote nodes get context packet in, progress out — no live DB sync |
+| 12  | **Local shared memory only**        | Remote nodes get context packet in, progress out - no live DB sync |
 | 13  | **In-proc event bus**               | Wake <5ms; jsonl WAL for audit; no Redis                           |
-| 14  | **RL-inspired not weight training** | Prompt slices + SQLite facts + bandit — auditable, local           |
+| 14  | **RL-inspired not weight training** | Prompt slices + SQLite facts + bandit - auditable, local           |
 | 15  | **Honest UX contract**              | Document hard limits; proactive only while running                 |
 | 16  | **Actor loops never execute tools** | Tool syscalls live in scheduler workers; actors consume lifecycle events |
 
@@ -265,19 +265,19 @@ Fifteen numbered principles dengan rationale — anchor untuk semua design decis
   `cd`. Runtime paths are injected as system variables and materialized in
   `~/SapaLOQ/etc/ROADMAP.md`.
 - Thinking pre-tag → widget ring only; **strip** from companion memory by default.
-- 9router = transport **pattern reference** only — built-in compat bridges, not third-party dep.
+- 9router = transport **pattern reference** only - built-in compat bridges, not third-party dep.
 
 ---
 
-## Part IV — System Architecture
+## Part IV - System Architecture
 
 ### Single binary diagram
 
 ```mermaid
 flowchart TB
-  subgraph core [sapaloq-core — one Go binary]
+  subgraph core [sapaloq-core - one Go binary]
     UI[Widget IPC / Wails]
-    ORCH[Orchestrator loop — Ask mode]
+    ORCH[Orchestrator loop - Ask mode]
     BUS[Event bus internal/bus]
     WAL[jsonl WAL goroutine]
     SQL[(SQLite companion.db)]
@@ -356,7 +356,7 @@ sequenceDiagram
     O->>P: spawn read-only
     P->>P: explore, draft plan.md
     P->>BUS: subagent.completed
-    O->>U: plan summary — confirm?
+    O->>U: plan summary - confirm?
     U->>O: approve
     O->>CS: agent context packet + planPath
     O->>A: spawn toolPolicy full
@@ -380,17 +380,17 @@ sequenceDiagram
 
 ---
 
-## Part V — Orchestrator & Execution Modes
+## Part V - Orchestrator & Execution Modes
 
 ### Ask = orchestrator, Plan = planner, Agent = task-runner
 
-Analog Cursor IDE: **Ask**, **Plan**, **Agent** — di SapaLOQ = orchestrator + sub-agent roles, bukan clone wire `UNIFIED_MODE` api2.
+Analog Cursor IDE: **Ask**, **Plan**, **Agent** - di SapaLOQ = orchestrator + sub-agent roles, bukan clone wire `UNIFIED_MODE` api2.
 
 
 | Cursor mode | SapaLOQ role                | Tool policy                                                         | Job                                 |
 | ----------- | --------------------------- | ------------------------------------------------------------------- | ----------------------------------- |
 | **Ask**     | **Orchestrator** (widget)   | Companion only: `spawn`, `desktop_*`, read progress/memory, clarify | Route, score spawn path, delegate   |
-| **Plan**    | Sub-agent `**planner`**     | **Read-only** — explore, draft plan, no mutating side effects       | Produce Markdown `plan.md` artifact |
+| **Plan**    | Sub-agent `**planner`**     | **Read-only** - explore, draft plan, no mutating side effects       | Produce Markdown `plan.md` artifact |
 | **Agent**   | Sub-agent `**task-runner`** | **Full access (default)**                                           | Execute plan or explicit user steps |
 
 
@@ -401,14 +401,14 @@ Config lock: `orchestrator.spawnRouting.agentToolPolicy: "full"` (only enum valu
 ### Orchestrator responsibilities (MUST)
 
 - Parse user intent; classify mode.
-- Run **context ingress** — intent-router → index prefetch → dynamic prompt.
+- Run **context ingress** - intent-router → index prefetch → dynamic prompt.
 - Maintain **task stack** (active, parked, done).
 - Spawn sub-agents with `**systemPrompt` per role** + **context packet**.
 - Update widget ring state.
-- **Subscribe progress stream** — mirror ke widget.
-- **React to event bus** — notifications, reminders, completion.
+- **Subscribe progress stream** - mirror ke widget.
+- **React to event bus** - notifications, reminders, completion.
 - **Never block** on sub-agent completion.
-- **Control lifecycle** — delay_start, pause, resume, stop, delete.
+- **Control lifecycle** - delay_start, pause, resume, stop, delete.
 
 ### Orchestrator MUST NOT
 
@@ -470,8 +470,8 @@ Intent-router output example:
 
 Config thresholds:
 
-- `orchestrator.spawnRouting.planScoreThreshold` — default **0.55**
-- `orchestrator.spawnRouting.directAgentScoreThreshold` — default **0.7**
+- `orchestrator.spawnRouting.planScoreThreshold` - default **0.55**
+- `orchestrator.spawnRouting.directAgentScoreThreshold` - default **0.7**
 
 ### Plan artifact
 
@@ -516,10 +516,10 @@ Refactor config schema validation without touching Cursor worker memory.
 | Policy                                 | When                                                    |
 | -------------------------------------- | ------------------------------------------------------- |
 | `autoApprovePlan: false` (**default**) | Orchestrator surfaces plan → user confirm → spawn agent |
-| `autoApprovePlan: true`                | Low-risk patterns only (configurable allowlist — TBD)   |
+| `autoApprovePlan: true`                | Low-risk patterns only (configurable allowlist - TBD)   |
 
 
-Planner **never** spawns agent — orchestrator only. The runtime binds a plan
+Planner **never** spawns agent - orchestrator only. The runtime binds a plan
 through an explicit validated `plan_task_id`; it never guesses from the latest
 planner directory in the session.
 
@@ -553,23 +553,23 @@ MVP exposes no other user-facing slash command. Mode, task control, scribe/note-
 
 ---
 
-## Part VI — Sub-agent Ecosystem
+## Part VI - Sub-agent Ecosystem
 
 ### All roles table
 
 
 | Role               | Trigger                      | Tool policy          | Primary job                                        |
 | ------------------ | ---------------------------- | -------------------- | -------------------------------------------------- |
-| **orchestrator**   | Every user turn              | `companion`          | **Ask mode** — route, spawn score, delegate, watch |
+| **orchestrator**   | Every user turn              | `companion`          | **Ask mode** - route, spawn score, delegate, watch |
 | **settings**       | `/settings ...`              | Config R/W only      | Patch `config.json`                                |
 | **scribe**         | "catat ini", notes           | Append tools         | Write `storage.paths` by mode/intent               |
-| **planner**        | `spawnPath: plan_then_agent` | `**read_only`**      | Draft Markdown `plan.md` — no mutating exec        |
+| **planner**        | `spawnPath: plan_then_agent` | `**read_only`**      | Draft Markdown `plan.md` - no mutating exec        |
 | **task-runner**    | Post-plan or `direct_agent`  | `**full`**           | Execute designed task                              |
 | **intent-router**  | Every prompt (pre-hook)      | Heuristic / tiny LLM | Classify intent, prefetch, spawn scores            |
-| **context-scaler** | Every delegation             | —                    | Minimal context packet; anti-deep-check            |
-| **boundary-guard** | Before delegation            | —                    | Reject cross-mode leaks                            |
+| **context-scaler** | Every delegation             | -                    | Minimal context packet; anti-deep-check            |
+| **boundary-guard** | Before delegation            | -                    | Reject cross-mode leaks                            |
 | **memory-janitor** | Auto / idle / schedule       | Index tools          | Dedupe, compact, drain learning_queue              |
-| **learning-agent** | Post `subagent.completed`    | —                    | Prompt overlay + skills builder                    |
+| **learning-agent** | Post `subagent.completed`    | -                    | Prompt overlay + skills builder                    |
 | **research**       | learning-agent / novel task  | Web fetch            | Best practice → facts + skill draft                |
 | **event-watcher**  | `events.watchers`            | Platform read        | GNOME/custom → event bus                           |
 
@@ -582,11 +582,11 @@ Config: `subAgents.roles` in [config.schema.json](../schema/config.schema.json).
 
 | State                    | Meaning                          |
 | ------------------------ | -------------------------------- |
-| `scheduled`              | delay_start — belum spawn        |
+| `scheduled`              | delay_start - belum spawn        |
 | `pending`                | Spawned, belum turn pertama      |
 | `in_progress`            | Aktif                            |
 | `paused`                 | Orchestrator pause               |
-| `awaiting_clarification` | Sub-agent pause — tunggu jawaban |
+| `awaiting_clarification` | Sub-agent pause - tunggu jawaban |
 | `stopping`               | Cooperative shutdown             |
 | `stopped`                | Cancelled                        |
 | `done`                   | Success                          |
@@ -614,25 +614,25 @@ stateDiagram-v2
 
 ### Clarification loop
 
-Sub-agent **tidak nebak** saat unclear — emit `clarification_request`, pause (`awaiting_clarification`).
+Sub-agent **tidak nebak** saat unclear - emit `clarification_request`, pause (`awaiting_clarification`).
 
-**Path 1 — Orchestrator auto-answer** (confidence ≥ `clarification.autoAnswerMinConfidence`, default 0.75):
+**Path 1 - Orchestrator auto-answer** (confidence ≥ `clarification.autoAnswerMinConfidence`, default 0.75):
 
 Sources: `config.json` snapshot, SQLite facts, active task mode, pre-resolved context packet.
 
-**Path 2 — Forward to user:** Widget shows question + quick reply buttons.
+**Path 2 - Forward to user:** Widget shows question + quick reply buttons.
 
 Timeouts: `clarification.userTimeoutSec` default 300 → re-prompt once → `defaultOnTimeout: park`.
 
 **Anti-blocker:** Clarification pins **one** sub-agent; orchestrator + widget stay responsive.
 
-Every role template **must** include "When unclear" section — see [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md).
+Every role template **must** include "When unclear" section - see [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md).
 
 ### Progress streaming
 
 Append-only: `state/progress/<subAgentId>.jsonl`
 
-Orchestrator tails stream (inotify / bus topic) — holds **slim snapshot** per active sub-agent, not full history.
+Orchestrator tails stream (inotify / bus topic) - holds **slim snapshot** per active sub-agent, not full history.
 
 User asks *"scribe lagi ngapain?"* → orchestrator reads snapshot + tail N (`progressStreaming.tailEventsOnAsk`, default 10).
 
@@ -646,7 +646,7 @@ Bus topic: `sapaloq.v1.orchestrator.control.{subAgentId}`
 | ------------- | ---------------------------------------------------- |
 | `delay_start` | Register `spawnAt`; pre-built context stored         |
 | `pause`       | Freeze before next turn                              |
-| `resume`      | Continue from checkpoint — no full transcript replay |
+| `resume`      | Continue from checkpoint - no full transcript replay |
 | `stop`        | Cooperative cancel                                   |
 | `delete`      | Detach from task; cleanup per `progressRetention`    |
 
@@ -667,7 +667,7 @@ Config: `orchestrator.subAgentControl.`*
 
 ---
 
-## Part VII — Context, Memory & Anti-Forget
+## Part VII - Context, Memory & Anti-Forget
 
 ### Problem (Cursor-style failure modes)
 
@@ -702,14 +702,14 @@ flowchart LR
 
 
 
-**Fase 0 — Ingress (<100ms, no LLM if possible):**
+**Fase 0 - Ingress (<100ms, no LLM if possible):**
 
 - Parse mode (personal/hobby/work/auto)
 - Classify intent (heuristic + optional tiny LLM)
 - Match task stack + poison check
 - Lookup `prefetch_rules`
 
-**Fase 1 — Index prefetch (<500ms):**
+**Fase 1 - Index prefetch (<500ms):**
 
 1. Hot cache (in-proc LRU)
 2. Facts by namespace
@@ -731,19 +731,19 @@ Prefetch packet example:
 }
 ```
 
-**Fase 2 — Dynamic system-prompt assembly** — see Part VIII.
+**Fase 2 - Dynamic system-prompt assembly** - see Part VIII.
 
-**Fase 3 — Context packet** → sub-agent.
+**Fase 3 - Context packet** → sub-agent.
 
 ### Anti-deep-check SOP
 
 
 | Condition                 | Action                                          |
 | ------------------------- | ----------------------------------------------- |
-| `confidence >= 0.7`       | **No explore** — act on prefetch                |
+| `confidence >= 0.7`       | **No explore** - act on prefetch                |
 | `0.4 <= confidence < 0.7` | Max 2 index queries + 1 file read               |
 | `confidence < 0.4`        | Max 3 files, 2 tool calls, 30s budget           |
-| Compaction / low context  | **Reload from index** — never replay transcript |
+| Compaction / low context  | **Reload from index** - never replay transcript |
 | User repeat within 5 min  | Serve hot_cache                                 |
 
 
@@ -752,7 +752,7 @@ Log overrides → learning_queue → prefetch rule tuning.
 
 ### SQLite schema summary
 
-Path: `~/SapaLOQ/memory/companion.db` — **only** persistence engine. Full DDL: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [NODES.md](./NODES.md).
+Path: `~/SapaLOQ/memory/companion.db` - **only** persistence engine. Full DDL: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [NODES.md](./NODES.md).
 
 
 | Table                 | Purpose                                 | Key columns                                           |
@@ -804,10 +804,10 @@ Task stack persisted under `state/tasks/`:
 
 **Rules (`orchestrator.antiContextPoisoning`):**
 
-1. `blockNewTaskUntilParkOrDone` — task B while A running → park/switch/finish prompt
-2. `requireExplicitTaskSwitch` — new task = new taskId + fresh packet
-3. Context packets **task-scoped** — never inject other tasks' history
-4. `parkInactiveAfterMinutes` — auto-park stale tasks (default 30)
+1. `blockNewTaskUntilParkOrDone` - task B while A running → park/switch/finish prompt
+2. `requireExplicitTaskSwitch` - new task = new taskId + fresh packet
+3. Context packets **task-scoped** - never inject other tasks' history
+4. `parkInactiveAfterMinutes` - auto-park stale tasks (default 30)
 
 Context packet (context-scaler output):
 
@@ -844,7 +844,7 @@ Triggers: success + `buildOnSuccess`, user 👎, novel intent, repeated failure 
 
 ---
 
-## Part VIII — Prompt Builder & Learning
+## Part VIII - Prompt Builder & Learning
 
 ### Two assemblers (pre-spawn vs post-task)
 
@@ -852,8 +852,8 @@ Triggers: success + `buildOnSuccess`, user 👎, novel intent, repeated failure 
 | Phase         | Actor                         | Output                               | Latency budget              |
 | ------------- | ----------------------------- | ------------------------------------ | --------------------------- |
 | **Pre-spawn** | orchestrator + context-scaler | Role `systemPrompt` + context packet | <500ms deterministic        |
-| **During**    | sub-agent                     | Progress stream                      | —                           |
-| **Post-task** | learning-agent                | roles.d overlay, skills, facts       | Async — never blocks widget |
+| **During**    | sub-agent                     | Progress stream                      | -                           |
+| **Post-task** | learning-agent                | roles.d overlay, skills, facts       | Async - never blocks widget |
 | **Research**  | research sub-agent            | Web best practice                    | Async, bounded              |
 
 
@@ -908,11 +908,11 @@ Orchestrator layers (token budget guide):
 | ephemeral | ~200       | Status ask only |
 
 
-Role templates live in `prompt/roles/{role}.md` — each must include Must / Must not / When unclear sections. Seed list: orchestrator, settings, scribe, planner, task-runner, context-scaler, memory-janitor, learning-agent, research, event-watcher. Example scribe rules: append-only via storage.intents; no config.json edit; ask_orchestrator when boundary unclear.
+Role templates live in `prompt/roles/{role}.md` - each must include Must / Must not / When unclear sections. Seed list: orchestrator, settings, scribe, planner, task-runner, context-scaler, memory-janitor, learning-agent, research, event-watcher. Example scribe rules: append-only via storage.intents; no config.json edit; ask_orchestrator when boundary unclear.
 
 ### Post-task learning-agent
 
-Adaptasi **automation-learning** — companion namespace, bukan repo path.
+Adaptasi **automation-learning** - companion namespace, bukan repo path.
 
 
 | Event                        | Spawn learning-agent?               |
@@ -927,8 +927,8 @@ Adaptasi **automation-learning** — companion namespace, bukan repo path.
 **Prefer overlay over base mutation:**
 
 ```text
-prompt/roles/scribe.md           # human seed — jarang overwrite
-prompt/roles.d/scribe-catat.md   # auto — learning-agent
+prompt/roles/scribe.md           # human seed - jarang overwrite
+prompt/roles.d/scribe-catat.md   # auto - learning-agent
 ```
 
 ### Research sub-agent (async, bounded)
@@ -974,7 +974,7 @@ Create via agent: `/settings buatin skill ...` → write file + upsert skills_in
 
 ---
 
-## Part IX — Feedback & Behavioral Shaping
+## Part IX - Feedback & Behavioral Shaping
 
 ### Verdict: RL-inspired, not weight training
 
@@ -1080,7 +1080,7 @@ Dynamic injection (max 1 positive + 1 negative per turn):
   "payload": {
     "namespace": "personal",
     "kind": "debug",
-    "do_not_repeat": "spawn task-runner for simple catat — use scribe",
+    "do_not_repeat": "spawn task-runner for simple catat - use scribe",
     "reward": -1,
     "userQuote": "keknya kepanjangan, catat aja langsung"
   }
@@ -1112,7 +1112,7 @@ Config: `feedback.banditTunePrefetch` default true.
 
 ---
 
-## Part X — Platform & Drivers
+## Part X - Platform & Drivers
 
 ### Platform abstraction
 
@@ -1141,7 +1141,7 @@ Capabilities: `notify`, `notify.watch`, `screenshot`, `window.list`, `window.foc
 
 Methods: `NotifySend`, `NotifyWatch`, `Windows`, `FocusWindow`, `Screenshot`, `ClipboardRead/Write`, `DNDEnabled`.
 
-Core calls `**desktop_*`** tools — never import GNOME types in orchestrator.
+Core calls `**desktop_*`** tools - never import GNOME types in orchestrator.
 
 ### Portable tool naming
 
@@ -1196,7 +1196,7 @@ flowchart TD
 
 **Slow path:** full probe `/etc/os-release`, `$XDG_CURRENT_DESKTOP`, D-Bus names → score drivers → backup old cache.
 
-### `os.json` example (generated — not hand-edited)
+### `os.json` example (generated - not hand-edited)
 
 ```json
 {
@@ -1225,7 +1225,7 @@ Config vs os.json:
 | `os.json`     | **sapaloq-core detect**    | Cached OS/DE + driver |
 
 
-Agent **reads** os.json for capability checks — does **not** rescan OS normally.
+Agent **reads** os.json for capability checks - does **not** rescan OS normally.
 
 CLI: `sapaloq-core detect`, `detect --force`, `doctor`.
 
@@ -1242,7 +1242,7 @@ Legacy alias `sapaloq.v1.gnome.`* deprecated but supported.
 
 ---
 
-## Part XI — LLM Bridge Layer
+## Part XI - LLM Bridge Layer
 
 ### Two driver families (do not mix)
 
@@ -1264,7 +1264,7 @@ sapaloq-core
 
 ### cursor-bridge as first-class built-in driver
 
-**NOT** runtime dep to `jahrulnr/cursor-bridge` or 9router — SapaLOQ **embeds/syncs schema at build**.
+**NOT** runtime dep to `jahrulnr/cursor-bridge` or 9router - SapaLOQ **embeds/syncs schema at build**.
 
 
 |                | SapaLOQ            | cursor-bridge monorepo | 9router                   |
@@ -1313,7 +1313,7 @@ Coercion config:
 
 Credentials **never** in config.json.
 
-### Parser layer — tools
+### Parser layer - tools
 
 Canonical internal model `parse.ToolCall`. Per-driver parsers:
 
@@ -1326,9 +1326,9 @@ Canonical internal model `parse.ToolCall`. Per-driver parsers:
 | **kimi**   | Inline markers in thinking tail  | Sub-parser of cursor Auto |
 
 
-### Parser layer — thinking
+### Parser layer - thinking
 
-**Do NOT derive from 9router** — it collapses/skips thinking channel.
+**Do NOT derive from 9router** - it collapses/skips thinking channel.
 
 
 | Parser     | Format                                                      |
@@ -1351,11 +1351,11 @@ Default policy:
 
 ### L0 RE summary (see [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md))
 
-**Truth hierarchy:** L0 = api2.cursor.sh + cursor-agent CLI protobuf; L0.5 = cursor-bridge.schema.json; **❌ 9router** = transport only (collapses thinking — not reference).
+**Truth hierarchy:** L0 = api2.cursor.sh + cursor-agent CLI protobuf; L0.5 = cursor-bridge.schema.json; **❌ 9router** = transport only (collapses thinking - not reference).
 
-**Wire:** `StreamUnifiedChatWithTools` — separate `TOOL_CALL` frames vs `RESPONSE` with `THINKING_TEXT` blob (pre/post `</think>`, optional Kimi inline tail).
+**Wire:** `StreamUnifiedChatWithTools` - separate `TOOL_CALL` frames vs `RESPONSE` with `THINKING_TEXT` blob (pre/post `</think>`, optional Kimi inline tail).
 
-**Three tool paths:** (1) protobuf ClientSideToolV2Call, (2) Kimi inline when `toolCallsCount=0`, (3) schema "leak" in thinking — detect only.
+**Three tool paths:** (1) protobuf ClientSideToolV2Call, (2) Kimi inline when `toolCallsCount=0`, (3) schema "leak" in thinking - detect only.
 
 **SapaLOQ must NOT:** collapse pre-tag thinking like 9router; audit content-only for leaks; assume Auto emits OpenAI tool_calls[].
 
@@ -1389,7 +1389,7 @@ Community bridges: compile-time registry; template for IDE-like backends.
 
 ---
 
-## Part XII — Nodes & Remote Execution
+## Part XII - Nodes & Remote Execution
 
 ### Concept
 
@@ -1410,15 +1410,15 @@ Core orchestrator **always** on user machine (widget). Node = **where sub-agent 
 | -------------------- | ------------------ | ------------------------- |
 | Shared companion.db? | ✅ Local sub-agents | ❌ **Not recommended**     |
 | What remote gets     | Full memory bus    | **Context packet only**   |
-| What remote returns  | —                  | Progress + result summary |
+| What remote returns  | -                  | Progress + result summary |
 | Learning promotion   | Local janitor      | Local after completed     |
 
 
 **Why no shared memory to remote:**
 
-1. Latency — FTS useless over RTT
-2. Stale memory — divergent truth
-3. Sync complexity — out of scope for single binary
+1. Latency - FTS useless over RTT
+2. Stale memory - divergent truth
+3. Sync complexity - out of scope for single binary
 
 Remote contract:
 
@@ -1452,7 +1452,7 @@ See Part VII schema. Key columns:
 
 ### Comm spec (SKILL-like)
 
-`nodes/{name}.md` — operating manual: endpoints, auth env vars, spawn protocol, control ack, boundaries, failure retry.
+`nodes/{name}.md` - operating manual: endpoints, auth env vars, spawn protocol, control ack, boundaries, failure retry.
 
 Agent: `/settings register node vps-scribe ...` → insert row + generate template.
 
@@ -1474,7 +1474,7 @@ VALUES ('local-default', '*', 'local', 'unix', '~/SapaLOQ/nodes/local-default.md
 
 Remote WS → sapaloq-core → `bus.Publish(sapaloq.v1.subagent.progress.{id})`
 
-Clarification + control frames same as local — orchestrator routes to WS not unix socket.
+Clarification + control frames same as local - orchestrator routes to WS not unix socket.
 
 Security: TLS required (`nodes.requireTlsRemote`), token via env not SQLite, path escape blocked by boundary-guard.
 
@@ -1482,7 +1482,7 @@ Config: `nodes.allowRemoteRoles`, `nodes.fallbackToLocalOnRemoteFail`.
 
 ---
 
-## Part XIII — Event Bus & Runtime
+## Part XIII - Event Bus & Runtime
 
 ### Single binary stack
 
@@ -1507,7 +1507,7 @@ sapaloq-core (one binary)
 | SQLite    | `memory/companion.db`              | Facts, FTS, nodes, rules       |
 | jsonl     | `events.jsonl`, `progress/*.jsonl` | WAL, audit, replay             |
 | Files     | config, skills, prompt             | Agent-editable                 |
-| In-memory | goroutine LRU                      | Hot cache — lost on restart OK |
+| In-memory | goroutine LRU                      | Hot cache - lost on restart OK |
 
 
 ### Concurrency model
@@ -1519,9 +1519,9 @@ go subAgentWorker(id, ctx)
 go platformAdapter.NotifyWatch()
 ```
 
-Sub-agent **child process** optional — talks via `sapaloq.sock` to **same** binary.
+Sub-agent **child process** optional - talks via `sapaloq.sock` to **same** binary.
 
-Publish never blocks slow consumer — drop + log.
+Publish never blocks slow consumer - drop + log.
 
 ### Event bus architecture
 
@@ -1558,7 +1558,7 @@ Built-in watchers at `main()`:
 Path: `~/SapaLOQ/run/sapaloq.sock`
 Ops: `publish`, `watch`, `unwatch`, `event`, `ping`.
 
-Orchestrator uses in-proc channel — no socket hop for local path.
+Orchestrator uses in-proc channel - no socket hop for local path.
 
 ### Bus config
 
@@ -1614,7 +1614,7 @@ Watcher example:
 }
 ```
 
-Dedicated **event-watcher** thread — orchestrator tidak block di D-Bus.
+Dedicated **event-watcher** thread - orchestrator tidak block di D-Bus.
 
 ### systemd user unit
 
@@ -1662,16 +1662,16 @@ No "Redis failed so events broken" cascade.
 
 ---
 
-## Part XIV — Configuration Contract
+## Part XIV - Configuration Contract
 
 ### Philosophy
 
-- **No settings UI** — all mutations via orchestrator chat + `/settings` sub-agent.
-- **Schema-shaped** — [config.schema.json](../schema/config.schema.json) and
+- **No settings UI** - all mutations via orchestrator chat + `/settings` sub-agent.
+- **Schema-shaped** - [config.schema.json](../schema/config.schema.json) and
   the bootstrap example are parity-tested.
-- **Agent-editable paths** — current `/settings patch` accepts only runtime
+- **Agent-editable paths** - current `/settings patch` accepts only runtime
   fields that are actually consumed; roadmap-only paths are rejected.
-- **Secrets never in config** — use `credentialsEnv` for LLM tokens.
+- **Secrets never in config** - use `credentialsEnv` for LLM tokens.
 
 Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 
@@ -1686,7 +1686,7 @@ Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 | `skills`, `prompts`, `feedback`                                  | Bounded skill injection, replaceable role prompts, explicit negative guidance                    |
 | `events.bus`                                                     | Socket path, JSONL WAL path, replay flag                                                         |
 | `storage`, `subAgents`, `commands`                               | Scribe destinations, active role profiles, slash registry                                       |
-| `vault`                                                          | Tool-call audit log rotation/retention (`maxLogBytes`, `keepRotatedFiles`) — see [RUNTIME.md](./RUNTIME.md#rotation--retention) |
+| `vault`                                                          | Tool-call audit log rotation/retention (`maxLogBytes`, `keepRotatedFiles`) - see [RUNTIME.md](./RUNTIME.md#rotation--retention) |
 
 
 Roadmap-only domains such as task-stack policy, context ingress, learning,
@@ -1703,9 +1703,9 @@ exist.
 | `llmBridge.driver`                          | `cursor-bridge` | Primary brain; `local-llama` = offline fallback only |
 | `orchestrator.spawnRouting.agentToolPolicy` | `"full"`        | Agent unrestricted post-plan                         |
 | `orchestrator.spawnRouting.autoApprovePlan` | `false`         | User reviews plans                                   |
-| Host command tool (`exec`) | available in **all** modes | Run any command anywhere (any path; optional `cwd`) — also reads any host file via `cat`/`sed`/`head`/`tail`/`rg`; shared dispatch in every mode — see `internal/core/orchestrator/tools_workspace.go` (`toolExec`) |
-| File tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`) | agent mutates; read/search/list everywhere | Flat, unrestricted CRUD — every `path` accepts absolute/`~`/CWD-relative. No workspace sandbox (a feature-not-security design) — see `internal/core/orchestrator/tools_workspace.go` |
-| Local image vision (`read_image`) | available in **all** modes | Read a local image file (png/jpeg/gif/webp) into the model's vision — returns inline `data:` markdown that `extractImages` re-ingests into `bridge.Request.Images` (same channel as widget attachments); needs a vision-capable model |
+| Host command tool (`exec`) | available in **all** modes | Run any command anywhere (any path; optional `cwd`) - also reads any host file via `cat`/`sed`/`head`/`tail`/`rg`; shared dispatch in every mode - see `internal/core/orchestrator/tools_workspace.go` (`toolExec`) |
+| File tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`) | agent mutates; read/search/list everywhere | Flat, unrestricted CRUD - every `path` accepts absolute/`~`/CWD-relative. No workspace sandbox (a feature-not-security design) - see `internal/core/orchestrator/tools_workspace.go` |
+| Local image vision (`read_image`) | available in **all** modes | Read a local image file (png/jpeg/gif/webp) into the model's vision - returns inline `data:` markdown that `extractImages` re-ingests into `bridge.Request.Images` (same channel as widget attachments); needs a vision-capable model |
 | `nodes.allowSharedMemoryRemote`             | `false`         | Remote = context packet only                         |
 | `events.bus.wakeViaBus`                     | `true`          | Bus primary wake                                     |
 | `feedback.banditTunePrefetch`               | `true`          | Lightweight RL on rules                              |
@@ -1752,7 +1752,7 @@ environment detector.
 
 ---
 
-## Part XV — File System Layout
+## Part XV - File System Layout
 
 Complete target tree under `~/.config/sapaloq/`:
 
@@ -1765,13 +1765,13 @@ Complete target tree under `~/.config/sapaloq/`:
 │          tasks/{stack.md,taskId/plan.md}, context-packets/,
 │          progress/{subAgentId}.jsonl, control/, events.jsonl, archive/}
 ├── rules/{companion.md, automation.md}
-├── mcp/servers.json          # Desktop MCP — NOT Cursor MCP
+├── mcp/servers.json          # Desktop MCP - NOT Cursor MCP
 ├── widget/{position.json, theme.json}
 ├── bridge/{cursor-bridge.schema.json, handoff/{uuid}.json}
 └── nodes/{local-default.md, {name}.md}
 
 ~/Documents/sapaloq/{personal,hobby,work}/   # mode storage roots
-~/.cursor/  ~/.local/share/cursor-agent/     # worker — ZERO overlap
+~/.cursor/  ~/.local/share/cursor-agent/     # worker - ZERO overlap
 ```
 
 ### File ownership matrix
@@ -1790,7 +1790,7 @@ Complete target tree under `~/.config/sapaloq/`:
 
 ---
 
-## Part XVI — Handoff Protocol
+## Part XVI - Handoff Protocol
 
 ### Purpose
 
@@ -1839,7 +1839,7 @@ sequenceDiagram
   U->>C: "Open in Agent" / Handoff mode
   C->>C: boundary-guard mode=work
   C->>H: write packet consumeOnce
-  C->>U: "Packet ready — launch worker"
+  C->>U: "Packet ready - launch worker"
   U->>W: open terminal/IDE with packet path
   W->>H: read + consume
   W->>W: execute with own memory
@@ -1852,18 +1852,18 @@ sequenceDiagram
 
 1. Worker **does not** read `companion.db`.
 2. SapaLOQ **does not** ingest worker transcript into SQLite (mirror visual optional only).
-3. MCP configs **separate** — `mcp/servers.json` vs Cursor MCP.
-4. Handoff is **user-initiated** — never implicit on task-runner local exec.
+3. MCP configs **separate** - `mcp/servers.json` vs Cursor MCP.
+4. Handoff is **user-initiated** - never implicit on task-runner local exec.
 
 ### Worker mirror (optional, TBD)
 
-Widget may listen worker stream-json for ring `mirror-worker` — **visual only**, no memory promotion.
+Widget may listen worker stream-json for ring `mirror-worker` - **visual only**, no memory promotion.
 
 Config decision open: listen stream-json vs purely idle ring.
 
 ---
 
-## Part XVII — Limitations & Honest UX Contract
+## Part XVII - Limitations & Honest UX Contract
 
 Full detail: [LIMITATIONS.md](./LIMITATIONS.md).
 
@@ -1885,14 +1885,14 @@ Full detail: [LIMITATIONS.md](./LIMITATIONS.md).
 
 ---
 
-## Part XVIII — Implementation Roadmap
+## Part XVIII - Implementation Roadmap
 
 ### Milestone overview
 
 
 | Phase  | Name                                      | Depends on |
 | ------ | ----------------------------------------- | ---------- |
-| **M0** | Architecture docs                         | — ✅        |
+| **M0** | Architecture docs                         | - ✅        |
 | **M1** | SQLite + nodes bootstrap                  | M0         |
 | **M2** | Orchestrator task stack + progress        | M1         |
 | **M3** | Completion + event bus + platform watcher | M2         |
@@ -1923,19 +1923,19 @@ Full detail: [LIMITATIONS.md](./LIMITATIONS.md).
 
 ### Suggested vertical slice MVP (fastest user-visible path)
 
-**Slice A (companion feel, minimal brain):** M1 → M2 → M4 → M5 with **cursor-bridge or stub LLM** — catat + widget + progress ring. M5a UI spike done.
+**Slice A (companion feel, minimal brain):** M1 → M2 → M4 → M5 with **cursor-bridge or stub LLM** - catat + widget + progress ring. M5a UI spike done.
 
-**Slice B (proactive):** M3 added — notification → "mau rangkum?" prompt.
+**Slice B (proactive):** M3 added - notification → "mau rangkum?" prompt.
 
-**Slice C (coding handoff):** M7 handoff only — no cursor-bridge required.
+**Slice C (coding handoff):** M7 handoff only - no cursor-bridge required.
 
-**Slice D (full brain Cursor):** M8 → M9 — last, highest complexity.
+**Slice D (full brain Cursor):** M8 → M9 - last, highest complexity.
 
 Recommended order for solo implementer: **M1 → M2 → M4 → M3 → M5 → M6 → M7 → M8 → M9**.
 
 ---
 
-## Part XIX — Go Project Structure
+## Part XIX - Go Project Structure
 
 Target repository layout: repo root (`github.com/jahrulnr/sapaloq`).
 
@@ -1966,11 +1966,11 @@ sapaloq/                              # github.com/jahrulnr/sapaloq
 | `store`                 | UI, bridge wire details                |
 
 
-Dependency rule: **core → store, bus, config, prompt** — never **drivers** directly; use `platform.Desktop` injected at main.
+Dependency rule: **core → store, bus, config, prompt** - never **drivers** directly; use `platform.Desktop` injected at main.
 
 ---
 
-## Part XX — Testing & Quality Strategy
+## Part XX - Testing & Quality Strategy
 
 
 | Layer         | Scope                                               | Tools                      |
@@ -1986,11 +1986,11 @@ Dependency rule: **core → store, bus, config, prompt** — never **drivers** d
 
 **Quality gates:** schema validate on config write; `doctor` pre-release; remote spawn asserts `noMemoryBus`; anti-poisoning integration test; bus non-blocking test.
 
-**Observability:** structured logs + prefetch_log — no external APM for MVP.
+**Observability:** structured logs + prefetch_log - no external APM for MVP.
 
 ---
 
-## Part XXI — Open Decisions & Risks
+## Part XXI - Open Decisions & Risks
 
 
 | #   | Open decision              | Options                                                                |
@@ -1999,8 +1999,8 @@ Dependency rule: **core → store, bus, config, prompt** — never **drivers** d
 | 2   | Worker mirror              | stream-json vs visual idle                                             |
 | 3   | systemd default            | auto-install vs manual                                                 |
 | 4   | Local LLM offline scope    | how dumb is OK?                                                        |
-| 5   | Widget toolkit             | ✅ **Wails v2** — see [UI-DECISION.md](./UI-DECISION.md); M5a validated |
-| 6   | Product name               | Open — see [NAME-RECOMMENDATIONS.md](./NAME-RECOMMENDATIONS.md)        |
+| 5   | Widget toolkit             | ✅ **Wails v2** - see [UI-DECISION.md](./UI-DECISION.md); M5a validated |
+| 6   | Product name               | Open - see [NAME-RECOMMENDATIONS.md](./NAME-RECOMMENDATIONS.md)        |
 
 
 
@@ -2016,7 +2016,7 @@ Dependency rule: **core → store, bus, config, prompt** — never **drivers** d
 
 ---
 
-## Appendix A — Event topic catalog (`sapaloq.v1.*`)
+## Appendix A - Event topic catalog (`sapaloq.v1.*`)
 
 Prefix: `config.events.bus.topicPrefix` default `**sapaloq.v1`**.
 
@@ -2026,7 +2026,7 @@ Prefix: `config.events.bus.topicPrefix` default `**sapaloq.v1`**.
 | **Sub-agent**    | `subagent.completed`, `subagent.clarification`, `subagent.progress.{id}`, `subagent.spawned`, `subagent.failed`            | sub-agent / orchestrator            |
 | **Control**      | `orchestrator.control.{subAgentId}`, `orchestrator.task.parked`, `orchestrator.task.switched`, `orchestrator.mode.changed` | orchestrator                        |
 | **Platform**     | `platform.notification`, `platform.focus.changed`, `platform.dnd.changed`                                                  | event-watcher / adapter             |
-| **Legacy alias** | `gnome.notification`, `gnome.focus.changed`                                                                                | same handlers — deprecated names    |
+| **Legacy alias** | `gnome.notification`, `gnome.focus.changed`                                                                                | same handlers - deprecated names    |
 | **Custom**       | `custom.reminder.fired`, `custom.email.received`, `custom.webhook`, `custom.file.changed`                                  | scheduler / watchers (later)        |
 | **Learning**     | `learning.queue.item`, `memory.fact.promoted`, `config.changed`                                                            | learning-agent / janitor / settings |
 
@@ -2038,11 +2038,11 @@ jsonl WAL parallel `kind` examples:
 { "v": 1, "kind": "notification.received", "source": "platform", "app": "slack", "body": "..." }
 ```
 
-Boot replay: tail WAL if `events.bus.replayOnBoot` — then live bus only. Detail: [EVENT-BUS.md](./EVENT-BUS.md).
+Boot replay: tail WAL if `events.bus.replayOnBoot` - then live bus only. Detail: [EVENT-BUS.md](./EVENT-BUS.md).
 
 ---
 
-## Appendix B — Progress event types
+## Appendix B - Progress event types
 
 File: `~/SapaLOQ/state/progress/{subAgentId}.jsonl`
 
@@ -2085,7 +2085,7 @@ One JSON object per line. Common envelope:
 | status                   | Meaning                        |
 | ------------------------ | ------------------------------ |
 | `pending`                | Spawned, belum turn pertama    |
-| `scheduled`              | delay_start — belum spawn      |
+| `scheduled`              | delay_start - belum spawn      |
 | `in_progress`            | Aktif                          |
 | `awaiting_clarification` | Paused for Q&A                 |
 | `paused`                 | Orchestrator paused            |
@@ -2131,7 +2131,7 @@ Config: `orchestrator.completion.requireTerminalEvent` default **true**.
 
 ---
 
-## Appendix C — Modular documentation map
+## Appendix C - Modular documentation map
 
 
 | File                                                                                                      | Role                   |
@@ -2165,6 +2165,6 @@ Config: `orchestrator.completion.requireTerminalEvent` default **true**.
 
 ## One-liner (closing)
 
-> **SapaLOQ** — portable desktop companion (HUD + memory + platform adapter), GNOME first — orchestrator-only widget, sub-agent workers, SQLite anti-forget, single Go binary, optional handoff to coding agent. Config-by-agent. No Redis. No shared worker memory. No 9router dependency. Honest about limits.
+> **SapaLOQ** - portable desktop companion (HUD + memory + platform adapter), GNOME first - orchestrator-only widget, sub-agent workers, SQLite anti-forget, single Go binary, optional handoff to coding agent. Config-by-agent. No Redis. No shared worker memory. No 9router dependency. Honest about limits.
 
 *End of SapaLOQ Development Blueprint.*

@@ -1,6 +1,6 @@
-# Color Buddy — Palette Linting & Analysis
+# Color Buddy - Palette Linting & Analysis
 
-**Source:** [GitHub — mcnuttandrew/color-buddy](https://github.com/mcnuttandrew/color-buddy)
+**Source:** [GitHub - mcnuttandrew/color-buddy](https://github.com/mcnuttandrew/color-buddy)
 **Author:** Andrew McNutt
 **Demo:** https://color-buddy.netlify.app/
 **Docs:** https://color-buddy-docs.netlify.app/
@@ -9,7 +9,7 @@
 
 ## What It Does
 
-Interactive tool for developing and **linting** color palettes. Like ESLint for code, but for color palettes — applies automated checks against accessibility, perceptual quality, affect, and design rules. Includes LLM integration (Gemini/OpenAI/Claude) for auto-fixes.
+Interactive tool for developing and **linting** color palettes. Like ESLint for code, but for color palettes - applies automated checks against accessibility, perceptual quality, affect, and design rules. Includes LLM integration (Gemini/OpenAI/Claude) for auto-fixes.
 
 ## The Palette Lint Language
 
@@ -109,7 +109,7 @@ A domain-specific language for expressing color palette checks. Supports:
 - **Perceptual quality:** ensure distinctness at different rendering sizes (thin/medium/wide objects)
 - **Fairness:** categorical palettes shouldn't privilege some data categories with brighter/more vivid colors
 - **Affect:** match the emotional register of the palette to the application's tone
-- **"Ugly color" avoidance** — same principle as pro-color-harmonies' muddy-zone avoidance
+- **"Ugly color" avoidance** - same principle as pro-color-harmonies' muddy-zone avoidance
 
 ## Architecture
 

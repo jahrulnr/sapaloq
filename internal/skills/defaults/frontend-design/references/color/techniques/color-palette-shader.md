@@ -1,6 +1,6 @@
-# Color Palette Shader — WebGL2 Palette Visualization
+# Color Palette Shader - WebGL2 Palette Visualization
 
-**Source:** [GitHub — meodai/color-palette-shader](https://github.com/meodai/color-palette-shader)
+**Source:** [GitHub - meodai/color-palette-shader](https://github.com/meodai/color-palette-shader)
 **Author:** meodai
 **Demo:** https://meodai.github.io/color-palette-shader/
 **npm:** `palette-shader`
@@ -16,15 +16,15 @@ Quick visual assessment of palette quality:
 - **Tiny regions** = redundant colors (too similar to neighbors)
 - **Uneven regions** = imbalanced hue/saturation/lightness distribution
 - **Large, distinct regions** = each color does unique work
-- Answers: "Is it worth adding another color?" — if the new region is tiny, no
+- Answers: "Is it worth adding another color?" - if the new region is tiny, no
 
 ## Features
 
-- **30+ color models** — OKLab, OKHsl, OKHsv, OKLCH, CIELab (D50/D65), CAM16-UCS, HSV, HSL, HWB, RGB, spectrum, retro bit-depths
-- **11 distance metrics** — oklab, deltaE2000, cam16ucs, rgb, lightness-only, spatial blends
+- **30+ color models** - OKLab, OKHsl, OKHsv, OKLCH, CIELab (D50/D65), CAM16-UCS, HSV, HSL, HWB, RGB, spectrum, retro bit-depths
+- **11 distance metrics** - oklab, deltaE2000, cam16ucs, rgb, lightness-only, spatial blends
 - **2D cross-sections** (PaletteViz) and **interactive 3D** (PaletteViz3D) with trackball rotation
-- **Gamut clipping** — reveal true color model boundaries
-- **Float16 precision** — lossless out-of-gamut sampling
+- **Gamut clipping** - reveal true color model boundaries
+- **Float16 precision** - lossless out-of-gamut sampling
 - Zero dependencies, WebGL2 only
 
 ## API
@@ -47,7 +47,7 @@ const viz = new PaletteViz({
   outlineWidth: 1, // region boundary lines
 });
 
-// Live updates — trigger immediate re-render
+// Live updates - trigger immediate re-render
 viz.palette = [
   [1, 0, 0],
   [0, 0.5, 1],

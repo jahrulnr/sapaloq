@@ -1,13 +1,13 @@
-# pro-color-harmonies — Perceptually-Tuned Color Palettes
+# pro-color-harmonies - Perceptually-Tuned Color Palettes
 
-**Source:** [GitHub — meodai/pro-color-harmonies](https://github.com/meodai/pro-color-harmonies)
+**Source:** [GitHub - meodai/pro-color-harmonies](https://github.com/meodai/pro-color-harmonies)
 **Author:** meodai (inspired by @royalfig)
 **Demo:** https://meodai.github.io/pro-color-harmonies/
 **npm:** `pro-color-harmonies`
 
 ## What It Does
 
-Dependency-free TypeScript library generating **perceptually-tuned color palettes** from a single base color. Goes far beyond traditional "rotate hue by X°" harmony — works in OKLCH with adaptive strategies, muddy-zone avoidance, and four post-processing modifiers.
+Dependency-free TypeScript library generating **perceptually-tuned color palettes** from a single base color. Goes far beyond traditional "rotate hue by X°" harmony - works in OKLCH with adaptive strategies, muddy-zone avoidance, and four post-processing modifiers.
 
 ## How It Differs from Standard Harmony Libraries
 
@@ -90,10 +90,10 @@ import {
 
 ## Key Concepts for the Skill
 
-- **Muddy-zone avoidance** — not all color space is equally useful; certain hue+lightness+chroma combinations are universally unappealing
-- **Adaptive variation** — dark bases need lighter variations, light bases need richer darker tones; one formula can't serve all
-- **Smooth interpolation** — palette generation shouldn't produce jarring shifts when base color crosses a threshold
-- **OKLCH is the right space** for harmony calculation — perceptually uniform means "rotate 120°" actually produces visually equidistant hues
+- **Muddy-zone avoidance** - not all color space is equally useful; certain hue+lightness+chroma combinations are universally unappealing
+- **Adaptive variation** - dark bases need lighter variations, light bases need richer darker tones; one formula can't serve all
+- **Smooth interpolation** - palette generation shouldn't produce jarring shifts when base color crosses a threshold
+- **OKLCH is the right space** for harmony calculation - perceptually uniform means "rotate 120°" actually produces visually equidistant hues
 
 ## Links
 

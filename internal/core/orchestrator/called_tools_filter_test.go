@@ -6,7 +6,7 @@ import (
 )
 
 // feedAll streams the deltas through a fresh filter and returns the
-// concatenation of everything emitted, including the final flush — i.e. the
+// concatenation of everything emitted, including the final flush - i.e. the
 // text the user would actually see.
 func feedAll(deltas ...string) string {
 	var f calledToolsFilter
@@ -159,10 +159,10 @@ func TestCalledToolsFilterToolMarkerByteAtATime(t *testing.T) {
 // of ordinary text the user wrote or the model legitimately produced).
 func TestCalledToolsFilterKeepsToolLikeProse(t *testing.T) {
 	cases := [][]string{
-		{"[Toolbar] is a UI element"},      // "[Tool" prefix but diverges at 'b'
-		{"the [Tools] menu"},               // diverges (no ':')
-		{"see ", "[Too", "lkit] docs"},     // split, diverges at 'k'
-		{"[Tooling notes] follow"},         // diverges at 'i'
+		{"[Toolbar] is a UI element"},  // "[Tool" prefix but diverges at 'b'
+		{"the [Tools] menu"},           // diverges (no ':')
+		{"see ", "[Too", "lkit] docs"}, // split, diverges at 'k'
+		{"[Tooling notes] follow"},     // diverges at 'i'
 	}
 	for _, deltas := range cases {
 		want := strings.Join(deltas, "")

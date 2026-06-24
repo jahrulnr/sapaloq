@@ -12,7 +12,7 @@ func isHelpArg(arg string) bool {
 }
 
 func isVersionArg(arg string) bool {
-	// Note: -V is intentionally NOT lowercased — the lowercase -v is the
+	// Note: -V is intentionally NOT lowercased - the lowercase -v is the
 	// global --verbose flag.
 	if arg == "-V" {
 		return true

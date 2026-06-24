@@ -1,4 +1,4 @@
-# COLOR WHEEL WEDNESDAY Ep. 2 — The Web Wheel
+# COLOR WHEEL WEDNESDAY Ep. 2 - The Web Wheel
 
 **Source:** [Color Nerd](https://www.youtube.com/@ColorNerd1) (YouTube Shorts)
 **Date:** 2026-03-18
@@ -6,7 +6,7 @@
 
 ## Description
 
-The Web Wheel — a time capsule tool for harmonizing the 216 "web-safe" colors from the early days of web design. Published around 2000 by the Color Wheel Company.
+The Web Wheel - a time capsule tool for harmonizing the 216 "web-safe" colors from the early days of web design. Published around 2000 by the Color Wheel Company.
 
 ## Transcript
 
@@ -26,10 +26,10 @@ I was actually inspired by this odd pattern of slopes to build this tool. It's s
 
 ## Key Facts
 
-- **216 web-safe colors** — built from 6 hex values per channel: `00`, `33`, `66`, `99`, `CC`, `FF` (6×6×6 = 216)
+- **216 web-safe colors** - built from 6 hex values per channel: `00`, `33`, `66`, `99`, `CC`, `FF` (6×6×6 = 216)
 - **Linda Weinman** coined "browser safe palette" in 1996
-- **The Web Wheel** — physical printed color harmony guide by the Color Wheel Company (~2000), used RGB model, showed complementary pairs (magenta-green, not red-green)
-- **Photoshop fossil** — "make ramp web" option still exists in the color picker
+- **The Web Wheel** - physical printed color harmony guide by the Color Wheel Company (~2000), used RGB model, showed complementary pairs (magenta-green, not red-green)
+- **Photoshop fossil** - "make ramp web" option still exists in the color picker
 - **~10-year window** (~1996–2006) when web-safe colors mattered
 
 ## Source Books

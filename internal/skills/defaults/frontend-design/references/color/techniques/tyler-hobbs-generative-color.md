@@ -1,4 +1,4 @@
-# Working with Color in Generative Art — Tyler Hobbs
+# Working with Color in Generative Art - Tyler Hobbs
 
 **Source:** https://www.tylerxhobbs.com/words/working-with-color-in-generative-art
 **Author:** Tyler Hobbs
@@ -6,7 +6,7 @@
 
 ## Overview
 
-Practical techniques for color in generative art/creative coding. Not theory — hands-on methods with code examples (Clojure/Processing). Foundation techniques that compose together.
+Practical techniques for color in generative art/creative coding. Not theory - hands-on methods with code examples (Clojure/Processing). Foundation techniques that compose together.
 
 ## Key Techniques
 
@@ -14,7 +14,7 @@ Practical techniques for color in generative art/creative coding. Not theory —
 
 > "RGB is for machines, HSB is for artists."
 
-HSB lets you independently control hue, saturation, and brightness — essential for maintaining consistent mood while varying color.
+HSB lets you independently control hue, saturation, and brightness - essential for maintaining consistent mood while varying color.
 
 ```clojure
 (color-mode :hsb 360 100 100 1.0)
@@ -49,7 +49,7 @@ Add randomness to gradient inputs to avoid harsh linearity:
   ...)
 ```
 
-Gradients don't have to be linear — quadratic, logarithmic, eased.
+Gradients don't have to be linear - quadratic, logarithmic, eased.
 
 ### 4. Probability Distributions for Palettes
 
@@ -66,7 +66,7 @@ Define palettes as weighted random choices:
 
 ### 5. Combine Gradients with Probability Shifts
 
-The most powerful technique — **gradient the probabilities themselves:**
+The most powerful technique - **gradient the probabilities themselves:**
 
 ```clojure
 ;; Blue probability decreases downward, red increases
@@ -78,7 +78,7 @@ The most powerful technique — **gradient the probabilities themselves:**
     [0 80 80] red-odds))
 ```
 
-Result: smooth transition from blue-accent to red-accent across the piece without explicit gradient — the color _distribution_ shifts, not the colors themselves.
+Result: smooth transition from blue-accent to red-accent across the piece without explicit gradient - the color _distribution_ shifts, not the colors themselves.
 
 ### 6. Context-Dependent Palette Switching
 
@@ -99,7 +99,7 @@ These techniques stack:
 
 ## Why This Matters for the Skill
 
-- **Probability-weighted palettes** is the most underrated technique — almost no design tools support it
+- **Probability-weighted palettes** is the most underrated technique - almost no design tools support it
 - **Gradient the probabilities** rather than the colors = much more naturalistic results
 - All of this works in any language/framework, not just Processing
 - Connects to RampenSau's approach (hue cycling + easing = parametric palette generation)

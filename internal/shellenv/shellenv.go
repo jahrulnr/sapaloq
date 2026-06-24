@@ -4,10 +4,10 @@
 // Why this exists: SapaLOQ normally runs as a systemd `--user` service (and via
 // XDG autostart for the widget). Neither starts a login/interactive shell, so a
 // user's `~/.bashrc` / `~/.zshrc` exports (e.g. provider tokens) are NOT in the
-// process environment — the credential loader then falls back to `.env` or the
+// process environment - the credential loader then falls back to `.env` or the
 // Cursor vscdb and a token set only in the shell rc is silently invisible.
 //
-// LoadOnce sources the shell rc files (bash first, then zsh — some terminals
+// LoadOnce sources the shell rc files (bash first, then zsh - some terminals
 // default to zsh) and copies the RELEVANT, not-already-set variables into the
 // process environment, BEFORE the credential loader runs. The resulting
 // priority is therefore:
@@ -78,7 +78,7 @@ func load() {
 		return
 	}
 
-	// bash first, then zsh — later sources do NOT override earlier imports
+	// bash first, then zsh - later sources do NOT override earlier imports
 	// (applyEnv skips keys already present), so bash wins a tie, matching the
 	// "bashrc first" intent. Each is independently best-effort.
 	for _, sh := range []shellRC{
@@ -101,7 +101,7 @@ type shellRC struct {
 // sourceShellRC runs the shell so it sources rc, then prints the environment
 // NUL-separated (`env -0`) so values containing newlines survive. Returns the
 // parsed map and ok=false on any failure (missing shell/rc, non-zero exit,
-// timeout) — the caller treats !ok as "nothing to import".
+// timeout) - the caller treats !ok as "nothing to import".
 func sourceShellRC(s shellRC) (map[string]string, bool) {
 	if _, err := os.Stat(s.rc); err != nil {
 		return nil, false // rc file absent → nothing to do
@@ -125,7 +125,7 @@ func sourceShellRC(s shellRC) (map[string]string, bool) {
 	//	case $- in *i*) ;; *) return;; esac
 	//
 	// so a plain `bash -c 'source ~/.bashrc'` (`$-` has no `i`) `return`s at
-	// that guard and never reaches the user's exports further down the file —
+	// that guard and never reaches the user's exports further down the file -
 	// the token set there would be invisible. `-i` makes `$-` contain `i` so
 	// the guard passes and the whole rc runs. The side effects of an
 	// interactive shell are contained: `2>/dev/null` drops the prompt/job

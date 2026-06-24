@@ -43,7 +43,7 @@ type turnOutcome struct {
 // NOTE: worker liveness is NO LONGER driven from here. Heartbeats used to fire
 // from beat() on every delta/tool, which meant a synchronous tool (exec ≤600s),
 // a slow time-to-first-byte, or a silent stream produced NO heartbeat and the
-// watchdog force-killed an agent that was actually fine — the recurring stall.
+// watchdog force-killed an agent that was actually fine - the recurring stall.
 // Liveness is now structural: runBackgroundTask runs a heartbeat ticker for as
 // long as the worker goroutine lives, so the watchdog only catches a genuinely
 // dead/wedged goroutine. beat() therefore only annotates the current phase.

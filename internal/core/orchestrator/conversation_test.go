@@ -43,7 +43,7 @@ func TestLooksLikeTransientTransport4xx(t *testing.T) {
 			why:  "404 NotFoundError (model missing) must fail fast",
 		},
 
-		// Other 4xx with deterministic causes — same treatment.
+		// Other 4xx with deterministic causes - same treatment.
 		{"provider-bridge: upstream status 403: forbidden", false, "403 forbidden is deterministic"},
 		{"provider-bridge: upstream status 400: invalid request", false, "400 invalid request is deterministic"},
 		{"provider-bridge: upstream status 400: maximum context length exceeded", false, "context overflow is its own path (compaction), not transient retry"},
@@ -380,7 +380,7 @@ func TestRunConversationStopsIdenticalToolLoop(t *testing.T) {
 // MaxIdenticalToolCalls disables the identical-tool loop guard: the same
 // repeating bridge that trips the guard above now runs until the (still
 // enforced) MaxToolCalls resource cap instead. This is the "observe raw model
-// behavior" escape hatch — the loop-breaker is off, but real resource caps
+// behavior" escape hatch - the loop-breaker is off, but real resource caps
 // still bound the run.
 func TestDisabledIdenticalToolGuardLetsLoopRun(t *testing.T) {
 	orch := &Orchestrator{memoryDir: t.TempDir(), vision: make(map[string]bool)}
@@ -485,7 +485,7 @@ func TestWaitForTaskChangeUsesBackendSignal(t *testing.T) {
 }
 
 // TestWaitIgnoresNonTerminalProgress proves the "blocking progress" fix: a bare
-// progress update (UpdatedAt advances, status stays in_progress — e.g. the agent
+// progress update (UpdatedAt advances, status stays in_progress - e.g. the agent
 // calling sapaloq_update_task_progress) must NOT break the wait. Otherwise the
 // orchestrator returns "changed to in_progress", re-waits, and the chat freezes
 // in a wait→progress→wait loop. The wait should run out its (short) window and
@@ -598,7 +598,7 @@ func TestCalledToolsNote(t *testing.T) {
 // after a turn that invoked a tool, the assistant message replayed to the model
 // on the next turn must carry an explicit [Called tools: …] record. Without it
 // the transcript shows only the model's narration plus a tool result, with no
-// proof the model itself called the tool — which leads some models (e.g. Opus)
+// proof the model itself called the tool - which leads some models (e.g. Opus)
 // to second-guess ("I forgot to call it") and re-issue the same call.
 func TestRunConversationRecordsToolCallInTranscript(t *testing.T) {
 	fake := &sequenceBridge{}
@@ -643,7 +643,7 @@ func TestRunConversationRecordsToolCallInTranscript(t *testing.T) {
 	}
 }
 
-// busyBridge keeps producing deltas — one short delay then output, repeated —
+// busyBridge keeps producing deltas - one short delay then output, repeated -
 // so the run is always making progress. Total runtime exceeds the idle window,
 // but no single gap does. It finishes (tool-less done) after `turns` turns.
 type busyBridge struct {
@@ -671,7 +671,7 @@ func (b *busyBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridg
 	return out, nil
 }
 
-// silentBridge opens a stream and never emits anything — a stuck network /
+// silentBridge opens a stream and never emits anything - a stuck network /
 // dead stream. The idle deadline must cancel it.
 type silentBridge struct{}
 
@@ -679,7 +679,7 @@ func (b *silentBridge) ID() string              { return "silent" }
 func (b *silentBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
 func (b *silentBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
 	out := make(chan bridge.StreamEvent)
-	// Never write, never close — only ctx cancellation (the idle deadline)
+	// Never write, never close - only ctx cancellation (the idle deadline)
 	// unblocks the loop's select on the stream.
 	return out, nil
 }
@@ -798,7 +798,7 @@ func (b *malformedToolBridge) Complete(_ context.Context, req bridge.Request) (<
 		defer close(out)
 		if call == 1 {
 			// An unknown tool name is not handled by handleAskTool/runSharedTool,
-			// so it yields no toolResult — exactly the "tool emitted but nothing
+			// so it yields no toolResult - exactly the "tool emitted but nothing
 			// executed" shape a mangled inline batch produces.
 			tool := parse.ToolCall{Name: "definitely_not_a_real_tool", Arguments: []byte(`{}`), Source: "openai_inline"}
 			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}

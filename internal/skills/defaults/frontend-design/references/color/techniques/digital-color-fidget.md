@@ -7,7 +7,7 @@
 
 ## Description
 
-In 2024, Peter Donahue designed the Color Fidget — a physical interactive color wheel pin/keychain created in collaboration with The Gray Muse. After discontinuing the physical product (competition from Temu knockoffs), he built a free digital version as a structured tool for thinking about color harmonies more flexibly than complementary/triadic/analogous.
+In 2024, Peter Donahue designed the Color Fidget - a physical interactive color wheel pin/keychain created in collaboration with The Gray Muse. After discontinuing the physical product (competition from Temu knockoffs), he built a free digital version as a structured tool for thinking about color harmonies more flexibly than complementary/triadic/analogous.
 
 ## Transcript
 
@@ -15,7 +15,7 @@ Some of you said you were kind of sad that you weren't able to get an official c
 
 And I actually made some improvements to the functionality. I stand behind it. But one thing that I had to try to explain to people was that when you're choosing colors from the second ring or the third ring, you actually want to think about lowering or raising the lightness of those colors so you can get a full range of values in your palette. And I built that functionality into the digital color fidget.
 
-So if you're interested, you can go play with it. The link is in my link tree — just go to "try my color pickers" and you'll get taken to my website and then you'll find your way to the digital fidget. So anyway, if that is useful or fun to play with, I hope you enjoy.
+So if you're interested, you can go play with it. The link is in my link tree - just go to "try my color pickers" and you'll get taken to my website and then you'll find your way to the digital fidget. So anyway, if that is useful or fun to play with, I hope you enjoy.
 
 ## Key Concepts
 
@@ -38,7 +38,7 @@ So if you're interested, you can go play with it. The link is in my link tree �
 
 ### Related Products (discontinued)
 
-- **The Gray Muse — Color Fidget:** https://www.thegraymuse.com/collections/the-color-fidget
+- **The Gray Muse - Color Fidget:** https://www.thegraymuse.com/collections/the-color-fidget
 
 ### Creator
 

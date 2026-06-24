@@ -32,7 +32,7 @@ func runService(cfg config.Config, cfgPath string, args []string) {
 		exitf("usage: sapaloq-core service <install|uninstall|start|stop|status>")
 	}
 	if _, err := exec.LookPath("systemctl"); err != nil {
-		exitf("service: systemctl not found — systemd --user is required.\n" +
+		exitf("service: systemctl not found - systemd --user is required.\n" +
 			"On a non-systemd host, run `sapaloq-core run` directly (e.g. from your\n" +
 			"session autostart) instead of using the service subcommand.")
 	}
@@ -89,7 +89,7 @@ func serviceInstall(cfg config.Config, cfgPath string) {
 // installWidgetAutostart writes an XDG autostart .desktop so the GUI widget
 // launches automatically when the desktop session starts (e.g. after GNOME
 // login). The widget is a graphical app, so it belongs in the session's
-// autostart — not in the headless systemd service. No-op (with a hint) when the
+// autostart - not in the headless systemd service. No-op (with a hint) when the
 // widget binary can't be found, or when SAPALOQ_SKIP_WIDGET_AUTOSTART is set.
 func installWidgetAutostart(coreExe string) {
 	if os.Getenv("SAPALOQ_SKIP_WIDGET_AUTOSTART") != "" {

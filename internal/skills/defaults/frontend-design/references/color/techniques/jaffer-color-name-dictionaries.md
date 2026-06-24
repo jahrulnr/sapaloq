@@ -1,4 +1,4 @@
-# Aubrey Jaffer — Color-Name Dictionaries
+# Aubrey Jaffer - Color-Name Dictionaries
 
 **Author:** Aubrey Jaffer
 **Source:** MIT CSAIL guest page

@@ -1,4 +1,4 @@
-# Aubrey Jaffer — Winsor-Newton Water-colours
+# Aubrey Jaffer - Winsor-Newton Water-colours
 
 **Author:** Aubrey Jaffer
 **Source:** section within Color-Name Dictionaries

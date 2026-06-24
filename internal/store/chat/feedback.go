@@ -49,7 +49,7 @@ func (s *Store) AddFeedback(ctx context.Context, sessionID string, turnID *int64
 	}
 
 	// Queue a learning event so the async drain (memory-janitor) can act on the
-	// reward signal later — e.g. tune a prefetch rule's success_rate or build an
+	// reward signal later - e.g. tune a prefetch rule's success_rate or build an
 	// overlay. Best-effort: a queue failure must not fail the feedback write the
 	// user already saw acknowledged.
 	payload := `{"session_id":` + jsonString(sessionID) +

@@ -1,13 +1,13 @@
-# FarbVelo — Random Color Palette Generator
+# FarbVelo - Random Color Palette Generator
 
-**Source:** [GitHub — meodai/farbvelo](https://github.com/meodai/farbvelo)
+**Source:** [GitHub - meodai/farbvelo](https://github.com/meodai/farbvelo)
 **Author:** meodai
 **Demo:** https://farbvelo.elastiq.ch/
 **License:** CC-BY-SA-4.0 | **Stars:** 87
 
 ## What It Does
 
-Web-based color palette generator that creates harmonious random palettes. Name is Swiss-German for "color bicycle" — the tool cycles through color harmonies algorithmically. Designed for design inspiration, passive enjoyment, and palette exploration.
+Web-based color palette generator that creates harmonious random palettes. Name is Swiss-German for "color bicycle" - the tool cycles through color harmonies algorithmically. Designed for design inspiration, passive enjoyment, and palette exploration.
 
 ## Generation Algorithm
 
@@ -33,14 +33,14 @@ Web-based color palette generator that creates harmonious random palettes. Name 
 ### 4. Color Naming
 
 - Integrates with [color-names API](https://github.com/meodai/color-names) to assign real names to generated colors
-- Beyond raw hex — gives context and character to each swatch
+- Beyond raw hex - gives context and character to each swatch
 
 ## Key Design Decisions
 
-- **HSLuv for hue selection** — perceptually uniform hue distribution (no green/ultramarine over-representation)
-- **CIE L\*a\*b\* for interpolation** — perceptually smooth gradients between stops
-- **Dark-to-light structure** — every palette has a usable tonal range (not just a random scatter of saturated hues)
-- **Minimum hue angle** — user-controllable diversity vs. analogous-ness
+- **HSLuv for hue selection** - perceptually uniform hue distribution (no green/ultramarine over-representation)
+- **CIE L\*a\*b\* for interpolation** - perceptually smooth gradients between stops
+- **Dark-to-light structure** - every palette has a usable tonal range (not just a random scatter of saturated hues)
+- **Minimum hue angle** - user-controllable diversity vs. analogous-ness
 
 ## Technical Stack
 

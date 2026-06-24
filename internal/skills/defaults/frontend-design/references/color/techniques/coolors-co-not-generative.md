@@ -27,11 +27,11 @@ That's it. The palette was made by someone else, stored in the bundle.
 
 ## Tools That Do Generate
 
-- **mycolor.space** — generates from a base color
-- **color.adobe.com/create/color-wheel** — geometric hue rotation
-- **paletton.com** — hue rotation with saturation/brightness control
-- **khroma.co** — ML-trained on user preferences
-- **colormind.io** — GAN-based deep learning, trained on Adobe Color + Dribbble + photos/movies; different datasets loaded daily
+- **mycolor.space** - generates from a base color
+- **color.adobe.com/create/color-wheel** - geometric hue rotation
+- **paletton.com** - hue rotation with saturation/brightness control
+- **khroma.co** - ML-trained on user preferences
+- **colormind.io** - GAN-based deep learning, trained on Adobe Color + Dribbble + photos/movies; different datasets loaded daily
 
 ## Tools With More Control
 
@@ -42,5 +42,5 @@ That's it. The palette was made by someone else, stored in the bundle.
 | **pro-color-harmonies** | Adaptive OKLCH harmony with muddy-zone avoidance                   |
 | **dittoTones**          | Extract lightness/chroma curves from Tailwind/Radix                |
 | **FarbVelo**            | Structured random with HSLuv hue selection + CIE Lab interpolation |
-| **IQ Cosine**           | `a + b*cos(2π(ct+d))` — 12 floats = infinite palette               |
+| **IQ Cosine**           | `a + b*cos(2π(ct+d))` - 12 floats = infinite palette               |
 | **Colorbox**            | Helical paths with configurable easing curves                      |

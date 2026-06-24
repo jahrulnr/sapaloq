@@ -26,7 +26,7 @@ func TestSeedMaterializesDefaults(t *testing.T) {
 	}
 
 	// At least one bundled resource (nested folder) must be materialized too,
-	// proving the full tree — not just SKILL.md — is seeded.
+	// proving the full tree - not just SKILL.md - is seeded.
 	if _, err := os.Stat(filepath.Join(dir, "skill-creator", "scripts", "init_skill.py")); err != nil {
 		t.Fatalf("bundled script not seeded: %v", err)
 	}

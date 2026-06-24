@@ -28,7 +28,7 @@ func TestAgentEncodeRoundtripSelf(t *testing.T) {
 }
 
 // TestAgentEncodeConversationIDStable confirms the same ConversationID
-// produces identical bodies — required for server-side request deduplication.
+// produces identical bodies - required for server-side request deduplication.
 func TestAgentEncodeConversationIDStable(t *testing.T) {
 	opts := AgentRunOptions{
 		UserText:       "hi",
@@ -44,7 +44,7 @@ func TestAgentEncodeConversationIDStable(t *testing.T) {
 }
 
 // TestAgentEncodeConversationIDFromRequestID confirms request_id == conversation_id
-// (matches cursor-agent's wire format — line 552 of cursorAgentProtobuf.js).
+// (matches cursor-agent's wire format - line 552 of cursorAgentProtobuf.js).
 func TestAgentEncodeConversationIDFromRequestID(t *testing.T) {
 	opts := AgentRunOptions{
 		UserText:       "hi",
@@ -147,7 +147,8 @@ func bytesEqual(a, b []byte) bool {
 }
 
 // buildAgentServerText constructs a synthetic AgentServerMessage:
-//   AgentServerMessage { InteractionUpdate { TextDeltaUpdate { text } } }
+//
+//	AgentServerMessage { InteractionUpdate { TextDeltaUpdate { text } } }
 func buildAgentServerText(text string) []byte {
 	td := encodeFieldLen(tduText, []byte(text))
 	tdu := encodeFieldLen(iuTextDelta, td)

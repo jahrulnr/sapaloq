@@ -1,4 +1,4 @@
-# Aubrey Jaffer — Resene Paint Colours
+# Aubrey Jaffer - Resene Paint Colours
 
 **Author:** Aubrey Jaffer
 **Source:** section within Color-Name Dictionaries

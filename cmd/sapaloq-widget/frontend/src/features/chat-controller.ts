@@ -229,7 +229,7 @@ export function initChatController() {
     // of bursting when SendMessage/RetryChatTurn resolves.
     EventsOn('sapaloq:stream', (event: StreamEvent) => {
       // Background task completions arrive asynchronously (no active chat
-      // request), so they must be handled regardless of `submitting` — otherwise
+      // request), so they must be handled regardless of `submitting` - otherwise
       // the completion trigger would be silently dropped while idle.
       if (event.kind === 'task_update') {
         renderTaskUpdate(event);
@@ -239,7 +239,7 @@ export function initChatController() {
       // The orchestrator SPEAKS a sub-agent's terminal outcome as a SINGLE,
       // whole response_delta stamped with task_id. This is a self-contained
       // completion line, not a streaming fragment, so it must be rendered as its
-      // own assistant bubble and must NEVER be fed into the live renderer —
+      // own assistant bubble and must NEVER be fed into the live renderer -
       // otherwise two concurrent completions (or a completion racing the active
       // turn) interleave their characters into one shared bubble. We also dedupe
       // per task_id so a re-published terminal transition can't append twice.

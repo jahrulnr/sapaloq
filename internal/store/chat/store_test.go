@@ -72,7 +72,7 @@ func TestUsageCountsAllRolesIncludingToolTurns(t *testing.T) {
 	}
 	// A realistic turn: user asks, a tool runs (results sent to the model), then
 	// the assistant answers. The tool results are real context tokens and must
-	// be counted — this is the regression that made usage read far too low.
+	// be counted - this is the regression that made usage read far too low.
 	_ = store.AppendTurn(ctx, sessionID, "user", "baca /etc/hosts", 5)
 	_ = store.AppendTurn(ctx, sessionID, "tool", "[Tool results]\n127.0.0.1 localhost ...", 40)
 	_ = store.AppendTurn(ctx, sessionID, "assistant", "Ini isi /etc/hosts ...", 12)
@@ -81,7 +81,7 @@ func TestUsageCountsAllRolesIncludingToolTurns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usage.UsedTokens != 57 { // 5 + 40 + 12 — the tool turn is NOT free
+	if usage.UsedTokens != 57 { // 5 + 40 + 12 - the tool turn is NOT free
 		t.Fatalf("expected used=57 (incl. tool turn), got %d", usage.UsedTokens)
 	}
 	if usage.ActiveTurns != 3 {

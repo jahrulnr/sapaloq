@@ -20,16 +20,16 @@ And if you want to learn more about the pigments on Caravaggio's palettes and ho
 
 ## Key Facts
 
-- **Copper resinate** — transparent green glaze pigment; made by dissolving verdigris in pine balsam
-- **Verdigris** — the opaque green pigment available ~1600, not very vivid on its own
-- **Technique** — copper resinate glazed over verdigris = vivid greens; glazed over red = deep rich shadows
-- **Spectral cancellation** — any color that doesn't share spectral transmission with red will cancel red (not just the "complementary"); complementary color theory wasn't formalized until late 1700s
+- **Copper resinate** - transparent green glaze pigment; made by dissolving verdigris in pine balsam
+- **Verdigris** - the opaque green pigment available ~1600, not very vivid on its own
+- **Technique** - copper resinate glazed over verdigris = vivid greens; glazed over red = deep rich shadows
+- **Spectral cancellation** - any color that doesn't share spectral transmission with red will cancel red (not just the "complementary"); complementary color theory wasn't formalized until late 1700s
 - **Copper resinate looks like modern phthalo green**
 - **Painting referenced:** _Martha and Mary Magdalene_ (~1598)
 
 ## Links
 
-- **Famous Palettes course** — mentioned but no direct URL; available via Color Nerd's link tree
+- **Famous Palettes course** - mentioned but no direct URL; available via Color Nerd's link tree
 - **Color Nerd:** https://www.youtube.com/@ColorNerd1
 
 ## Source Books & Documents
@@ -37,6 +37,6 @@ And if you want to learn more about the pigments on Caravaggio's palettes and ho
 | Document                                                             | Author           | Year | Archive.org                                                           | Local PDF                                                                                |
 | -------------------------------------------------------------------- | ---------------- | ---- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | _The Painter's Methods & Materials_                                  | A.P. Laurie      | 1926 | [archive.org](https://archive.org/details/paintersmethodsm00lauruoft) | [pdfs/laurie-painters-methods-materials.pdf](pdfs/laurie-painters-methods-materials.pdf) |
-| _Painting Materials_ (handbook)                                      | —                | —    | [archive.org](https://archive.org/details/PaintingMaterial)           | [pdfs/painting-material.pdf](pdfs/painting-material.pdf)                                 |
+| _Painting Materials_ (handbook)                                      | -                | -    | [archive.org](https://archive.org/details/PaintingMaterial)           | [pdfs/painting-material.pdf](pdfs/painting-material.pdf)                                 |
 | _The Distillation of Resins: Resinate Lakes and Pigments_            | Viktor Schweizer | 1907 | [archive.org](https://archive.org/details/distillationofre00schwrich) | [pdfs/schweizer-resinate-pigments.pdf](pdfs/schweizer-resinate-pigments.pdf)             |
-| _Artists' Pigments: A Handbook of Their History and Characteristics_ | —                | —    | [archive.org](https://archive.org/details/artistspigmentsh0000unse)   | borrow-only                                                                              |
+| _Artists' Pigments: A Handbook of Their History and Characteristics_ | -                | -    | [archive.org](https://archive.org/details/artistspigmentsh0000unse)   | borrow-only                                                                              |

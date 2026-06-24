@@ -16,24 +16,24 @@ Critique of Procreate's default color picker: the hue circle uses "traditional" 
 
 **Wrong complementary pairs:**
 
-- Procreate places red opposite green, yellow opposite violet — following Itten/Chevreul "traditional" complements
-- Violet in RGB has hue angle 270°; yellow is 60° — they don't add to 360°
+- Procreate places red opposite green, yellow opposite violet - following Itten/Chevreul "traditional" complements
+- Violet in RGB has hue angle 270°; yellow is 60° - they don't add to 360°
 - They started with yellow↔violet, then scaled one half of the wheel to fit, creating inconsistent spacing
-- RGB green (120°) is "too limey" to be red's complement, so they shifted it to ~142° — but didn't apply the same logic consistently
+- RGB green (120°) is "too limey" to be red's complement, so they shifted it to ~142° - but didn't apply the same logic consistently
 
 **Unintuitive saturation/lightness disc:**
 
 - The center disc is HSL (hue, saturation, lightness) warped into a circle
-- Should be a square — the circular warp makes it impossible to find the most vivid colors intuitively
-- "Where are the most vivid greens? Top? Left? No — some corner of a circle that doesn't exist"
+- Should be a square - the circular warp makes it impossible to find the most vivid colors intuitively
+- "Where are the most vivid greens? Top? Left? No - some corner of a circle that doesn't exist"
 - Hue and saturation/lightness are split into two separate controls
 
 ### The Good: Harmony Wheel (alternate picker)
 
-- Uses RGB hue angles — yellow↔indigo, red↔cyan as complementary pairs
+- Uses RGB hue angles - yellow↔indigo, red↔cyan as complementary pairs
 - These are scientifically correct: "two colors that when combined create an achromatic stimulus"
 - Triads, tetrads, and other geometric harmonies are geometrically correct
-- Combines hue AND saturation in one view — desaturated tones in the center
+- Combines hue AND saturation in one view - desaturated tones in the center
 - Can choose complement pairs with matching saturation levels
 - "Both more intuitive and more scientifically correct"
 

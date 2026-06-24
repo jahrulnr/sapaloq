@@ -1,4 +1,4 @@
-# Itten's Seven Colour Contrasts — a Critical Review
+# Itten's Seven Colour Contrasts - a Critical Review
 
 **Source:** [Colour Society of Australia](https://www.youtube.com/@coloursocietyofaustraliainc) (YouTube)
 **Speaker:** Robert Hirschler with Andreas Schwarz

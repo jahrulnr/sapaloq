@@ -195,7 +195,7 @@ func TestBridgeScenarios(t *testing.T) {
 			want: scenarioExpect{
 				kinds:    []bridge.EventKind{bridge.EventError},
 				hasError: true,
-				// errorSubstr intentionally omitted — mock server may reply
+				// errorSubstr intentionally omitted - mock server may reply
 				// with "unauthenticated" or goaway PROTOCOL_ERROR depending
 				// on driver. The contract being asserted is "EventError fires",
 				// not the literal error string.

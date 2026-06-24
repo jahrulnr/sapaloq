@@ -1,10 +1,10 @@
 # Image Color Extraction Tools
 
-Three tools for extracting color palettes from images — plus one that enables searching by palette.
+Three tools for extracting color palettes from images - plus one that enables searching by palette.
 
 ---
 
-## img-colors.com — Clustering-Based Extraction
+## img-colors.com - Clustering-Based Extraction
 
 **URL:** https://img-colors.com/
 **Author:** mrmrs / mrmrs.cc
@@ -35,10 +35,10 @@ Three tools for extracting color palettes from images — plus one that enables 
 | Space                 | Pros                                                       | Cons                                                             |
 | --------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------- |
 | **RGB**               | Raw screen values, easy math                               | Not perceptually uniform (yellow "farther" from white than blue) |
-| **CIELab**            | Perceptually uniform — equal step = equal perceived change | Best for human-expectation clustering                            |
+| **CIELab**            | Perceptually uniform - equal step = equal perceived change | Best for human-expectation clustering                            |
 | **HSL (cylindrical)** | Separates hue from sat/lightness; good for creative UI     | Wonky distance near poles                                        |
 
-**Tip:** Toggle color space buttons and watch the 3D point cloud morph — same data, different clustering results.
+**Tip:** Toggle color space buttons and watch the 3D point cloud morph - same data, different clustering results.
 
 ### Mesh Gradient Generation
 
@@ -46,7 +46,7 @@ Click any palette card → instantly generates a blurred mesh gradient backgroun
 
 ---
 
-## okpalette.color.pizza — OKLCH-Based Extraction
+## okpalette.color.pizza - OKLCH-Based Extraction
 
 **URL:** https://okpalette.color.pizza/
 **Author:** meodai / Elastiq.ch
@@ -68,9 +68,9 @@ Upload or paste an image → extracts palette in **OKLab/OKLCh** color space wit
 
 ### Controls
 
-- **Muted ↔ Saturated** slider — bias extraction toward desaturated or vivid colors
-- **Dark ↔ Light** slider — bias toward shadows or highlights
-- **Auto-Detect Bias** — automatic adjustment
+- **Muted ↔ Saturated** slider - bias extraction toward desaturated or vivid colors
+- **Dark ↔ Light** slider - bias toward shadows or highlights
+- **Auto-Detect Bias** - automatic adjustment
 
 ### Visualizations
 
@@ -84,7 +84,7 @@ Upload or paste an image → extracts palette in **OKLab/OKLCh** color space wit
 
 ---
 
-## colorgram-js — Fast Lightweight Palette Extraction
+## colorgram-js - Fast Lightweight Palette Extraction
 
 **URL:** https://github.com/darosh/colorgram-js
 **npm:** `colorgram`
@@ -126,10 +126,10 @@ Also exports `sample()` (raw buckets), `hsl()` (RGB→HSL), `sortByHsl()`.
 
 ---
 
-## Art Palette — Palette Extraction + Search-by-Color (Google Arts & Culture)
+## Art Palette - Palette Extraction + Search-by-Color (Google Arts & Culture)
 
 **URL:** https://github.com/googleartsculture/art-palette
-**Authors:** Simon Doury ([@voglervoice](https://github.com/voglervoice)), Damien Henry ([@dh7](https://github.com/dh7)) — Google Arts & Culture Lab
+**Authors:** Simon Doury ([@voglervoice](https://github.com/voglervoice)), Damien Henry ([@dh7](https://github.com/dh7)) - Google Arts & Culture Lab
 **License:** Apache 2.0
 **Status:** Archived (read-only since 2025-11)
 
@@ -141,8 +141,8 @@ A two-part system from Google Arts & Culture that extracts palettes from images 
 
 | Part | Language | Purpose |
 | --- | --- | --- |
-| **Frontend** | JavaScript | Palette extractor — processes `ImageData` to compute color palettes from images |
-| **Backend** | Python + TensorFlow | Palette embedding model — maps palettes into Euclidean space preserving perceptual color distance |
+| **Frontend** | JavaScript | Palette extractor - processes `ImageData` to compute color palettes from images |
+| **Backend** | Python + TensorFlow | Palette embedding model - maps palettes into Euclidean space preserving perceptual color distance |
 
 ### How It Works
 
@@ -156,9 +156,9 @@ The JS extractor can be used directly in browser or Node to extract palettes fro
 
 ### Why It Matters
 
-- **Perceptual embedding** — palette similarity respects human perception, not just RGB distance
-- **Scalable search** — embedding space enables fast nearest-neighbor queries over large art collections
-- **Reusable code** — Apache 2.0 licensed JS + Python, ready to integrate into projects
+- **Perceptual embedding** - palette similarity respects human perception, not just RGB distance
+- **Scalable search** - embedding space enables fast nearest-neighbor queries over large art collections
+- **Reusable code** - Apache 2.0 licensed JS + Python, ready to integrate into projects
 
 ---
 

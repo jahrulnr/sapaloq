@@ -1,12 +1,12 @@
-# Color Router — Reactive Color Management for Design Systems
+# Color Router - Reactive Color Management for Design Systems
 
-**Source:** [GitHub — meodai/color-router](https://github.com/meodai/color-router)
+**Source:** [GitHub - meodai/color-router](https://github.com/meodai/color-router)
 **Author:** meodai
 **npm:** `color-router`
 
 ## What It Does
 
-TypeScript color management framework that works like a **smart, interconnected color spreadsheet**. Solves the combinatorial explosion problem in design systems — a 190-color palette (Material Design) has 17,955 two-color combinations. Color Router maintains relationships reactively instead of manually.
+TypeScript color management framework that works like a **smart, interconnected color spreadsheet**. Solves the combinatorial explosion problem in design systems - a 190-color palette (Material Design) has 17,955 two-color combinations. Color Router maintains relationships reactively instead of manually.
 
 ## Core Concept
 
@@ -94,15 +94,15 @@ graph.hasCycles(); // detect circular deps
 
 ## Why It Matters for Design Systems
 
-- **Single source of truth** — change one color, everything updates
-- **Theme inheritance** — dark mode extends light, only overrides what changes
-- **Contrast guarantees** — `bestContrastWith` searches entire palettes
-- **Native CSS output** — renders `color-mix()`, CSS custom properties
-- **Auditable** — dependency graph reveals how colors relate
+- **Single source of truth** - change one color, everything updates
+- **Theme inheritance** - dark mode extends light, only overrides what changes
+- **Contrast guarantees** - `bestContrastWith` searches entire palettes
+- **Native CSS output** - renders `color-mix()`, CSS custom properties
+- **Auditable** - dependency graph reveals how colors relate
 
 ## Related
 
-- [DesignBook — Reactive Design Token Architecture Spec](designbook-reactive-design-token-spec.md) — architecture-level companion focused on reference tokens, semantic tokens, derived functions, scope inheritance, and multi-renderer token graphs.
+- [DesignBook - Reactive Design Token Architecture Spec](designbook-reactive-design-token-spec.md) - architecture-level companion focused on reference tokens, semantic tokens, derived functions, scope inheritance, and multi-renderer token graphs.
 
 ## Links
 

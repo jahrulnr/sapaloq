@@ -20,7 +20,7 @@ func TestBuildNudgeRequestBodyShape(t *testing.T) {
 }
 
 // TestNudgeServiceConstants are smoke checks for the endpoint constants
-// — easy to catch typos at build time, no need to do live requests.
+// - easy to catch typos at build time, no need to do live requests.
 func TestNudgeServiceConstants(t *testing.T) {
 	if NudgeServicePath != "/aiserver.v1.AiService/GetDefaultModelNudgeData" {
 		t.Fatalf("NudgeServicePath = %q, want /aiserver.v1.AiService/GetDefaultModelNudgeData", NudgeServicePath)

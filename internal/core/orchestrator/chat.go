@@ -105,7 +105,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	// The default skills ship embedded in the binary and are materialized to
 	// the skills dir on first run (Seed), so a fresh install has working
 	// defaults without any manual download/copy. Seeding never clobbers user
-	// edits and is best-effort — a disk error must not break startup.
+	// edits and is best-effort - a disk error must not break startup.
 	var loadedSkills []skills.Skill
 	if cfg.Skills.WithDefaults().Enabled {
 		skillsDir := config.ExpandPath(cfg.Skills.WithDefaults().Dir)
@@ -152,7 +152,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	}
 	// Seed the in-memory vision cache from config so a model previously proven
 	// text-only (supportsImages:false) is skipped before we ever send an image
-	// again — and a known-good one (true) isn't needlessly re-probed.
+	// again - and a known-good one (true) isn't needlessly re-probed.
 	o.seedVisionFromConfig(cfg)
 	o.materializeRuntimeRoadmap()
 	// Best-effort: index skill bodies into facts (kind="skill") so the
@@ -199,7 +199,7 @@ func (o *Orchestrator) toolJobs() *toolJobScheduler {
 // indexSkills upserts the in-memory skills into the facts store under
 // kind="skill" so SearchFacts can surface them as a secondary signal. It is
 // idempotent per boot: a skill id already present is left untouched. Best-effort
-// — any error is ignored so indexing never disrupts startup.
+// - any error is ignored so indexing never disrupts startup.
 func (o *Orchestrator) indexSkills(ctx context.Context) {
 	if o == nil || o.chat == nil || len(o.skills) == 0 {
 		return

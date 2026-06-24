@@ -13,7 +13,7 @@ Bird tetrachromatic vision (4 cone types: R, G, B, UV) means different complemen
 
 Colors that are complementary for humans are not complementary for birds. The reason a pair of colors is complementary is because in our vision those two colors add up to white. So for example, red and cyan add up to white because red only activates our long cone cell and cyan activates our short and medium. We've got three cone cells. 1 + 2 is three. All three cone cells is white because that means we're seeing the whole visible spectrum.
 
-But if you were a bird and you had tetrachromatic vision, you had four cone cells — red, green, blue, ultraviolet — well then now red and cyan don't add up to whatever you would consider white.
+But if you were a bird and you had tetrachromatic vision, you had four cone cells - red, green, blue, ultraviolet - well then now red and cyan don't add up to whatever you would consider white.
 
 Now let's see if we can do the math. The complement to red would be ultra cyan. The complement to yellow would be ultra blue.
 
@@ -27,17 +27,17 @@ Anyway, this has been interesting.
 
 ## Key Concepts
 
-- **Tetrachromacy** — birds have 4 cone types: L (red), M (green), S (blue), UV (ultraviolet)
-- **Human complementary pairs** are 1+2 cone splits (red↔cyan, green↔magenta, blue↔yellow) — always adds to 3
+- **Tetrachromacy** - birds have 4 cone types: L (red), M (green), S (blue), UV (ultraviolet)
+- **Human complementary pairs** are 1+2 cone splits (red↔cyan, green↔magenta, blue↔yellow) - always adds to 3
 - **Bird complementary pairs** must add to 4 cones, creating two structures:
   - **1+3:** e.g., red ↔ ultra cyan (G+B+UV), UV ↔ human white (R+G+B)
   - **2+2:** e.g., yellow (R+G) ↔ ultra blue (B+UV), gruv (G+UV) ↔ magenta (R+B)
 - **Novel bird color categories:**
-  - **Ultra cyan** (G+B+UV) — complement of red
-  - **Ultra blue** (B+UV) — complement of yellow
-  - **Gruv** (G+UV) — its complement is human magenta
-  - **Ultra yellow**, **ultra cyan**, **ultra magenta** — secondaries involving UV
-  - **Human white** (R+G+B) — is a _color_ for birds, complement of UV
+  - **Ultra cyan** (G+B+UV) - complement of red
+  - **Ultra blue** (B+UV) - complement of yellow
+  - **Gruv** (G+UV) - its complement is human magenta
+  - **Ultra yellow**, **ultra cyan**, **ultra magenta** - secondaries involving UV
+  - **Human white** (R+G+B) - is a _color_ for birds, complement of UV
 - **Bird white** = R+G+B+UV (all 4 cones equally stimulated)
 - **6 bird secondaries** from pairs: yellow, cyan, magenta, ruv, buv, gruv
 - **Additional "tertiary" class** from 3-cone combos: ultrayellow, ultracyan, ultramagenta, human-white

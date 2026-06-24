@@ -21,14 +21,14 @@ Color Nerd's most practical lecture on color selection. Covers the opponent-proc
 
 ### Three Properties to Navigate
 
-1. **Hue** = the angle around the circle (brown and orange share the same hue angle — "brown is just dark orange" = same hue, different lightness/chroma)
-2. **Chroma** = distance from center (how pure/vivid vs gray). Use "chroma" for pigments, "saturation" for screens — similar but not identical
+1. **Hue** = the angle around the circle (brown and orange share the same hue angle - "brown is just dark orange" = same hue, different lightness/chroma)
+2. **Chroma** = distance from center (how pure/vivid vs gray). Use "chroma" for pigments, "saturation" for screens - similar but not identical
 3. **Lightness** = how white or black
 
 ### Pigment Touchstones for Key Positions
 
 - **Yellow:** PY97 (Hansa Yellow)
-- **Green:** Phthalo Green (PG7) — phthalo green + white ≈ the green axis position
+- **Green:** Phthalo Green (PG7) - phthalo green + white ≈ the green axis position
 - Know where your actual paints sit in the color space, not just their names
 
 ## Reframing Harmony: Hue Count × Contrast Amount
@@ -43,11 +43,11 @@ Instead of memorizing harmony names, think of two sliders:
 | **Triadic**       | 3 (equidistant) | High but less than complementary          |
 | **Tetradic**      | 4               | More variety, less contrast per pair      |
 
-**The insight:** these aren't different "types" — they're positions on a 2D slider of variety vs contrast. You can place yourself anywhere, not just at the preset positions.
+**The insight:** these aren't different "types" - they're positions on a 2D slider of variety vs contrast. You can place yourself anywhere, not just at the preset positions.
 
 ### Monochromatic = Your Eye Begs for Contrast
 
-With zero chroma, a gray within a magenta painting will appear slightly green — your eye manufactures the missing complementary. Monochromatic schemes exploit this.
+With zero chroma, a gray within a magenta painting will appear slightly green - your eye manufactures the missing complementary. Monochromatic schemes exploit this.
 
 ## The Two Rules Exercise
 
@@ -62,11 +62,11 @@ This forces you to invent your own organization rather than relying on preset ha
 
 ## Key Quotes
 
-> "Brown is just dark orange — they share the same hue angle but we perceive them as different colors."
+> "Brown is just dark orange - they share the same hue angle but we perceive them as different colors."
 
 > "How many hues, and how much contrast? That's all harmony is."
 
-> "You're just inventing it — creating your own way of organizing colors."
+> "You're just inventing it - creating your own way of organizing colors."
 
 ## Links
 

@@ -8,17 +8,17 @@
 
 ## Description
 
-Deep analysis of Disney's Aladdin color palette — how the film uses primary color dominance, hierarchy, peacemaker colors, and deliberate palette shifts to guide the eye and serve the story.
+Deep analysis of Disney's Aladdin color palette - how the film uses primary color dominance, hierarchy, peacemaker colors, and deliberate palette shifts to guide the eye and serve the story.
 
 ## Key Concepts
 
 ### Color Dominance & Hierarchy
 
-- Every scene categorizable as a **blue scene, red scene, or yellow scene** — one color always dominant
+- Every scene categorizable as a **blue scene, red scene, or yellow scene** - one color always dominant
 - **Gorilla cage analogy:** three equally-sized intense colors fight; make one the size of an SUV and you have peace
-- Natural basis: light itself carries a color — colors that agree with the light are amplified, those that disagree are suppressed/neutralized
+- Natural basis: light itself carries a color - colors that agree with the light are amplified, those that disagree are suppressed/neutralized
 
-### Narrative Color — Guiding the Eye
+### Narrative Color - Guiding the Eye
 
 - Dominant color creates instant emphasis when a contrasting color appears
   - Golden treasure room → blue carpet draws eye immediately
@@ -28,16 +28,16 @@ Deep analysis of Disney's Aladdin color palette — how the film uses primary co
 
 ### Color Temperature Is NOT Emotion
 
-- **Blue ≠ sad:** Magic Carpet Ride is deeply romantic AND intensely blue — same palette as when Aladdin nearly drowns
+- **Blue ≠ sad:** Magic Carpet Ride is deeply romantic AND intensely blue - same palette as when Aladdin nearly drowns
 - "We shouldn't oversimplify or attribute unwarranted narrative power to color"
-- Colors give a **vague sense of high/low energy** (warm = more energy, cool = less) — context determines the specific emotion
+- Colors give a **vague sense of high/low energy** (warm = more energy, cool = less) - context determines the specific emotion
 - "It is rare to encounter a color in a vacuum"
 
 ### Peacemaker Colors
 
 - Bridge colors between primaries (orange between red and yellow, purple between red and blue) absorb the clash
 - Like humble gorillas keeping the intense ones apart
-- Edges of primaries softened by shifts in hue, saturation, and value — they never hit each other at full force
+- Edges of primaries softened by shifts in hue, saturation, and value - they never hit each other at full force
 - Intense primary proximity is rare and used deliberately (usually for danger)
 
 ### The Scene Formula
@@ -50,15 +50,15 @@ Deep analysis of Disney's Aladdin color palette — how the film uses primary co
 
 ### The Mysterious Green Scenes
 
-- Three scenes break the pattern by using green — evenly spaced (beginning, middle, near end)
-- First two are **grounding scenes:** exposition, light jokes, no danger — give relief from dramatic color; establish "normal" as reference
-- Third is unique — turquoise appears, only green-red complement in the film; breaks all patterns
-- "Critique is an exploration... it confuses me" — embracing what can't be fully explained
+- Three scenes break the pattern by using green - evenly spaced (beginning, middle, near end)
+- First two are **grounding scenes:** exposition, light jokes, no danger - give relief from dramatic color; establish "normal" as reference
+- Third is unique - turquoise appears, only green-red complement in the film; breaks all patterns
+- "Critique is an exploration... it confuses me" - embracing what can't be fully explained
 
 ### Color Psychology Caveat
 
-- Don't pin art success/failure on one variable — artwork is "a massive swarming pile of variables"
-- Color "joins the choir" — offers support and harmony, not solo determination
+- Don't pin art success/failure on one variable - artwork is "a massive swarming pile of variables"
+- Color "joins the choir" - offers support and harmony, not solo determination
 - Color is flexible for emotion: same blue palette = romance AND threat depending on context
 
 ## Links

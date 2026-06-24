@@ -212,7 +212,7 @@ func claudeThinkingFromEffort(effort string) *claudeThinking {
 // (and "error" for failures) so the model can tell them apart from a user
 // request. The OpenAI/Claude "tool" role, however, is reserved for native
 // function-calling and requires a tool_call_id tied to a preceding
-// assistant.tool_calls — which the non-native (inline) path does not have, so
+// assistant.tool_calls - which the non-native (inline) path does not have, so
 // sending it raw is rejected. We therefore surface these as "user" input: a
 // tool observation is, semantically, fresh input for the model to reason over.
 func wireRole(role string) string {
@@ -237,7 +237,7 @@ func buildOpenAIMessages(messages []bridge.Message, images []bridge.Image) []ope
 }
 
 // shouldAttachOpenAIImages returns true when inline images should be attached
-// to this message — only the final user message gets them. `role` is the wire
+// to this message - only the final user message gets them. `role` is the wire
 // role (post wireRole), so a tool observation mapped to "user" still receives
 // its inline image (the read_image vision path).
 func shouldAttachOpenAIImages(idx, total int, role string, images []bridge.Image) bool {

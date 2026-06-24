@@ -30,11 +30,11 @@ Different languages divide the color spectrum in fundamentally different ways, b
 
 ### Universal vs. language-specific boundaries
 
-Some color boundaries are near-universal (e.g., red/orange). Others are highly language-specific. Russian requires distinct terms for light blue ("goluboy") and dark blue ("siniy") — these aren't shades of one category but separate basic color terms. Korean has a similar mandatory blue split.
+Some color boundaries are near-universal (e.g., red/orange). Others are highly language-specific. Russian requires distinct terms for light blue ("goluboy") and dark blue ("siniy") - these aren't shades of one category but separate basic color terms. Korean has a similar mandatory blue split.
 
 ### Term granularity varies enormously
 
-English speakers use 314+ distinct hue terms; some languages use fewer than 10 basic terms. This is not just vocabulary size — it reflects genuinely different perceptual categorization strategies.
+English speakers use 314+ distinct hue terms; some languages use fewer than 10 basic terms. This is not just vocabulary size - it reflects genuinely different perceptual categorization strategies.
 
 ### Translation is lossy
 
@@ -48,21 +48,21 @@ The most prototypical or "best example" color for a given category shifts betwee
 
 The project site provides 8 tools:
 
-1. Color Name Summaries — overview of term distributions per language
-2. Color Translator — cross-language term lookup
-3. Hue Color Comparisons — brightest, most saturated colors per term
-4. Full Color Comparisons — complete color space coverage
-5. Korean-English Translation Comparison — detailed case study
-6. Korean-English Viridis Spectrum — how each language segments a perceptual ramp
-7. Full Color Bin Options — binning parameter exploration
-8. Color Name Data Entries — raw data browser
+1. Color Name Summaries - overview of term distributions per language
+2. Color Translator - cross-language term lookup
+3. Hue Color Comparisons - brightest, most saturated colors per term
+4. Full Color Comparisons - complete color space coverage
+5. Korean-English Translation Comparison - detailed case study
+6. Korean-English Viridis Spectrum - how each language segments a perceptual ramp
+7. Full Color Bin Options - binning parameter exploration
+8. Color Name Data Entries - raw data browser
 
 ## Why This Matters
 
 - **Color naming tools** should not assume English categories are universal. Any naming API or color dictionary benefits from multilingual awareness.
-- **Palette communication** across cultures is harder than it looks — "blue" is not one thing.
+- **Palette communication** across cultures is harder than it looks - "blue" is not one thing.
 - **Accessibility** has a linguistic dimension: if a UI relies on color names for communication, the names must match the user's language categories, not just be translated literally.
-- **Perceptual uniformity** alone doesn't solve naming — two colors equidistant in OKLAB may fall in the same category in one language and different categories in another.
+- **Perceptual uniformity** alone doesn't solve naming - two colors equidistant in OKLAB may fall in the same category in one language and different categories in another.
 - Provides empirical data for the Sapir-Whorf hypothesis applied to color: language doesn't just label perception, it shapes categorization.
 
 ## Citation

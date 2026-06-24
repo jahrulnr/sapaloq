@@ -40,7 +40,7 @@ func FitMessagesToContext(messages []bridge.Message, window int) []bridge.Messag
 	if estimateTotalTokens(messages) <= window {
 		return messages
 	}
-	// Peel off the leading system message — it must always be the first
+	// Peel off the leading system message - it must always be the first
 	// message in the output (most APIs reject system messages elsewhere).
 	var systemMsg bridge.Message
 	hasSystem := false

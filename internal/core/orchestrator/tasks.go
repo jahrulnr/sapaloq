@@ -180,7 +180,7 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			// into chat on the terminal transition). Tell the user it will be
 			// surfaced automatically instead of promising to "wait a bit more".
 			return askToolResult{text: fmt.Sprintf(
-				"Task `%s` masih %s setelah jendela tunggu. Tidak perlu menunggu — aku akan otomatis mengabari di chat begitu task selesai/gagal/butuh keputusan (kamu juga bisa cek `sapaloq_get_task_status`).",
+				"Task `%s` masih %s setelah jendela tunggu. Tidak perlu menunggu - aku akan otomatis mengabari di chat begitu task selesai/gagal/butuh keputusan (kamu juga bisa cek `sapaloq_get_task_status`).",
 				record.ID, record.Status), handled: true}
 		}
 		response := fmt.Sprintf("Task `%s` changed to **%s**.", record.ID, record.Status)
@@ -346,7 +346,7 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 	o.publishTaskUpdate(sessionID, record)
 	// No hard total-runtime cap: a productive background task must be free to
 	// work as long as it makes progress. The real guards are runConversation's
-	// inactivity (idle) deadline — which fires only when the run goes silent —
+	// inactivity (idle) deadline - which fires only when the run goes silent -
 	// the worker watchdog (stale heartbeat), and the loop-anomaly budgets. The
 	// stored cancel still backs user-initiated Stop and shutdown.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -442,8 +442,8 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 	// Structural liveness: heartbeat for as long as THIS goroutine is alive,
 	// independent of stream/tool activity. Previously the heartbeat was driven
 	// from inside the inference loop (on each delta/tool), so any synchronous
-	// operation that blocks the goroutine without emitting events — a long
-	// `exec`, a slow time-to-first-byte, a silent stream — produced no
+	// operation that blocks the goroutine without emitting events - a long
+	// `exec`, a slow time-to-first-byte, a silent stream - produced no
 	// heartbeat and the watchdog force-killed a worker that was actually fine.
 	// That was the recurring "worker stalled: no heartbeat" bug. Now the
 	// watchdog only fires when the goroutine itself is genuinely dead/wedged.
@@ -494,7 +494,7 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 	_ = o.writeTask(record)
 	// Completion trigger: push the terminal/notable state to the widget via the
 	// event bus (the `watch` op streams it). This is what lets the chat surface
-	// "task done/failed/needs-clarification" without the user polling — the
+	// "task done/failed/needs-clarification" without the user polling - the
 	// "speak"-style trigger the realtime flow expects.
 	o.publishTaskUpdate(sessionID, record)
 	// NOTE: plan.md is written ONLY when the planner explicitly calls
@@ -617,7 +617,7 @@ func taskUpdateEvent(sessionID string, record taskRecord) bridge.StreamEvent {
 	case "done":
 		// The card is a STATUS timeline, not a result dump. The full summary is
 		// authored by the orchestrator and surfaced as a chat bubble
-		// (speakTaskCompletion) — duplicating record.Result here produced two
+		// (speakTaskCompletion) - duplicating record.Result here produced two
 		// identical, redundant summaries (card + bubble). Keep this terse.
 		summary = "Selesai."
 	case "failed":
@@ -820,7 +820,7 @@ func (o *Orchestrator) waitForTaskChange(ctx context.Context, taskID string, pol
 		// Only a MEANINGFUL change ends the wait: the task reached a terminal
 		// state, or its status transitioned to a different non-terminal state.
 		// A bare UpdatedAt bump with the SAME status (e.g. the agent calling
-		// sapaloq_update_task_progress) must NOT break the wait — otherwise the
+		// sapaloq_update_task_progress) must NOT break the wait - otherwise the
 		// orchestrator returns "changed to in_progress", tends to re-wait, and
 		// the chat freezes in a wait→progress→wait loop (the "blocking
 		// progress" symptom). Such progress is surfaced live via the watch

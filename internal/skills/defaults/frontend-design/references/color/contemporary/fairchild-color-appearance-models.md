@@ -1,4 +1,4 @@
-# Fairchild — Color Appearance Models
+# Fairchild - Color Appearance Models
 
 **Source:** _Color Appearance Models_ (2nd ed., Wiley, 2005)
 **Author:** Mark D. Fairchild

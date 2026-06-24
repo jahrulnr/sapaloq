@@ -12,7 +12,7 @@ import (
 // Entry records a provider tool call. It serves two purposes:
 //   - reason="undeclared": a provider (e.g. cursor, whose tool surface is
 //     hardcoded server-side) called a tool outside the companion declared
-//     surface — the original anomaly/audit signal.
+//     surface - the original anomaly/audit signal.
 //   - reason="executed": the orchestrator's audit trail of every tool it ran
 //     (added later). Both share this log, distinguished by Reason.
 type Entry struct {

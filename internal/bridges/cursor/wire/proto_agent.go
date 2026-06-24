@@ -1,4 +1,4 @@
-// Package wire — Cursor Agent API encoder/decoder for
+// Package wire - Cursor Agent API encoder/decoder for
 // agent.v1.AgentService/Run. This is the endpoint cursor-agent uses for all
 // chat + composer + auto requests (including vision). It speaks to
 // `agentn.global.api5.cursor.sh` (or the privacy-preserving equivalent when
@@ -18,19 +18,19 @@ import (
 
 // AgentRunRequest field numbers.
 const (
-	arrConversationState  = 1
-	arrAction             = 2
-	arrMCPTools           = 4
-	arrConversationID     = 5
-	arrRequestedModel     = 9
-	arrUnknown12          = 12
-	arrRequestID          = 16
-	arrMCPToolsInner      = 1 // repeated McpToolDefinition at field 1 of McpTools
+	arrConversationState = 1
+	arrAction            = 2
+	arrMCPTools          = 4
+	arrConversationID    = 5
+	arrRequestedModel    = 9
+	arrUnknown12         = 12
+	arrRequestID         = 16
+	arrMCPToolsInner     = 1 // repeated McpToolDefinition at field 1 of McpTools
 )
 
 // AgentClientMessage field numbers (oneof).
 const (
-	acmRunRequest       = 1
+	acmRunRequest        = 1
 	acmExecClientMessage = 2
 	acmKvClientMessage   = 3
 )
@@ -53,10 +53,10 @@ const (
 
 // UserMessage field numbers.
 const (
-	umText           = 1
-	umMessageID      = 2
+	umText            = 1
+	umMessageID       = 2
 	umSelectedContext = 3
-	umMode           = 4
+	umMode            = 4
 )
 
 // SelectedContext field numbers.
@@ -92,11 +92,11 @@ const (
 
 // McpToolDefinition field numbers.
 const (
-	mtdName              = 1
-	mtdDescription       = 2
-	mtdInputSchema       = 3
+	mtdName               = 1
+	mtdDescription        = 2
+	mtdInputSchema        = 3
 	mtdProviderIdentifier = 4
-	mtdToolName          = 5
+	mtdToolName           = 5
 )
 
 // AgentServerMessage field numbers (oneof).
@@ -125,18 +125,18 @@ const (
 
 // ExecServerMessage envelope fields.
 const (
-	esmID                   = 1
-	esmExecID               = 15
-	esmRequestContextArgs   = 10
-	esmReadArgs             = 7
-	esmShellArgs            = 2
+	esmID                 = 1
+	esmExecID             = 15
+	esmRequestContextArgs = 10
+	esmReadArgs           = 7
+	esmShellArgs          = 2
 )
 
 // ExecClientMessage envelope fields.
 const (
-	ecmID                 = 1
-	ecmExecID             = 15
-	ecmRequestContextRes  = 10
+	ecmID                = 1
+	ecmExecID            = 15
+	ecmRequestContextRes = 10
 )
 
 // RequestContextResult sub-fields.
@@ -148,9 +148,9 @@ const (
 
 // KvServerMessage envelope fields.
 const (
-	ksmID              = 1
-	ksmGetBlobArgs     = 2
-	ksmSetBlobArgs     = 3
+	ksmID          = 1
+	ksmGetBlobArgs = 2
+	ksmSetBlobArgs = 3
 )
 
 // AgentImage is a decoded image ready to inline-encode in the request.
@@ -195,7 +195,7 @@ func encodeAgentRunRequest(opts AgentRunOptions) []byte {
 		msgID = uuid.NewString()
 	}
 
-	// selected_context — empty by default, populated when images present.
+	// selected_context - empty by default, populated when images present.
 	// Without the empty placeholder the server accepts the request but never
 	// streams a response (matches kaitranntt behavior).
 	var selectedCtxParts []byte
@@ -298,7 +298,9 @@ func jsonSchemaToProtobufValueBytes(schema map[string]any) ([]byte, error) {
 }
 
 // BuildSyntheticAgentText constructs a synthetic AgentServerMessage:
-//   AgentServerMessage { InteractionUpdate { TextDeltaUpdate { text } } }
+//
+//	AgentServerMessage { InteractionUpdate { TextDeltaUpdate { text } } }
+//
 // Exported so cross-package tests can build canned responses for httptest
 // mock servers.
 func BuildSyntheticAgentText(text string) []byte {
@@ -307,6 +309,7 @@ func BuildSyntheticAgentText(text string) []byte {
 	iu := encodeFieldLen(asmInteractionUpdate, tdu)
 	return iu
 }
+
 const (
 	valNull   = 1
 	valNumber = 2
@@ -383,7 +386,7 @@ type AgentDecoded struct {
 
 // DecodeAgentServerMessage parses one Connect-RPC payload (post-decompress)
 // into AgentDecoded events. Only text/thinking/turn_end/kv markers are
-// surfaced — exec channel is out of scope for the MVP driver.
+// surfaced - exec channel is out of scope for the MVP driver.
 func DecodeAgentServerMessage(payload []byte) []AgentDecoded {
 	var out []AgentDecoded
 	top := decodeMessage(payload)

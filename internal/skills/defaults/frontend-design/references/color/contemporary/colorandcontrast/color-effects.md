@@ -1,6 +1,6 @@
 # Color Effects
 
-**Source:** [Color & Contrast](https://colorandcontrast.com/) — A comprehensive guide to color for UI designers
+**Source:** [Color & Contrast](https://colorandcontrast.com/) - A comprehensive guide to color for UI designers
 
 _16 content fragments extracted from SPA bundle_
 

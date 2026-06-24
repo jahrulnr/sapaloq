@@ -258,7 +258,7 @@ func TestCompletionFallsBackToTemplateWithoutProvider(t *testing.T) {
 }
 
 // TestTaskUpdateEventDoneIsStatusOnly locks in that the task CARD is a status
-// timeline: a done update must NOT embed the (potentially huge) raw result —
+// timeline: a done update must NOT embed the (potentially huge) raw result -
 // that summary belongs only to the orchestrator-authored bubble.
 func TestTaskUpdateEventDoneIsStatusOnly(t *testing.T) {
 	const rawResult = "VERY LONG RESULT DUMP that must never appear on the status card"
@@ -300,7 +300,7 @@ func (b *recordingBridge) Complete(_ context.Context, req bridge.Request) (<-cha
 }
 
 // TestTaskRunnerCompletionAnnouncementUnchanged guards that a normal (non-
-// planner) completion keeps the original "report the result" framing — the
+// planner) completion keeps the original "report the result" framing - the
 // planner branch must not bleed into ordinary task completions.
 func TestTaskRunnerCompletionAnnouncementUnchanged(t *testing.T) {
 	fake := &recordingBridge{reply: "Udah kelar."}

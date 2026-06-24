@@ -1,18 +1,18 @@
-# SapaLOQ — LLM Bridge Drivers
+# SapaLOQ - LLM Bridge Drivers
 
-> **Brain bridge drivers** — connect companion/sub-agent LLM calls to external APIs & IDEs.
+> **Brain bridge drivers** - connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-06-22 (runtime bridge/vault paths moved to ~/SapaLOQ)
+> Last updated: 2026-06-25 (provider-bridge pre-stream retry/backoff knob `maxRetries`)
 
 Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
-> **Thinking/tools wire truth:** [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) (L0 only). Jangan derive thinking behavior dari 9router — adapter itu skip/collapse channel thinking Cursor.
+> **Thinking/tools wire truth:** [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) (L0 only). Jangan derive thinking behavior dari 9router - adapter itu skip/collapse channel thinking Cursor.
 
 ---
 
 ## Dua keluarga driver
 
-SapaLOQ punya **dua registry driver** terpisah — jangan dicampur:
+SapaLOQ punya **dua registry driver** terpisah - jangan dicampur:
 
 
 | Family         | Package             | Pilih via                          | Contoh                                                           |
@@ -32,6 +32,18 @@ wire default truncated long sub-agent steps (large file generation) into a bare
 "context deadline exceeded"; **both** bridges now rewrite that error to name the
 timeout and the knob to raise it (`explainStreamError`).
 
+### Pre-stream retry
+
+The provider-bridge retries a **transient pre-stream failure** (connection
+error, or a retryable status: `408`, `429`, `5xx`) with exponential backoff +
+jitter, bounded by `llmBridge.providers[].maxRetries`
+(`config.LLMBridge.ResolveMaxRetries()`, default **5**, `-1` disables, clamped
+to 10). This matches the official Blackbox CLI's resilience (OpenAI SDK
+`maxRetries`) and absorbs flaky-gateway `500`s (e.g. the Vercel AI Gateway
+`Connection error` routing Anthropic/opus models behind `api.blackbox.ai`).
+Retries only fire **before** the first SSE byte, so streamed deltas are never
+duplicated. See [PROVIDER-BRIDGE.md](./PROVIDER-BRIDGE.md#limitations).
+
 
 ```
 sapaloq-core
@@ -50,7 +62,7 @@ Platform driver = desktop automation. LLM bridge driver = **companion brain** + 
 
 ## cursor-bridge sebagai driver resmi
 
-**cursor-bridge** bukan dependency runtime ke repo `jahrulnr/cursor-bridge` atau 9router — SapaLOQ **mengadopsi kontrak** (schema, aliases, coercion) sebagai driver built-in.
+**cursor-bridge** bukan dependency runtime ke repo `jahrulnr/cursor-bridge` atau 9router - SapaLOQ **mengadopsi kontrak** (schema, aliases, coercion) sebagai driver built-in.
 
 
 |                    | SapaLOQ                          | cursor-bridge monorepo                   | 9router                                    |
@@ -63,16 +75,16 @@ Platform driver = desktop automation. LLM bridge driver = **companion brain** + 
 
 Reference artifacts (dev / regen):
 
-- `cursor-bridge.schema.json` — aliases, nativeTools, kimiTokens, coercion maps
-- `cursor-agent-toolcall-spec.json` — 49 ToolCall variants (mirror UI only)
+- `cursor-bridge.schema.json` - aliases, nativeTools, kimiTokens, coercion maps
+- `cursor-agent-toolcall-spec.json` - 49 ToolCall variants (mirror UI only)
 
-Orchestrator & sub-agents call unified interface `bridge.Complete()` — driver handles wire format.
+Orchestrator & sub-agents call unified interface `bridge.Complete()` - driver handles wire format.
 
 ---
 
 ## Vault (undeclared tool calls)
 
-When Cursor or another provider emits a **structured tool call** (protobuf `TOOL_CALL` or Kimi inline) that is not on the companion **declared surface**, SapaLOQ appends a JSONL row — **no blocking**, stream continues.
+When Cursor or another provider emits a **structured tool call** (protobuf `TOOL_CALL` or Kimi inline) that is not on the companion **declared surface**, SapaLOQ appends a JSONL row - **no blocking**, stream continues.
 
 **Path:** `~/SapaLOQ/vault/tool-calls.jsonl`
 
@@ -90,7 +102,7 @@ sapaloq-core vault stats
 | `unknown_upstream` | Name not in schema `nativeTools` + aliases (truly foreign)        |
 
 
-**Not vaulted:** tool names mentioned in thinking or chat text — aliases already group upstream names internally; filtering prose is unnecessary.
+**Not vaulted:** tool names mentioned in thinking or chat text - aliases already group upstream names internally; filtering prose is unnecessary.
 
 **Workflow:** run companion → review vault → add alias or extend `declaredTools` → regen schema from [cursor-bridge](https://github.com/jahrulnr/cursor-bridge) if needed.
 
@@ -113,8 +125,8 @@ Empty `declaredTools` → vault only `unknown_upstream` calls.
 
 | Driver ID                  | Wire                                  | Tool poisoning             | Default parsers                   |
 | -------------------------- | ------------------------------------- | -------------------------- | --------------------------------- |
-| `cursor-bridge`            | Cursor `api2.cursor.sh` / agent proto | **High** — fake tool names | `tools:cursor`, `thinking:cursor` |
-| `provider-bridge` (openai) | OpenAI `/v1/chat/completions`         | **Low** — usually clean    | `tools:openai`, `thinking:openai` |
+| `cursor-bridge`            | Cursor `api2.cursor.sh` / agent proto | **High** - fake tool names | `tools:cursor`, `thinking:cursor` |
+| `provider-bridge` (openai) | OpenAI `/v1/chat/completions`         | **Low** - usually clean    | `tools:openai`, `thinking:openai` |
 | `provider-bridge` (claude) | Anthropic `/v1/messages`              | **Low**                    | `tools:claude`, `thinking:claude` |
 | `provider-bridge` (kimi)   | OpenAI-compatible + `thinking` flag   | **Low**                    | `tools:openai`, `thinking:openai` |
 | `local-llama`              | llama.cpp / sidecar                   | N/A (local schema)         | configurable                      |
@@ -137,13 +149,13 @@ Empty `declaredTools` → vault only `unknown_upstream` calls.
 | Copilot VSCode / similar IDE agents | **Possible**    | Vault unknown calls; coerce via cursor-like aliases      |
 
 
-**boundary-guard** + **context-scaler** tetap jalan di atas parsed tool calls — wire-format aliasing + vault review, bukan prose filtering di thinking channel.
+**boundary-guard** + **context-scaler** tetap jalan di atas parsed tool calls - wire-format aliasing + vault review, bukan prose filtering di thinking channel.
 
 ---
 
 ## Parser layer (tools)
 
-Satu **canonical internal model** (`parse.ToolCall`) — setiap driver pilih parser:
+Satu **canonical internal model** (`parse.ToolCall`) - setiap driver pilih parser:
 
 ```go
 type ToolParser interface {
@@ -157,7 +169,7 @@ type ToolParser interface {
 
 | Parser     | Wire shape                                               | Known quirks                                                                                              |
 | ---------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **cursor** | Protobuf `THINKING_TEXT` + `RESPONSE_TEXT` + `TOOL_CALL` | Dual channel; blob split at `</think>` — see [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) |
+| **cursor** | Protobuf `THINKING_TEXT` + `RESPONSE_TEXT` + `TOOL_CALL` | Dual channel; blob split at `</think>` - see [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) |
 | **openai** | `choices[].delta.tool_calls[]`                           | Parallel calls, `index` field                                                                             |
 | **claude** | `content[]` type `tool_use`                              | Block IDs, stop_reason `tool_use`                                                                         |
 | **kimi**   | Inline markers in thinking/content tail                  | Often with Cursor Auto; not standalone API                                                                |
@@ -178,7 +190,7 @@ Auto-default dari `driver` ID; override untuk exotic proxy (OpenAI wire + Cursor
 
 ## Parser layer (thinking / reasoning)
 
-Thinking blocks **tidak** disimpan ke companion memory verbatim by default — stream to widget ring state `thinking`, strip before scribe index.
+Thinking blocks **tidak** disimpan ke companion memory verbatim by default - stream to widget ring state `thinking`, strip before scribe index.
 
 ```go
 type ThinkingParser interface {
@@ -191,13 +203,13 @@ type ThinkingParser interface {
 
 | Parser     | Format                                                          | Notes                                          |
 | ---------- | --------------------------------------------------------------- | ---------------------------------------------- |
-| **cursor** | `THINKING_TEXT` blob: pre/post `</think>`, optional `<|final|>` | **Do not** collapse like 9router — see RE doc  |
+| **cursor** | `THINKING_TEXT` blob: pre/post `</think>`, optional `<|final|>` | **Do not** collapse like 9router - see RE doc  |
 | **claude** | Extended thinking `thinking` blocks                             | API beta headers                               |
 | **kimi**   | Inline section after thinking split                             | Sub-parser of cursor Auto path, not standalone |
 | **openai** | `reasoning` / o-series deltas                                   | Model-gated                                    |
 
 
-Widget **thinking** state driven by parser events — not raw provider bytes.
+Widget **thinking** state driven by parser events - not raw provider bytes.
 
 ---
 
@@ -214,7 +226,7 @@ type Bridge interface {
 
 type BridgeCaps struct {
     ToolPoisoning   bool
-    NativeTools     []string  // upstream leak catalog — for coercion/sanitizer ONLY, not sub-agent tool list
+    NativeTools     []string  // upstream leak catalog - for coercion/sanitizer ONLY, not sub-agent tool list
     Streaming       bool
     Vision          bool
     ThinkingMode    bool
@@ -223,9 +235,9 @@ type BridgeCaps struct {
 
 `**NativeTools` semantics:** names Cursor/Kimi may **hallucinate** in thinking/content. Used by:
 
-1. **Leak detection** (`analyzeLeak`) — content + thinking scan
-2. **Coercion mapping** — fake name → declared bridge tool via `cursor-bridge.schema.json` aliases
-3. **Not** exposed to sub-agent as callable tools — sub-agent tools come from `subAgents.roles[].allowedTools` only
+1. **Leak detection** (`analyzeLeak`) - content + thinking scan
+2. **Coercion mapping** - fake name → declared bridge tool via `cursor-bridge.schema.json` aliases
+3. **Not** exposed to sub-agent as callable tools - sub-agent tools come from `subAgents.roles[].allowedTools` only
 
 Wrong interpretation (exposing NativeTools to task-runner) = double tool namespace bug.
 
@@ -248,7 +260,7 @@ func init() { bridge.Register(&CursorBridgeFactory{}) }
 
 ---
 
-## `config.json` — `llmBridge`
+## `config.json` - `llmBridge`
 
 ```json
 {
@@ -284,14 +296,14 @@ func init() { bridge.Register(&CursorBridgeFactory{}) }
 | `fallback`                           | Offline / auth fail → local brain                        |
 
 
-Credentials **never** in config.json — env, `.env`, or IDE `state.vscdb` only.
+Credentials **never** in config.json - env, `.env`, or IDE `state.vscdb` only.
 
 ### Credentials
 
 Autoload priority (ported from `@cursor-bridge/credential-loader`):
 
 1. `SAPALOQ_CURSOR_TOKEN` or `CURSOR_ACCESS_TOKEN` + optional `CURSOR_MACHINE_ID` in process env
-2. **Shell rc** — at boot `sapaloq-core` sources `~/.bashrc` then `~/.zshrc` (Linux only) and folds the relevant, not-already-set vars (`SAPALOQ_*`, `CURSOR_*`, `BLACKBOX_*`, `OPENAI_*`, `ANTHROPIC_*`, `KIMI_*`, `MOONSHOT_*`, `OPENROUTER_*`) into the process env. This matters under systemd `--user`/XDG autostart, where there is no login shell so rc exports would otherwise be invisible. The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) on purpose: the stock Debian/Ubuntu `~/.bashrc` begins with `case $- in *i*) ;; *) return;; esac`, which would `return` before any exports under a non-interactive shell. Best-effort, silent on any failure, stdin detached and stderr discarded so the interactive shell can't prompt/block, never overrides an already-set var, short timeout so a hanging rc can't freeze startup (`internal/shellenv`).
+2. **Shell rc** - at boot `sapaloq-core` sources `~/.bashrc` then `~/.zshrc` (Linux only) and folds the relevant, not-already-set vars (`SAPALOQ_*`, `CURSOR_*`, `BLACKBOX_*`, `OPENAI_*`, `ANTHROPIC_*`, `KIMI_*`, `MOONSHOT_*`, `OPENROUTER_*`) into the process env. This matters under systemd `--user`/XDG autostart, where there is no login shell so rc exports would otherwise be invisible. The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) on purpose: the stock Debian/Ubuntu `~/.bashrc` begins with `case $- in *i*) ;; *) return;; esac`, which would `return` before any exports under a non-interactive shell. Best-effort, silent on any failure, stdin detached and stderr discarded so the interactive shell can't prompt/block, never overrides an already-set var, short timeout so a hanging rc can't freeze startup (`internal/shellenv`).
 3. `.env` in cwd, then `~/.config/sapaloq/.env`
 4. `~/.config/Cursor/User/globalStorage/state.vscdb` (`cursorAuth/accessToken`, `storage.serviceMachineId`)
 
@@ -299,7 +311,7 @@ Override vscdb path: `CURSOR_STATE_VSCDB`. Ghost mode default on unless `CURSOR_
 
 `sapaloq-core doctor` prints credential source. Mock stream when autoload finds no token.
 
-Agent may `/settings set llmBridge.driver openai-compat` — no settings UI.
+Agent may `/settings set llmBridge.driver openai-compat` - no settings UI.
 
 ### Wire driver selection
 
@@ -310,8 +322,8 @@ shape (headers + Connect+proto body); they differ in transport. Pick via
 
 | Driver          | Implementation                                                                             | Status                                                                                                                                     |
 | --------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `raw` (default) | `wire.StreamChatRaw` — raw frames via `http2.Framer`, mirrors cursor-proto-lab Node client | Experimental; some api2 responses require further frame-format alignment (current symptom: `FRAME_SIZE_ERROR` goaway or no response).      |
-| `http2`         | `wire.StreamChat` — Go `net/http` + `http2.Transport`                                      | Stable; surfaces `unauthenticated` cleanly when token rejected, but api2 currently rejects with the same error against valid vscdb tokens. |
+| `raw` (default) | `wire.StreamChatRaw` - raw frames via `http2.Framer`, mirrors cursor-proto-lab Node client | Experimental; some api2 responses require further frame-format alignment (current symptom: `FRAME_SIZE_ERROR` goaway or no response).      |
+| `http2`         | `wire.StreamChat` - Go `net/http` + `http2.Transport`                                      | Stable; surfaces `unauthenticated` cleanly when token rejected, but api2 currently rejects with the same error against valid vscdb tokens. |
 
 
 Live E2E (`make e2e-live`) accepts either path as long as the bridge emits
@@ -327,8 +339,8 @@ supports inline image input.
 
 SapaLOQ automatically routes a request through the Agent API path when:
 
-1. `**SAPALOQ_AGENT_PATH=1`** — explicit operator override (used by tests).
-2. **Vision content** — any message contains `data:image/...` (inline base64)
+1. `**SAPALOQ_AGENT_PATH=1`** - explicit operator override (used by tests).
+2. **Vision content** - any message contains `data:image/...` (inline base64)
   or an `http(s)://....png|jpg|jpeg|gif|webp` URL.
 
 The encoder/decoder live in `internal/bridges/cursor/wire/proto_agent.go`
@@ -341,8 +353,8 @@ encoder and response decoder:
 
 | Driver (Agent API) | Implementation                                                                    | Default                                                                               |
 | ------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `raw`              | `wire.StreamAgentRawWithRaw` — raw frames; mirrors `cursorAgent.js` byte-for-byte | Production                                                                            |
-| `http2`            | `wire.StreamAgentHTTP2` — stdlib `http.Client` + `http2.Transport`                | Set via `SAPALOQ_AGENT_WIRE_DRIVER=http2` (used by unit tests against httptest mocks) |
+| `raw`              | `wire.StreamAgentRawWithRaw` - raw frames; mirrors `cursorAgent.js` byte-for-byte | Production                                                                            |
+| `http2`            | `wire.StreamAgentHTTP2` - stdlib `http.Client` + `http2.Transport`                | Set via `SAPALOQ_AGENT_WIRE_DRIVER=http2` (used by unit tests against httptest mocks) |
 
 
 Override the host with `CURSOR_AGENT_HOST` and the path with `CURSOR_AGENT_PATH`
@@ -352,7 +364,7 @@ self-signed test servers.
 
 Live E2E: `make e2e-live SAPALOQ_AGENT_PATH=1` exercises the Agent API path
 end-to-end against `api5.cursor.sh`. Currently surfaces `rst_stream code=1`
-from the real server — same byte-level frame alignment work as the chat
+from the real server - same byte-level frame alignment work as the chat
 path; vision encoder/decoder contract is independently verified by the
 unit tests.
 
@@ -376,10 +388,10 @@ the user's privacy setting.
 
 | RPC                 | Path                                                                     | Status                                         | Notes                                                                                                                                                                                            |
 | ------------------- | ------------------------------------------------------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Chat                | `aiserver.v1.ChatService/StreamUnifiedChatWithTools`                     | Encoder stable; live returns `unauthenticated` | Same `unauthenticated` issue as the chat HTTP/2 transport — byte-level frame alignment still pending against `api2.cursor.sh`.                                                                   |
+| Chat                | `aiserver.v1.ChatService/StreamUnifiedChatWithTools`                     | Encoder stable; live returns `unauthenticated` | Same `unauthenticated` issue as the chat HTTP/2 transport - byte-level frame alignment still pending against `api2.cursor.sh`.                                                                   |
 | Agent (privacy)     | `agent.v1.AgentService/Run` (host `agent.global.api5.cursor.sh`)         | Routed via `wire.AgentHost(true)`              | No telemetry sent to cursor.                                                                                                                                                                     |
 | Agent (non-privacy) | `agent.v1.AgentService/Run` (host `agentn.global.api5.cursor.sh`)        | Routed via `wire.AgentHost(false)` (default)   | Default host.                                                                                                                                                                                    |
-| Default model nudge | `aiserver.v1.AiService/GetDefaultModelNudgeData` (host `api2.cursor.sh`) | Stub via `wire.BuildNudgeRequestBody`          | 5-byte Connect-RPC unary envelope (1-byte flag + 4-byte length=0). Server picks the default model id; not currently decoded — bridge falls back to the explicit model id supplied by the caller. |
+| Default model nudge | `aiserver.v1.AiService/GetDefaultModelNudgeData` (host `api2.cursor.sh`) | Stub via `wire.BuildNudgeRequestBody`          | 5-byte Connect-RPC unary envelope (1-byte flag + 4-byte length=0). Server picks the default model id; not currently decoded - bridge falls back to the explicit model id supplied by the caller. |
 
 
 There is no separate "plan" RPC in cursor's API. Plan mode is an
@@ -399,13 +411,13 @@ API frame alignment is resolved.
 | --------------------- | --------------------------------------------------------- |
 | Orchestrator (widget) | `llmBridge.driver` default                                |
 | task-runner sub-agent | Same or `nodes` row override                              |
-| research (web)        | Often `openai-compat` / `claude-compat` — lower poisoning |
+| research (web)        | Often `openai-compat` / `claude-compat` - lower poisoning |
 | scribe                | Local or cheap compat API                                 |
 
 
-Remote node **does not** share bridge credentials unless comm spec declares — token stays on orchestrator machine, remote gets **delegated spawn** with pre-built messages only.
+Remote node **does not** share bridge credentials unless comm spec declares - token stays on orchestrator machine, remote gets **delegated spawn** with pre-built messages only.
 
-### Worker (`cursor-agent`) relationship — not intercept
+### Worker (`cursor-agent`) relationship - not intercept
 
 SapaLOQ widget = **parallel independent session** via `cursor-bridge` (or compat driver). It does **not** tap or proxy live `cursor-agent` CLI traffic.
 
@@ -426,8 +438,8 @@ Implication for milestones: M1–M3 need bridge session + SQLite only; deep curs
 | Idea                                   | Why                                                        |
 | -------------------------------------- | ---------------------------------------------------------- |
 | Bundle 9router as required dep         | User chose less-deps single binary                         |
-| One parser for all providers           | Formats genuinely differ — wrong parser = silent tool loss |
-| Sync cursor-bridge memory to companion | Isolation — handoff packet only                            |
+| One parser for all providers           | Formats genuinely differ - wrong parser = silent tool loss |
+| Sync cursor-bridge memory to companion | Isolation - handoff packet only                            |
 | Runtime `.so` bridge plugins           | Compile-time registry for MVP; revisit later               |
 
 
@@ -456,5 +468,5 @@ Implication for milestones: M1–M3 need bridge session + SQLite only; deep curs
 | Repo                                                                | Use for SapaLOQ                                   |
 | ------------------------------------------------------------------- | ------------------------------------------------- |
 | [jahrulnr/cursor-bridge](https://github.com/jahrulnr/cursor-bridge) | Schema, coercion test vectors, proto-lab          |
-| 9router                                                             | Transport pattern reference — **not** runtime dep |
+| 9router                                                             | Transport pattern reference - **not** runtime dep |
 | `cursor-agent-toolcall-spec.json`                                   | ToolCall variant map for mirror UI                |

@@ -1,4 +1,4 @@
-# Ardov Color Lab — Techniques & Algorithms
+# Ardov Color Lab - Techniques & Algorithms
 
 Source code analysis of [ardov/color-lab](https://github.com/ardov/color-lab) (lab.ardov.me) by Alexey Ardov.
 
@@ -6,22 +6,22 @@ Built with: React 18, Vite, TypeScript, Three.js (React Three Fiber), Culori, ap
 
 ---
 
-## Edge Seeker — LUT-Based Gamut Mapping
+## Edge Seeker - LUT-Based Gamut Mapping
 
 A novel gamut mapping algorithm that avoids runtime binary search entirely.
 
 ### How It Works
 
-1. **LUT generation** — For each of 400 hue slices, finds the "cusp" (point of maximum chroma on the gamut boundary) by converting fully saturated HSL colors to OKLCH. A second pass at L=0.762 provides curvature data.
+1. **LUT generation** - For each of 400 hue slices, finds the "cusp" (point of maximum chroma on the gamut boundary) by converting fully saturated HSL colors to OKLCH. A second pass at L=0.762 provides curvature data.
 
-2. **Curvature fitting** — For each hue slice, fits a **circular arc** to the bright side of the gamut boundary (cusp → white). Key insight: the gamut boundary's bright side is well-approximated by an arc, not a straight line.
+2. **Curvature fitting** - For each hue slice, fits a **circular arc** to the bright side of the gamut boundary (cusp → white). Key insight: the gamut boundary's bright side is well-approximated by an arc, not a straight line.
 
-3. **Runtime lookup** — Given (L, H) in OKLCH:
+3. **Runtime lookup** - Given (L, H) in OKLCH:
    - Interpolates the LUT for cusp position and curvature at that hue
    - **Dark side** (L ≤ cusp L): linear relationship `C = (L / cusp_L) * cusp_C`
    - **Bright side** (L > cusp L): circle-line intersection using the pre-computed arc
 
-4. **Gamut-agnostic** — Works for sRGB and Display P3 by swapping the RGB-to-OKLCH converter.
+4. **Gamut-agnostic** - Works for sRGB and Display P3 by swapping the RGB-to-OKLCH converter.
 
 ### Performance
 
@@ -44,7 +44,7 @@ The `oklchDisplayable()` function detects this region and uses the slope from pu
 
 ---
 
-## OKLrCH — OKLCH with Better Toe
+## OKLrCH - OKLCH with Better Toe
 
 A custom color space: OKLCH with Ottosson's "better toe" function applied to lightness. Makes OKLCH lightness more perceptually uniform for SDR gamuts (sRGB, P3).
 
@@ -61,7 +61,7 @@ Both forward (`betterToe`) and inverse (`betterToeInv`) are used throughout the 
 
 ### Why It Matters
 
-OKLAB's lightness is designed for HDR. The toe remaps it to behave more like CIELAB lightness for SDR content — better for color pickers and palette tools targeting screen displays.
+OKLAB's lightness is designed for HDR. The toe remaps it to behave more like CIELAB lightness for SDR content - better for color pickers and palette tools targeting screen displays.
 
 ---
 
@@ -73,7 +73,7 @@ Converts a gradient defined in any color space into sRGB stops that visually app
 
 Recursive subdivision: if the midpoint of a segment in the source space differs from the sRGB midpoint by more than a threshold (measured in OKLAB with toe-adjusted lightness), insert intermediate stops.
 
-Solves the problem of CSS gradients only interpolating in sRGB — generate enough sRGB stops to fake perceptual interpolation.
+Solves the problem of CSS gradients only interpolating in sRGB - generate enough sRGB stops to fake perceptual interpolation.
 
 ---
 
@@ -83,7 +83,7 @@ Given a background color and a target opaque appearance, derives the minimum-alp
 
 ### Use Case
 
-Design system tooling — generating semi-transparent overlay colors that adapt to different backgrounds while maintaining consistent appearance.
+Design system tooling - generating semi-transparent overlay colors that adapt to different backgrounds while maintaining consistent appearance.
 
 ---
 
@@ -110,7 +110,7 @@ Colors resolved recursively with cycle detection. Output: sRGB HSL + Display P3 
 
 ### Why It Matters
 
-A concrete implementation of the "encode color decisions" principle — theme colors are defined by perceptual relationships rather than frozen hex values.
+A concrete implementation of the "encode color decisions" principle - theme colors are defined by perceptual relationships rather than frozen hex values.
 
 ---
 

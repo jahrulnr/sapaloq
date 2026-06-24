@@ -1,6 +1,6 @@
 # dimensions of colour
 
-**Source:** David Briggs — [Dimensions of Color](http://www.huevaluechroma.com/)
+**Source:** David Briggs - [Dimensions of Color](http://www.huevaluechroma.com/)
 
 ---
 

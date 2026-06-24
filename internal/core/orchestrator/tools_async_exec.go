@@ -5,7 +5,7 @@ package orchestrator
 // loop. The history is the recurring "tool_call stuck" bug: the model issues
 // `exec`, the dispatcher blocks waiting for the command to finish, and if the
 // post-tool chat completion hangs at the provider, the agent never gets a tool
-// result back — meanwhile its heartbeat ticker keeps the worker "healthy" so
+// result back - meanwhile its heartbeat ticker keeps the worker "healthy" so
 // the watchdog never fires. The fix is to make exec a real subtask:
 //
 //   - exec_async: spawn a job and return {job_id, status:"queued"} immediately.
@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -217,13 +216,16 @@ func (r *asyncExecRegistry) execute(ctx context.Context, job *asyncExecJob, cmd,
 	if timeoutSec > maxTerminalSecs {
 		timeoutSec = maxTerminalSecs
 	}
-	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	// Use a plain cancel context (not WithTimeout): runShellCaptured enforces
+	// the deadline itself and reports it as TimedOut, while ctx cancellation
+	// (job.Cancel via exec_cancel / host shutdown) is reported as Cancelled.
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	started := time.Now().UTC()
 	job.mu.Lock()
 	// A cancel can land between spawn() and this goroutine getting scheduled:
 	// it would have already flipped Status to a terminal value (and closed
-	// Done). Do NOT resurrect it to "running" or launch the command — bail out
+	// Done). Do NOT resurrect it to "running" or launch the command - bail out
 	// so the job stays terminal and Done stays closed exactly once.
 	if job.Status != asyncExecQueued {
 		job.mu.Unlock()
@@ -235,34 +237,28 @@ func (r *asyncExecRegistry) execute(ctx context.Context, job *asyncExecJob, cmd,
 	job.mu.Unlock()
 	r.persist(job)
 
-	const cwdMarker = "__SAPALOQ_FINAL_CWD__="
-	wrapped := cmd + "\nstatus=$?\nprintf '\\n" + cwdMarker + "%s\\n' \"$PWD\"\nexit $status"
-	c := exec.CommandContext(runCtx, "bash", "-lc", wrapped)
-	if dir := strings.TrimSpace(cwd); dir != "" {
-		c.Dir = expandHome(dir)
-	}
-	out, err := c.CombinedOutput()
-	text, finalCWD := splitExecCWD(string(out), cwdMarker)
-	if finalCWD != "" && job.RunID != "" {
-		(&Orchestrator{}).persistActorCWD(job.RunID, finalCWD)
-	}
-	if len(text) > 16*1024 {
-		text = text[:16*1024] + "\n[output truncated]"
+	// runShellCaptured runs in its own process group and, on timeout or on the
+	// runCtx being cancelled (which job.Cancel() triggers), kills the whole
+	// group so detached `&` children are reaped and this goroutine never wedges
+	// past the timeout - the root cause of the historical "tool_call stuck" bug.
+	res := runShellCaptured(runCtx, cmd, cwd, time.Duration(timeoutSec)*time.Second)
+	if res.FinalCWD != "" && job.RunID != "" {
+		(&Orchestrator{}).persistActorCWD(job.RunID, res.FinalCWD)
 	}
 	completed := time.Now().UTC()
 	job.mu.Lock()
-	job.Output = text
+	job.Output = res.Output
 	job.CompletedAt = &completed
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || res.Cancelled {
 		job.Status = asyncExecCancelled
 		job.Error = "cancelled by host"
-	} else if runCtx.Err() == context.DeadlineExceeded {
+	} else if res.TimedOut {
 		job.Status = asyncExecFailed
-		job.Error = fmt.Sprintf("Command timed out after %ds.", timeoutSec)
-	} else if err != nil {
+		job.Error = fmt.Sprintf("Command timed out after %ds (process group killed).", timeoutSec)
+	} else if res.Err != nil {
 		job.Status = asyncExecFailed
 		job.ExitCode = -1
-		job.Error = fmt.Sprintf("Command exited with error: %v", err)
+		job.Error = fmt.Sprintf("Command exited with error: %v", res.Err)
 	} else {
 		job.Status = asyncExecCompleted
 		job.ExitCode = 0
@@ -340,21 +336,39 @@ func (r *asyncExecRegistry) cancel(id string) (asyncExecSnapshot, bool) {
 	}
 	job.mu.Lock()
 	if job.Status == asyncExecRunning || job.Status == asyncExecQueued {
-		// execute() will see ctx.Err() != nil and write the terminal state.
-		job.Cancel()
-		// Defensive: if the goroutine somehow missed it, flip the status so
-		// exec_status / exec_result stop returning "running" forever.
-		job.Status = asyncExecCancelled
-		now := time.Now().UTC()
-		job.CompletedAt = &now
-		job.Error = "cancelled by host"
+		// Cancelling the context makes runShellCaptured kill the whole process
+		// group and return; execute() then writes the terminal state, persists
+		// it, and closes Done. We prefer to let execute() be the one that
+		// closes Done so the "Done implies result-on-disk" invariant holds and
+		// a waiter (or a test's TempDir cleanup) never races execute()'s final
+		// persist().
+		cancelFn := job.Cancel
+		done := job.Done
 		job.mu.Unlock()
-		r.persist(job)
-		// Funnelled close: execute() may also be transitioning this job to a
-		// terminal state right now (the cancel raced the command finishing),
-		// and it closes Done too. closeDone() makes whichever loses the race a
-		// no-op instead of a double-close panic.
-		job.closeDone()
+		if cancelFn != nil {
+			cancelFn()
+		}
+		// Wait briefly for execute() to finish its terminal persist + close.
+		// With process-group kill this returns near-instantly; the timeout is
+		// a safety net so cancel() never blocks indefinitely if the goroutine
+		// is wedged for some other reason.
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			// Defensive fallback: execute() did not converge. Flip the status
+			// ourselves so exec_status / exec_result stop returning "running"
+			// forever, persist, and force the funnelled close.
+			job.mu.Lock()
+			if !job.Status.terminal() {
+				job.Status = asyncExecCancelled
+				now := time.Now().UTC()
+				job.CompletedAt = &now
+				job.Error = "cancelled by host"
+			}
+			job.mu.Unlock()
+			r.persist(job)
+			job.closeDone()
+		}
 	} else {
 		job.mu.Unlock()
 	}
@@ -632,7 +646,7 @@ func (o *Orchestrator) toolExecResult(_ context.Context, args toolArgs) string {
 	view["waited_ms"] = elapsed.Milliseconds()
 	if !done {
 		// The job is still in flight. Tell the model explicitly so it does
-		// not loop forever — the canonical escape hatch is sapaloq_fail_task.
+		// not loop forever - the canonical escape hatch is sapaloq_fail_task.
 		view["hint"] = "job is still running. Either call exec_result again with a wait_seconds, exec_cancel(job_id) to abort, or sapaloq_fail_task with reason='tool hang' if it has been too long."
 	} else {
 		delete(view, "hint")

@@ -1,6 +1,6 @@
-# SapaLOQ — Runtime: Single Binary
+# SapaLOQ - Runtime: Single Binary
 
-> **Satu binary Go** — goroutine + channel + persistence lokal. Zero external daemons.
+> **Satu binary Go** - goroutine + channel + persistence lokal. Zero external daemons.
 > Last updated: 2026-06-22 (config/data split, persistent actor workspace, runtime map)
 
 Related: [EVENT-BUS.md](./EVENT-BUS.md) · [VISION.md](./VISION.md)
@@ -43,7 +43,7 @@ sapaloq-core (one binary)
 | Worker health | `state/workers/<task-id>/health.json` | Live per-worker PID/phase/heartbeat snapshot (observability) |
 | Worker errors | `state/workers/<task-id>/error.log` | Errors-only trail per sub-agent (debugging) |
 | Files | `config.json`, `skills/`, `prompt/` | Agent-editable, git-friendly |
-| In-memory | goroutine LRU | Session hot cache — **lost on restart OK** |
+| In-memory | goroutine LRU | Session hot cache - **lost on restart OK** |
 
 Restart = reload SQLite + optional jsonl tail. No external cache warm-up.
 
@@ -59,7 +59,7 @@ go subAgentWorker(id, ctx)
 go platformAdapter.NotifyWatch()
 ```
 
-Sub-agent **process** (optional): still talks via `sapaloq.sock` to **same** binary's socket server — not a second broker.
+Sub-agent **process** (optional): still talks via `sapaloq.sock` to **same** binary's socket server - not a second broker.
 
 ---
 
@@ -72,7 +72,7 @@ Sub-agent **process** (optional): still talks via `sapaloq.sock` to **same** bin
 | SQLite locked | WAL mode + short retry + single-writer queue (see [CONTEXT-SOP.md](./CONTEXT-SOP.md#sqlite-write-concurrency-implementation-note)) |
 | Slow watcher | Drop + log; never block publisher |
 
-No cascade: "Redis failed so events broken" — **cannot happen**.
+No cascade: "Redis failed so events broken" - **cannot happen**.
 
 ---
 
@@ -113,7 +113,7 @@ No Docker, no compose, no message queue for SapaLOQ itself.
 
 ## Config
 
-`runtime.singleBinary: true` (always — informational lock in schema).
+`runtime.singleBinary: true` (always - informational lock in schema).
 
 Memory: `engine: sqlite` only. Event wake: `events.bus` not external broker.
 
@@ -159,7 +159,7 @@ Hard limits without full fix: [LIMITATIONS.md](./LIMITATIONS.md).
 
 ## `sapaloq-core` CLI
 
-Headless entrypoint — orchestrator, IPC socket, cursor-bridge brain, vault review.
+Headless entrypoint - orchestrator, IPC socket, cursor-bridge brain, vault review.
 
 ```bash
 sapaloq-core help
@@ -173,12 +173,12 @@ Debug output goes to **stderr**; chat events stay on stdout. Env: `SAPALOQ_DEBUG
 | Env | Default | Purpose |
 |-----|---------|---------|
 | `SAPALOQ_CONFIG` | `~/.config/sapaloq/config.json` | Live config only |
-| `SAPALOQ_CURSOR_TOKEN` | — | Cursor bearer token (sapaloq name) |
-| `CURSOR_ACCESS_TOKEN` | — | Same token (cursor-bridge convention) |
-| `CURSOR_MACHINE_ID` | — | Machine id for checksum headers |
+| `SAPALOQ_CURSOR_TOKEN` | - | Cursor bearer token (sapaloq name) |
+| `CURSOR_ACCESS_TOKEN` | - | Same token (cursor-bridge convention) |
+| `CURSOR_MACHINE_ID` | - | Machine id for checksum headers |
 | `CURSOR_STATE_VSCDB` | auto | Override IDE `state.vscdb` path |
 
-Without explicit env vars, `sapaloq-core` first sources the user's shell rc (`~/.bashrc` then `~/.zshrc`, Linux only — needed under systemd `--user`/autostart where no login shell runs), then autoloads from `.env`, then Cursor IDE `state.vscdb` — broadly the same priority as the [cursor-bridge credential-loader](https://github.com/jahrulnr/cursor-bridge/tree/master/packages/credential-loader) with the shell-rc step added in front of `.env` (`internal/shellenv`). The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) so the stock Debian/Ubuntu `~/.bashrc` interactive guard (`case $- in *i*) ;; *) return;; esac`) doesn't short-circuit before the user's exports. Shell-rc import is best-effort, silent on failure, allowlisted by key prefix, and never overrides an already-set variable.
+Without explicit env vars, `sapaloq-core` first sources the user's shell rc (`~/.bashrc` then `~/.zshrc`, Linux only - needed under systemd `--user`/autostart where no login shell runs), then autoloads from `.env`, then Cursor IDE `state.vscdb` - broadly the same priority as the [cursor-bridge credential-loader](https://github.com/jahrulnr/cursor-bridge/tree/master/packages/credential-loader) with the shell-rc step added in front of `.env` (`internal/shellenv`). The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) so the stock Debian/Ubuntu `~/.bashrc` interactive guard (`case $- in *i*) ;; *) return;; esac`) doesn't short-circuit before the user's exports. Shell-rc import is best-effort, silent on failure, allowlisted by key prefix, and never overrides an already-set variable.
 
 `chat` output prefixes: `[thinking]`, `[response]`, `[tool]`, `[error]`, `[done]`.
 
@@ -194,7 +194,7 @@ The vault log is JSON-lines and serves **two** purposes, distinguished by the `r
 
 | `reason` | Source | Meaning |
 |----------|--------|---------|
-| `undeclared` | cursor-bridge (and future drivers) | A provider whose tool surface is hardcoded server-side called a tool **outside** `llmBridge.declaredTools` — the original anomaly/alias-review signal |
+| `undeclared` | cursor-bridge (and future drivers) | A provider whose tool surface is hardcoded server-side called a tool **outside** `llmBridge.declaredTools` - the original anomaly/alias-review signal |
 | `executed` | `Orchestrator.auditTool` (Ask + sub-agent chokepoints) | Audit trail of every tool the orchestrator actually ran |
 
 Review via CLI:
@@ -204,11 +204,11 @@ sapaloq-core vault stats
 sapaloq-core vault list --limit 50 --json
 ```
 
-Vault **does not** filter thinking/chat text — only structured tool calls (`undeclared` anomalies and `executed` audit entries). See [BRIDGE.md](./BRIDGE.md#vault-undeclared-tool-calls).
+Vault **does not** filter thinking/chat text - only structured tool calls (`undeclared` anomalies and `executed` audit entries). See [BRIDGE.md](./BRIDGE.md#vault-undeclared-tool-calls).
 
 ### Rotation & retention
 
-The log is append-only, so it is **size-rotated** to stay bounded (it would otherwise grow forever, and reads — which scan the whole file — would get slower over time). When the primary file would exceed `maxLogBytes`, it cascades to numbered siblings (`tool-calls.jsonl` → `.1` → `.2` …) and the oldest beyond `keepRotatedFiles` is dropped. Rotation is **best-effort**: if a rename fails, the writer falls back to a plain append so an audit write is never lost. `ReadRecent` reads across rotated siblings so stats/CLI still see recent history after a rotation.
+The log is append-only, so it is **size-rotated** to stay bounded (it would otherwise grow forever, and reads - which scan the whole file - would get slower over time). When the primary file would exceed `maxLogBytes`, it cascades to numbered siblings (`tool-calls.jsonl` → `.1` → `.2` …) and the oldest beyond `keepRotatedFiles` is dropped. Rotation is **best-effort**: if a rename fails, the writer falls back to a plain append so an audit write is never lost. `ReadRecent` reads across rotated siblings so stats/CLI still see recent history after a rotation.
 
 | Config (`config.json` → `vault`) | Default | Meaning |
 |-----------------------------------|---------|---------|

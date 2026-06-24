@@ -1,6 +1,6 @@
-# SapaLOQ — Sub-agent Nodes
+# SapaLOQ - Sub-agent Nodes
 
-> Sub-agent = **node** — bisa local goroutine **atau** remote (Docker, VPS, EC2, SSH host).
+> Sub-agent = **node** - bisa local goroutine **atau** remote (Docker, VPS, EC2, SSH host).
 > Registry di SQLite table `nodes` + **comm spec** (SKILL-like) per node.
 > Last updated: 2026-06-22 (runtime data root moved to ~/SapaLOQ)
 
@@ -22,7 +22,7 @@ Orchestrator (local sapaloq-core)
 | Local | Remote (outer machine) |
 |-------|------------------------|
 | Same machine, `sapaloq.sock` | Out-of-machine execution |
-| **Shared memory bus OK** | **No shared memory** — context packet only |
+| **Shared memory bus OK** | **No shared memory** - context packet only |
 | Low latency | Network latency + stale cache risk |
 | Full desktop driver | Role-specific; own storage root |
 
@@ -36,14 +36,14 @@ Core orchestrator **tetap** di mesin user (widget). Node = **where sub-agent run
 |--|--------------|---------------|
 | **Shared `companion.db`?** | ✅ Local sub-agents | ❌ **Not recommended** |
 | **What remote gets** | Full memory bus access | **Context packet** at spawn (bounded) |
-| **What remote returns** | — | Progress stream + task result summary |
+| **What remote returns** | - | Progress stream + task result summary |
 | **Learning / facts** | memory-janitor local | Remote **may not** write orchestrator SQLite; local promotes after `completed` |
 
 ### Why no shared memory to remote nodes
 
-1. **Latency** — prefetch & FTS useless over network RTT
-2. **Stale memory** — remote acts on outdated facts; orchestrator assumes fresh index
-3. **Sync complexity** — replication, conflict resolution, offline partitions = out of scope
+1. **Latency** - prefetch & FTS useless over network RTT
+2. **Stale memory** - remote acts on outdated facts; orchestrator assumes fresh index
+3. **Sync complexity** - replication, conflict resolution, offline partitions = out of scope
 
 ### Remote node contract
 
@@ -61,7 +61,7 @@ Core orchestrator **tetap** di mesin user (widget). Node = **where sub-agent run
 }
 ```
 
-Optional: remote node keeps **its own** local SQLite — **never** mounted as orchestrator memory.
+Optional: remote node keeps **its own** local SQLite - **never** mounted as orchestrator memory.
 
 Same-host Docker: default `shareMemory: false` in node row; explicit opt-in only for dev.
 
@@ -71,7 +71,7 @@ Same-host Docker: default `shareMemory: false` in node row; explicit opt-in only
 |-----|------|
 | **orchestrator** (pre-spawn) | Remote or `share_memory=0` → `contextPacket.noMemoryBus=true`; block memory bus tools on remote |
 | **boundary-guard** | Reject remote `share_memory=1` unless `nodes.allowSharedMemoryRemote` |
-| **Node client** | Must not open orchestrator `companion.db` — packet-only over wire |
+| **Node client** | Must not open orchestrator `companion.db` - packet-only over wire |
 
 `local-default` bootstrap: **`share_memory=1`**. Remote nodes: **always 0**.
 
@@ -146,9 +146,9 @@ Orchestrator reads **comm spec** to know exact URLs, headers, auth env vars.
 
 ---
 
-## Comm spec (`nodes/{name}.md`) — like SKILL.md
+## Comm spec (`nodes/{name}.md`) - like SKILL.md
 
-Not hand-wavy config — **operating manual** for talking to this node.
+Not hand-wavy config - **operating manual** for talking to this node.
 
 ```markdown
 ---
@@ -185,7 +185,7 @@ communicate: ws
 
 ## Boundaries
 
-- No desktop tools — scribe only writes to agreed paths
+- No desktop tools - scribe only writes to agreed paths
 - Storage root: `/data/sapaloq/scribe/` on remote (sync policy: pull via rsync optional)
 
 ## Failure
@@ -249,7 +249,7 @@ Remote node **must** mirror local progress protocol:
 Remote WS → sapaloq-core → bus.Publish(sapaloq.v1.subagent.progress.{id})
 ```
 
-Clarification + control frames work same as local — orchestrator routes to WS instead of unix socket.
+Clarification + control frames work same as local - orchestrator routes to WS instead of unix socket.
 
 Config: `nodes.allowRemoteRoles`, `nodes.requireTls`.
 
@@ -291,4 +291,4 @@ Config: `nodes.allowRemoteRoles`, `nodes.requireTls`.
 
 ## Limitations
 
-See [LIMITATIONS.md](./LIMITATIONS.md) — remote nodes add network partition, latency, stale memory risk, and trust boundaries. **No shared memory to outer machines.**
+See [LIMITATIONS.md](./LIMITATIONS.md) - remote nodes add network partition, latency, stale memory risk, and trust boundaries. **No shared memory to outer machines.**

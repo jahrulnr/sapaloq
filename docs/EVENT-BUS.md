@@ -1,6 +1,6 @@
-# SapaLOQ — Event Bus (in-process)
+# SapaLOQ - Event Bus (in-process)
 
-> **Internal pub/sub** inside `sapaloq-core` — goroutine + channel + route watcher.
+> **Internal pub/sub** inside `sapaloq-core` - goroutine + channel + route watcher.
 > Bukan service terpisah. Bukan Redis / Rabbit / MQTT.
 > Last updated: 2026-06-22 (tool lifecycle, steering, and decision events)
 
@@ -12,10 +12,10 @@ Related: [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md)
 
 Event wake = **fungsi dalam binary yang sama**:
 
-1. **Route table** — topic pattern → watchers
-2. **Publish** — fan-out ke `chan Envelope` (<1ms)
-3. **Unix socket** — optional IPC ke sub-agent process; tetap ke **same** binary
-4. **jsonl WAL** — goroutine append (persist, replay on boot)
+1. **Route table** - topic pattern → watchers
+2. **Publish** - fan-out ke `chan Envelope` (<1ms)
+3. **Unix socket** - optional IPC ke sub-agent process; tetap ke **same** binary
+4. **jsonl WAL** - goroutine append (persist, replay on boot)
 
 ```
 ❌ External broker, Redis, Rabbit, MQTT
@@ -28,7 +28,7 @@ Event wake = **fungsi dalam binary yang sama**:
 
 ```mermaid
 flowchart TB
-  subgraph core [sapaloq-core — one binary]
+  subgraph core [sapaloq-core - one binary]
     BUS[Bus.Publish]
     RT[RouteMatcher]
     W1[Watcher orchestrator]
@@ -67,7 +67,7 @@ func (b *Bus) Watch(id string, patterns []string, buf int) *Watcher
 func (b *Bus) Publish(topic, producer string, payload any) (Envelope, error)
 ```
 
-Publish never blocks on slow consumer — drop + log.
+Publish never blocks on slow consumer - drop + log.
 
 ---
 
@@ -89,7 +89,7 @@ Publish never blocks on slow consumer — drop + log.
 
 Ops: `publish`, `watch`, `unwatch`, `event`, `ping`.
 
-Orchestrator uses in-proc channel — **no socket hop**.
+Orchestrator uses in-proc channel - **no socket hop**.
 
 The bus carries wake/visibility events, while durable files remain authoritative:
 
@@ -112,14 +112,14 @@ orchestrator does two things: it publishes the `task_update` card event **and**
 `speakTaskCompletion` (`completion.go`) injects a durable assistant turn into the
 task's session and republishes it as a `response_delta` on
 `sapaloq.v1.chat.response`. That republish is the "speak" trigger that closes the
-event-driven loop — a completion arriving after `sapaloq_wait` has already
+event-driven loop - a completion arriving after `sapaloq_wait` has already
 returned is still surfaced in chat, not just as a silently-updated card. It is
 idempotent per task id and gated by `completion.speakOnTerminal`.
 
 The widget's `watch` callback (`cmd/sapaloq-widget/app.go`) forwards **both**
 `task_update` (rendered as a per-task card) **and** `response_delta` (the spoken
 completion) to the UI. When a `response_delta` arrives while idle (no chat turn
-in flight), the frontend renders it as a new assistant bubble — so a sub-agent
+in flight), the frontend renders it as a new assistant bubble - so a sub-agent
 failure/success that lands after the chat turn closed auto-follows into the
 conversation instead of only updating a card.
 
@@ -127,7 +127,7 @@ conversation instead of only updating a card.
 
 ## Topics
 
-Prefix `sapaloq.v1` — see prior catalog (subagent.completed, orchestrator.control.{id}, gnome.notification, …).
+Prefix `sapaloq.v1` - see prior catalog (subagent.completed, orchestrator.control.{id}, gnome.notification, …).
 
 ---
 

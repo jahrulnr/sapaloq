@@ -15,7 +15,7 @@ import (
 
 // TestWatchdogFailsStalledWorker proves a wedged worker (no heartbeat) is
 // force-failed with an explicit reason instead of sitting at "in_progress"
-// forever — the core of the "we never know if the agent finished" bug.
+// forever - the core of the "we never know if the agent finished" bug.
 func TestWatchdogFailsStalledWorker(t *testing.T) {
 	dir := t.TempDir()
 	b := bus.New()

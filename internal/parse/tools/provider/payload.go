@@ -23,7 +23,7 @@ func EncodeToolCallPayload(name string, args []byte) string {
 // DecodeToolCallPayload is the inverse of EncodeToolCallPayload. It returns
 // the reconstructed parse.ToolCall and true on success, or (zero, false) when
 // `s` does not carry the payload separator. The source label is stamped as
-// "claude_inline" — callers should override Source if they need a different
+// "claude_inline" - callers should override Source if they need a different
 // provenance.
 func DecodeToolCallPayload(s string) (parse.ToolCall, bool) {
 	idx := strings.Index(s, payloadSeparator)

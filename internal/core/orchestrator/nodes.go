@@ -14,7 +14,7 @@ const localDefaultNode = "local-default"
 
 // bootstrapLocalDefaultNode ensures a "local-default" node row exists so spawns
 // always have a routable in-proc target. Idempotent: a second call does not
-// duplicate. Best-effort — errors are non-fatal (spawn falls back to local).
+// duplicate. Best-effort - errors are non-fatal (spawn falls back to local).
 func (o *Orchestrator) bootstrapLocalDefaultNode(ctx context.Context) {
 	if o == nil || o.chat == nil {
 		return

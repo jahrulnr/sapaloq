@@ -34,7 +34,7 @@ func TestReadImageReturnsInlineMarkdown(t *testing.T) {
 	if !strings.HasPrefix(got, "![shot.png](data:image/png;base64,") {
 		t.Fatalf("expected inline png markdown, got %q", truncate(got))
 	}
-	// Must be re-ingestible by the orchestrator's image extractor — this is the
+	// Must be re-ingestible by the orchestrator's image extractor - this is the
 	// whole mechanism that turns the result into real vision input.
 	if !inlineImageRE.MatchString(got) {
 		t.Fatalf("read_image output not matched by inlineImageRE: %q", truncate(got))
@@ -49,7 +49,7 @@ func TestReadImageReturnsInlineMarkdown(t *testing.T) {
 }
 
 // A read_image result is fed back under the "tool" role. extractImages must
-// still treat that turn as the latest vision source — otherwise the inline
+// still treat that turn as the latest vision source - otherwise the inline
 // image would be downgraded to a text placeholder and the model would go blind
 // to it. This guards the tool-role addition against silently breaking vision.
 func TestExtractImagesTreatsToolRoleAsVisionSource(t *testing.T) {

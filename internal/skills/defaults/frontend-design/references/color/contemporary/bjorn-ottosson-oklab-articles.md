@@ -1,10 +1,10 @@
-# Björn Ottosson — OKLAB, OKHSV, OKHSL & Color Science Articles
+# Björn Ottosson - OKLAB, OKHSV, OKHSL & Color Science Articles
 
 **Source:** https://bottosson.github.io/posts/
 **Author:** Björn Ottosson
 **License:** MIT (all code)
 
-The foundational articles behind OKLAB — the color space recommended throughout this collection.
+The foundational articles behind OKLAB - the color space recommended throughout this collection.
 
 ---
 
@@ -45,7 +45,7 @@ Outperforms CIELAB on lightness AND chroma AND hue prediction. CIELAB's biggest 
 
 ### The Problem
 
-Most software blends/processes in sRGB — designed for 1990s CRTs, not color math. Results: colors become "much darker and bluer" when blending saturated opposing hues.
+Most software blends/processes in sRGB - designed for 1990s CRTs, not color math. Results: colors become "much darker and bluer" when blending saturated opposing hues.
 
 ### Why
 
@@ -65,7 +65,7 @@ sRGB's nonlinear transfer function exists because CRTs had nonlinear voltage→b
 
 ---
 
-## 3. Okhsv and Okhsl — Color Picker Spaces
+## 3. Okhsv and Okhsl - Color Picker Spaces
 
 **URL:** https://bottosson.github.io/posts/colorpicker/
 
@@ -84,7 +84,7 @@ HSV/HSL are ubiquitous but perceptually wrong. HSLuv improves lightness but has 
 7. Varies smoothly
 8. Varies evenly
 
-These properties CONFLICT — can't have all simultaneously.
+These properties CONFLICT - can't have all simultaneously.
 
 ### Okhsv Design
 
@@ -128,15 +128,15 @@ sRGB gamut in OKLAB is always close to a triangle per hue slice, with corners at
 
 ### 5 Methods Compared
 
-1. **Chroma compression** — keep L constant, reduce C (preserves brightness)
-2. **Project to (0.5, 0)** — toward middle grey (hue-independent)
-3. **Project to cusp L** — hue-dependent projection target
-4. **Adaptive L₀=0.5** — blend chroma compression + projection, α parameter
-5. **Adaptive L₀=Lcusp** — same with hue-dependent target
+1. **Chroma compression** - keep L constant, reduce C (preserves brightness)
+2. **Project to (0.5, 0)** - toward middle grey (hue-independent)
+3. **Project to cusp L** - hue-dependent projection target
+4. **Adaptive L₀=0.5** - blend chroma compression + projection, α parameter
+5. **Adaptive L₀=Lcusp** - same with hue-dependent target
 
 ### Recommendation
 
-**Adaptive L₀ with α=0.05** — good default. L₀=0.5 variant slightly more efficient, visually equivalent at low α.
+**Adaptive L₀ with α=0.05** - good default. L₀=0.5 variant slightly more efficient, visually equivalent at low α.
 
 ---
 

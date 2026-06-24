@@ -1,9 +1,9 @@
-# SapaLOQ — UI Decision (Widget / HUD)
+# SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
 > Last updated: 2026-06-23 (network-core identity and app icons)
 
-**Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** — orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) — not two independent products long-term.
+**Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
 
 Related: [PLATFORM.md](./PLATFORM.md) · [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md)
 
@@ -14,9 +14,9 @@ Related: [PLATFORM.md](./PLATFORM.md) · [RUNTIME.md](./RUNTIME.md) · [ORCHESTR
 | Layer | Choice |
 |-------|--------|
 | **UI framework** | **Wails v2** (re-evaluate v3 at M5 kickoff) |
-| **Frontend** | Web (Svelte or React) — CSS ring/thinking animations |
+| **Frontend** | Web (Svelte or React) - CSS ring/thinking animations |
 | **Backend coupling** | Thin client → `sapaloq.sock`; orchestrator stays in `sapaloq-core` |
-| **GNOME Wayland window policy** | Optional **thin GJS shell shim** (`sapaloq-shell@`) — not full UI extension |
+| **GNOME Wayland window policy** | Optional **thin GJS shell shim** (`sapaloq-shell@`) - not full UI extension |
 | **KDE / Sway / COSMIC** | `gtk-layer-shell` hook on WebKitGTK window (post-M5c adapter) |
 | **X11** | Normal floating window; `wmctrl` / EWMH hints optional |
 
@@ -30,7 +30,7 @@ GNOME Shell (Mutter) **does not implement** `zwlr_layer_shell_v1`. Official [gtk
 
 > Does not work on X11 or **GNOME on Wayland**.
 
-Layer Shell remains valid for KDE Plasma, wlroots compositors (Sway), COSMIC — not Ubuntu/Pop GNOME MVP target.
+Layer Shell remains valid for KDE Plasma, wlroots compositors (Sway), COSMIC - not Ubuntu/Pop GNOME MVP target.
 
 Additionally, GTK4 removed `gtk_window_set_keep_above`. GNOME maintainers confirm: **no programmatic always-on-top** from client apps on Wayland ([GNOME Discourse](https://discourse.gnome.org/t/any-way-to-set-window-always-on-top-programmatically/31579)). The "Always on Top" menu action is **Shell-side**, not app-side.
 
@@ -40,7 +40,7 @@ Additionally, GTK4 removed `gtk_window_set_keep_above`. GNOME maintainers confir
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  sapaloq-widget (Wails — separate binary from core)      │
+│  sapaloq-widget (Wails - separate binary from core)      │
 │  Web UI: ring, chat panel, progress mirror               │
 │  Go glue: IPC client → sapaloq.sock                      │
 └────────────────────────┬─────────────────────────────────┘
@@ -57,7 +57,7 @@ GNOME Wayland (optional, M5c):
 └──────────────────────────────────────────────────────────┘
 ```
 
-Widget is **not** embedded inside `sapaloq-core` process for M5 — separate `sapaloq-widget` binary keeps core headless-testable and matches `doctor` / no-UI recovery story. Same repo, shared types package optional.
+Widget is **not** embedded inside `sapaloq-core` process for M5 - separate `sapaloq-widget` binary keeps core headless-testable and matches `doctor` / no-UI recovery story. Same repo, shared types package optional.
 
 The long-lived `watch` scanner is cancellable: widget shutdown closes its Unix
 socket to wake an idle blocking read immediately. Core event writes carry a
@@ -110,7 +110,7 @@ though: GNOME matches a window to a `.desktop` entry by `WM_CLASS` and takes the
 icon from there. Wails never sets `WM_CLASS` on Linux (it only calls
 `g_set_prgname` + `gtk_window_set_icon`), so the class defaults to the binary
 name (e.g. `sapaloq-widget-dev-linux-amd64` under `wails dev`) and no entry
-matches — yielding a generic placeholder icon and the dev binary name as the
+matches - yielding a generic placeholder icon and the dev binary name as the
 title. Two pieces fix this:
 
 - **`WM_CLASS = sapaloq`** is set from `cmd/sapaloq-widget/input_shape_linux.go`
@@ -136,7 +136,7 @@ telemetry, or window sizing contracts.
 | Multi-window | Limited | First-class |
 | Risk | Low | Alpha API/build churn |
 
-**Lock for spike (M5a–M5b):** Wails **v2** — predictable, docs mature.
+**Lock for spike (M5a–M5b):** Wails **v2** - predictable, docs mature.
 
 **Re-evaluate at M5 kickoff:** if v3 is **beta or stable** and GTK4 default is proven on Ubuntu 24.04/26.04, migrate before production widget. Do not block M5a on v3.
 
@@ -148,10 +148,10 @@ Track: [Wails v3 FAQ](https://github.com/wailsapp/wails/discussions/5139), [GTK4
 
 ### Scope (minimal)
 
-Extension **only** handles window stacking policy — no UI, no D-Bus business logic in GJS.
+Extension **only** handles window stacking policy - no UI, no D-Bus business logic in GJS.
 
 ```javascript
-// Pseudocode — ESM (GNOME 45+)
+// Pseudocode - ESM (GNOME 45+)
 import Meta from 'gi://Meta';
 
 const APP_ID = 'sapaloq-widget'; // match Wails app_id / WM_CLASS
@@ -174,9 +174,9 @@ export default class SapaLOQShellExtension extends Extension {
 
 | Question | Answer |
 |----------|--------|
-| API still exists? | Yes — core `Meta.Window.make_above()` in Mutter; documented, long-lived |
+| API still exists? | Yes - core `Meta.Window.make_above()` in Mutter; documented, long-lived |
 | Breaks each GNOME major? | **API stable**; breakage is usually **extension packaging** (ESM port GNOME 45, `shell-version` in metadata) |
-| Real failure mode | Calling `make_above()` on **destroyed** `Meta.Window` → Shell crash ([pip-on-top #22](https://github.com/Rafostar/gnome-shell-extension-pip-on-top/issues/22)) — fix with validity checks + defer via `Mainloop.idle_add` |
+| Real failure mode | Calling `make_above()` on **destroyed** `Meta.Window` → Shell crash ([pip-on-top #22](https://github.com/Rafostar/gnome-shell-extension-pip-on-top/issues/22)) - fix with validity checks + defer via `Mainloop.idle_add` |
 
 **Mitigation:** ship extension per Shell line (`metadata.json`: `["45","46","47","48"]`); CI smoke on target Ubuntu LTS; never call stacking APIs after `window-unmanaged`.
 
@@ -184,7 +184,7 @@ export default class SapaLOQShellExtension extends Extension {
 
 | Mode | Always-on-top | Install |
 |------|---------------|---------|
-| **M5a/b default** | Not guaranteed — normal floating HUD | Widget only |
+| **M5a/b default** | Not guaranteed - normal floating HUD | Widget only |
 | **M5c recommended** | Reliable via shim | Widget + `sapaloq-shell@` |
 
 Document in `doctor`: warn if shim missing and `widget.requireAlwaysOnTop: true`.
@@ -195,7 +195,7 @@ Document in `doctor`: warn if shim missing and `widget.requireAlwaysOnTop: true`
 
 | Phase | Goal | Blocks on AOT? |
 |-------|------|----------------|
-| **M5a** | Wails spike: FAB+popup, IPC, input shape | ✅ Done — see [cmd/sapaloq-widget/](../cmd/sapaloq-widget/) |
+| **M5a** | Wails spike: FAB+popup, IPC, input shape | ✅ Done - see [cmd/sapaloq-widget/](../cmd/sapaloq-widget/) |
 | **M5b** | Production widget: chat, progress mirror, position persist | No |
 | **M5c** | `sapaloq-shell@` + `doctor` check | Only if product requires guaranteed AOT |
 | **M5d** | KDE/Sway layer-shell adapter | No (GNOME path independent) |
@@ -213,18 +213,18 @@ Document in `doctor`: warn if shim missing and `widget.requireAlwaysOnTop: true`
 | **KDE Plasma Wayland** | Wails + web | gtk-layer-shell hook (`Layer::Overlay`) |
 | **Sway / wlroots** | Wails + web | gtk-layer-shell |
 | **Windows** (later) | Wails + web | WebView2 always-on-top APIs |
-| **macOS** | Out of scope | — |
+| **macOS** | Out of scope | - |
 
 ---
 
-## Spikes (M5a — completed 2026-06-19)
+## Spikes (M5a - completed 2026-06-19)
 
 | # | Result |
 |---|--------|
 | 1 | Wails v2 frameless + transparent on Ubuntu 24.04 (`-tags webkit2_41`) ✅ |
 | 2 | IPC round-trip widget ↔ unix socket < 50ms ✅ |
 | 3 | FAB pojok + popup expand/collapse ✅ |
-| 4 | GTK circular `input_shape` — click-through outside orb ✅ |
+| 4 | GTK circular `input_shape` - click-through outside orb ✅ |
 
 See [M5a spike notes](./development/m5a-spike.md).
 

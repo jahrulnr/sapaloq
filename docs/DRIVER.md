@@ -1,7 +1,7 @@
-# SapaLOQ — Driver Architecture (Go)
+# SapaLOQ - Driver Architecture (Go)
 
-> **Modular drivers** — detect OS/distro/DE once, cache **`os.json`**, load matching **platform driver**.
-> LLM **bridge drivers** (cursor-bridge, openai-compat, …) = keluarga terpisah — see [BRIDGE.md](./BRIDGE.md).
+> **Modular drivers** - detect OS/distro/DE once, cache **`os.json`**, load matching **platform driver**.
+> LLM **bridge drivers** (cursor-bridge, openai-compat, …) = keluarga terpisah - see [BRIDGE.md](./BRIDGE.md).
 > Last updated: 2026-06-22 (runtime OS/cache paths moved to ~/SapaLOQ)
 
 Related: [PLATFORM.md](./PLATFORM.md) · [BRIDGE.md](./BRIDGE.md) · [RUNTIME.md](./RUNTIME.md) · [os.json.schema.json](./os.json.schema.json)
@@ -23,11 +23,11 @@ Platform driver ≠ brain driver. **cursor-bridge** is an LLM bridge driver, not
 
 ```
 sapaloq-core (single Go binary)
-├── core/           orchestrator, bus, sqlite — no OS imports
+├── core/           orchestrator, bus, sqlite - no OS imports
 ├── detect/         OS + distro + DE probe
 ├── driver/         platform registry, os.json cache, fingerprint
 ├── drivers/        gnome, kde, freedesktop, windows, headless
-├── bridge/         LLM bridge registry — see BRIDGE.md
+├── bridge/         LLM bridge registry - see BRIDGE.md
 └── bridges/        cursor-bridge, openai-compat, claude-compat, local-llama, …
 ```
 
@@ -47,7 +47,7 @@ flowchart TD
   PICK[Pick best driver from registry]
   BAK[Backup os.json → os.json.bak.*]
   WRITE[Write new os.json]
-  INIT[driver.New — init once]
+  INIT[driver.New - init once]
   RUN[core run]
 
   START --> LOAD
@@ -64,7 +64,7 @@ flowchart TD
 
 1. Read `~/SapaLOQ/os.json`
 2. Compare `fingerprint` dengan cheap probe (env + 2–3 file stats)
-3. Match → load `selectedDriver` + `capabilities` — **no full scan**
+3. Match → load `selectedDriver` + `capabilities` - **no full scan**
 
 ### Slow path (distro change, first run, corrupt cache)
 
@@ -78,7 +78,7 @@ User pindah distro (Ubuntu → Fedora KDE) → fingerprint mismatch → auto res
 
 ---
 
-## `os.json` (generated — not hand-edited)
+## `os.json` (generated - not hand-edited)
 
 Path: `~/SapaLOQ/os.json`
 Schema: [os.json.schema.json](./os.json.schema.json)
@@ -116,7 +116,7 @@ Schema: [os.json.schema.json](./os.json.schema.json)
 }
 ```
 
-**Agent reads** `os.json` for capability checks — **does not** rescan OS.
+**Agent reads** `os.json` for capability checks - **does not** rescan OS.
 
 ---
 
@@ -177,7 +177,7 @@ internal/drivers/
   kde/         linux + KDE Plasma
   freedesktop/ linux fallback (D-Bus notify, portal)
   windows/     GOOS=windows
-  headless/    no DE — notify off, file only
+  headless/    no DE - notify off, file only
 ```
 
 Each driver: `_ "sapaloq/internal/drivers/gnome"` in `main.go` for registration.
@@ -201,7 +201,7 @@ Config override: `driver.override: gnome` skips scoring.
 | `config.json` | User/agent via `/settings` | Preferences, orchestrator, modes |
 | `os.json` | **sapaloq-core detect** | Cached OS/DE + driver selection |
 
-**Never** merge — agent tidak edit `os.json` unless `/settings force-rescan` (optional command).
+**Never** merge - agent tidak edit `os.json` unless `/settings force-rescan` (optional command).
 
 ---
 

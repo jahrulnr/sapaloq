@@ -166,7 +166,7 @@ func TestRoleAllowsFallsBackOnUnknownAllowlist(t *testing.T) {
 }
 
 // TestRoleAllowsHonorsValidAllowlist confirms a correct (real-tool) allowlist is
-// still authoritative — the guard only triggers when nothing matches.
+// still authoritative - the guard only triggers when nothing matches.
 func TestRoleAllowsHonorsValidAllowlist(t *testing.T) {
 	o := &Orchestrator{cfg: config.Config{
 		SubAgents: config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{

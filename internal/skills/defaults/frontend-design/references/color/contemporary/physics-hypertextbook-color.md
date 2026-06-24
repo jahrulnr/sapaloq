@@ -1,10 +1,10 @@
-# Color — The Physics Hypertextbook (Glenn Elert)
+# Color - The Physics Hypertextbook (Glenn Elert)
 
 A clean, citable, textbook-grade overview of the **physics of color**: light → eye → models →
 digital encoding. Good canonical reference for the fundamentals, and unusually strong on the
 *encoding/standards* side (bit depths, TV color systems) that most color resources skip.
 
-- **Author:** Glenn Elert — *The Physics Hypertextbook*
+- **Author:** Glenn Elert - *The Physics Hypertextbook*
 - **Section:** Waves & Optics → Physical Optics (between "Thin-film interference" and "Reflection")
 - **URL:** <https://physics.info/color/>
 
@@ -16,7 +16,7 @@ Spectral power distributions are physical; **color exists only in the observer**
 the [philosophy-of-color](colour-subjectivisms-philosophy.md) and
 [Briggs](briggs-what-is-a-colour.md) references.)
 
-Elert frames the visible band in **frequency** (≈400–790 THz) rather than only wavelength — a
+Elert frames the visible band in **frequency** (≈400–790 THz) rather than only wavelength - a
 useful reminder that frequency is the invariant (it doesn't change across media; wavelength does).
 
 ## Cone peaks
@@ -27,21 +27,21 @@ useful reminder that frequency is the invariant (it doesn't change across media;
 | **M** | medium / "green" | ~540 nm |
 | **S** | short / "blue"  | ~440 nm |
 
-Combined cone response peaks ~**560 nm** (yellow-green) — why luminance/luminous-efficiency curves
+Combined cone response peaks ~**560 nm** (yellow-green) - why luminance/luminous-efficiency curves
 center there, and why warning/safety colors lean yellow-green.
 
 ## Additive vs. subtractive
 
-**Additive (light) — primaries R, G, B**
+**Additive (light) - primaries R, G, B**
 - R+G = Yellow · G+B = Cyan · B+R = Magenta · R+G+B = White · none = Black
-- Secondaries sit at hue **60° (yellow), 180° (cyan), 300° (magenta)** — each the complement of a
+- Secondaries sit at hue **60° (yellow), 180° (cyan), 300° (magenta)** - each the complement of a
   primary.
 
-**Subtractive (pigment/print) — primaries C, M, Y**
+**Subtractive (pigment/print) - primaries C, M, Y**
 - C+M = Blue · M+Y = Red · Y+C = Green · C+M+Y = (≈)Black · none = White (paper)
 
 > The traditional **RYB painter's wheel is historically inaccurate** for human vision; **CMY has
-> the superior chromatic range.** (Aligns with the skill's RYB-is-bad-theory thread — see
+> the superior chromatic range.** (Aligns with the skill's RYB-is-bad-theory thread - see
 > [RYB vs CMY](../historical/ryb-vs-cmy-color-wheels.md), [Moses Harris](../historical/moses-harris-1769-color-wheel.md).)
 
 ## Spectral wavelength bands (approximate, continuous not discrete)
@@ -56,14 +56,14 @@ center there, and why warning/safety colors lean yellow-green.
 | Violet | 400–450  |
 
 Boundaries vary by source; the spectrum is continuous. (Note green/yellow overlap in the listed
-ranges — different conventions disagree at the edges.)
+ranges - different conventions disagree at the edges.)
 
 ## Six ways color is produced
 
 Emission (incandescence, fluorescence, phosphorescence, lasers) · Reflection (paints, inks, dyes,
 biological pigments) · Transmission (stained glass, filters) · Scattering (sky blue, colloids) ·
 Dispersion (rainbows, chromatic aberration) · Interference (thin films, iridescence, nacre,
-peacock). This is a condensed cousin of Nassau's framework — see the fuller
+peacock). This is a condensed cousin of Nassau's framework - see the fuller
 [Causes of Color / 15 causes](webexhibits-causes-of-color.md).
 
 ## Digital & broadcast encoding (the genuinely distinctive part)
@@ -72,13 +72,13 @@ peacock). This is a condensed cousin of Nassau's framework — see the fuller
 
 | Bits | Colors        | Marketing name |
 | ---- | ------------- | -------------- |
-| 8    | 256           | —              |
+| 8    | 256           | -              |
 | 16   | 65,536        | Thousands      |
 | 24   | 16,777,216    | Millions       |
 | 32   | 4,294,967,296 | Billions       |
 
 **Broadcast / video luma-chroma systems** (all separate luminance from chrominance, enabling
-chroma subsampling — see [JPEG/chroma subsampling](computerphile-jpeg-color.md)):
+chroma subsampling - see [JPEG/chroma subsampling](computerphile-jpeg-color.md)):
 
 | System | Used by |
 | ------ | ------- |
@@ -93,10 +93,10 @@ chroma subsampling — see [JPEG/chroma subsampling](computerphile-jpeg-color.md
 ## Etymology & history (nice color-naming color)
 
 - **Old English** color words: *reád* (red), *geolu* (yellow), *grēne* (green), *hǽwen* (blue).
-- **1066 Norman Conquest** brought French loanwords — "blue" displaced *hǽwen*, "violet" appeared.
+- **1066 Norman Conquest** brought French loanwords - "blue" displaced *hǽwen*, "violet" appeared.
 - **Newton's seven colors** (incl. indigo) is critiqued as numerology/mysticism-driven; **John
   Leslie (1838)** already attacked the seven-color scheme. Indigo called practically
-  insignificant — see [What Happened to Indigo?](../historical/what-happened-to-indigo.md).
+  insignificant - see [What Happened to Indigo?](../historical/what-happened-to-indigo.md).
 - Cited theorists: Newton (~1666), **Thomas Young** (1802 Bakerian Lecture, trichromacy), **Goethe**
   (*Theory of Colors*, 1810). Standards: **CIE**, **ISO 21348:2007**. Etymologies from the OED.
 
@@ -104,7 +104,7 @@ chroma subsampling — see [JPEG/chroma subsampling](computerphile-jpeg-color.md
 
 - **Best single-page primer** when someone needs the physics fundamentals (cone peaks, additive vs
   subtractive, wavelength bands) with textbook authority and a citation.
-- **The encoding tables are the unique value** — bit depths and the YIQ/YUV/YDbDr/YPbPr/YCbCr
+- **The encoding tables are the unique value** - bit depths and the YIQ/YUV/YDbDr/YPbPr/YCbCr
   family aren't covered elsewhere in these references; they're the bridge from "physics of light"
   to "how color is actually stored and broadcast."
 

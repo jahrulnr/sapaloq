@@ -8,7 +8,7 @@ communicate: ws
 
 # Node: vps-scribe
 
-Remote scribe on VPS — append-only notes, no desktop tools.
+Remote scribe on VPS - append-only notes, no desktop tools.
 
 ## Endpoints
 
@@ -24,7 +24,7 @@ Remote scribe on VPS — append-only notes, no desktop tools.
 
 1. Open WS; send hello: `{ "op": "hello", "node": "vps-scribe", "token": "..." }`
 2. Send spawn envelope with `systemPrompt`, `contextPacket`, `subAgentId`, `taskId`
-3. Stream progress events — same schema as local progress jsonl
+3. Stream progress events - same schema as local progress jsonl
 4. Terminal: `{ "type": "status", "status": "done" | "failed" }`
 
 ## Control

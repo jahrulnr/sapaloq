@@ -133,7 +133,7 @@ func TestAgentVisionAutoRouteInBridge(t *testing.T) {
 	t.Setenv("CURSOR_STATE_VSCDB", filepath.Join(t.TempDir(), "missing.vscdb"))
 	t.Setenv("SAPALOQ_WIRE_INSECURE_TLS", "1")
 	t.Setenv("SAPALOQ_AGENT_WIRE_DRIVER", "http2")
-	// Deliberately NOT setting SAPALOQ_AGENT_PATH — vision content should
+	// Deliberately NOT setting SAPALOQ_AGENT_PATH - vision content should
 	// auto-route.
 	t.Setenv("CURSOR_AGENT_HOST", strings.TrimPrefix(server.URL, "https://"))
 	t.Setenv("CURSOR_AGENT_PATH", wire.AgentAgentPath)
@@ -157,7 +157,7 @@ func TestAgentVisionAutoRouteInBridge(t *testing.T) {
 	}
 	select {
 	case <-hitCh:
-		// expected — Agent API endpoint was hit
+		// expected - Agent API endpoint was hit
 	default:
 		t.Fatalf("expected Agent API endpoint to be called (vision routing failed)")
 	}

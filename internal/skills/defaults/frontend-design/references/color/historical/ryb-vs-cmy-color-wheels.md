@@ -21,18 +21,18 @@ This Process Color Selector Wheel from the 80s allows us to select different per
 
 - **RYB mixing failures:**
   - Red + Yellow subtractively = still red (hue angle ~357), not orange
-  - Red + Blue (close to cyan) = near-black, not purple — because red and cyan cancel out
+  - Red + Blue (close to cyan) = near-black, not purple - because red and cyan cancel out
   - Yellow + Blue = decent green (the one case that works okay)
 - **CMY superiority for subtractive mixing:** magenta, cyan, yellow allow precise control via percentage mixing
-- **Process Color Selector Wheel** (1988) — graphic design tool showing CMY+K mixtures in 10% increments
-- **Met Junior Museum color wheel** (~1950) — Bauhaus-style, beautiful but theoretically flawed RYB model
-- **Spectral cancellation** — again, it's about shared spectral transmission, not just "complementary" pairs
-- **Hue angle 357° ≈ red** — demonstrates that "red" in RYB is already far from a true primary for subtractive mixing
+- **Process Color Selector Wheel** (1988) - graphic design tool showing CMY+K mixtures in 10% increments
+- **Met Junior Museum color wheel** (~1950) - Bauhaus-style, beautiful but theoretically flawed RYB model
+- **Spectral cancellation** - again, it's about shared spectral transmission, not just "complementary" pairs
+- **Hue angle 357° ≈ red** - demonstrates that "red" in RYB is already far from a true primary for subtractive mixing
 
 ## Links
 
 - **Met Museum:** https://www.metmuseum.org/
-- **1958 exhibition "How to Look at Paintings"** — referenced in description, included large interactive color wheel
+- **1958 exhibition "How to Look at Paintings"** - referenced in description, included large interactive color wheel
 
 ## Source Books & Documents
 

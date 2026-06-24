@@ -1,4 +1,4 @@
-# Better Than HSL? — Interview with Alexei Boronine (HSLuv)
+# Better Than HSL? - Interview with Alexei Boronine (HSLuv)
 
 **Source:** [Color Nerd](https://www.youtube.com/@ColorNerd1) (YouTube, full-length)
 **Date:** 2022-02-19
@@ -15,16 +15,16 @@ Interview with Alexei Boronine about HSLuv, a color space he developed in 2012 t
 
 ### Problems with HSL
 
-- **Lightness is broken for comparison** — works within a single hue/saturation but wildly different across hues; comparing lightness of different colors is meaningless
+- **Lightness is broken for comparison** - works within a single hue/saturation but wildly different across hues; comparing lightness of different colors is meaningless
 - **Saturation** has similar issues, though less pronounced
-- **Hue is non-uniform** — 20-30° shift between red-orange-yellow is very noticeable, but the same degrees in the green region are barely perceptible
+- **Hue is non-uniform** - 20-30° shift between red-orange-yellow is very noticeable, but the same degrees in the green region are barely perceptible
 - HSL warps RGB into a cylinder, creating all these distortions
 
 ### HSLuv's Innovation
 
-- Based on **CIELUV** (CIE 1976 L*u*v\*) — a perceptually more uniform color space
+- Based on **CIELUV** (CIE 1976 L*u*v\*) - a perceptually more uniform color space
 - **The key innovation:** normalizing CIELUV chroma to a percentage of what's available at each hue/lightness
-- Solves the "out of bounds" problem — in raw CIELUV, changing hue at fixed chroma/lightness often produces impossible colors
+- Solves the "out of bounds" problem - in raw CIELUV, changing hue at fixed chroma/lightness often produces impossible colors
 - **Saturation 100%** = maximum available chroma for that hue at that lightness
 
 ### The Funky Gamut Shape
@@ -41,15 +41,15 @@ Interview with Alexei Boronine about HSLuv, a color space he developed in 2012 t
 ### HPLuv ("Pastel" mode)
 
 - A secondary circle in the picker that stays within the maximum inscribed circle of the gamut
-- Within this circle, you get full hue range at consistent chroma — never out of bounds
+- Within this circle, you get full hue range at consistent chroma - never out of bounds
 - Trade-off: limited to pastel/desaturated colors
 - "P" stands for pastel
 
 ### Design Use Cases
 
 - More convenient than traditional HSL pickers
-- Best use: **automated palette generation** — the uniformity makes algorithmic color schemes more predictable
-- Sliding hue at fixed saturation traces a line parallel to the gamut boundary — unique to HSLuv
+- Best use: **automated palette generation** - the uniformity makes algorithmic color schemes more predictable
+- Sliding hue at fixed saturation traces a line parallel to the gamut boundary - unique to HSLuv
 
 ## Links
 

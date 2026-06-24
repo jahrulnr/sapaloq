@@ -1,6 +1,6 @@
 # Color Vision
 
-**Source:** [Color & Contrast](https://colorandcontrast.com/) — A comprehensive guide to color for UI designers
+**Source:** [Color & Contrast](https://colorandcontrast.com/) - A comprehensive guide to color for UI designers
 
 _37 content fragments extracted from SPA bundle_
 

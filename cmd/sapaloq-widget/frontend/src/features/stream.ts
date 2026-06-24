@@ -85,7 +85,7 @@ function makeStreamTarget(className: string): StreamTarget {
 
 // makeThinkingTarget builds a collapsible reasoning bubble: a clickable header
 // (with a chevron) plus a body the deltas stream into. The bubble is never
-// hidden — only toggled — so finished reasoning stays available for review.
+// hidden - only toggled - so finished reasoning stays available for review.
 function makeThinkingTarget(): StreamTarget {
   const list = getMessageList();
   const el = document.createElement('div');
@@ -156,7 +156,7 @@ function flushStream(target: StreamTarget) {
   } else if (target.el.classList.contains('message--assistant')) {
     // A settled assistant bubble with no visible rendered text (e.g. the model
     // emitted only whitespace, or content that rendered to nothing) is dropped
-    // entirely — we never show a blank bubble nor attach feedback to it.
+    // entirely - we never show a blank bubble nor attach feedback to it.
     if (!hasVisibleText(target.el)) {
       target.el.remove();
     } else if (!target.el.querySelector('.message-feedback')) {
@@ -247,7 +247,7 @@ export function renderTaskUpdate(event: StreamEvent) {
 
   // Record the latest status and recompute the orb's busy ring FIRST, before any
   // early return. A terminal transition (done/failed/stopped) must always clear
-  // the busy flag — even if its summary happens to be empty — otherwise the orb
+  // the busy flag - even if its summary happens to be empty - otherwise the orb
   // stays stuck pulsing ("responding") after the sub-agent has finished. The
   // bubble rendering below needs a summary; the ring state must not depend on it.
   if (taskID) taskStatuses.set(taskID, status);
@@ -260,7 +260,7 @@ export function renderTaskUpdate(event: StreamEvent) {
     if (!active) setRingState('idle');
     // A terminal transition (done/failed/stopped) means the sub-agent has wound
     // down. Refresh the runtime-status pill immediately instead of waiting up to
-    // 3s for the next poll — otherwise the "Agent" pill keeps blinking
+    // 3s for the next poll - otherwise the "Agent" pill keeps blinking
     // "finalizing" after the task is already finished.
     if (terminal.has(status)) void refreshRuntimeStatus();
   }
@@ -269,7 +269,7 @@ export function renderTaskUpdate(event: StreamEvent) {
   // status label, plus a short activity hint while the task is running (e.g.
   // "Menjalankan `exec`."). The full, human-readable summary is authored by the
   // orchestrator and shown as its own chat bubble (response_delta tagged with
-  // task_id) — rendering record.Result here too produced two identical,
+  // task_id) - rendering record.Result here too produced two identical,
   // redundant summaries. So for terminal states we deliberately drop the
   // summary body and keep only the status line.
   let prefix = '';

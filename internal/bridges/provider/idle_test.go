@@ -17,7 +17,7 @@ import (
 // accepts the TCP connection but NEVER sends response headers (a common
 // overloaded-gateway failure) must be abandoned within the idle window. Before
 // the guard, the SSE idle timer hadn't started yet (it only arms after headers
-// arrive), so this hung up to the 600s whole-request timeout with no heartbeat —
+// arrive), so this hung up to the 600s whole-request timeout with no heartbeat -
 // long enough for the worker watchdog to force-fail a healthy sub-agent.
 func TestStreamTTFBTimeoutFires(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -62,7 +62,7 @@ func TestStreamTTFBTimeoutFires(t *testing.T) {
 
 // TestStreamIdleTimeoutFires proves the bug fix: a server that accepts the SSE
 // connection, sends one chunk, then goes silent must be abandoned within the
-// idle window — NOT held open until the (much larger) whole-request timeout.
+// idle window - NOT held open until the (much larger) whole-request timeout.
 // Before the fix this read blocked for up to RequestTimeout (600s default),
 // long enough for the worker health watchdog to force-fail the sub-agent.
 func TestStreamIdleTimeoutFires(t *testing.T) {
@@ -74,7 +74,7 @@ func TestStreamIdleTimeoutFires(t *testing.T) {
 		if flusher != nil {
 			flusher.Flush()
 		}
-		// Now go silent — the client must give up via the idle timeout.
+		// Now go silent - the client must give up via the idle timeout.
 		<-hang
 	}))
 	defer server.Close()
@@ -119,7 +119,7 @@ func TestStreamIdleTimeoutFires(t *testing.T) {
 // that, after one real chunk, sends ONLY blank-line keep-alives (no model data)
 // must still trip the idle timeout. Before the fix every blank line reset the
 // idle timer, so a stream that delivered nothing but newlines stayed "alive"
-// forever — the exact "listening but receiving nothing from the model" stall.
+// forever - the exact "listening but receiving nothing from the model" stall.
 func TestStreamIdleTimeoutFiresOnKeepAliveOnly(t *testing.T) {
 	stop := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +129,7 @@ func TestStreamIdleTimeoutFiresOnKeepAliveOnly(t *testing.T) {
 		if flusher != nil {
 			flusher.Flush()
 		}
-		// Now spam blank-line keep-alives only — no model data ever again.
+		// Now spam blank-line keep-alives only - no model data ever again.
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -174,7 +174,7 @@ func TestStreamIdleTimeoutFiresOnKeepAliveOnly(t *testing.T) {
 }
 
 // TestStreamIdleTimeoutDoesNotFireWhenDataFlows confirms a steadily-streaming
-// server (chunks within the idle window) completes normally — the idle timer is
+// server (chunks within the idle window) completes normally - the idle timer is
 // reset on every event and never trips.
 func TestStreamIdleTimeoutDoesNotFireWhenDataFlows(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

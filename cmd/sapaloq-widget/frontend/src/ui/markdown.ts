@@ -42,7 +42,7 @@ function decorateRenderedMarkdown(root: ParentNode) {
   // GFM task-list checkboxes. marked emits `<input disabled type="checkbox">`
   // for `- [ ]`/`- [x]`, but DOMPurify strips the `type` attribute on <input>
   // (its own input-attr policy, not overridable via ADD_ATTR), leaving a bare
-  // <input> the browser renders as a long TEXT field — the "checkbox jadi input
+  // <input> the browser renders as a long TEXT field - the "checkbox jadi input
   // panjang" bug. Every <input> our markdown produces is a task-list checkbox,
   // so re-assert type=checkbox (and disabled, since these are display-only) and
   // tag the row for styling. The `checked` attribute survives sanitization.
@@ -65,7 +65,7 @@ export function renderMarkdown(text: string): DocumentFragment {
   const clean = DOMPurify.sanitize(rawHTML, {
     ADD_ATTR: ['target', 'rel'],
     // Allow http(s)/mailto/tel + data:image (inline previews) AND local file
-    // references — `file:` URLs and absolute paths (`/…`) — so a `[name](/tmp/x)`
+    // references - `file:` URLs and absolute paths (`/…`) - so a `[name](/tmp/x)`
     // link keeps its href and stays clickable (routed via OpenExternal).
     // Everything else (notably `javascript:`) is still stripped.
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|file):|data:image\/|\/)/i,

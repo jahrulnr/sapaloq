@@ -13,10 +13,10 @@ function render(md: string): HTMLElement {
   return host;
 }
 
-describe('renderMarkdown — GFM task lists', () => {
+describe('renderMarkdown - GFM task lists', () => {
   // Regression for the "checkbox jadi input panjang" bug: marked emits
   // `<input disabled type="checkbox">`, but DOMPurify strips `type` unless it
-  // is explicitly allowed — leaving a bare `<input>` the browser renders as a
+  // is explicitly allowed - leaving a bare `<input>` the browser renders as a
   // long text field. The fix is ADD_ATTR: ['...', 'type'].
   it('keeps the checkbox type so it renders as a checkbox, not a text input', () => {
     const host = render('- [ ] todo item\n- [x] done item\n');
@@ -48,7 +48,7 @@ describe('renderMarkdown — GFM task lists', () => {
     // nested <ul> as direct children of the same <li> (so it lays out as one
     // flowing line with the sublist below, not as squeezed columns).
     const host = render(
-      '- [ ] **Struktur direktori** di `/tmp/webprofile`:\n  - `index.html` — markup\n  - `style.css` — tema\n',
+      '- [ ] **Struktur direktori** di `/tmp/webprofile`:\n  - `index.html` - markup\n  - `style.css` - tema\n',
     );
     const item = host.querySelector('li.md-task-item');
     expect(item).not.toBeNull();

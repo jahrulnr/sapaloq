@@ -10,7 +10,7 @@ import (
 
 // speakTaskCompletion closes the event-driven loop that the original bug left
 // open: when a background sub-agent reaches a terminal state, the orchestrator
-// must SPEAK the outcome into the conversation — not merely update a task card.
+// must SPEAK the outcome into the conversation - not merely update a task card.
 //
 // Before this, `sapaloq_wait` would return "still in_progress" and the Ask
 // generation would end; when the worker finished later, only a card updated and
@@ -23,7 +23,7 @@ import (
 // naturally per model and reads like the assistant talking to the user, e.g.
 // "sub-agent udah kelar, hasilnya ..."). The task CARD stays a terse status
 // timeline (see taskUpdateEvent); this bubble is the single place the full
-// summary lives — no more two redundant copies.
+// summary lives - no more two redundant copies.
 //
 // It is idempotent per task id and gated by completion.speakOnTerminal.
 func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) {
@@ -67,7 +67,7 @@ func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) 
 	}
 
 	// Republish as a streamed response so a connected widget hears it live via
-	// the watch stream — this is the missing "speak" trigger.
+	// the watch stream - this is the missing "speak" trigger.
 	//
 	// The event carries TaskID so the widget can (a) dedupe it to exactly one
 	// bubble per task id even if the terminal transition is published more than
@@ -91,7 +91,7 @@ func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) 
 // so it never collides with the foreground UI orchestrator's mailbox/tool-jobs.
 //
 // The generation streams into a drained channel (the announcement is not shown
-// live token-by-token — the widget expects ONE whole task_id-tagged bubble, see
+// live token-by-token - the widget expects ONE whole task_id-tagged bubble, see
 // speakTaskCompletion); we capture the full assistant text and return it.
 //
 // Returns "" when no provider is configured so the caller can fall back to the

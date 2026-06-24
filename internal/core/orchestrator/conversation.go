@@ -39,7 +39,7 @@ var idleWindowUnit = time.Minute
 
 // runConversation drives one Ask (chat) turn. If thinkingOut is non-nil,
 // reasoning (EventThinkingDelta) text is accumulated into it so the caller can
-// persist it as a show-only "thinking" turn — separate from the assistant
+// persist it as a show-only "thinking" turn - separate from the assistant
 // answer (`all`). It is a thin wrapper that configures the SHARED engine
 // (runTurnLoop) for the chat role: the full Ask tool surface, a live channel
 // sink, no heartbeat, and natural finish on a tool-less turn.
@@ -89,7 +89,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	// gracefully instead of looping on the same 400.
 	visionDowngraded := false
 	// If this model is already known text-only (marked false in a prior run or
-	// in config), don't bother sending the image — drop it and proceed on the
+	// in config), don't bother sending the image - drop it and proceed on the
 	// text placeholder so the user still gets an answer instead of an error.
 	if len(images) > 0 && !o.visionAllowed(snap.entry.Key, snap.entry.Model) {
 		images = nil
@@ -99,7 +99,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	budget := runtimeCfg.Continuation
 	// Wall-time is an INACTIVITY (idle) deadline, not a total-runtime cap. A
 	// productive agent that keeps streaming output / making tool calls must be
-	// allowed to work as long as it is making progress — capping total runtime
+	// allowed to work as long as it is making progress - capping total runtime
 	// would kill a healthy long task (e.g. scaffolding a large app) mid-work,
 	// which is exactly the wrong thing to punish. Instead we cancel only when
 	// the run goes SILENT for MaxWallTimeMinutes (a stuck network / dead stream
@@ -144,7 +144,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	const maxMalformedToolTurns = 3
 
 	// maxInferenceTurns: a positive value caps the loop; a NEGATIVE value means
-	// UNLIMITED — the loop is then bounded only by the real anomaly guards
+	// UNLIMITED - the loop is then bounded only by the real anomaly guards
 	// (wall-time, no-progress, identical-tool, tool-call budgets). cfg overrides
 	// the config default when set to any non-zero value (so an explicit -1 from a
 	// role survives instead of falling back to the bounded config default).
@@ -171,7 +171,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		// Heartbeat at the top of every turn so the health watchdog can tell a
 		// genuinely-working agent (advancing turns) from a wedged goroutine.
-		// Advancing a turn is progress — reset the inactivity deadline.
+		// Advancing a turn is progress - reset the inactivity deadline.
 		resetIdle()
 		out.beat(fmt.Sprintf("inference turn %d/%s", inferenceTurn, turnBudgetLabel))
 		if shouldCompactConversation(cleanMessages, snap.entry.ContextWindow, runtimeCfg.Compaction.BackgroundThreshold) &&
@@ -259,7 +259,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				// Drop any echoed "[Called tools: …]" note before it is
 				// streamed or persisted. The filter may withhold a trailing
 				// fragment (the marker can split across deltas), so an empty
-				// result here just means "still deciding" — flushed on done.
+				// result here just means "still deciding" - flushed on done.
 				clean := ctFilter.feed(ev.Delta)
 				if clean == "" {
 					continue
@@ -318,17 +318,17 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 					o.setVisionSupport(snap.entry.Key, snap.entry.Model, false)
 					o.persistVisionSupport(snap.entry.Key, snap.entry.Model, false)
 					retryTextOnly = true
-					out.emit(runCtx, statusEvent(sessionID, "model can't see images — retrying without the attachment"))
+					out.emit(runCtx, statusEvent(sessionID, "model can't see images - retrying without the attachment"))
 					cancelAttempt()
 					break streamLoop
 				}
 				// A context/token-overflow 400 means our (guessed) context window
 				// was too large. Force a compaction pass and retry instead of
-				// failing — providers rarely expose the real limit, so the 400 is
+				// failing - providers rarely expose the real limit, so the 400 is
 				// the only reliable signal.
 				if looksLikeContextOverflow(ev.Error) && forcedCompactions < maxForcedCompactions {
 					retryCompacted = true
-					out.emit(runCtx, statusEvent(sessionID, "context too large — compacting and retrying"))
+					out.emit(runCtx, statusEvent(sessionID, "context too large - compacting and retrying"))
 					cancelAttempt()
 					break streamLoop
 				}
@@ -338,7 +338,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				// maxTransportRetries; the wall-time budget is the final cap.
 				if looksLikeTransientTransport(ev.Error) && transportRetries < maxTransportRetries {
 					retryTransport = true
-					out.emit(runCtx, statusEvent(sessionID, fmt.Sprintf("provider error — retrying (%d/%d)", transportRetries+1, maxTransportRetries)))
+					out.emit(runCtx, statusEvent(sessionID, fmt.Sprintf("provider error - retrying (%d/%d)", transportRetries+1, maxTransportRetries)))
 					cancelAttempt()
 					break streamLoop
 				}
@@ -348,7 +348,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				break streamLoop
 			case bridge.EventThinkingDelta:
 				// Reasoning tokens are progress too (the model is working, not
-				// stuck) — reset the inactivity deadline. Accumulate reasoning so
+				// stuck) - reset the inactivity deadline. Accumulate reasoning so
 				// it can be persisted as a show-only "thinking" turn (survives
 				// restart), then forward it live.
 				resetIdle()
@@ -396,7 +396,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			// Force one compaction pass and re-run this same turn against the
 			// shrunken history. The failed attempt is already cancelled. If
 			// compaction can't shrink further (already minimal), recovery is
-			// impossible — surface the original overflow error rather than loop.
+			// impossible - surface the original overflow error rather than loop.
 			compacted := compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
 			if len(compacted) >= len(cleanMessages) {
 				return all, fmt.Errorf("context overflow and conversation already minimal: %s", lastErr)
@@ -439,7 +439,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		if hadError {
 			// The error event itself was already emitted to the sink above;
 			// the dedicated EventDone is what unblocks the chat IPC consumer
-			// (and the widget) — without it, the channel closes silently and
+			// (and the widget) - without it, the channel closes silently and
 			// the frontend can stay in its "submitting" state because no
 			// terminal event was seen. We use the turn's context (already
 			// cancelled by the broken attempt) just to match the rest of the
@@ -447,7 +447,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			// the context is done.
 			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			// Propagate the error to the CALLER. The UI already saw the error
-			// (emitted to the sink) — but sub-agent finalization in
+			// (emitted to the sink) - but sub-agent finalization in
 			// runSubAgentLoop keys "failed vs done" off this returned error.
 			// Returning nil here used to make a planner whose only LLM call hit
 			// a provider 500 finish as "done" with a fake "Selesai." and no
@@ -469,7 +469,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// that emits tool calls inline in its content (source "openai_inline",
 		// e.g. MiniMax-M3) can produce a turn where tool calls were EMITTED
 		// (toolCallsThisTurn > 0) but none parsed/executed into a result
-		// (toolResults empty) — typically a multi-call batch whose JSON got
+		// (toolResults empty) - typically a multi-call batch whose JSON got
 		// mangled by leaked template tokens. Without this guard that turn looks
 		// identical to a clean tool-less finish and the run would end mid-task
 		// with no answer. Instead, nudge the model to retry one call at a time
@@ -477,7 +477,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// never emit a valid call still finishes rather than looping forever.
 		if !stop && toolCallsThisTurn > 0 && len(toolResults) == 0 && malformedToolTurns < maxMalformedToolTurns {
 			malformedToolTurns++
-			nudge := "Your previous tool call(s) could not be parsed or executed — likely " +
+			nudge := "Your previous tool call(s) could not be parsed or executed - likely " +
 				"because they were emitted as inline text or batched together with stray " +
 				"markers. Please issue ONE tool call at a time using the proper tool-call " +
 				"format, or, if no tool is needed, just answer in plain text."
@@ -497,7 +497,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// A tool-less turn ends it only for roles that finish naturally (chat,
 		// planner); an executor must signal completion via a terminal tool, so
 		// it keeps looping (bounded by the budgets + loop guards below) until it
-		// does. Narrating without acting is allowed — the budgets, not a
+		// does. Narrating without acting is allowed - the budgets, not a
 		// bespoke narration guard, bound a misbehaving model.
 		if stop || (cfg.finishOnNoTool && len(toolResults) == 0) {
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
@@ -506,7 +506,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// NOTE: we intentionally do NOT fail a turn just because the model
 		// narrated without calling a tool. Thinking/narrating before acting is
 		// healthy model behavior (the same way any capable model reasons before
-		// it acts) — penalising it cuts the model off before it gets to act.
+		// it acts) - penalising it cuts the model off before it gets to act.
 		// A model that truly spins forever is still bounded by the real safety
 		// nets: maxInferenceTurns (per-role turn cap), the wall-time budget,
 		// MaxToolCalls, and the no-progress hash guard right below (which fires
@@ -548,13 +548,13 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		continuation += usageReadout(inferenceTurn, toolCalls)
 		// Record the tool calls this turn actually made into the assistant
-		// message. response.String() carries only the model's text deltas — not
-		// the tool_call itself — so without this the next turn sees the model's
+		// message. response.String() carries only the model's text deltas - not
+		// the tool_call itself - so without this the next turn sees the model's
 		// narration ("I'll delegate to an agent…") followed by a tool result,
 		// but no evidence that IT invoked the tool. Some models (e.g. Opus)
 		// need that confirmation in-transcript to trust the action happened;
 		// lacking it they second-guess ("I forgot to actually call it") and
-		// re-issue the same call — the double-spawn bug. Appending an explicit
+		// re-issue the same call - the double-spawn bug. Appending an explicit
 		// [Called tools: …] note gives that proof back. Models that don't need
 		// it (e.g. minimax) are unaffected.
 		assistantContent := response.String()
@@ -578,11 +578,11 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		)
 		// Re-extract images from the freshly appended tool-results message so a
 		// read_image tool call (which returns inline-image markdown) becomes real
-		// vision input on the next turn — the same channel widget attachments use.
+		// vision input on the next turn - the same channel widget attachments use.
 		cleanMessages, images = extractImages(cleanMessages)
 		// If the model is already known text-only (this run downgraded it, or a
 		// prior run/config marked it), drop the images and keep going on text
-		// instead of stalling — the markdown is already a text placeholder.
+		// instead of stalling - the markdown is already a text placeholder.
 		if len(images) > 0 && (visionDowngraded || !o.visionAllowed(snap.entry.Key, snap.entry.Model)) {
 			images = nil
 		}
@@ -668,7 +668,7 @@ func truncateForCheckpoint(text string, limit int) string {
 func extractImages(messages []bridge.Message) ([]bridge.Message, []bridge.Image) {
 	cleaned := make([]bridge.Message, 0, len(messages))
 	var images []bridge.Image
-	// The image-bearing message is the most recent fresh input to the model —
+	// The image-bearing message is the most recent fresh input to the model -
 	// either the user's latest message or a tool observation (e.g. read_image
 	// returns inline-image markdown). Both are valid vision sources; only this
 	// one message contributes real images, older ones become text placeholders.
@@ -811,7 +811,7 @@ func setProviderVisionFlag(raw map[string]any, providerKey, model string, suppor
 }
 
 // imageRejection reports whether an upstream error on an image-bearing request
-// most likely means the model can't accept images — so we should mark it
+// most likely means the model can't accept images - so we should mark it
 // text-only and retry without the attachment. Two signals:
 //  1. An explicit vision-unsupported phrase (works regardless of status code,
 //     and for providers that return the rejection inside a 200 body).
@@ -856,7 +856,7 @@ func looksLikeContextOverflow(message string) bool {
 // network/transport hiccup (a slow or flaky provider) that is worth retrying
 // the same turn for, rather than a deterministic failure (auth, malformed
 // request, context overflow) where retrying would just fail again. We retry on
-// timeouts, dropped/reset connections, premature EOFs, and 5xx/429 responses —
+// timeouts, dropped/reset connections, premature EOFs, and 5xx/429 responses -
 // the classic "try again in a moment" class. Context-overflow is intentionally
 // excluded here because it has its own dedicated compaction-and-retry path.
 //
@@ -874,7 +874,7 @@ func looksLikeTransientTransport(message string) bool {
 	if looksLikeContextOverflow(lower) {
 		return false
 	}
-	// Deterministic client errors must never be retried — they will just
+	// Deterministic client errors must never be retried - they will just
 	// fail the same way again and burn the per-turn retry budget while
 	// the user sees the agent "hanging".
 	for _, kw := range []string{

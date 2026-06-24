@@ -1,4 +1,4 @@
-// Package wire — Agent API raw HTTP/2 driver. Reuses the same h2 transport as
+// Package wire - Agent API raw HTTP/2 driver. Reuses the same h2 transport as
 // StreamChatRaw (cursor-proto-lab compatible) but targets the Agent API RPC
 // and uses the Agent protobuf envelope. This path is the same shape the
 // reference 9router/open-sse/executors/cursorAgent.js uses; the JS reference
@@ -82,11 +82,11 @@ func StreamAgentRawWithRaw(ctx context.Context, opts AgentStreamOptions, onFrame
 	defer conn.Close()
 
 	headers := map[string]string{
-		":method":      "POST",
-		":path":        path,
-		":scheme":      "https",
-		":authority":   host,
-		"content-type": "application/connect+proto",
+		":method":       "POST",
+		":path":         path,
+		":scheme":       "https",
+		":authority":    host,
+		"content-type":  "application/connect+proto",
 		"authorization": "Bearer " + opts.Token,
 	}
 
@@ -238,7 +238,7 @@ func (c *h2Conn) sendAndRecvRaw(ctx context.Context, headers map[string]string, 
 		case *http2.RSTStreamFrame:
 			return fmt.Errorf("rst_stream code=%d", v.ErrCode)
 		case *http2.WindowUpdateFrame:
-			// flow control — non-essential for a single request
+			// flow control - non-essential for a single request
 		case *http2.SettingsFrame:
 			// server settings; no ack needed unless requested
 		}
@@ -277,5 +277,3 @@ var _ = url.JoinPath
 
 // keep http imported for the http2 fallback transport setup
 var _ = http.NoBody
-
-

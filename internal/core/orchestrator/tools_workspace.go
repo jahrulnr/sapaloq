@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -80,8 +79,8 @@ type toolArgs struct {
 	Message        string   `json:"message"`
 	Priority       string   `json:"priority"`
 	CorrelationID  string   `json:"correlation_id"`
-	JobID          string   `json:"job_id"`         // exec_status / exec_result / exec_cancel
-	WaitSeconds    int      `json:"wait_seconds"`   // exec_result: optional poll window (0 = immediate)
+	JobID          string   `json:"job_id"`       // exec_status / exec_result / exec_cancel
+	WaitSeconds    int      `json:"wait_seconds"` // exec_result: optional poll window (0 = immediate)
 }
 
 func parseToolArgs(raw json.RawMessage) toolArgs {
@@ -89,7 +88,7 @@ func parseToolArgs(raw json.RawMessage) toolArgs {
 	if err := json.Unmarshal(raw, &args); err != nil {
 		// Models frequently emit multi-line argument values (heredoc bodies,
 		// file content) with RAW control bytes inside the JSON string, which is
-		// invalid JSON and makes encoding/json drop the value silently — the
+		// invalid JSON and makes encoding/json drop the value silently - the
 		// tool then sees empty args and the model wrongly concludes its content
 		// was "stripped". Repair the raw control chars and retry once.
 		_ = json.Unmarshal(parse.RepairControlCharsInJSON(raw), &args)
@@ -100,7 +99,7 @@ func parseToolArgs(raw json.RawMessage) toolArgs {
 // looksBinary reports whether a byte chunk is likely binary: a NUL byte is a
 // strong signal, and a high ratio of non-printable bytes is a softer one. This
 // guards read_file from dumping raw binary as a "string" (a real failure mode
-// the user flagged — read may otherwise happily read a 1GB or binary file).
+// the user flagged - read may otherwise happily read a 1GB or binary file).
 func looksBinary(b []byte) bool {
 	if len(b) == 0 {
 		return false
@@ -271,7 +270,7 @@ func toolDeleteFile(args toolArgs) string {
 }
 
 // toolGlob lists files matching a glob pattern under a root directory (path
-// arg, default CWD). It supports "**" for recursive matching. Native — no
+// arg, default CWD). It supports "**" for recursive matching. Native - no
 // shell needed.
 func toolGlob(args toolArgs) string {
 	pattern := strings.TrimSpace(args.Pattern)
@@ -486,27 +485,19 @@ func (o *Orchestrator) toolExec(ctx context.Context, args toolArgs) string {
 	if timeout > maxTerminalSecs {
 		timeout = maxTerminalSecs
 	}
-	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-	defer cancel()
-	const cwdMarker = "__SAPALOQ_FINAL_CWD__="
-	wrapped := cmd + "\nstatus=$?\nprintf '\\n" + cwdMarker + "%s\\n' \"$PWD\"\nexit $status"
-	c := exec.CommandContext(runCtx, "bash", "-lc", wrapped)
-	if dir := strings.TrimSpace(args.Cwd); dir != "" {
-		c.Dir = expandHome(dir)
+	res := runShellCaptured(ctx, cmd, args.Cwd, time.Duration(timeout)*time.Second)
+	if res.FinalCWD != "" {
+		o.persistActorCWD(actorRunID(ctx), res.FinalCWD)
 	}
-	out, err := c.CombinedOutput()
-	text, finalCWD := splitExecCWD(string(out), cwdMarker)
-	if finalCWD != "" {
-		o.persistActorCWD(actorRunID(ctx), finalCWD)
+	text := res.Output
+	if res.TimedOut {
+		return fmt.Sprintf("Command timed out after %ds (process group killed). If this command is long-running (a server, watcher, or anything started with '&'), use exec_async instead so you can keep working and poll/cancel it.\n%s", timeout, text)
 	}
-	if len(text) > 16*1024 {
-		text = text[:16*1024] + "\n[output truncated]"
+	if res.Cancelled {
+		return fmt.Sprintf("Command cancelled by host.\n%s", text)
 	}
-	if runCtx.Err() == context.DeadlineExceeded {
-		return fmt.Sprintf("Command timed out after %ds.\n%s", timeout, text)
-	}
-	if err != nil {
-		return fmt.Sprintf("Command exited with error: %v\n%s", err, text)
+	if res.Err != nil {
+		return fmt.Sprintf("Command exited with error: %v\n%s", res.Err, text)
 	}
 	if strings.TrimSpace(text) == "" {
 		return "(command produced no output)"

@@ -1,6 +1,6 @@
-# Workshop: Generative Color — mattdesl
+# Workshop: Generative Color - mattdesl
 
-**Source:** [GitHub — mattdesl/workshop-generative-color](https://github.com/mattdesl/workshop-generative-color)
+**Source:** [GitHub - mattdesl/workshop-generative-color](https://github.com/mattdesl/workshop-generative-color)
 **Author:** Matt DesLauriers (mattdesl)
 **Live:** ~~https://generative-color.glitch.me~~ <!-- ⚠️ GONE (HTTP 410). Glitch project deleted. Use the GitHub repo to run locally. -->
 **Stars:** 99
@@ -55,17 +55,17 @@ Hands-on workshop on color science for generative art and creative coding. Inclu
 
 ### The Wada Sanzō Connection
 
-mattdesl digitized [Sanzo Wada's "Dictionary of Colour Combinations"](https://github.com/mattdesl/dictionary-of-colour-combinations) — the classic 1933 Japanese color reference. This appears in the color-name-lists package as well.
+mattdesl digitized [Sanzo Wada's "Dictionary of Colour Combinations"](https://github.com/mattdesl/dictionary-of-colour-combinations) - the classic 1933 Japanese color reference. This appears in the color-name-lists package as well.
 
 ## Technical Contents
 
-- `lib/oklab.js` — OKLAB conversion math (MIT, Björn Ottosson)
-- `lib/spectra/` — CIE 1931 2° Standard Observer functions, ColorChecker spectral data
-- `sketches/` — editable exercise files for the workshop
+- `lib/oklab.js` - OKLAB conversion math (MIT, Björn Ottosson)
+- `lib/spectra/` - CIE 1931 2° Standard Observer functions, ColorChecker spectral data
+- `sketches/` - editable exercise files for the workshop
 
 ## Why This Matters
 
-This workshop is one of the best curated collections of **practical generative color resources**. The three custom tools (Color Grab, Color Swatch, Color SPD) are unique — especially Color SPD which works directly with spectral power distributions, bridging the gap between physics and creative coding.
+This workshop is one of the best curated collections of **practical generative color resources**. The three custom tools (Color Grab, Color Swatch, Color SPD) are unique - especially Color SPD which works directly with spectral power distributions, bridging the gap between physics and creative coding.
 
 ## Links
 
@@ -92,7 +92,7 @@ Generate vibrant palettes using **Kubelka-Munk pigment mixing** with 5 primaries
 
 ### Extending to N Dimensions
 
-The approach generalizes: instead of mixing 2 pigments, **sample the N-dimensional pigment simplex** — a point in the space where all N pigment concentrations sum to 1. This means:
+The approach generalizes: instead of mixing 2 pigments, **sample the N-dimensional pigment simplex** - a point in the space where all N pigment concentrations sum to 1. This means:
 
 - 2 pigments = random point on a line segment
 - 3 pigments = random point on a triangle
@@ -111,7 +111,7 @@ Blue, yellow, red = chromatic gamut (subtractive primaries in painter's terms). 
 
 ### Connection to Other Tools
 
-- **Spectral.js** — provides the K-M mixing math in JS/GLSL
-- **Mixbox** — commercial alternative for K-M mixing
-- **FocalPaint** — iPad app with K-M mixing + editable spectral profiles
+- **Spectral.js** - provides the K-M mixing math in JS/GLSL
+- **Mixbox** - commercial alternative for K-M mixing
+- **FocalPaint** - iPad app with K-M mixing + editable spectral profiles
 - This technique could be implemented using any of these libraries

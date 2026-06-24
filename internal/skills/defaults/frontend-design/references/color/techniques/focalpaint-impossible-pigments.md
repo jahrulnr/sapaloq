@@ -1,4 +1,4 @@
-# Simulating Impossible Pigments — FocalPaint
+# Simulating Impossible Pigments - FocalPaint
 
 **Source:** [Color Nerd](https://www.youtube.com/@ColorNerd1) (YouTube, full-length)
 **Date:** 2022-02-13
@@ -17,11 +17,11 @@ Interview with Biren Dieterle about FocalPaint, an iPad app that simulates spect
 
 - **Mixbox** being integrated into Rebelle 5
 - **OKLAB** as gradient space in Photoshop
-- **FocalPaint** — iPad app with spectral reflectance-based mixing
+- **FocalPaint** - iPad app with spectral reflectance-based mixing
 
 ### How FocalPaint Works
 
-- **Reflectance recovery** — technique to generate spectral reflectance curves from RGB values
+- **Reflectance recovery** - technique to generate spectral reflectance curves from RGB values
 - Inspired by **Scott Burns's website** on spectral reflectance recovery
 - Started from **MyPaint** forums where Annatim had made a patch for real color blending
 - Uses **Kubelka-Munk theory** for modeling paint mixing (scattering + absorption)
@@ -47,7 +47,7 @@ Interview with Biren Dieterle about FocalPaint, an iPad app that simulates spect
 ### Herbert Ives's Thought Experiment (1930s)
 
 - What if pigments reflected the whole spectrum EXCEPT one tiny piece?
-- "Reverse laser" — high reflectance with one dip
+- "Reverse laser" - high reflectance with one dip
 - Theorized these would mix to very bright secondaries/tertiaries
 - Ives couldn't test it; FocalPaint now can simulate this
 
@@ -61,6 +61,6 @@ Interview with Biren Dieterle about FocalPaint, an iPad app that simulates spect
 
 ## Source References
 
-- **Herbert Ives** (1930s) — thought experiment on "reverse laser" pigments
-- **Kubelka-Munk theory** — mathematical model for paint mixing (scattering + absorption)
-- **Scott Burns** — spectral reflectance recovery research
+- **Herbert Ives** (1930s) - thought experiment on "reverse laser" pigments
+- **Kubelka-Munk theory** - mathematical model for paint mixing (scattering + absorption)
+- **Scott Burns** - spectral reflectance recovery research

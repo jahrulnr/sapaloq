@@ -1,6 +1,6 @@
-# Color & Contrast — Recommended Publications
+# Color & Contrast - Recommended Publications
 
-**Source:** [Color & Contrast](https://colorandcontrast.com/) — reference bibliography
+**Source:** [Color & Contrast](https://colorandcontrast.com/) - reference bibliography
 
 These are the publications cited by colorandcontrast.com. All are borrow-only on Archive.org (modern copyrighted works).
 
@@ -31,13 +31,13 @@ These are the publications cited by colorandcontrast.com. All are borrow-only on
 | _Understanding Color: An Introduction for Designers_ (5th ed.) | Linda Holtzschue   | 2017 | not found   |
 | _Launching the Imagination_ (2nd ed.)                          | Mary Stewart       | 2006 | not found   |
 | _Classical Painting Atelier_                                   | Juliette Aristides | 2008 | not found   |
-| _Color Psychology_                                             | —                  | —    | —           |
+| _Color Psychology_                                             | -                  | -    | -           |
 
 ## Key Takeaways for the Skill
 
-- **Fairchild** — the definitive reference for CAM02, CAM16, and color appearance modeling
-- **Hunt** — authoritative on color reproduction and measurement; the standard for print/photography color science
-- **Hoffman** — visual perception is _constructed_, not passively received; the eye creates what we see
-- **Livingstone** — how neural processing creates artistic effects; luminance vs color pathways in art
-- **Schanda** — CIE system explained; essential for understanding standardized colorimetry
-- **Bruce/Green/Georgeson** — comprehensive visual perception textbook; covers physiology through ecology
+- **Fairchild** - the definitive reference for CAM02, CAM16, and color appearance modeling
+- **Hunt** - authoritative on color reproduction and measurement; the standard for print/photography color science
+- **Hoffman** - visual perception is _constructed_, not passively received; the eye creates what we see
+- **Livingstone** - how neural processing creates artistic effects; luminance vs color pathways in art
+- **Schanda** - CIE system explained; essential for understanding standardized colorimetry
+- **Bruce/Green/Georgeson** - comprehensive visual perception textbook; covers physiology through ecology

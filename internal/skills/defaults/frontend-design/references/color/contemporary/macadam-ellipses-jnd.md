@@ -1,4 +1,4 @@
-# MacAdam Ellipses — Just Noticeable Color Difference
+# MacAdam Ellipses - Just Noticeable Color Difference
 
 **Primary Source:** David L. MacAdam, “Visual sensitivities to color differences in daylight” (JOSA, 1942)
 **DOI:** [doi.org/10.1364/JOSA.32.000247](https://doi.org/10.1364/JOSA.32.000247)
