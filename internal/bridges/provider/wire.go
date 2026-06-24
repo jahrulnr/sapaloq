@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"strings"
@@ -46,6 +48,11 @@ type WireOptions struct {
 	// Zero means "use DetectContextWindow" - the bridge layer does not
 	// re-detect here so callers control the contract explicitly.
 	ContextWindow int
+	// MaxRetries bounds how many extra attempts runSSE makes after a transient
+	// *pre-stream* failure (connection error, or a retryable status: 408, 429,
+	// 5xx). Retries fire only before the first SSE byte is dispatched, so no
+	// emitted delta is ever duplicated. Zero disables retries.
+	MaxRetries int
 }
 
 // WireEvent is what the wire layer pushes back into the bridge.
@@ -175,11 +182,60 @@ func buildClaudeRequestBody(opts WireOptions, fallbackModel string) ([]byte, err
 	return json.Marshal(req)
 }
 
+// retryableError wraps a transient *pre-stream* failure (connection error or a
+// retryable status) so runSSE can tell it apart from an error raised once the
+// SSE stream has already started emitting deltas. Only pre-stream failures are
+// safe to retry: re-sending after deltas were dispatched would duplicate output.
+type retryableError struct{ err error }
+
+func (e retryableError) Error() string { return e.err.Error() }
+func (e retryableError) Unwrap() error { return e.err }
+
 // runSSE POSTs the body to the upstream endpoint and dispatches every SSE
 // line to onLine. It honours ctx cancellation and returns errStreamStopped
 // when the upstream emits the [DONE] sentinel or the line handler signals
 // stop.
+//
+// A transient pre-stream failure (connection error, or a retryable status:
+// 408, 429, 5xx) is retried up to opts.MaxRetries times with exponential
+// backoff + jitter. Once the stream is open and the first byte has been
+// dispatched, no retry is attempted (so emitted deltas are never duplicated).
 func runSSE(ctx context.Context, opts WireOptions, body []byte, onLine func([]byte) error) error {
+	attempts := opts.MaxRetries + 1 // MaxRetries extra tries after the first
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			delay := retryBackoff(attempt)
+			debug.Debugf("provider-bridge: retry %d/%d after %v (last error: %v)",
+				attempt, attempts-1, delay, lastErr)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+		err := attemptSSE(ctx, opts, body, onLine)
+		if err == nil || err == errStreamStopped {
+			return err
+		}
+		var retryable retryableError
+		if !errors.As(err, &retryable) {
+			// Non-retryable: a 4xx (except 408/429), or any failure raised
+			// after the stream already started emitting.
+			return err
+		}
+		lastErr = retryable.err
+	}
+	return lastErr
+}
+
+// attemptSSE performs a single POST + SSE pump. Pre-stream failures are wrapped
+// in retryableError; failures during streaming are returned bare so runSSE does
+// not retry them.
+func attemptSSE(ctx context.Context, opts WireOptions, body []byte, onLine func([]byte) error) error {
 	req, cancel, err := buildHTTPRequest(ctx, opts, body)
 	if err != nil {
 		return err
@@ -190,15 +246,60 @@ func runSSE(ctx context.Context, opts WireOptions, body []byte, onLine func([]by
 
 	resp, err := streamHTTPClient(opts.IdleTimeout).Do(req)
 	if err != nil {
-		return err
+		// A connection / transport failure is pre-stream by definition.
+		if ctx.Err() != nil {
+			return err // caller-driven cancellation: do not retry.
+		}
+		return retryableError{err: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("provider-bridge: upstream status %d: %s", resp.StatusCode, upstreamErrorBody(raw))
+		statusErr := fmt.Errorf("provider-bridge: upstream status %d: %s", resp.StatusCode, upstreamErrorBody(raw))
+		if isRetryableStatus(resp.StatusCode) {
+			return retryableError{err: statusErr}
+		}
+		return statusErr
 	}
 	reader := newSSEReader(resp.Body)
+	// From here the stream is open; pumpSSE may dispatch deltas, so its error
+	// is returned bare (non-retryable).
 	return pumpSSE(ctx, reader, resp.Body, opts.IdleTimeout, onLine)
+}
+
+// isRetryableStatus reports whether an HTTP status warrants a pre-stream retry.
+// These are the transient classes: request timeout, rate limit, and the 5xx
+// server / gateway failures (e.g. the Vercel AI Gateway `500 Connection error`
+// seen routing Anthropic models behind api.blackbox.ai).
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, // 408
+		http.StatusTooManyRequests: // 429
+		return true
+	default:
+		return code >= 500
+	}
+}
+
+// retryBackoff returns the wait before the given (1-based) retry attempt:
+// exponential growth (500ms, 1s, 2s, 4s, …) capped at 8s, plus up to 250ms of
+// jitter to avoid synchronised retries against a recovering gateway.
+func retryBackoff(attempt int) time.Duration {
+	const base = 500 * time.Millisecond
+	const maxDelay = 8 * time.Second
+	shift := attempt - 1
+	if shift < 0 {
+		shift = 0
+	}
+	if shift > 30 { // guard against overflow on absurd retry counts
+		shift = 30
+	}
+	delay := base << shift
+	if delay > maxDelay || delay <= 0 {
+		delay = maxDelay
+	}
+	jitter := time.Duration(rand.Int63n(int64(250 * time.Millisecond)))
+	return delay + jitter
 }
 
 // streamHTTPClient returns an HTTP client bounded for streaming. The idle

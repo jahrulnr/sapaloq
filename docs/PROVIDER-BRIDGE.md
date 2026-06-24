@@ -1,7 +1,7 @@
 # SapaLOQ - Provider Bridge (OpenAI / Claude / Kimi)
 
 > **Multi-model LLM bridge** - speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
-> Last updated: 2026-06-23 (documented `contextWindow` (input) vs `maxTokens` (output) knobs + 1M/128k example; clarified `[Called tools: …]` is a suppressed orchestrator note, not a recoverable inline call)
+> Last updated: 2026-06-25 (added pre-stream retry/backoff with `maxRetries` knob; documented `contextWindow` (input) vs `maxTokens` (output) knobs + 1M/128k example; clarified `[Called tools: …]` is a suppressed orchestrator note, not a recoverable inline call)
 
 Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -484,4 +484,5 @@ The provider bridge serializes those canonical names into OpenAI/Claude/Kimi too
 - **Single inference backend per stream.** Each Complete call goes to one configured endpoint. Multi-model orchestration (e.g. Claude for thinking, GPT for tools) is the orchestrator's job.
 - **No provider-specific tool schemas.** `declaredTools` is a name list; the bridge sends `additionalProperties: true` schemas. If you need strict parameter validation, build a custom `*ToolParser` adapter.
 - **Tool calls in a single message only.** The bridge does not yet route tool results back to the model in a multi-turn loop - that's the orchestrator's responsibility.
-- **No fallback / retry.** If the upstream returns 5xx the bridge surfaces an `EventError` and stops. The orchestrator decides whether to retry.
+- **Pre-stream retry, no mid-stream retry.** A transient *pre-stream* failure (connection error, or a retryable status: `408`, `429`, `5xx`) is retried with exponential backoff + jitter up to `llmBridge.providers[].maxRetries` times (resolved by `config.LLMBridge.ResolveMaxRetries()`, default **5**; set `-1` to disable, clamped to 10). This mirrors the OpenAI SDK's default retry behaviour that keeps the official Blackbox CLI stable on the same endpoint, and fixes flaky-gateway `500`s such as the Vercel AI Gateway `InternalServerError: Connection error` routing Anthropic models behind `api.blackbox.ai` (model-other providers rarely hit that route, so the symptom was opus-only). Retries fire **only** before the first SSE byte is dispatched, so emitted deltas are never duplicated. Once the stream is open, any failure (or a non-retryable 4xx) surfaces an `EventError` and stops — the orchestrator decides whether to retry the whole turn.
+- **No model-group fallback.** The bridge does not switch to a different provider entry on failure; that is the orchestrator's job.

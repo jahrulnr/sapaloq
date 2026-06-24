@@ -382,6 +382,16 @@ type LLMBridge struct {
 	// cap detects a wedged/hung stream quickly and surfaces an actionable error
 	// so the sub-agent loop can retry the turn. 0 → DefaultStreamIdleTimeoutSec.
 	StreamIdleTimeoutSec int `json:"streamIdleTimeoutSec,omitempty"`
+	// MaxRetries bounds how many times the provider-bridge re-sends a request
+	// when the upstream fails *before* the SSE stream starts - a connection
+	// error or a retryable status (408, 429, 5xx). Some gateways (e.g. the
+	// Vercel AI Gateway behind api.blackbox.ai routing Anthropic models) fail
+	// transiently with `500 Connection error` and no fallback; a single retry
+	// usually lands on a healthy node. This mirrors the OpenAI SDK's default
+	// retry behaviour that keeps the official CLI stable on the same endpoint.
+	// Retries only ever fire pre-stream, so emitted deltas are never
+	// duplicated. 0 → DefaultMaxRetries; negative disables retries.
+	MaxRetries int `json:"maxRetries,omitempty"`
 }
 
 // DefaultRequestTimeoutSec is the per-inference-request timeout when a provider
@@ -420,6 +430,33 @@ func (b LLMBridge) StreamIdleTimeout() time.Duration {
 		idle = req
 	}
 	return idle
+}
+
+// DefaultMaxRetries is the number of times the provider-bridge re-sends a
+// request after a transient pre-stream failure when an entry doesn't set one.
+// Matches the resilience of the official Blackbox CLI (OpenAI SDK maxRetries),
+// which keeps the same flaky-gateway-routed Anthropic models stable.
+const DefaultMaxRetries = 5
+
+// MaxRetriesCap is an upper bound on the resolved retry count so a misconfigured
+// value can't turn a hard upstream outage into a very long retry storm.
+const MaxRetriesCap = 10
+
+// ResolveMaxRetries returns the number of pre-stream retries for this provider.
+// 0 → DefaultMaxRetries; a negative value disables retries (0 returned); values
+// above MaxRetriesCap are clamped.
+func (b LLMBridge) ResolveMaxRetries() int {
+	n := b.MaxRetries
+	switch {
+	case n < 0:
+		return 0
+	case n == 0:
+		return DefaultMaxRetries
+	case n > MaxRetriesCap:
+		return MaxRetriesCap
+	default:
+		return n
+	}
 }
 
 // LLMBridgeRoot is the top-level llmBridge config block - registry of

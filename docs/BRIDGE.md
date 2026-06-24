@@ -2,7 +2,7 @@
 
 > **Brain bridge drivers** - connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-06-22 (runtime bridge/vault paths moved to ~/SapaLOQ)
+> Last updated: 2026-06-25 (provider-bridge pre-stream retry/backoff knob `maxRetries`)
 
 Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -31,6 +31,18 @@ cursor-bridge (`StreamOptions`/`AgentStreamOptions`). The old hardcoded 120s
 wire default truncated long sub-agent steps (large file generation) into a bare
 "context deadline exceeded"; **both** bridges now rewrite that error to name the
 timeout and the knob to raise it (`explainStreamError`).
+
+### Pre-stream retry
+
+The provider-bridge retries a **transient pre-stream failure** (connection
+error, or a retryable status: `408`, `429`, `5xx`) with exponential backoff +
+jitter, bounded by `llmBridge.providers[].maxRetries`
+(`config.LLMBridge.ResolveMaxRetries()`, default **5**, `-1` disables, clamped
+to 10). This matches the official Blackbox CLI's resilience (OpenAI SDK
+`maxRetries`) and absorbs flaky-gateway `500`s (e.g. the Vercel AI Gateway
+`Connection error` routing Anthropic/opus models behind `api.blackbox.ai`).
+Retries only fire **before** the first SSE byte, so streamed deltas are never
+duplicated. See [PROVIDER-BRIDGE.md](./PROVIDER-BRIDGE.md#limitations).
 
 
 ```

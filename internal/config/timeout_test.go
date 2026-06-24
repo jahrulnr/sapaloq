@@ -27,3 +27,39 @@ func TestDefaultRequestTimeoutExceedsOldHardcoded(t *testing.T) {
 		t.Fatalf("DefaultRequestTimeoutSec=%d must exceed the old 120s wire default", DefaultRequestTimeoutSec)
 	}
 }
+
+// TestResolveMaxRetries covers default, disable, explicit, and clamp behaviour
+// of the provider-bridge pre-stream retry knob.
+func TestResolveMaxRetries(t *testing.T) {
+	cases := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"unset defaults", 0, DefaultMaxRetries},
+		{"explicit value", 3, 3},
+		{"negative disables", -1, 0},
+		{"large negative disables", -99, 0},
+		{"clamped to cap", 50, MaxRetriesCap},
+		{"exactly cap", MaxRetriesCap, MaxRetriesCap},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (LLMBridge{MaxRetries: tc.in}).ResolveMaxRetries(); got != tc.want {
+				t.Fatalf("ResolveMaxRetries(%d) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDefaultMaxRetriesMatchesCLIResilience documents the intent: the default
+// should provide meaningful resilience against flaky-gateway 500s (the official
+// Blackbox CLI uses the OpenAI SDK default of 3; we go a little higher).
+func TestDefaultMaxRetriesMatchesCLIResilience(t *testing.T) {
+	if DefaultMaxRetries < 3 {
+		t.Fatalf("DefaultMaxRetries=%d should be >= 3 to absorb transient gateway 500s", DefaultMaxRetries)
+	}
+	if DefaultMaxRetries > MaxRetriesCap {
+		t.Fatalf("DefaultMaxRetries=%d must not exceed MaxRetriesCap=%d", DefaultMaxRetries, MaxRetriesCap)
+	}
+}

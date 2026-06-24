@@ -111,6 +111,7 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 		ContextWindow:   contextWindow,
 		Timeout:         b.entry.RequestTimeout(),
 		IdleTimeout:     b.entry.StreamIdleTimeout(),
+		MaxRetries:      b.entry.ResolveMaxRetries(),
 	}
 }
 

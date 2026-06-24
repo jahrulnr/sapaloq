@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-24 (runTurnLoop: propagate a non-recoverable stream error so a failed planner no longer reports "done"/"Selesai." with no plan)
+> Last updated: 2026-06-25 (provider-bridge: pre-stream retry/backoff with `maxRetries` knob to absorb flaky-gateway 500s, e.g. opus-4.8 behind api.blackbox.ai)
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -23,7 +23,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 9 | Clarification loop | ✅ | Two-way: `request_clarification` pauses, `sapaloq_answer_clarification` resumes the paused sub-agent loop (transcript replayed, answer nudge injected). `tasks.go`, `subagent.go`, `tools.go`, `session.go` |
 | 10 | Vault audit log | ✅ | `internal/vault`, wired via `Orchestrator.auditTool` (`chat.go`) at Ask + sub-agent chokepoints; cursor-bridge logs undeclared calls |
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
-| 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go` |
+| 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go`. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); mirrors the official CLI's OpenAI-SDK resilience and absorbs flaky-gateway 500s (`wire.go` `runSSE`/`attemptSSE`/`isRetryableStatus`/`retryBackoff`) |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor` |
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
@@ -41,6 +41,38 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` - schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` - the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
+
+---
+
+## Implemented this session (2026-06-25) - provider-bridge pre-stream retry (flaky-gateway 500s)
+
+- **Root cause.** Field repro (progress file `orch-task-1782332239050172454`):
+  opus-4.8 via the `blackbox` provider entry **started fine** (response delta +
+  a successful `exec` tool call), then failed with
+  `upstream status 500: … Vercel_ai_gatewayException - Connection error … Model
+  Group=blackboxai/anthropic/claude-opus-4.8, Available Model Group
+  Fallbacks=None`. This is a **transient gateway** failure, not a payload
+  problem. The official Blackbox CLI hits the *same* host (`api.blackbox.ai/v1`)
+  but stays stable because it uses the OpenAI SDK with `maxRetries: 3`, which
+  silently retries 5xx/connection errors; SapaLOQ's `runSSE` sent the request
+  **once** and returned the error immediately. "Other models stay OK" because
+  they don't take the flaky opus gateway route.
+- **Fix - pre-stream retry/backoff in `internal/bridges/provider/wire.go`.**
+  `runSSE` now wraps a single attempt (`attemptSSE`) in a retry loop: a
+  connection error or a retryable status (`408`, `429`, `5xx`) is wrapped in a
+  `retryableError` and retried with exponential backoff + jitter
+  (`retryBackoff`: 500ms→1s→2s→4s, cap 8s) up to `WireOptions.MaxRetries` times.
+  Retries fire **only before the first SSE byte** is dispatched, so streamed
+  deltas are never duplicated; a failure *during* the stream (or a non-retryable
+  4xx) is returned bare and surfaces an `EventError` as before. `ctx`
+  cancellation is honoured during backoff.
+- **Knob.** `llmBridge.providers[].maxRetries` →
+  `config.LLMBridge.ResolveMaxRetries()` (`internal/config/load.go`): default
+  **5** (`DefaultMaxRetries`), `-1` disables, clamped to `MaxRetriesCap` (10).
+  Wired through `bridge.go` `buildWireOptions`. Added to
+  `config/config.example.json` (blackbox entry) and `schema/config.schema.json`.
+  Docs: `docs/PROVIDER-BRIDGE.md` (Limitations), `docs/BRIDGE.md` (Per-request
+  timeout → Pre-stream retry).
 
 ---
 
