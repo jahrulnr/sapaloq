@@ -2,11 +2,49 @@ package orchestrator
 
 import "strings"
 
-// calledToolsMarker is the exact prefix the orchestrator itself appends to an
-// assistant transcript message to record which tools a turn invoked (see
-// calledToolsNote). It is an *internal* bookkeeping note, never something the
-// model should speak back to the user.
-const calledToolsMarker = "[Called tools: "
+// calledToolsMarkers are the bracketed marker prefixes that must never reach
+// the user's visible text stream:
+//
+//   - "[Called tools: " is the orchestrator's own anti double-spawn note (see
+//     calledToolsNote) which some models then echo back as prose.
+//   - "[Tool: " is the announce form some models (e.g. MiniMax-M3) emit in
+//     their content alongside a real native tool_call. The bare label (no
+//     trailing "{args}" object) is NOT a recoverable inline call — the
+//     bridge's leak-scanner only recovers "[Tool: name]{args}" — so it leaks
+//     to the user as noise. Worse, the model then SEES "[Tool: name]" in its
+//     own prior turn, mistakes it for the correct tool-call syntax, and starts
+//     emitting bare "[Tool: name]" labels instead of structured calls, which
+//     execute nothing and spiral into a stuck loop (orch-task-…103).
+//
+// Stripping both here, at the single point text deltas funnel to the user,
+// removes the noise AND breaks the imitation loop (the model never sees the
+// bad pattern echoed back).
+var calledToolsMarkers = []string{"[Called tools: ", "[Tool: "}
+
+// markerMatch classifies a buffered "[…" fragment against calledToolsMarkers.
+type markerMatch int
+
+const (
+	markerNone    markerMatch = iota // diverged from every marker → ordinary text
+	markerPartial                    // still a viable prefix of some marker
+	markerFull                       // equals some marker exactly → begin skipping
+)
+
+// classifyMarker reports whether pending is a full marker, a still-viable
+// prefix of one, or has diverged from all of them.
+func classifyMarker(pending string) markerMatch {
+	for _, m := range calledToolsMarkers {
+		if pending == m {
+			return markerFull
+		}
+	}
+	for _, m := range calledToolsMarkers {
+		if strings.HasPrefix(m, pending) {
+			return markerPartial
+		}
+	}
+	return markerNone
+}
 
 // calledToolsFilter strips echoed "[Called tools: …]" notes out of the model's
 // visible text stream before they reach the user (and before they are folded
@@ -67,16 +105,16 @@ func (f *calledToolsFilter) feed(delta string) string {
 			// We are mid-decision on a buffered "[…" fragment.
 			f.buf.WriteByte(c)
 			pending := f.buf.String()
-			switch {
-			case pending == calledToolsMarker:
+			switch classifyMarker(pending) {
+			case markerFull:
 				// Full marker prefix matched: switch to skip mode and discard
 				// the buffered prefix — the body + ']' are dropped too.
 				f.skipping = true
 				f.buf.Reset()
-			case strings.HasPrefix(calledToolsMarker, pending):
-				// Still a viable prefix of the marker; keep buffering.
+			case markerPartial:
+				// Still a viable prefix of some marker; keep buffering.
 			default:
-				// Diverged from the marker: this was an ordinary '['. Release
+				// Diverged from every marker: this was an ordinary '['. Release
 				// the buffered bytes verbatim and resume normal passthrough.
 				out.WriteString(pending)
 				f.buf.Reset()

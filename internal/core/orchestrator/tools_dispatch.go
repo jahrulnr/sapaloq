@@ -29,6 +29,14 @@ func (o *Orchestrator) runSharedTool(ctx context.Context, call parse.ToolCall) (
 		return toolReadImage(args), true
 	case "exec":
 		return o.toolExec(ctx, args), true
+	case "exec_async":
+		return o.toolExecAsync(ctx, args), true
+	case "exec_status":
+		return o.toolExecStatus(ctx, args), true
+	case "exec_result":
+		return o.toolExecResult(ctx, args), true
+	case "exec_cancel":
+		return o.toolExecCancel(ctx, args), true
 	case "web_fetch":
 		return toolWebFetch(ctx, args), true
 	case "web_search":

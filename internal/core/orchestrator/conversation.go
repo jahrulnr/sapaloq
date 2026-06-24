@@ -429,6 +429,15 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// budget, so an occasional blip during a long run doesn't accumulate.
 		transportRetries = 0
 		if hadError {
+			// The error event itself was already emitted to the sink above;
+			// the dedicated EventDone is what unblocks the chat IPC consumer
+			// (and the widget) — without it, the channel closes silently and
+			// the frontend can stay in its "submitting" state because no
+			// terminal event was seen. We use the turn's context (already
+			// cancelled by the broken attempt) just to match the rest of the
+			// call sites; the emit is fire-and-forget and is safe even if
+			// the context is done.
+			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return all, nil
 		}
 		if len(images) > 0 {
@@ -499,13 +508,22 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// standard "continue using these results" follow-up.
 		var toolResultsBody string
 		if len(toolResults) == 0 {
-			// Plain, non-coercive continuation for a turn that produced no tool
-			// call. The model may simply be thinking before it acts — so we just
-			// remind it of the available moves without threatening or rushing it.
-			toolResultsBody = "You did not call any tool this turn and have not finished. " +
-				"When you are ready, invoke the tool you need (e.g. exec, create_file, " +
-				"edit_file), or call sapaloq_complete_task with a summary if the task is " +
-				"done, or sapaloq_fail_task with a reason if it cannot be done."
+			// Tool-less turn for a role that must signal completion (executor).
+			// The failure mode we are countering: a model narrates intent
+			// ("I'll call the tool now") turn after turn without ever emitting a
+			// structured tool call, so the run never ends on its own. The old
+			// nudge merely listed the available moves, which a stuck model reads
+			// as permission to keep deliberating. Borrowing goclaw's budget-nudge
+			// posture, this instead pushes the model to WRAP UP: decide and act
+			// in THIS turn. It still offers the same moves, but frames inaction
+			// as the thing to stop — not as a neutral option.
+			toolResultsBody = "You produced text but no tool call this turn. Narrating that " +
+				"you will call a tool does not call it — only a structured tool call does. " +
+				"Wrap up now: in THIS turn either (a) emit exactly one tool call to make " +
+				"concrete progress (e.g. exec, create_file, edit_file), or (b) if the work " +
+				"is already done, call `sapaloq_complete_task` with a summary, or (c) call " +
+				"`sapaloq_fail_task` with a reason if it cannot be completed. Do not reply " +
+				"with another plain-text intention to act."
 		} else {
 			// Tool output is an OBSERVATION the model should reason over and
 			// summarize — not a script to copy. A compliant non-native model
@@ -536,7 +554,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// self-awareness of how much work it has done so far. This is purely
 		// informational — the budgets are set generously so they don't cage the
 		// model; this just helps it pace itself. Cheap to render, ~1 line.
-		continuation += fmt.Sprintf("\n\n[Usage] turn %d · tool-calls so far %d", inferenceTurn, toolCalls)
+		continuation += fmt.Sprintf("\n\n--\n\nUsage turn %d · tool-calls so far %d", inferenceTurn, toolCalls)
 		// Record the tool calls this turn actually made into the assistant
 		// message. response.String() carries only the model's text deltas — not
 		// the tool_call itself — so without this the next turn sees the model's
@@ -876,10 +894,35 @@ func looksLikeContextOverflow(message string) bool {
 // timeouts, dropped/reset connections, premature EOFs, and 5xx/429 responses —
 // the classic "try again in a moment" class. Context-overflow is intentionally
 // excluded here because it has its own dedicated compaction-and-retry path.
+//
+// 4xx statuses that indicate the request itself is wrong (auth failure, model
+// not found, forbidden, bad request) are ALSO excluded: a wrong API key or a
+// non-existent model will fail the exact same way on every retry, and the user
+// would see the agent appear to hang for 4 attempts before giving up. We
+// detect them by both the wire-level status ("status 401/403/404") and the
+// body-level error name (the bridge surfaces upstream error names like
+// "AuthenticationError" / "NotFoundError" / "PermissionDeniedError" alongside
+// the status code, so either form is enough to identify a deterministic
+// failure).
 func looksLikeTransientTransport(message string) bool {
 	lower := strings.ToLower(message)
 	if looksLikeContextOverflow(lower) {
 		return false
+	}
+	// Deterministic client errors must never be retried — they will just
+	// fail the same way again and burn the per-turn retry budget while
+	// the user sees the agent "hanging".
+	for _, kw := range []string{
+		"status 400", "status 401", "status 403", "status 404", "status 408", "status 409", "status 410", "status 412", "status 415", "status 422",
+		"400 ", "401 ", "403 ", "404 ", "408 ", "409 ", "410 ", "412 ", "415 ", "422 ",
+		"authenticationerror", "notfounderror", "permissiondeniederror", "permission_denied",
+		"invalid api key", "invalid_api_key", "unauthorized", "authentication failed",
+		"forbidden", "model not found", "model_not_found", "model group fallbacks=none",
+		"billing", "payment required", "quota exceeded", "credit",
+	} {
+		if strings.Contains(lower, kw) {
+			return false
+		}
 	}
 	for _, kw := range []string{
 		"timeout", "timed out", "deadline exceeded",

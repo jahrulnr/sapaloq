@@ -3,7 +3,7 @@
 > Setiap spawn sub-agent dapat **system-prompt per role**.
 > Setelah task selesai: **automation-learning** (SapaLOQ) + orchestrator hooks → prompt/skill builder.
 > Learning **tidak hanya** dari interaksi user — bisa **research internet** untuk best practice.
-> Last updated: 2026-06-23 (shared persona.md core-character layer prepended to every role)
+> Last updated: 2026-06-24 (ask.md: spawn-before-acknowledge ordering on delegation/plan handoff)
 
 Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [FEEDBACK-SOP.md](./FEEDBACK-SOP.md)
 
@@ -95,6 +95,8 @@ Role system-prompts are **not** hardcoded Go strings anymore — they are editab
 - **User edits are preserved.** On upgrade, a file whose on-disk hash still matches the manifest (i.e. untouched by the user) is refreshed when the embedded default changes; a file the user modified is **left alone**.
 - Resolution order at spawn: **on-disk file → embedded default**. `Manager.Get(role)` returns the active prompt; `task-runner` aliases `agent`.
 - The Ask system prompt and `buildSubAgentMessages` (planner/task-runner/scribe) all go through `Orchestrator.systemPrompt(role)`, so editing the `.md` file changes behavior without a rebuild.
+
+> **Delegation ordering (ask.md).** The Ask delegation paragraph states the action order explicitly: when the orchestrator decides to delegate (including after an approved plan), it emits the `sapaloq_spawn_agent`/`sapaloq_spawn_plan` tool call **first in that same turn, then acknowledges** to the user. This precedes the "fire-and-forget … END your turn" guidance so a context-sensitive model does not read "acknowledge then END turn" as permission to narrate the delegation without ever emitting the spawn call (the observed planner→agent hand-off stall: *"oke aku delegasikan ke agent"* with no tool call). The note is deliberately a declarative ordering statement — no scolding/"narration is not action" framing — to keep the persona tone unchanged.
 
 ### Shared persona (core character)
 

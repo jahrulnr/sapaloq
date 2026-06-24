@@ -1,14 +1,17 @@
 package orchestrator
 
+// subagent.go drives the sub-agent inference loop. It owns the lifecycle
+// (spawn → run → tool dispatch → finalise / fail) and the routing of every
+// tool the sub-agent can call. The system-prompt and message-assembly helpers
+// it relies on (buildSubAgentMessages, readPlanMarkdown) live in prompt.go.
+
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
@@ -131,7 +134,7 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	// completion is a failure; a non-executor (planner without a plan) is done.
 	if record.Role == "task-runner" {
 		record.Status = "failed"
-		record.Error = "executor stopped without calling sapaloq_complete_task or sapaloq_fail_task"
+		record.Error = "executor stopped without calling `sapaloq_complete_task` or `sapaloq_fail_task`"
 		return
 	}
 	record.Status = "done"
@@ -226,65 +229,6 @@ func isMutatingTool(tool string) bool {
 		return true
 	}
 	return false
-}
-
-// buildSubAgentMessages assembles the system + user context for a sub-agent,
-// including the user's original intent and (for agents) the handed-off plan
-// with its acceptance criteria.
-func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Message {
-	// Role system prompts are file-driven and replaceable (internal/prompts):
-	// the on-disk copy is preferred, falling back to the embedded default. An
-	// unknown role gets a minimal generic prompt.
-	systemContent := o.systemPrompt(record.Role)
-	if strings.TrimSpace(systemContent) == "" {
-		systemContent = "You are a background SapaLOQ task agent. Use your tools, then return a concise final result."
-	}
-
-	messages := []bridge.Message{{Role: "system", Content: systemContent}}
-	messages = append(messages, o.runtimeContextMessage())
-
-	// Hand off the plan (goal + acceptance criteria) to the agent.
-	if record.Role == "task-runner" && record.PlanTaskID != "" {
-		if plan := o.readPlanMarkdown(record.PlanTaskID); plan != "" {
-			messages = append(messages, bridge.Message{
-				Role:    "system",
-				Content: "Approved plan to execute (read it as authoritative; satisfy every item under ## Acceptance):\n\n" + plan,
-			})
-		}
-	}
-
-	messages = append(messages, bridge.Message{Role: "user", Content: record.Task})
-
-	// Resume path: if the task has a persisted transcript (it was paused on a
-	// clarification), replay it so the sub-agent continues with its prior
-	// context. When an Answer is present, append it as the resume nudge.
-	if len(record.Transcript) > 0 {
-		for _, turn := range record.Transcript {
-			role := turn.Role
-			if role != "assistant" && role != "user" && role != "system" {
-				role = "user"
-			}
-			messages = append(messages, bridge.Message{Role: role, Content: turn.Content})
-		}
-	}
-	if strings.TrimSpace(record.Answer) != "" {
-		messages = append(messages, bridge.Message{
-			Role:    "user",
-			Content: "Answer to your clarification question: " + strings.TrimSpace(record.Answer) + "\nContinue the task using this answer.",
-		})
-	}
-	return messages
-}
-
-func (o *Orchestrator) readPlanMarkdown(planTaskID string) string {
-	if planTaskID == "" || filepath.Base(planTaskID) != planTaskID {
-		return ""
-	}
-	raw, err := os.ReadFile(filepath.Join(o.taskDir(planTaskID), "plan.md"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(raw))
 }
 
 type subToolResult struct {

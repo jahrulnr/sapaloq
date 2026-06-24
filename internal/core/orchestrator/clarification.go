@@ -77,9 +77,7 @@ func (o *Orchestrator) runClarificationResolver(sessionID string, record taskRec
 	system := "You are the orchestrator mediating between the user and a background sub-agent. " +
 		"A sub-agent is paused and needs a decision to continue. " +
 		"If — and ONLY if — you can answer confidently from the conversation context and the user's evident intent, " +
-		"call sapaloq_answer_clarification with task_id=\"" + record.ID + "\" and a clear answer. " +
-		"If you are not confident, or the decision is genuinely the user's to make, do NOT call any tool and do NOT guess — " +
-		"the user has already been shown the question and will answer."
+		"call `sapaloq_answer_clarification` with task_id=\"" + record.ID + "\" and a clear answer. "
 
 	user := fmt.Sprintf("Background task `%s` (%s) asks:\n\n%s\n\nTask goal was: %s",
 		record.ID, record.Role, strings.TrimSpace(record.Question), strings.TrimSpace(record.Task))

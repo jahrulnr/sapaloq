@@ -63,6 +63,10 @@ type Orchestrator struct {
 	skills           []skills.Skill
 	desktop          platform.Desktop
 	prompts          *prompts.Manager
+	// asyncExecReg is the in-process registry for non-blocking shell exec.
+	// See tools_async_exec.go. asyncOnce guards its lazy init.
+	asyncExecReg *asyncExecRegistry
+	asyncOnce    sync.Once
 }
 
 type activeRun struct {

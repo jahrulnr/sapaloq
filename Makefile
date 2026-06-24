@@ -1,13 +1,24 @@
 SHELL := /bin/bash
 
-.PHONY: help run test e2e mock widget-install widget-dev widget-build core core-run chat doctor vault-list sync-cursor-schema install uninstall desktop-entry
+.PHONY: help run test e2e mock widget-install widget-dev widget-build core core-run chat doctor vault-list sync-cursor-schema install uninstall desktop-entry simulate-live
 
 GO_TAGS ?= webkit2_41
 WIDGET_DIR := cmd/sapaloq-widget
 MOCK_DIR := cmd/sapaloq-mock
-CORE_FLAGS ?=
+CORE_FLAGS ?= --verbose
 CORE := go run ./cmd/sapaloq-core $(CORE_FLAGS)
 CHAT_MSG ?= halo
+
+# --- live simulate suite (real LLM, mocked sub-agents) -------------------
+# `make simulate-live` runs internal/core/orchestrator/simulate_live_test.go
+# against a real OpenAI-compatible provider (Blackbox) in one role at a time
+# (the others + tooling are mocked). The provider coordinates default to
+# Blackbox and are overridable; the API key MUST come from the environment
+# (BLACKBOX_API_KEY) — never hard-code a token here.
+BLACKBOX_MODEL ?= blackboxai/anthropic/claude-sonnet-4.5
+BLACKBOX_ENDPOINT ?= https://api.blackbox.ai/v1
+BLACKBOX_CREDENTIALS_ENV ?= BLACKBOX_API_KEY
+SIMULATE_RUN ?= TestSimulate
 
 # --- local install (build from source) -----------------------------------
 # `make install` builds the binaries from this checkout and installs them into
@@ -29,6 +40,8 @@ help:
 	@echo "  make test             — go test ./..."
 	@echo "  make e2e              — mock e2e (test/e2e)"
 	@echo "  make e2e-live         — live api2 e2e (needs Cursor creds, SAPALOQ_LIVE_E2E=1)"
+	@echo "  make simulate-live    — live orchestrator/planner/agent sim vs real LLM (needs BLACKBOX_API_KEY)"
+	@echo "                          vars: BLACKBOX_MODEL, BLACKBOX_ENDPOINT, SIMULATE_RUN=TestSimulate..."
 	@echo "  make core             — sapaloq-core run (CORE_FLAGS='--debug')"
 	@echo "  make chat             — one-shot chat (CHAT_MSG=...)"
 	@echo "  make doctor           — sapaloq-core doctor"
@@ -108,6 +121,13 @@ e2e-live:
 
 e2e-live-strict:
 	SAPALOQ_LIVE_E2E=1 SAPALOQ_LIVE_E2E_STRICT=1 go test ./test/e2e/... -v -count=1 -timeout 5m -run Live
+
+simulate-live:
+	SAPALOQ_BLACKBOX_E2E=1 \
+		BLACKBOX_MODEL="$(BLACKBOX_MODEL)" \
+		BLACKBOX_ENDPOINT="$(BLACKBOX_ENDPOINT)" \
+		BLACKBOX_CREDENTIALS_ENV="$(BLACKBOX_CREDENTIALS_ENV)" \
+		go test ./internal/core/orchestrator/ -v -count=1 -timeout 10m -run $(SIMULATE_RUN)
 
 core core-run:
 	$(CORE) run
