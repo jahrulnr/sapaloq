@@ -132,6 +132,13 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	}
 	// No tools, no terminal signal, no error: an executor that never signalled
 	// completion is a failure; a non-executor (planner without a plan) is done.
+	// NOTE: we intentionally do NOT fail a planner that finished cleanly with
+	// no plan.md — a planner may legitimately answer a question without
+	// producing a formal plan (see TestPlannerCompletesOnToolLessTurn). The
+	// field "halu sukses" bug was NOT this case: there the planner's LLM call
+	// failed with a provider 500, which now returns a non-nil error and is
+	// handled by the `if err != nil` branch above (→ failed). A clean finish
+	// with no error is a real, non-failing outcome.
 	if record.Role == "task-runner" {
 		record.Status = "failed"
 		record.Error = "executor stopped without calling `sapaloq_complete_task` or `sapaloq_fail_task`"

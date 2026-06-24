@@ -580,10 +580,10 @@ func TestCalledToolsNote(t *testing.T) {
 		want  string
 	}{
 		{"none", nil, ""},
-		{"single", mk("sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent]"},
-		{"multiple distinct", mk("read_file", "exec"), "[Called tools: read_file, exec]"},
-		{"duplicates collapse", mk("sapaloq_spawn_agent", "sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent ×2]"},
-		{"mixed", mk("exec", "read_file", "exec"), "[Called tools: exec ×2, read_file]"},
+		{"single", mk("sapaloq_spawn_agent"), "Called tools: sapaloq_spawn_agent"},
+		{"multiple distinct", mk("read_file", "exec"), "Called tools: read_file, exec"},
+		{"duplicates collapse", mk("sapaloq_spawn_agent", "sapaloq_spawn_agent"), "Called tools: sapaloq_spawn_agent ×2"},
+		{"mixed", mk("exec", "read_file", "exec"), "Called tools: exec ×2, read_file"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -633,7 +633,7 @@ func TestRunConversationRecordsToolCallInTranscript(t *testing.T) {
 	msgs := fake.requests[1].Messages
 	var recorded bool
 	for _, m := range msgs {
-		if m.Role == "assistant" && strings.Contains(m.Content, "[Called tools: sapaloq_get_task_status]") {
+		if m.Role == "assistant" && strings.Contains(m.Content, "Called tools: sapaloq_get_task_status") {
 			recorded = true
 			break
 		}

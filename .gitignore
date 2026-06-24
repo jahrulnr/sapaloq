@@ -6,6 +6,7 @@
 *.dylib
 *.test
 *.out
+*.cov
 /vendor/
 
 # Built binaries (from `go build` without -o, or install.sh into the repo)

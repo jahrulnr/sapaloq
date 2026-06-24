@@ -268,8 +268,13 @@ func (r *asyncExecRegistry) execute(ctx context.Context, job *asyncExecJob, cmd,
 		job.ExitCode = 0
 	}
 	job.mu.Unlock()
-	job.closeDone()
+	// Persist the terminal snapshot BEFORE closing Done. Waiters (exec_result,
+	// recovery, tests) select on Done as "the job is finished"; if we closed it
+	// first, a waiter could resume and tear down the state dir while this final
+	// file-write is still in flight (the flaky "TempDir RemoveAll: directory
+	// not empty"). Closing after persist makes Done imply "result on disk".
 	r.persist(job)
+	job.closeDone()
 	// Keep completed jobs queryable for a short window, then drop them from
 	// the in-memory map. The on-disk JSON survives the full retention so an
 	// out-of-process recovery still finds the result.

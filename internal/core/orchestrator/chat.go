@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -288,7 +289,12 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		assistant, err := o.runConversation(runCtx, snap, out, sessionID, message, messages, &thinking)
 		if err != nil {
 			debug.Debugf("orchestrator: conversation error session=%s err=%v", sessionID, err)
-			o.emit(runCtx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+			// errStreamErrorSurfaced means runTurnLoop already emitted the
+			// EventError (and an EventDone) to this same channel; re-emitting
+			// would duplicate the error bubble in the widget.
+			if !errors.Is(err, errStreamErrorSurfaced) {
+				o.emit(runCtx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+			}
 			return
 		}
 		// Persist reasoning as a show-only "thinking" turn before the answer so
@@ -348,7 +354,11 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 	var thinking strings.Builder
 	assistant, err := o.runConversation(ctx, snap, out, sessionID, message, messages, &thinking)
 	if err != nil {
-		o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+		// See the streaming path above: skip the duplicate emit when the
+		// stream error was already surfaced to this channel by runTurnLoop.
+		if !errors.Is(err, errStreamErrorSurfaced) {
+			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+		}
 		return
 	}
 	if strings.TrimSpace(thinking.String()) != "" {

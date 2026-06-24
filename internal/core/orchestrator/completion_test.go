@@ -274,6 +274,57 @@ func TestTaskUpdateEventDoneIsStatusOnly(t *testing.T) {
 	}
 }
 
+// recordingBridge captures the requests it is asked to complete so a test can
+// assert what system/user prompt the orchestrator authored. It always replies
+// with a single fixed text delta + done (no tool calls).
+type recordingBridge struct {
+	requests []bridge.Request
+	reply    string
+}
+
+func (b *recordingBridge) ID() string              { return "recording" }
+func (b *recordingBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *recordingBridge) Complete(_ context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.requests = append(b.requests, req)
+	out := make(chan bridge.StreamEvent, 2)
+	go func() {
+		defer close(out)
+		reply := b.reply
+		if reply == "" {
+			reply = "ok"
+		}
+		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: reply}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+// TestTaskRunnerCompletionAnnouncementUnchanged guards that a normal (non-
+// planner) completion keeps the original "report the result" framing — the
+// planner branch must not bleed into ordinary task completions.
+func TestTaskRunnerCompletionAnnouncementUnchanged(t *testing.T) {
+	fake := &recordingBridge{reply: "Udah kelar."}
+	o := &Orchestrator{cfg: speakEnabledCfg(), bridge: fake}
+
+	record := taskRecord{ID: "task-run-1", Role: "task-runner", Status: "done", Task: "build", Result: "done"}
+	_ = o.composeCompletionAnnouncement("sess-1", record)
+
+	if len(fake.requests) == 0 {
+		t.Fatal("announcer never called the bridge")
+	}
+	var sys string
+	for _, m := range fake.requests[0].Messages {
+		if m.Role == "system" {
+			sys = strings.ToLower(m.Content)
+			break
+		}
+	}
+	// The task-runner branch must NOT ask for plan review/approval.
+	if strings.Contains(sys, "rencana") || strings.Contains(sys, "review") {
+		t.Fatalf("task-runner completion must not use the planner review framing; got: %q", sys)
+	}
+}
+
 // TestSpeakDisabledByDefaultConfig confirms a zero-value config does NOT speak
 // (opt-in), so existing tests/behavior are unaffected.
 func TestSpeakDisabledForZeroConfig(t *testing.T) {

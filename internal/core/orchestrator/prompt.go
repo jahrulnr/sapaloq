@@ -91,7 +91,7 @@ func (o *Orchestrator) rolePrompt(role string) string {
 // ---------------------------------------------------------------------------
 
 const (
-	defaultContextWindow = 1000000
+	defaultContextWindow = 131072
 	autoCompactPercent   = 80
 )
 
@@ -116,7 +116,9 @@ func (o *Orchestrator) contextWindow() int {
 // skills / state live. Cheap to build (no I/O) and bounded in size.
 func (o *Orchestrator) runtimeContextMessage() bridge.Message {
 	dirs := config.RuntimeDirs(o.snapshot().cfg)
-	content := fmt.Sprintf(`[SapaLOQ runtime variables]
+	content := fmt.Sprintf(`---
+# SapaLOQ runtime variables
+
 config_path=%s
 data_path=%s
 memory_path=%s
@@ -146,7 +148,7 @@ func (o *Orchestrator) materializeRuntimeRoadmap() {
 	}
 	content := o.runtimeContextMessage().Content + `
 
-[Workspace contract]
+# Workspace contract
 - Every actor starts at workspace unless it has a persisted cwd.
 - Relative file and exec paths follow that actor cwd.
 - cd persists for the same actor.
@@ -278,6 +280,77 @@ func (o *Orchestrator) skillsBlock(ctx context.Context, userMsg string) string {
 }
 
 // ---------------------------------------------------------------------------
+// Per-turn continuation prompt fragments
+// ---------------------------------------------------------------------------
+//
+// These are the literal strings the MODEL sees between tool turns. They were
+// previously inlined in conversation.go's runTurnLoop; collecting them here
+// (next to the role/persona prompts and the system blocks) gives one obvious
+// place to audit and retune the wording the model is actually fed — the whole
+// point of this file. Each builder is pure and returns exactly what the loop
+// used to assemble inline, so behavior is unchanged.
+
+// toolObservationBody frames the tool results that are fed back to the model.
+// Tool output is an OBSERVATION the model should reason over and summarize —
+// not a script to copy. A compliant non-native model (e.g. MiniMax) treated
+// the old "[Tool results]\n…" framing as a template to echo and dumped the raw
+// output (whole files, job metadata) straight into the user-facing answer.
+// This neutral framing + the dedicated "tool" role at the call site removes
+// that cue. Returns "" when there are no results.
+func toolObservationBody(results []string) string {
+	if len(results) == 0 {
+		return ""
+	}
+	return "Tool output observed (for your reasoning only - " +
+		"summarize the outcome for the user in your own words; do not " +
+		"copy this verbatim):\n" + strings.Join(results, "\n\n")
+}
+
+// continueWithResultsSuffix is the plain, declarative follow-up appended after
+// tool output so the model carries on with the original request.
+func continueWithResultsSuffix() string {
+	return "\nContinue the original request using these results."
+}
+
+// usageReadout is a small, honest, ~1-line self-awareness note of how much work
+// the model has done so far. Purely informational — the budgets are set
+// generously and do not cage the model; this just helps it pace itself.
+func usageReadout(inferenceTurn, toolCalls int) string {
+	return fmt.Sprintf("\n\n--\n\nUsage turn %d · tool-calls so far %d", inferenceTurn, toolCalls)
+}
+
+// calledToolsNote renders an explicit, in-transcript record of the tools the
+// assistant invoked on a turn, e.g. "Called tools: sapaloq_spawn_agent". It
+// is appended to the assistant message so the model sees proof that it acted —
+// the text delta stream alone does not include the tool_call. Duplicate names
+// in the same turn are listed once with a ×N count to stay compact. Returns ""
+// when no tools were called. (Echoes of this note are stripped back out by
+// calledToolsFilter so they never reach the user.)
+func calledToolsNote(tools []scheduledTool) string {
+	if len(tools) == 0 {
+		return ""
+	}
+	order := make([]string, 0, len(tools))
+	counts := make(map[string]int, len(tools))
+	for _, t := range tools {
+		name := t.call.Name
+		if _, seen := counts[name]; !seen {
+			order = append(order, name)
+		}
+		counts[name]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		if counts[name] > 1 {
+			parts = append(parts, fmt.Sprintf("%s ×%d", name, counts[name]))
+		} else {
+			parts = append(parts, name)
+		}
+	}
+	return "Called tools: " + strings.Join(parts, ", ")
+}
+
+// ---------------------------------------------------------------------------
 // Message assembly
 // ---------------------------------------------------------------------------
 
@@ -342,7 +415,7 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 // with its acceptance criteria.
 func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Message {
 	// Role system prompts are file-driven and replaceable (internal/prompts):
-	// the on-disk copy is preferred, falling back to the embedded default. An
+	// the on-disk copy is preferred, falling back to the embeded default. An
 	// unknown role gets a minimal generic prompt.
 	systemContent := o.systemPrompt(record.Role)
 	if strings.TrimSpace(systemContent) == "" {
@@ -370,7 +443,7 @@ func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Messag
 	if len(record.Transcript) > 0 {
 		for _, turn := range record.Transcript {
 			role := turn.Role
-			if role != "assistant" && role != "user" && role != "system" && role != "tool" {
+			if role != "assistant" && role != "user" && role != "system" {
 				role = "user"
 			}
 			messages = append(messages, bridge.Message{Role: role, Content: turn.Content})

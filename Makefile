@@ -111,7 +111,9 @@ run: desktop-entry
 	cleanup
 
 test:
-	go test ./...
+	go clean -testcache
+	go test -v -covermode=count ./... -coverprofile=coverage.cov
+	go tool cover -func=coverage.cov
 
 e2e:
 	go test ./test/e2e/... -v -count=1 -timeout 120s
