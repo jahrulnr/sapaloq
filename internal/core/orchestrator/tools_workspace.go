@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -486,27 +485,19 @@ func (o *Orchestrator) toolExec(ctx context.Context, args toolArgs) string {
 	if timeout > maxTerminalSecs {
 		timeout = maxTerminalSecs
 	}
-	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-	defer cancel()
-	const cwdMarker = "__SAPALOQ_FINAL_CWD__="
-	wrapped := cmd + "\nstatus=$?\nprintf '\\n" + cwdMarker + "%s\\n' \"$PWD\"\nexit $status"
-	c := exec.CommandContext(runCtx, "bash", "-lc", wrapped)
-	if dir := strings.TrimSpace(args.Cwd); dir != "" {
-		c.Dir = expandHome(dir)
+	res := runShellCaptured(ctx, cmd, args.Cwd, time.Duration(timeout)*time.Second)
+	if res.FinalCWD != "" {
+		o.persistActorCWD(actorRunID(ctx), res.FinalCWD)
 	}
-	out, err := c.CombinedOutput()
-	text, finalCWD := splitExecCWD(string(out), cwdMarker)
-	if finalCWD != "" {
-		o.persistActorCWD(actorRunID(ctx), finalCWD)
+	text := res.Output
+	if res.TimedOut {
+		return fmt.Sprintf("Command timed out after %ds (process group killed). If this command is long-running (a server, watcher, or anything started with '&'), use exec_async instead so you can keep working and poll/cancel it.\n%s", timeout, text)
 	}
-	if len(text) > 16*1024 {
-		text = text[:16*1024] + "\n[output truncated]"
+	if res.Cancelled {
+		return fmt.Sprintf("Command cancelled by host.\n%s", text)
 	}
-	if runCtx.Err() == context.DeadlineExceeded {
-		return fmt.Sprintf("Command timed out after %ds.\n%s", timeout, text)
-	}
-	if err != nil {
-		return fmt.Sprintf("Command exited with error: %v\n%s", err, text)
+	if res.Err != nil {
+		return fmt.Sprintf("Command exited with error: %v\n%s", res.Err, text)
 	}
 	if strings.TrimSpace(text) == "" {
 		return "(command produced no output)"
