@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,37 @@ func TestTaskRunnerRetriesTransientThenSurfaces(t *testing.T) {
 	}
 	if fake.calls > 6 {
 		t.Fatalf("transport retries not bounded: %d calls", fake.calls)
+	}
+}
+
+// TestPlannerSurfacesProviderError is the regression for the "halu sukses" bug
+// seen in the field (orch-task progress: a planner hit a non-recoverable
+// provider 500 yet the task was recorded `done`/"Selesai." with no plan.md, so
+// Ask narrated a plan that never existed). A planner whose only LLM call fails
+// non-recoverably must end `failed` with the provider error — never `done`.
+// The error string mirrors the real Blackbox gateway 500 (carries
+// "Model Group Fallbacks=None", which is classified non-transient so it is NOT
+// retried — it surfaces immediately via the hadError path).
+func TestPlannerSurfacesProviderError(t *testing.T) {
+	fake := &alwaysErrorBridge{err: `provider-bridge: upstream status 500: {"error":{"message":"blackbox.Error: InternalServerError: Vercel_ai_gatewayException - Connection error.. Received Model Group=blackboxai/anthropic/claude-opus-4.8\nAvailable Model Group Fallbacks=None","type":"None","param":"None","code":"500"}}`}
+	o := newTestOrchestrator(t)
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
+	rec := &taskRecord{ID: "task-planner-500", Role: "planner", Status: "in_progress", Task: "bikin web profile di /tmp/profile"}
+
+	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+
+	if rec.Status != "failed" {
+		t.Fatalf("status = %q, want failed (planner hit a non-recoverable provider 500)", rec.Status)
+	}
+	if rec.Error == "" {
+		t.Fatalf("a failed planner must record the provider error as the reason")
+	}
+	if !strings.Contains(rec.Error, "500") {
+		t.Fatalf("failure reason should carry the provider error, got %q", rec.Error)
+	}
+	// It must NOT have been retried (non-transient): exactly one upstream call.
+	if fake.calls != 1 {
+		t.Fatalf("non-transient 500 must not be retried, got %d call(s)", fake.calls)
 	}
 }
 

@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-24 (async-exec: fix "close of closed channel" panic when a cancel races command completion)
+> Last updated: 2026-06-24 (runTurnLoop: propagate a non-recoverable stream error so a failed planner no longer reports "done"/"Selesai." with no plan)
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -44,6 +44,46 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Implemented this session (2026-06-24) — failed sub-agent reported as "done" ("halu sukses")
+
+- **`runTurnLoop` now propagates a non-recoverable stream error.** Field repro
+  (progress files `orch-task-…`): a **planner** hit a provider 500
+  (`blackbox … Vercel_ai_gateway … Model Group Fallbacks=None`, classified
+  non-transient so not retried), yet the task was recorded
+  `task_status:"done"` / `summary:"Selesai."` with **no plan.md** — so Ask then
+  narrated a plan that never existed (looked like the model "hallucinating",
+  but the orchestrator had told it the planner succeeded). Root cause: the
+  `hadError` branch in `runTurnLoop` (`conversation.go`) emitted the
+  `EventError`+`EventDone` to the sink but `return all, nil`; `runSubAgentLoop`
+  keys *failed vs done* off that returned error, so a planner with `err==nil`
+  and no plan.md fell through to `done`. Fix: return
+  `fmt.Errorf("%s: %w", lastErr, errStreamErrorSurfaced)`. The new sentinel
+  `errStreamErrorSurfaced` lets the **chat** caller (`chat.go`, both send +
+  retry paths) `errors.Is`-skip a *duplicate* `EventError` (the sink already
+  emitted it), while sub-agents still see a non-nil error → `failed` with the
+  provider message as the reason. Regression: `TestPlannerSurfacesProviderError`
+  (uses the exact real Blackbox 500 string; asserts `failed`, reason carries
+  the error, and it is NOT retried). Existing `TestPlannerCompletesOnToolLessTurn`
+  still green — a planner that finishes *cleanly* (no error) with no plan is
+  still `done` by design. `conversation.go`, `chat.go`,
+  `subagent_stream_retry_test.go`.
+
+## Implemented this session (2026-06-24) — shellenv interactive-shell fix (token in `~/.bashrc` was invisible)
+
+- **`internal/shellenv` now sources rc with an interactive shell (`bash -ic`/`zsh -ic`).**
+  Symptom: after `make install` the core still logged `provider-bridge: token env
+  BLACKBOX_API_KEY is empty` even though it was `export`ed in `~/.bashrc`. Root
+  cause: the stock Debian/Ubuntu `~/.bashrc` opens with the guard
+  `case $- in *i*) ;; *) return;; esac`, so the previous non-interactive
+  `bash -c 'source ~/.bashrc'` (`$-` has no `i`) `return`ed at that guard and
+  never reached the `export` lines below it. Fix: invoke the shell with `-i` so
+  `$-` contains `i` and the guard passes; stdin is detached (`cmd.Stdin = nil`)
+  and stderr discarded so the interactive shell can't prompt or block, and the
+  existing 3s `sourceTimeout` still bounds it. Regression:
+  `TestSourceShellRCPassesInteractiveGuard` puts the Debian guard *before* the
+  export and asserts the var is still captured (`shellenv_test.go`).
+  `internal/shellenv/shellenv.go`.
+
 ## Implemented this session (2026-06-24) — async-exec cancel/complete race fix
 
 - **`tools_async_exec.go`: no more `close of closed channel` panic.** CI
@@ -54,7 +94,11 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   through `job.closeDone()` (a `sync.Once`), and—because a cancel can also land
   between `spawn()` and the goroutine starting—`execute()` now bails out early if
   the job is no longer `queued` (it was already cancelled), so it never
-  resurrects a terminal job to `running` or launches the command. Regression:
+  resurrects a terminal job to `running` or launches the command. Also reordered
+  `execute()`'s terminal path to `r.persist(job)` **before** `job.closeDone()`:
+  waiters treat a closed `Done` as "finished", and closing it before the final
+  on-disk write let a waiter (or `t.TempDir()` cleanup) race the write — the
+  flaky `TestAsyncExecWaitBlocksUntilDone` "directory not empty". Regression:
   `TestAsyncExecCancelRaceNoDoubleClose` hammers concurrent cancels against a
   near-instant command; passes under `go test -race -count=5`. `tools_async_exec.go`,
   `tools_async_exec_test.go`.

@@ -161,10 +161,6 @@ func deleteChatTurn(socketPath, sessionID string, turnID int64) error {
 	return nil
 }
 
-func retryChatTurn(socketPath, sessionID string, turnID int64) (chatResult, error) {
-	return retryChatTurnWithStatus(socketPath, sessionID, turnID, nil)
-}
-
 func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, onEvent func(bridge.StreamEvent)) (chatResult, error) {
 	var result chatResult
 	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_retry", SessionID: sessionID, TurnID: turnID}, func(res ipcResponse) {

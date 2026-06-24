@@ -13,7 +13,6 @@ import {
   resetMessageSeq,
   setUserGroup,
   spokenTaskIDs,
-  getLastSubmittedText,
 } from '../core/state';
 import { copyText, deleteTurn, editText, retryTurn } from './message-actions';
 
@@ -179,18 +178,12 @@ function wireUserMessage(item: HTMLElement, _text: string) {
 function wireErrorMessage(item: HTMLElement) {
   const actions = document.createElement('div');
   actions.className = 'message-inline-actions';
-  actions.innerHTML = `<button type="button" title="Retry">↻</button><button type="button" title="Edit">Edit</button>`;
-  const [retry, edit] = Array.from(actions.querySelectorAll<HTMLButtonElement>('button'));
+  actions.innerHTML = `<button type="button" title="Retry">↻</button>`;
+  const [retry] = Array.from(actions.querySelectorAll<HTMLButtonElement>('button'));
   retry?.addEventListener('click', (event) => {
     event.stopPropagation();
     const turnID = Number(item.dataset.turnId || 0);
     if (turnID) retryTurn(turnID);
-  });
-  edit?.addEventListener('click', (event) => {
-    event.stopPropagation();
-    const groupID = item.dataset.group || '';
-    const user = document.querySelector<HTMLElement>(`.message--user[data-group="${groupID}"]`);
-    editText(user?.dataset.rawText || getLastSubmittedText());
   });
   item.append(actions);
 }

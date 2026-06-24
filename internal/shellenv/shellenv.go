@@ -22,6 +22,12 @@
 // a short timeout so an interactive/hanging rc can't freeze startup, and it
 // only imports a small allowlist of key prefixes so the rest of the shell
 // environment (PATH, prompt vars, …) never leaks in.
+//
+// The rc is sourced with an INTERACTIVE shell (`bash -ic` / `zsh -ic`) on
+// purpose: the stock Debian/Ubuntu `~/.bashrc` short-circuits with
+// `case $- in *i*) ;; *) return;; esac` when not interactive, which would skip
+// every export below it. Running interactively makes that guard pass; stdin is
+// detached and stderr discarded so the interactive shell can't prompt or block.
 package shellenv
 
 import (
@@ -110,11 +116,28 @@ func sourceShellRC(s shellRC) (map[string]string, bool) {
 
 	// `source <rc>` then emit the environment. `2>/dev/null` swallows any noise
 	// the rc prints; a failing source still lets `env -0` run so partial
-	// exports are captured. We invoke a non-interactive shell to avoid prompts.
+	// exports are captured.
+	//
+	// We run the shell INTERACTIVELY (`-i`). The default Debian/Ubuntu
+	// `~/.bashrc` starts with the standard guard
+	//
+	//	# If not running interactively, don't do anything
+	//	case $- in *i*) ;; *) return;; esac
+	//
+	// so a plain `bash -c 'source ~/.bashrc'` (`$-` has no `i`) `return`s at
+	// that guard and never reaches the user's exports further down the file —
+	// the token set there would be invisible. `-i` makes `$-` contain `i` so
+	// the guard passes and the whole rc runs. The side effects of an
+	// interactive shell are contained: `2>/dev/null` drops the prompt/job
+	// noise, stdin is /dev/null so it can't block waiting for input, and the
+	// sourceTimeout bounds anything slow in the rc.
 	script := "source " + shellQuote(s.rc) + " 2>/dev/null; env -0"
-	cmd := exec.CommandContext(ctx, shellPath, "-c", script)
+	cmd := exec.CommandContext(ctx, shellPath, "-i", "-c", script)
 	// Start from the current environment so the rc sees a realistic context.
 	cmd.Env = os.Environ()
+	// Detach stdin: an interactive shell must never block reading from the
+	// service's stdin (it has none / it is the journal).
+	cmd.Stdin = nil
 	out, err := cmd.Output()
 	if err != nil {
 		// Non-zero exit can still carry usable stdout (e.g. rc `return`s after

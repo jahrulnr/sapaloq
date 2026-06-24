@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -14,6 +15,13 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
+
+// errStreamErrorSurfaced wraps a non-recoverable provider/stream error that the
+// turn loop has ALREADY emitted to its sink (as an EventError) before
+// returning. runTurnLoop returns it so the sub-agent finalizer can mark the
+// task `failed` (it keys off a non-nil error), while the chat caller uses
+// errors.Is to AVOID emitting a second, duplicate EventError to the widget.
+var errStreamErrorSurfaced = errors.New("stream error already surfaced to sink")
 
 var inlineImageRE = regexp.MustCompile(`!\[([^\]]*)\]\((data:(image/[^;,]+)(?:;base64)?,[^)]+)\)`)
 var attachmentMetaRE = regexp.MustCompile(`<!--sapaloq-attachment:[A-Za-z0-9+/=]+-->`)
@@ -438,7 +446,20 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			// call sites; the emit is fire-and-forget and is safe even if
 			// the context is done.
 			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
-			return all, nil
+			// Propagate the error to the CALLER. The UI already saw the error
+			// (emitted to the sink) — but sub-agent finalization in
+			// runSubAgentLoop keys "failed vs done" off this returned error.
+			// Returning nil here used to make a planner whose only LLM call hit
+			// a provider 500 finish as "done" with a fake "Selesai." and no
+			// plan.md, so Ask then narrated a plan that never existed. A
+			// non-recoverable provider error is a real failure: surface it.
+			// Wrap with errStreamErrorSurfaced so the chat caller knows the
+			// EventError was already emitted and must not duplicate it.
+			detail := lastErr
+			if strings.TrimSpace(detail) == "" {
+				detail = "inference failed"
+			}
+			return all, fmt.Errorf("%s: %w", detail, errStreamErrorSurfaced)
 		}
 		if len(images) > 0 {
 			o.setVisionSupport(snap.entry.Key, snap.entry.Model, true)
@@ -506,35 +527,10 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// role (executor narrating intent without acting) gets an explicit nudge
 		// to either act or signal completion; a normal tool turn gets the
 		// standard "continue using these results" follow-up.
-		var toolResultsBody string
-		if len(toolResults) == 0 {
-			// Tool-less turn for a role that must signal completion (executor).
-			// The failure mode we are countering: a model narrates intent
-			// ("I'll call the tool now") turn after turn without ever emitting a
-			// structured tool call, so the run never ends on its own. The old
-			// nudge merely listed the available moves, which a stuck model reads
-			// as permission to keep deliberating. Borrowing goclaw's budget-nudge
-			// posture, this instead pushes the model to WRAP UP: decide and act
-			// in THIS turn. It still offers the same moves, but frames inaction
-			// as the thing to stop — not as a neutral option.
-			toolResultsBody = "You produced text but no tool call this turn. Narrating that " +
-				"you will call a tool does not call it — only a structured tool call does. " +
-				"Wrap up now: in THIS turn either (a) emit exactly one tool call to make " +
-				"concrete progress (e.g. exec, create_file, edit_file), or (b) if the work " +
-				"is already done, call `sapaloq_complete_task` with a summary, or (c) call " +
-				"`sapaloq_fail_task` with a reason if it cannot be completed. Do not reply " +
-				"with another plain-text intention to act."
-		} else {
-			// Tool output is an OBSERVATION the model should reason over and
-			// summarize — not a script to copy. A compliant non-native model
-			// (e.g. MiniMax) treated the old "[Tool results]\n…" framing as a
-			// template to echo and dumped the raw output (whole files, job
-			// metadata) straight into the user-facing answer. This neutral
-			// framing + the dedicated "tool" role below removes that cue.
-			toolResultsBody = "Tool output observed (for your reasoning only — " +
-				"summarize the outcome for the user in your own words; do not " +
-				"copy this verbatim):\n" + strings.Join(toolResults, "\n\n")
-		}
+		// The literal continuation strings the model sees live in prompt.go
+		// (toolObservationBody / continueWithResultsSuffix / usageReadout) so
+		// every model-facing prompt fragment has one auditable home.
+		toolResultsBody := toolObservationBody(toolResults)
 		// Persist tool results as a "tool" turn so they count toward context
 		// usage and auto-compaction. These messages ARE sent to the model (they
 		// are appended to cleanMessages below and replayed via contextMessages;
@@ -548,13 +544,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		continuation := toolResultsBody
 		if len(toolResults) > 0 {
-			continuation += "\nContinue the original request using these results. Do not repeat the tool call unless another tool action is required."
+			continuation += continueWithResultsSuffix()
 		}
-		// Inject a small, honest usage readout so the model has lightweight
-		// self-awareness of how much work it has done so far. This is purely
-		// informational — the budgets are set generously so they don't cage the
-		// model; this just helps it pace itself. Cheap to render, ~1 line.
-		continuation += fmt.Sprintf("\n\n--\n\nUsage turn %d · tool-calls so far %d", inferenceTurn, toolCalls)
+		continuation += usageReadout(inferenceTurn, toolCalls)
 		// Record the tool calls this turn actually made into the assistant
 		// message. response.String() carries only the model's text deltas — not
 		// the tool_call itself — so without this the next turn sees the model's
@@ -602,35 +594,8 @@ func toolCallSignature(call parse.ToolCall) string {
 	return call.Name + "\x00" + strings.TrimSpace(string(call.Arguments))
 }
 
-// calledToolsNote renders an explicit, in-transcript record of the tools the
-// assistant invoked on a turn, e.g. "[Called tools: sapaloq_spawn_agent]". It
-// is appended to the assistant message so the model sees proof that it acted —
-// the text delta stream alone does not include the tool_call. Duplicate names
-// in the same turn are listed once with a ×N count to stay compact. Returns ""
-// when no tools were called.
-func calledToolsNote(tools []scheduledTool) string {
-	if len(tools) == 0 {
-		return ""
-	}
-	order := make([]string, 0, len(tools))
-	counts := make(map[string]int, len(tools))
-	for _, t := range tools {
-		name := t.call.Name
-		if _, seen := counts[name]; !seen {
-			order = append(order, name)
-		}
-		counts[name]++
-	}
-	parts := make([]string, 0, len(order))
-	for _, name := range order {
-		if counts[name] > 1 {
-			parts = append(parts, fmt.Sprintf("%s ×%d", name, counts[name]))
-		} else {
-			parts = append(parts, name)
-		}
-	}
-	return "[Called tools: " + strings.Join(parts, ", ") + "]"
-}
+// calledToolsNote (the "[Called tools: …]" in-transcript record) now lives in
+// prompt.go alongside the other model-facing prompt fragments.
 
 func conversationTokenRatio(messages []bridge.Message, contextWindow int) float64 {
 	if contextWindow <= 0 {

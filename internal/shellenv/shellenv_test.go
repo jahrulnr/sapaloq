@@ -112,3 +112,39 @@ func TestSourceShellRCImportsExportedVar(t *testing.T) {
 		t.Fatalf("exported var not captured: %#v", env["SAPALOQ_FROM_RC"])
 	}
 }
+
+// TestSourceShellRCPassesInteractiveGuard is the regression for the bug where a
+// token set in a stock Debian/Ubuntu ~/.bashrc was invisible to the service.
+// That rc begins with the standard guard
+//
+//	case $- in *i*) ;; *) return;; esac
+//
+// which `return`s immediately under a non-interactive shell, skipping every
+// export below it. sourceShellRC now runs the shell with `-i` so the guard
+// passes; this fixture places the guard BEFORE the export to prove it.
+func TestSourceShellRCPassesInteractiveGuard(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("shell-rc sourcing is linux-only")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
+	}
+	rc := filepath.Join(t.TempDir(), ".bashrc")
+	body := "# If not running interactively, don't do anything\n" +
+		"case $- in\n" +
+		"    *i*) ;;\n" +
+		"      *) return;;\n" +
+		"esac\n" +
+		"\n" +
+		"export SAPALOQ_GUARDED_TOKEN='past-the-guard'\n"
+	if err := os.WriteFile(rc, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env, ok := sourceShellRC(shellRC{shell: "bash", rc: rc})
+	if !ok {
+		t.Fatalf("expected ok=true sourcing a guarded rc")
+	}
+	if env["SAPALOQ_GUARDED_TOKEN"] != "past-the-guard" {
+		t.Fatalf("export below the interactive guard was not captured (the -i fix regressed): %#v", env["SAPALOQ_GUARDED_TOKEN"])
+	}
+}

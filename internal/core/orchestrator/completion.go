@@ -116,22 +116,12 @@ func (o *Orchestrator) composeCompletionAnnouncement(sessionID string, record ta
 		detail = "(tidak ada detail dari sub-agent)"
 	}
 
-	system := "Kamu adalah orchestrator yang berbicara langsung ke user. " +
-		"Sebuah sub-agent latar belakang baru saja " + outcome + ". " +
-		"Sampaikan hasilnya ke user DENGAN BAHASAMU SENDIRI secara natural, ramah, dan ringkas — " +
-		"seperti kamu melaporkan ke user (mis. \"Sub-agent-nya udah kelar, hasilnya ...\"). " +
-		"Rangkum poin pentingnya; JANGAN menyalin-tempel mentah laporan sub-agent dan jangan menambah tabel/heading panjang. " +
-		"JANGAN memanggil tool apa pun — cukup jawab dengan teks. Tulis dalam bahasa yang dipakai user di percakapan."
-
 	user := fmt.Sprintf("Sub-agent `%s` (%s) %s.\n\nTujuan task: %s\n\nLaporan/detail dari sub-agent:\n%s",
 		record.ID, record.Role, outcome, strings.TrimSpace(record.Task), detail)
 
-	messages := []bridge.Message{{Role: "system", Content: system}, {Role: "user", Content: user}}
+	messages := []bridge.Message{{Role: "user", Content: user}}
 	if o.chat != nil {
 		if shared, err := o.contextMessages(context.Background(), sessionID, user); err == nil && len(shared) > 0 {
-			// Keep a bounded snapshot of the UI conversation/task context but
-			// replace the Ask system prompt with the announcer's narrower role.
-			shared[0] = bridge.Message{Role: "system", Content: system}
 			messages = shared
 		}
 	}
