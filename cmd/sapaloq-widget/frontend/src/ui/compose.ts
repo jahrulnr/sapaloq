@@ -1,6 +1,6 @@
 // Compose box backed by a contenteditable <div> so attachments can live as
 // inline, non-editable "pills" sitting between the user's words (at the caret),
-// exactly where they were dropped/picked — instead of a separate chip tray or
+// exactly where they were dropped/picked - instead of a separate chip tray or
 // raw markdown text. The box still behaves like a plain text input for typing,
 // slash-suggest and submit; serialization turns the mixed text+pill content
 // into (a) a human-visible string for the chat bubble and (b) the model-facing
@@ -39,7 +39,7 @@ function pillTag(a: AttachmentData): string {
   return 'FILE';
 }
 
-// The model-facing block for one attachment — mirrors the old buildAttachmentPrompt
+// The model-facing block for one attachment - mirrors the old buildAttachmentPrompt
 // rules: image → base64 (+ path line when known); text → inline body (+ path);
 // path-backed binary → a [Local file: …] pointer with NO base64 (avoids context
 // flooding); pathless binary → base64 fallback.
@@ -109,11 +109,19 @@ export class ComposeBox {
   readonly el: HTMLElement;
   private onChange: () => void;
   private onSubmit: () => void;
+  // onKeyDown lets the caller intercept keys (e.g. slash-suggest navigation)
+  // before the box's own Enter-submit / pill-delete logic runs. Returning true
+  // means the caller consumed the event and the box must do nothing further.
+  private onKeyDown: (e: KeyboardEvent) => boolean;
 
-  constructor(el: HTMLElement, handlers: { onChange?: () => void; onSubmit?: () => void } = {}) {
+  constructor(
+    el: HTMLElement,
+    handlers: { onChange?: () => void; onSubmit?: () => void; onKeyDown?: (e: KeyboardEvent) => boolean } = {},
+  ) {
     this.el = el;
     this.onChange = handlers.onChange || (() => {});
     this.onSubmit = handlers.onSubmit || (() => {});
+    this.onKeyDown = handlers.onKeyDown || (() => false);
     this.wire();
   }
 
@@ -122,6 +130,9 @@ export class ComposeBox {
     this.el.addEventListener('keyup', () => this.onChange());
     this.el.addEventListener('keydown', (event) => {
       const e = event as KeyboardEvent;
+      // Give the caller (slash-suggest) first refusal on navigation keys so an
+      // open popover swallows Enter/Tab/Arrows instead of submitting/blurring.
+      if (this.onKeyDown(e)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.onSubmit();
@@ -351,7 +362,7 @@ export class ComposeBox {
     const pills = Array.from(this.el.querySelectorAll(`.${PILL_CLASS}`)) as HTMLElement[];
     // Rebuild: we only support the common case (text after the last pill).
     // Remove all text nodes, keep pills, then append new trailing text.
-    // Compute text that belongs after the last pill vs before — but slash only
+    // Compute text that belongs after the last pill vs before - but slash only
     // edits trailing text, so place full text after existing pills.
     this.el.innerHTML = '';
     pills.forEach((p) => this.el.appendChild(p));

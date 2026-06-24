@@ -19,7 +19,7 @@ import {
 import { cycleRingState, renderUsage, runPing, startPingLoop } from './features/connection';
 import { autosizeCompose, toggleComposeExpand } from './ui/compose-ui';
 import { closeMessageMenu } from './features/messages';
-import { refreshSlashSuggest } from './features/slash';
+import { refreshSlashSuggest, slashKeydown } from './features/slash';
 import { addClipboardItems, addFiles } from './features/attachments';
 import { initDragAndDrop } from './features/drag-overlay';
 import { initChatController, stopActiveResponse, submitMessage } from './features/chat-controller';
@@ -76,6 +76,7 @@ if (composeEl) {
   setCompose(new ComposeBox(composeEl, {
     onChange: () => { autosizeCompose(); void refreshSlashSuggest(); },
     onSubmit: () => void submitMessage(),
+    onKeyDown: (e) => slashKeydown(e),
   }));
 }
 document.getElementById('compose-expand')?.addEventListener('click', () => toggleComposeExpand());
