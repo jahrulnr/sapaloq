@@ -91,7 +91,7 @@ func (o *Orchestrator) rolePrompt(role string) string {
 // ---------------------------------------------------------------------------
 
 const (
-	defaultContextWindow = 1000000
+	defaultContextWindow = 131072
 	autoCompactPercent   = 80
 )
 
@@ -301,7 +301,7 @@ func toolObservationBody(results []string) string {
 	if len(results) == 0 {
 		return ""
 	}
-	return "Tool output observed (for your reasoning only — " +
+	return "Tool output observed (for your reasoning only - " +
 		"summarize the outcome for the user in your own words; do not " +
 		"copy this verbatim):\n" + strings.Join(results, "\n\n")
 }
@@ -320,7 +320,7 @@ func usageReadout(inferenceTurn, toolCalls int) string {
 }
 
 // calledToolsNote renders an explicit, in-transcript record of the tools the
-// assistant invoked on a turn, e.g. "[Called tools: sapaloq_spawn_agent]". It
+// assistant invoked on a turn, e.g. "Called tools: sapaloq_spawn_agent". It
 // is appended to the assistant message so the model sees proof that it acted —
 // the text delta stream alone does not include the tool_call. Duplicate names
 // in the same turn are listed once with a ×N count to stay compact. Returns ""
@@ -347,7 +347,7 @@ func calledToolsNote(tools []scheduledTool) string {
 			parts = append(parts, name)
 		}
 	}
-	return "[Called tools: " + strings.Join(parts, ", ") + "]"
+	return "Called tools: " + strings.Join(parts, ", ")
 }
 
 // ---------------------------------------------------------------------------
