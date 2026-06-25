@@ -101,7 +101,14 @@ export function parseTurnContent(content: string): { text: string; attachments: 
     const attachment = decodeAttachmentMeta(match[1]);
     if (attachment) attachments.push(attachment);
   }
-  let text = content.replace(metadata, '');
+  // Replace each attachment metadata marker with a clickable markdown link when
+  // the attachment is path-backed (native file/folder drop), so a restored
+  // bubble renders the same link as the live one. Pathless attachments (browser
+  // /pasted) collapse to nothing here and surface via the "N attachments" badge.
+  let text = content.replace(metadata, (_match, encoded) => {
+    const a = decodeAttachmentMeta(encoded);
+    return a && a.path ? `[${a.name}](${a.path})` : '';
+  });
   text = text.replace(/\n*!\[([^\]]*)\]\((data:image\/[^)]+)\)/g, (_match, name, dataURI) => {
     const existing = attachments.find((item) => item.name === name);
     if (existing) existing.dataURI = dataURI;
@@ -109,9 +116,10 @@ export function parseTurnContent(content: string): { text: string; attachments: 
     return '';
   });
   text = text.replace(/\n*--- file: ([^\n]+) \(([^)]+)\) ---[\s\S]*?--- end file: \1 ---/g, '');
-  // The chip already shows the name/path, so drop the model-facing
-  // "[Local file: …]" lines from the displayed bubble to avoid duplication.
+  // The chip/link already shows the name/path, so drop the model-facing
+  // "[Local file: …]" / "[Local folder: …]" pointers to avoid duplication.
   text = text.replace(/\n*\[Local file:[^\]]*\]/g, '');
+  text = text.replace(/\n*\[Local folder:[^\]]*\]/g, '');
   return { text: text.trim(), attachments };
 }
 

@@ -23,7 +23,15 @@ import { refreshSlashSuggest, slashKeydown } from './features/slash';
 import { addClipboardItems, addFiles } from './features/attachments';
 import { initDragAndDrop } from './features/drag-overlay';
 import { initChatController, stopActiveResponse, submitMessage } from './features/chat-controller';
-import { restoreChatHistory } from './features/history';
+import {
+  closeHistoryMenu,
+  isHistoryMenuOpen,
+  loadSessionList,
+  restoreChatHistory,
+  startNewSession,
+  switchSession,
+  toggleHistoryMenu,
+} from './features/history';
 import { startRuntimeStatusLoop } from './features/runtime-status';
 
 document.querySelector('#app')!.innerHTML = APP_TEMPLATE;
@@ -47,6 +55,34 @@ document.getElementById('orb')?.addEventListener('click', (e) => {
 });
 document.getElementById('btn-close')?.addEventListener('click', () => void setExpanded(false));
 document.getElementById('btn-resize')?.addEventListener('click', () => void cyclePanelSize());
+
+// --- Chat history switcher ------------------------------------------------
+
+document.getElementById('btn-history')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  void toggleHistoryMenu();
+});
+document.getElementById('btn-new-chat')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  void startNewSession();
+});
+document.getElementById('history-new')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  void startNewSession();
+});
+document.getElementById('history-list')?.addEventListener('click', (e) => {
+  const item = (e.target as HTMLElement | null)?.closest<HTMLElement>('.history-item');
+  if (!item) return;
+  e.stopPropagation();
+  void switchSession(item.dataset.sessionId || '');
+});
+// Close the dropdown on any outside click.
+document.addEventListener('click', (event) => {
+  if (!isHistoryMenuOpen()) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('#history-menu') || target?.closest('#btn-history')) return;
+  closeHistoryMenu();
+});
 document.getElementById('orb')?.addEventListener('dblclick', (e) => {
   e.preventDefault();
   if (clickTimer) {
@@ -115,6 +151,7 @@ initDragAndDrop();
 // --- Bootstrap ------------------------------------------------------------
 
 void restoreChatHistory();
+void loadSessionList();
 void ContextUsage().then((usage) => renderUsage(usage as ChatUsage)).catch(() => undefined);
 startPingLoop();
 startRuntimeStatusLoop();

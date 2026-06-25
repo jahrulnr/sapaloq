@@ -87,6 +87,12 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			write(conn, Response{OK: true, Op: req.Op, Suggestions: s.orch.SlashSuggest(req.Query), ServerMs: time.Since(start).Milliseconds()})
 		case "session_active", "chat_history":
 			s.handleHistory(ctx, conn, req, start)
+		case "session_list":
+			s.handleSessionList(ctx, conn, req, start)
+		case "session_switch":
+			s.handleSessionSwitch(ctx, conn, req, start)
+		case "session_new":
+			s.handleSessionNew(ctx, conn, req, start)
 		case "context_usage":
 			s.handleUsage(ctx, conn, req, start)
 		case "runtime_status":
@@ -194,6 +200,37 @@ func (s *Server) handleHistory(ctx context.Context, conn net.Conn, req Request, 
 	}
 	usage, _ := s.orch.ContextUsage(ctx, sessionID)
 	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Turns: turns, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleSessionList(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	sessions, err := s.orch.ListSessions(ctx, 50)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	write(conn, Response{OK: true, Op: req.Op, Sessions: sessions, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleSessionSwitch(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	if req.SessionID == "" {
+		write(conn, Response{OK: false, Op: req.Op, Message: "session_id is required", ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	sessionID, err := s.orch.SwitchSession(ctx, req.SessionID)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleSessionNew(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	sessionID, err := s.orch.NewSession(ctx)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, ServerMs: time.Since(start).Milliseconds()})
 }
 
 func (s *Server) handleUsage(ctx context.Context, conn net.Conn, req Request, start time.Time) {

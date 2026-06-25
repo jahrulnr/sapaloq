@@ -14,6 +14,14 @@ export function DeleteChatTurn(arg1, arg2) {
   return window['go']['main']['App']['DeleteChatTurn'](arg1, arg2);
 }
 
+export function ListSessions() {
+  return window['go']['main']['App']['ListSessions']();
+}
+
+export function NewSession() {
+  return window['go']['main']['App']['NewSession']();
+}
+
 export function OpenAttachment(arg1) {
   return window['go']['main']['App']['OpenAttachment'](arg1);
 }
@@ -56,6 +64,10 @@ export function StopChat(arg1) {
 
 export function SubmitFeedback(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SubmitFeedback'](arg1, arg2, arg3, arg4);
+}
+
+export function SwitchSession(arg1) {
+  return window['go']['main']['App']['SwitchSession'](arg1);
 }
 
 export function SyncInputShape(arg1) {

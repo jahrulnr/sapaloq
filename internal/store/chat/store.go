@@ -407,6 +407,132 @@ func (s *Store) Reset(ctx context.Context, provider, model string) (string, erro
 	return id, tx.Commit()
 }
 
+// SessionSummary is a compact description of a stored chat session for the
+// widget's history switcher. Title is derived from the first user turn so the
+// switcher can show something more meaningful than the opaque session id.
+type SessionSummary struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Active    bool   `json:"active"`
+	TurnCount int    `json:"turn_count"`
+	UpdatedAt string `json:"updated_at"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListSessions returns recent sessions ordered by most-recently-updated first.
+// A limit <= 0 falls back to a sensible default so callers can pass 0 for "all
+// reasonable recent sessions". Each summary carries a derived title (first user
+// turn snippet) and the count of turns that surface in the chat view.
+func (s *Store) ListSessions(ctx context.Context, limit int) ([]SessionSummary, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, active, created_at, updated_at
+		FROM chat_sessions
+		ORDER BY active DESC, updated_at DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionSummary
+	for rows.Next() {
+		var (
+			summary SessionSummary
+			active  int
+		)
+		if err := rows.Scan(&summary.ID, &active, &summary.CreatedAt, &summary.UpdatedAt); err != nil {
+			return nil, err
+		}
+		summary.Active = active == 1
+		out = append(out, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Enrich each session with a human title (first user turn) and a turn
+	// count. Done in a second pass to keep the listing query simple and
+	// portable across SQLite builds (no window functions needed).
+	for i := range out {
+		title, count, derr := s.sessionTitleAndCount(ctx, out[i].ID)
+		if derr != nil {
+			return nil, derr
+		}
+		out[i].Title = title
+		out[i].TurnCount = count
+	}
+	return out, nil
+}
+
+// sessionTitleAndCount derives a display title from the first user turn and
+// counts the user/assistant/error turns that surface in the chat view.
+func (s *Store) sessionTitleAndCount(ctx context.Context, sessionID string) (string, int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM chat_turns WHERE session_id=? AND role IN ('user','assistant','error')`,
+		sessionID).Scan(&count); err != nil {
+		return "", 0, err
+	}
+	var first sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT content FROM chat_turns WHERE session_id=? AND role='user' ORDER BY seq ASC LIMIT 1`,
+		sessionID).Scan(&first); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", 0, err
+	}
+	title := summarizeTitle(first.String)
+	return title, count, nil
+}
+
+// summarizeTitle trims a turn body into a single-line switcher label. Empty
+// content (e.g. an attachment-only turn or a brand-new session) yields an empty
+// string so callers can fall back to a placeholder.
+func summarizeTitle(content string) string {
+	line := strings.TrimSpace(content)
+	if line == "" {
+		return ""
+	}
+	if idx := strings.IndexAny(line, "\r\n"); idx >= 0 {
+		line = strings.TrimSpace(line[:idx])
+	}
+	const maxLen = 48
+	if len([]rune(line)) > maxLen {
+		runes := []rune(line)
+		line = strings.TrimSpace(string(runes[:maxLen])) + "…"
+	}
+	return line
+}
+
+// Activate marks an existing session as the single active session. It mirrors
+// the active-flag invariant used by Reset: every other session is deactivated
+// in the same transaction. An unknown session id is rejected so the caller can
+// surface a clear error instead of silently leaving no active session.
+func (s *Store) Activate(ctx context.Context, sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return errors.New("session id is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_sessions WHERE id=?`, sessionID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return fmt.Errorf("session %q not found", sessionID)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET active=0, updated_at=? WHERE active=1 AND id<>?`, now, sessionID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET active=1, updated_at=? WHERE id=?`, now, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) AppendTurn(ctx context.Context, sessionID, role, content string, tokenEstimate int) error {
 	_, err := s.AppendTurnID(ctx, sessionID, role, content, tokenEstimate)
 	return err

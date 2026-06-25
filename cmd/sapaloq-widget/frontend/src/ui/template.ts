@@ -1,6 +1,6 @@
 // The root #app markup for the dock (orb + popup chat panel). Kept as a single
 // template so main.ts stays a thin wiring/bootstrap module.
-import { ICON_EXPAND, ICON_SEND } from './icons';
+import { ICON_CARET, ICON_EXPAND, ICON_HISTORY, ICON_NEW_CHAT, ICON_SEND } from './icons';
 
 export const APP_TEMPLATE = `
   <div class="dock">
@@ -8,15 +8,25 @@ export const APP_TEMPLATE = `
       <header class="popup-header">
         <div class="popup-brand">
           <span class="brand-mark" aria-hidden="true"><span class="brand-mark-core"></span></span>
-          <span class="brand-copy">
-            <span class="popup-name">SapaLOQ</span>
-          </span>
+          <button type="button" class="history-switcher" id="btn-history" aria-haspopup="true" aria-expanded="false" aria-controls="history-menu" title="Riwayat chat">
+            <span class="history-switcher-icon" aria-hidden="true">${ICON_HISTORY}</span>
+            <span class="history-switcher-label" id="history-current">SapaLOQ</span>
+            <span class="history-switcher-caret" aria-hidden="true">${ICON_CARET}</span>
+          </button>
         </div>
         <div class="popup-header-right">
           <span class="context-usage" id="context-usage" data-level="normal" title="context usage">0/0</span>
-          <span class="conn-pill"><span class="conn-dot" id="conn-dot" data-state="connecting" aria-label="status koneksi" title="menghubungkan…"></span><span>core</span></span>
+          <span class="conn-pill"><span class="conn-dot" id="conn-dot" data-state="connecting" aria-label="status koneksi" title="menghubungkan…"></span></span>
+          <button type="button" class="popup-icon-btn" id="btn-new-chat" aria-label="Chat baru" title="Chat baru">${ICON_NEW_CHAT}</button>
           <button type="button" class="popup-resize" id="btn-resize" aria-label="Ubah ukuran chat" title="Ubah ukuran chat">□</button>
           <button type="button" class="popup-close" id="btn-close" aria-label="Tutup">×</button>
+        </div>
+        <div class="history-menu" id="history-menu" role="menu" aria-hidden="true" hidden>
+          <div class="history-menu-head">
+            <span>Riwayat chat</span>
+            <button type="button" class="history-new" id="history-new" role="menuitem">${ICON_NEW_CHAT}<span>Chat baru</span></button>
+          </div>
+          <div class="history-list" id="history-list"></div>
         </div>
       </header>
       <section class="runtime-strip" aria-label="Runtime status">

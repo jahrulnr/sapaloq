@@ -86,6 +86,28 @@ func (o *Orchestrator) ActiveSession(ctx context.Context) (string, error) {
 	return o.chat.ActiveSession(ctx, snap.entry.Key, snap.entry.Model)
 }
 
+// ListSessions returns recent chat sessions for the widget's history switcher,
+// most-recently-updated first (active session sorted to the top).
+func (o *Orchestrator) ListSessions(ctx context.Context, limit int) ([]chatstore.SessionSummary, error) {
+	return o.chat.ListSessions(ctx, limit)
+}
+
+// SwitchSession makes an existing session the active one and returns its id so
+// the caller can immediately restore that session's history.
+func (o *Orchestrator) SwitchSession(ctx context.Context, sessionID string) (string, error) {
+	if err := o.chat.Activate(ctx, sessionID); err != nil {
+		return "", err
+	}
+	return sessionID, nil
+}
+
+// NewSession starts a fresh active chat session (same path as the /reset slash
+// command) and returns the new session id.
+func (o *Orchestrator) NewSession(ctx context.Context) (string, error) {
+	snap := o.snapshot()
+	return o.chat.Reset(ctx, snap.entry.Key, snap.entry.Model)
+}
+
 func (o *Orchestrator) ActiveTurns(ctx context.Context, sessionID string) ([]chatstore.Turn, error) {
 	if sessionID == "" {
 		var err error

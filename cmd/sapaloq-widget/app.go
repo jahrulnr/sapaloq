@@ -90,6 +90,22 @@ func (a *App) ChatHistory() (chatHistoryResult, error) {
 	return chatHistory(a.socketPath)
 }
 
+// ListSessions returns recent chat sessions for the topbar history switcher.
+func (a *App) ListSessions() (sessionListResult, error) {
+	return listSessions(a.socketPath)
+}
+
+// SwitchSession activates an existing session and returns its id so the
+// frontend can restore that session's history.
+func (a *App) SwitchSession(sessionID string) (string, error) {
+	return switchSession(a.socketPath, sessionID)
+}
+
+// NewSession starts a fresh active chat session and returns its id.
+func (a *App) NewSession() (string, error) {
+	return newSession(a.socketPath)
+}
+
 func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 	return deleteChatTurn(a.socketPath, sessionID, turnID)
 }
@@ -144,6 +160,7 @@ type droppedFile struct {
 	DataURI string `json:"data_uri,omitempty"`
 	Text    string `json:"text,omitempty"`
 	IsImage bool   `json:"is_image"`
+	IsDir   bool   `json:"is_dir"`
 }
 
 // maxDroppedBytes caps how much of a dropped file we read into memory before
@@ -164,7 +181,17 @@ func (a *App) ReadDroppedFile(path string) (*droppedFile, error) {
 		return nil, err
 	}
 	if info.IsDir() {
-		return nil, errors.New("directory drop not supported")
+		// Folder drop: the model only ever needs the *path* (it can list/read
+		// it with its own tools), so we deliberately read no contents and emit
+		// a path-only attachment. This mirrors the path-backed-binary rule and
+		// avoids flooding the prompt with a whole tree.
+		return &droppedFile{
+			Path:  cleaned,
+			Name:  filepath.Base(cleaned),
+			MIME:  "inode/directory",
+			Size:  0,
+			IsDir: true,
+		}, nil
 	}
 	if info.Size() > maxDroppedBytes {
 		return nil, errors.New("file too large (max 8 MB)")
@@ -207,13 +234,19 @@ func (a *App) OpenAttachment(path string) error {
 	if cleaned == "" || !filepath.IsAbs(cleaned) {
 		return errors.New("attachment path must be absolute")
 	}
-	if _, err := os.Stat(cleaned); err != nil {
+	info, err := os.Stat(cleaned)
+	if err != nil {
 		return err
 	}
+	// For a folder, open the folder itself; for a file, reveal it inside its
+	// parent directory (selected where the file manager supports it).
 	target := filepath.Dir(cleaned)
+	if info.IsDir() {
+		target = cleaned
+	}
 	var command *exec.Cmd
 	switch {
-	case commandExists("nautilus"):
+	case !info.IsDir() && commandExists("nautilus"):
 		command = exec.Command("nautilus", "--select", cleaned)
 	case commandExists("gio"):
 		command = exec.Command("gio", "open", target)

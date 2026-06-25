@@ -127,12 +127,12 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 
 .popup-header {
   position: relative;
-  z-index: 1;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 13px 14px;
+  gap: 8px;
+  padding: 11px 12px;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(180deg, oklch(100% 0 0 / 0.035), transparent);
 }
@@ -140,7 +140,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .popup-brand,
 .popup-header-right,
 .conn-pill { display: flex; align-items: center; }
-.popup-brand { gap: 10px; min-width: 0; }
+.popup-brand { gap: 8px; min-width: 0; flex: 1 1 auto; }
 
 .brand-mark {
   position: relative;
@@ -181,7 +181,132 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   font-weight: 850;
   letter-spacing: 0.16em;
 }
-.popup-header-right { gap: 8px; }
+.popup-header-right { gap: 6px; flex: 0 0 auto; }
+
+/* History switcher button: doubles as the brand title + the entry point to the
+   recent-sessions dropdown. Keeps the topbar to a single uncluttered row. */
+.history-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.history-switcher:hover,
+.history-switcher[aria-expanded='true'] {
+  background: oklch(100% 0 0 / 0.07);
+  border-color: var(--line);
+}
+.history-switcher-icon { display: grid; place-items: center; flex: 0 0 auto; color: var(--muted); }
+.history-switcher-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.history-switcher-label {
+  overflow: hidden;
+  font-size: 0.9rem;
+  font-weight: 820;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-switcher-caret { display: grid; place-items: center; flex: 0 0 auto; color: var(--subtle); transition: transform 160ms ease; }
+.history-switcher-caret svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.history-switcher[aria-expanded='true'] .history-switcher-caret { transform: rotate(180deg); }
+
+/* Dropdown anchored just under the header. */
+.history-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% - 4px);
+  left: 12px;
+  width: min(300px, calc(100% - 24px));
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: oklch(13% 0.01 255 / 0.98);
+  box-shadow: 0 18px 44px oklch(0% 0 0 / 0.55), inset 0 1px 0 oklch(100% 0 0 / 0.06);
+  backdrop-filter: blur(18px);
+}
+.history-menu[hidden] { display: none; }
+.history-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--line);
+  color: var(--subtle);
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.history-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: oklch(100% 0 0 / 0.06);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  cursor: pointer;
+}
+.history-new:hover { background: oklch(100% 0 0 / 0.13); }
+.history-new svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.history-list { overflow-y: auto; padding: 6px; display: grid; gap: 3px; }
+.history-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 10px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 130ms ease, border-color 130ms ease;
+}
+.history-item:hover { background: oklch(100% 0 0 / 0.06); }
+.history-item[data-active='true'] {
+  border-color: oklch(70% 0.13 235 / 0.45);
+  background: oklch(70% 0.13 235 / 0.12);
+}
+.history-item-title {
+  overflow: hidden;
+  font-size: 0.74rem;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-item-meta { color: var(--subtle); font-size: 0.58rem; font-weight: 700; white-space: nowrap; }
+.history-item-dot {
+  grid-column: 2;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px oklch(73% 0.18 150 / 0.7);
+}
+.history-empty { padding: 14px 12px; color: var(--muted); font-size: 0.68rem; text-align: center; }
 
 .context-usage {
   min-height: 26px;
@@ -201,8 +326,10 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 
 .conn-pill {
   gap: 6px;
+  justify-content: center;
+  min-width: 26px;
   min-height: 26px;
-  padding: 0 9px;
+  padding: 0 7px;
   border: 1px solid var(--line);
   border-radius: 7px;
   color: var(--muted);
@@ -226,7 +353,8 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .conn-dot[data-state='disconnected'] { background: var(--danger); box-shadow: 0 0 12px oklch(67% 0.21 28 / 0.75); }
 
 .popup-close,
-.popup-resize {
+.popup-resize,
+.popup-icon-btn {
   width: 28px;
   height: 28px;
   display: grid;
@@ -238,8 +366,10 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   cursor: pointer;
 }
 .popup-resize { font-size: 0.82rem; line-height: 1; }
+.popup-icon-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .popup-close:hover,
-.popup-resize:hover { background: oklch(100% 0 0 / 0.14); }
+.popup-resize:hover,
+.popup-icon-btn:hover { background: oklch(100% 0 0 / 0.14); }
 
 .runtime-strip {
   position: relative;
@@ -1042,6 +1172,12 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   font-weight: 950;
   letter-spacing: 0.04em;
 }
+/* Folder pills get an accent tag so a dropped directory reads differently from
+   a file at a glance. */
+.att-pill[data-isdir="1"] .att-pill-tag {
+  background: var(--accent, oklch(72% 0.16 250));
+  color: oklch(14% 0.008 255);
+}
 .att-pill-name { overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
 .att-pill-x {
   flex: 0 0 auto;
@@ -1214,7 +1350,10 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   box-shadow:
     inset 0 0 0 1px oklch(100% 0 0 / 0.22),
     0 0 8px oklch(68% 0.19 255 / 0.4);
-  transition: filter 180ms ease, transform 180ms ease;
+  transition: filter 180ms ease;
+  /* The icon spins counter-clockwise while the ring spins clockwise, so the
+     orb reads as two counter-rotating layers. */
+  animation: core-counter-spin 9s linear infinite;
 }
 
 .orb-chevron {
@@ -1232,7 +1371,7 @@ body.expanded .orb-chevron { opacity: 1; }
 body.expanded .orb-art { opacity: 0; }
 
 .orb[data-state='thinking'] .orb-ring { animation-duration: 1.35s; opacity: 1; }
-.orb[data-state='thinking'] .orb-art { animation: core-pulse 1.4s ease-in-out infinite; }
+.orb[data-state='thinking'] .orb-art { animation: core-counter-spin 9s linear infinite, core-pulse 1.4s ease-in-out infinite; }
 .orb[data-state='delegating'] .orb-ring { animation-duration: .7s; opacity: 1; }
 .orb[data-state='delegating'] .orb-art { filter: saturate(1.2) brightness(1.12); }
 .orb[data-state='needs-input'] .orb-ring { background: conic-gradient(from 210deg, var(--warn), transparent 42% 68%, var(--warn)); }
@@ -1259,7 +1398,11 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
 @keyframes orb-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
 @keyframes halo-breathe { 0%, 100% { opacity: .68; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
 @keyframes ring-spin { to { transform: rotate(360deg); } }
-@keyframes core-pulse { 50% { transform: scale(0.94); filter: brightness(1.24) saturate(1.14); } }
+/* Counter-clockwise icon spin (the ring spins clockwise via ring-spin). */
+@keyframes core-counter-spin { to { transform: rotate(-360deg); } }
+/* The thinking pulse rides the spin, so it can't use transform (that would
+   fight core-counter-spin's rotate); it pulses via lighting instead. */
+@keyframes core-pulse { 50% { filter: brightness(1.24) saturate(1.14); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

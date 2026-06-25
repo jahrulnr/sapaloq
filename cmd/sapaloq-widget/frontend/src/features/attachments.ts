@@ -76,10 +76,11 @@ export async function addDroppedPaths(paths: string[]) {
         compose.insertAttachment({
           name: file.name,
           path: file.path || undefined,
-          type: file.mime || (file.is_image ? 'image/*' : 'text/plain'),
+          type: file.mime || (file.is_image ? 'image/*' : file.is_dir ? 'inode/directory' : 'text/plain'),
           size: file.size,
           dataURI: file.data_uri || undefined,
           text: file.text || undefined,
+          isDir: file.is_dir || undefined,
         });
       } catch (err) {
         appendMessage('message--error', `gagal membaca ${path.split('/').pop()}: ${String(err)}`);

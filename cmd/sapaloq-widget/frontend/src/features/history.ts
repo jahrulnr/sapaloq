@@ -1,7 +1,8 @@
 // Chat-history restore + turn rendering, plus the helpers that bind/clear turn
-// ids when retrying or deleting a branch.
-import { ChatHistory } from '../../wailsjs/go/main/App';
-import type { ChatTurn, ChatUsage } from '../core/types';
+// ids when retrying or deleting a branch. Also owns the topbar history switcher
+// (list recent sessions, switch active session, start a new chat).
+import { ChatHistory, ContextUsage, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
+import type { ChatTurn, ChatUsage, SessionSummary } from '../core/types';
 import { appendMessage, appendThinkingBubble, clearMessages, parseTurnContent } from './messages';
 import { renderUsage } from './connection';
 import {
@@ -38,6 +39,160 @@ export async function restoreChatHistory() {
   } catch {
     // Core may not be ready yet; ping loop will update connection state.
   }
+}
+
+// ---- Topbar history switcher --------------------------------------------
+
+const DEFAULT_LABEL = 'SapaLOQ';
+
+function relativeTime(iso: string): string {
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return '';
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'baru saja';
+  if (min < 60) return `${min}m lalu`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `${hrs}j lalu`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}h lalu`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function sessionLabel(session: SessionSummary): string {
+  return session.title?.trim() || DEFAULT_LABEL;
+}
+
+function setSwitcherLabel(text: string) {
+  const el = document.getElementById('history-current');
+  if (el) el.textContent = text || DEFAULT_LABEL;
+}
+
+export function isHistoryMenuOpen(): boolean {
+  const menu = document.getElementById('history-menu');
+  return !!menu && !menu.hidden;
+}
+
+export function closeHistoryMenu() {
+  const menu = document.getElementById('history-menu');
+  const btn = document.getElementById('btn-history');
+  if (menu) {
+    menu.hidden = true;
+    menu.setAttribute('aria-hidden', 'true');
+  }
+  btn?.setAttribute('aria-expanded', 'false');
+}
+
+function renderSessionList(sessions: SessionSummary[]) {
+  const list = document.getElementById('history-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!sessions.length) {
+    const empty = document.createElement('div');
+    empty.className = 'history-empty';
+    empty.textContent = 'Belum ada riwayat chat.';
+    list.appendChild(empty);
+    return;
+  }
+  for (const session of sessions) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'history-item';
+    item.setAttribute('role', 'menuitem');
+    item.dataset.sessionId = session.id;
+    item.dataset.active = session.active ? 'true' : 'false';
+
+    const title = document.createElement('span');
+    title.className = 'history-item-title';
+    title.textContent = sessionLabel(session);
+    item.appendChild(title);
+
+    const meta = document.createElement('span');
+    meta.className = 'history-item-meta';
+    const rel = relativeTime(session.updated_at);
+    meta.textContent = `${session.turn_count} pesan${rel ? ` · ${rel}` : ''}`;
+    item.appendChild(meta);
+
+    if (session.active) {
+      const dot = document.createElement('span');
+      dot.className = 'history-item-dot';
+      dot.title = 'Sesi aktif';
+      item.appendChild(dot);
+    }
+    list.appendChild(item);
+  }
+}
+
+// loadSessionList refreshes the dropdown contents and the switcher label from
+// the active session.
+export async function loadSessionList() {
+  try {
+    const result = await ListSessions();
+    const sessions = (result.sessions || []) as SessionSummary[];
+    renderSessionList(sessions);
+    const active = sessions.find((session) => session.active);
+    if (active) setSwitcherLabel(sessionLabel(active));
+  } catch {
+    renderSessionList([]);
+  }
+}
+
+export async function openHistoryMenu() {
+  const menu = document.getElementById('history-menu');
+  const btn = document.getElementById('btn-history');
+  if (!menu) return;
+  menu.hidden = false;
+  menu.setAttribute('aria-hidden', 'false');
+  btn?.setAttribute('aria-expanded', 'true');
+  await loadSessionList();
+}
+
+export async function toggleHistoryMenu() {
+  if (isHistoryMenuOpen()) closeHistoryMenu();
+  else await openHistoryMenu();
+}
+
+async function refreshAfterSessionChange() {
+  await restoreChatHistory();
+  await loadSessionList();
+  try {
+    renderUsage((await ContextUsage()) as ChatUsage);
+  } catch {
+    // usage refresh is best-effort; the chat view already swapped.
+  }
+}
+
+// switchSession activates an existing session and reloads the chat + usage so
+// the widget reflects the chosen conversation.
+export async function switchSession(sessionID: string) {
+  if (!sessionID || sessionID === getSessionID()) {
+    closeHistoryMenu();
+    return;
+  }
+  try {
+    const activeID = await SwitchSession(sessionID);
+    setSessionID(activeID || sessionID);
+  } catch {
+    return;
+  } finally {
+    closeHistoryMenu();
+  }
+  await refreshAfterSessionChange();
+}
+
+// startNewSession spins up a fresh active chat and clears the view.
+export async function startNewSession() {
+  try {
+    const newID = await NewSession();
+    if (newID) setSessionID(newID);
+  } catch {
+    return;
+  } finally {
+    closeHistoryMenu();
+  }
+  clearMessages();
+  setSwitcherLabel(DEFAULT_LABEL);
+  await refreshAfterSessionChange();
 }
 
 export async function bindLatestGroupTurnID() {

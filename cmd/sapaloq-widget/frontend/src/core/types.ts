@@ -16,6 +16,7 @@ export type StreamEvent = {
   summary?: string;
 };
 export type ChatTurn = { id: number; seq: number; role: string; content: string };
+export type SessionSummary = { id: string; title: string; active: boolean; turn_count: number; updated_at: string; created_at: string };
 export type ChatUsage = { session_id: string; used_tokens: number; context_window: number; percent: number; provider: string; model: string };
 export type ActorRuntimeStatus = { id: string; role: string; status: string; phase: string; workspace: string };
 export type RuntimeStatus = {
@@ -30,7 +31,7 @@ export type RuntimeStatus = {
   workspace_path: string;
   actors: ActorRuntimeStatus[];
 };
-export type PendingAttachment = { name: string; type: string; size: number; path?: string; dataURI?: string; text?: string };
+export type PendingAttachment = { name: string; type: string; size: number; path?: string; dataURI?: string; text?: string; isDir?: boolean };
 
 // Streaming coalescer: accumulates delta chunks into one bubble so
 // word-by-word streams (e.g. blackbox MiniMax-M3) render as natural typing

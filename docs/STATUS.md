@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-25 (**provider-bridge non-stream mode**: per-provider `stream` flag (default true) - `stream:false` sends one request and parses a complete response into the same `WireEvent` sequence as SSE, for gateways that don't stream; **tool turns are now pure `<untrusted_data>` data**: all steering moved into the `rules.md` system prompt (`## Working with tool output`), usage-readout removed, `[Called tools: …]` leak fixed; shared **`rules.md`** project-grounding prompt layer prepended to every role; tool-result **secret redaction** via vendored `privacyfilter`; peek-agents default skill; provider-bridge pre-stream retry)
+> Last updated: 2026-06-25 (**orb icon counter-rotation**: the inner orb icon (`.orb-art`) now spins counter-clockwise (`core-counter-spin`) against the clockwise gradient ring (`ring-spin`); the thinking pulse moved off `transform` to lighting so it composes with the spin; **folder drag-and-drop + attachments as bubble links + drag-overlay flicker fix**: native folder drops now ingest as a path-only attachment (`DIR` pill, `[Local folder: …]` model pointer, no contents read); path-backed attachments (dropped files/folders) now render as a clickable markdown link in the chat bubble - fixing the bug where a pill showed as plain text in the sent/restored bubble while being a link in the composer; the drag overlay no longer blinks while a file is *held* over the widget - replaced the dragenter/dragleave depth counter (which toggled the highlight class many times a second on WebKitGTK child crossings) with a single idle-timer-driven boolean; **topbar chat-history switcher**: reworked the widget header into a single uncluttered row - brand + a session switcher dropdown (list recent sessions, switch active, "Chat baru") on the left, compact usage/conn/new-chat/resize/close on the right; new store `ListSessions`/`Activate`, orchestrator `ListSessions`/`SwitchSession`/`NewSession`, IPC `session_list`/`session_switch`/`session_new`; **provider-bridge non-stream mode**: per-provider `stream` flag (default true) - `stream:false` sends one request and parses a complete response into the same `WireEvent` sequence as SSE, for gateways that don't stream; **tool turns are now pure `<untrusted_data>` data**: all steering moved into the `rules.md` system prompt (`## Working with tool output`), usage-readout removed, `[Called tools: …]` leak fixed; shared **`rules.md`** project-grounding prompt layer prepended to every role; tool-result **secret redaction** via vendored `privacyfilter`; peek-agents default skill; provider-bridge pre-stream retry)
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -25,7 +25,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go`. **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor` |
-| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect |
+| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
 | 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
@@ -41,6 +41,84 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` - schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` - the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
+
+---
+
+## Implemented this session (2026-06-25) - folder drag-and-drop + attachments render as bubble links
+
+- **Folder drops (path-only).** `ReadDroppedFile` (`cmd/sapaloq-widget/app.go`)
+  previously rejected directories (`"directory drop not supported"`). GTK already
+  hands folder *paths* via `OnFileDrop`, so the guard now returns a path-only
+  `droppedFile{IsDir:true, MIME:"inode/directory", Size:0}` with **no** contents
+  read (the model gets a pointer it can list/read with its own tools - no tree
+  flooding, mirroring the path-backed-binary rule). New `IsDir` field on
+  `droppedFile` (+ `is_dir` in `wailsjs/go/models.ts`). `OpenAttachment` now opens
+  a *folder* directly (vs revealing a file inside its parent).
+- **Frontend ingest.** `features/attachments.ts` passes `isDir` into the compose
+  pill; `ui/compose.ts` tags it `DIR`, persists `data-isdir`, and emits a
+  `[Local folder: <path>]` model block. `core/types.ts`/`AttachmentData` gain
+  `isDir?`. `style.css` accents the `DIR` tag.
+- **Bug fix - attachments as bubble links.** `ComposeBox.serialize()` built the
+  *visible* bubble text from the bare attachment name, so a file/folder showed as
+  plain text in the sent bubble even though it was a clickable pill in the
+  composer. Path-backed attachments now serialize as a markdown link
+  `[name](path)` in `visibleText`; `parseTurnContent` (`features/messages.ts`)
+  reconstructs the same link from the persisted metadata on history restore (and
+  strips the `[Local folder: …]`/`[Local file: …]` model pointers). The markdown
+  renderer already whitelists absolute-path hrefs and routes clicks through
+  `OpenExternal` -> file manager, so no sanitizer change was needed. Pathless
+  (browser/pasted) attachments keep the bare name + "N attachments" badge.
+- **Drag-overlay flicker fix.** Holding a file over the widget made the
+  "Lepas untuk attach file" highlight blink. The overlay was driven by a
+  `dragenter`/`dragleave` depth counter; on WebKitGTK `dragover` fires
+  continuously and `dragleave` fires on every child crossing (often with
+  `relatedTarget === null`), so the `is-dragging-file` class was removed and
+  re-added many times a second. `features/drag-overlay.ts` now drives the
+  overlay from a single boolean shown once on the first `dragover` and a single
+  idle timer (re-armed each `dragover`, 180ms) that clears it when the drag
+  truly leaves - no `dragleave`-driven hiding, so no flicker. Drop/`dragend`
+  still force-clear.
+- **Tests.** `cmd/sapaloq-widget/dropped_file_test.go` (folder = path-only/no
+  contents, file reads contents, relative path rejected),
+  `frontend/src/ui/compose.test.ts` (link in `visibleText`, folder model block,
+  `DIR` tag, `parseTurnContent` link reconstruction), two `markdown.test.ts`
+  cases asserting an absolute-path link stays a clickable `<a>`, and
+  `frontend/src/features/drag-overlay.test.ts` (overlay stays continuously shown
+  across a long held drag with child `dragleave` noise = no blink; idle timeout
+  clears it once). `go build/vet/test ./...` green; frontend `tsc + vite` build
+  + 39 vitest tests green.
+
+---
+
+## Implemented this session (2026-06-25) - topbar chat-history switcher
+
+- **Why.** The widget topbar was a single cramped row (brand + usage pill +
+  `CORE` conn pill + resize + close) with no room to add a way to browse/switch
+  past conversations. Sessions already existed in the store (`chat_sessions`
+  with a single-active `active` flag) but nothing listed or switched them.
+- **Backend (new vertical slice).**
+  - `internal/store/chat/store.go`: `SessionSummary`, `ListSessions(ctx, limit)`
+    (orders active-first then `updated_at DESC`, derives a title from the first
+    user turn + a turn count), and `Activate(ctx, sessionID)` (mirrors `Reset`'s
+    single-active invariant for an *existing* session; rejects unknown/empty id).
+    No migration - the table/columns already existed.
+  - `internal/core/orchestrator/session.go`: `ListSessions`, `SwitchSession`
+    (delegates to `Activate`), `NewSession` (reuses `chat.Reset`).
+  - `internal/ipc/{protocol,server}.go`: `Response.Sessions`; ops `session_list`,
+    `session_switch` (requires `session_id`), `session_new`.
+- **Widget bridge.** `cmd/sapaloq-widget/ipc.go` (`sessionSummary`/round-trips)
+  + `app.go` Wails methods `ListSessions`/`SwitchSession`/`NewSession`
+  (regenerated `wailsjs/go/main/App.*` + `models.ts`).
+- **Frontend.** Header reworked in `ui/template.ts` (history switcher button +
+  `#history-menu` dropdown + new-chat icon; conn pill reduced to a dot). New
+  `features/history.ts` helpers `loadSessionList`/`openHistoryMenu`/
+  `switchSession`/`startNewSession`; wiring + outside-click close in `main.ts`;
+  styles in `style.css`; `SessionSummary` type in `core/types.ts`.
+- **Tests.** `internal/store/chat/sessions_test.go` (ordering, limit, switch
+  invariant, unknown/empty-id rejection) and
+  `internal/core/orchestrator/session_switch_test.go` (full list→switch→new flow
+  + unknown-id failure). `go build/vet/test ./...` green; frontend `tsc + vite`
+  build green; switcher + dropdown verified visually in a browser preview.
 
 ---
 

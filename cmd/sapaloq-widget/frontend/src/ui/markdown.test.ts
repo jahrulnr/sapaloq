@@ -73,3 +73,21 @@ describe('renderMarkdown - GFM task lists', () => {
     expect(img?.getAttribute('onerror')).toBeNull();
   });
 });
+
+describe('renderMarkdown - local file/folder attachment links', () => {
+  // The chat-bubble attachment link is an absolute-path markdown link. It must
+  // survive sanitization as a real, clickable <a href="/abs/path"> so the click
+  // handler can route it to the file manager via OpenExternal.
+  it('keeps an absolute-path link clickable (file attachment in a bubble)', () => {
+    const host = render('[main.go](/home/x/main.go)');
+    const a = host.querySelector('a');
+    expect(a).not.toBeNull();
+    expect(a?.getAttribute('href')).toBe('/home/x/main.go');
+    expect(a?.textContent).toBe('main.go');
+  });
+
+  it('keeps an absolute-path folder link clickable', () => {
+    const host = render('[sapaloq](/home/x/sapaloq)');
+    expect(host.querySelector('a')?.getAttribute('href')).toBe('/home/x/sapaloq');
+  });
+});

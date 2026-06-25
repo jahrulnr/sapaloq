@@ -71,6 +71,20 @@ type chatHistoryResult struct {
 	Usage     *chatUsage `json:"usage,omitempty"`
 }
 
+type sessionSummary struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Active    bool   `json:"active"`
+	TurnCount int    `json:"turn_count"`
+	UpdatedAt string `json:"updated_at"`
+	CreatedAt string `json:"created_at"`
+}
+
+type sessionListResult struct {
+	OK       bool             `json:"ok"`
+	Sessions []sessionSummary `json:"sessions"`
+}
+
 type actorRuntimeStatus struct {
 	ID        string `json:"id"`
 	Role      string `json:"role"`
@@ -144,6 +158,60 @@ func chatHistory(socketPath string) (chatHistoryResult, error) {
 		result.Turns = append(result.Turns, chatTurn{ID: turn.ID, Seq: turn.Seq, Role: turn.Role, Content: turn.Content})
 	}
 	return result, nil
+}
+
+func listSessions(socketPath string) (sessionListResult, error) {
+	var result sessionListResult
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_list"})
+	if err != nil {
+		return result, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return result, fmt.Errorf("%s", message)
+	}
+	res := responses[0]
+	result.OK = true
+	for _, item := range res.Sessions {
+		result.Sessions = append(result.Sessions, sessionSummary{
+			ID: item.ID, Title: item.Title, Active: item.Active,
+			TurnCount: item.TurnCount, UpdatedAt: item.UpdatedAt, CreatedAt: item.CreatedAt,
+		})
+	}
+	return result, nil
+}
+
+func switchSession(socketPath, sessionID string) (string, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_switch", SessionID: sessionID})
+	if err != nil {
+		return "", err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return "", fmt.Errorf("%s", message)
+	}
+	return responses[0].SessionID, nil
+}
+
+func newSession(socketPath string) (string, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_new"})
+	if err != nil {
+		return "", err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return "", fmt.Errorf("%s", message)
+	}
+	return responses[0].SessionID, nil
 }
 
 func deleteChatTurn(socketPath, sessionID string, turnID int64) error {

@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-23 (network-core identity and app icons)
+> Last updated: 2026-06-25 (orb icon counter-rotates vs the ring; folder drag-and-drop + attachments render as bubble links + drag-overlay flicker fix; topbar one row + chat-history switcher)
 
 **Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
 
@@ -229,6 +229,64 @@ Document in `doctor`: warn if shim missing and `widget.requireAlwaysOnTop: true`
 See [M5a spike notes](./development/m5a-spike.md).
 
 Pending: GJS shim prototype (M5c), KDE layer-shell (M5d).
+
+---
+
+## Topbar layout + chat-history switcher (2026-06-25)
+
+The popup header is a **single row** to stay usable at the smallest panel width
+(376px). It was previously brand + a tight cluster of usage/conn/resize/close
+with no room for new affordances.
+
+- **Left:** brand mark + a **history switcher** (`#btn-history`): clock icon +
+  the active session title + a caret. Clicking it opens `#history-menu`, a
+  dropdown anchored under the header listing recent sessions (title derived from
+  the first user turn, message count + relative time, a green dot on the active
+  session) plus a **"Chat baru"** action.
+- **Right (compacted):** context-usage pill, the connection indicator reduced to
+  a single dot (`.conn-pill` now dot-only), a new-chat icon button, the resize
+  cycle button, and close.
+
+Session model: the store keeps a **single active session** (`chat_sessions.active`).
+Switching reuses that invariant (`Store.Activate`), "Chat baru" reuses
+`Store.Reset`, and the list comes from `Store.ListSessions`. The widget reaches
+these via IPC ops `session_list` / `session_switch` / `session_new`
+(orchestrator `ListSessions` / `SwitchSession` / `NewSession`). UI detail lives
+in `docs/STATUS.md`; files: `ui/template.ts`, `style.css`, `features/history.ts`,
+`main.ts`.
+
+---
+
+## Attachments: folder drops + bubble links (2026-06-25)
+
+- **Folders are path-only.** A dropped directory ingests as an attachment that
+  carries only its path (`DIR` pill, `[Local folder: <path>]` model pointer). We
+  deliberately do **not** read the tree - the model lists/reads it with its own
+  tools, avoiding prompt flooding. Same single-path model as native file drops on
+  WebKitGTK (GTK delivers the path; `ReadDroppedFile` returns it).
+- **Path-backed attachments render as links in the bubble.** Anything with a real
+  host path (dropped file or folder) serializes into the *visible* chat bubble as
+  a markdown link `[name](path)`, clickable and routed to the file manager via
+  `OpenExternal`. Previously the bubble showed the bare name as plain text while
+  the composer pill was effectively a link - this is now consistent in both the
+  live and restored bubble. Pathless (browser/pasted) attachments keep the bare
+  name and surface through the "N attachments" badge. Files:
+  `ui/compose.ts` (`serialize`, `attachmentModelBlock`, `pillTag`),
+  `features/messages.ts` (`parseTurnContent`), `features/attachments.ts`,
+  `app.go` (`ReadDroppedFile`/`OpenAttachment`).
+- **Orb layers counter-rotate.** The orb's gradient ring (`.orb-ring`) spins
+  clockwise (`ring-spin`); the inner icon (`.orb-art`) now spins
+  counter-clockwise (`core-counter-spin`, `rotate(-360deg)`) so the two layers
+  read as opposed motion. The thinking-state pulse was moved off `transform`
+  (lighting only) so it composes with the spin instead of fighting its rotate.
+  `style.css`.
+- **Drag overlay is idle-timer driven, not depth-counted.** The "Lepas untuk
+  attach file" highlight is shown once on the first `dragover` and cleared by a
+  single idle timer (re-armed on each `dragover`); there is intentionally **no**
+  `dragenter`/`dragleave` hide path. On WebKitGTK `dragleave` fires on every
+  child crossing (frequently `relatedTarget === null`) while a file is merely
+  *held* over the widget, which previously flickered the class on/off many times
+  a second. `features/drag-overlay.ts`.
 
 ---
 
