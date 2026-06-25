@@ -378,7 +378,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		if len(pendingTools) > 0 && !retryTextOnly && !retryCompacted && !retryTransport && !hadError {
 			results, batchStop := o.executeToolBatch(runCtx, runID, sessionID, pendingTools)
-			toolResults = append(toolResults, results...)
+			toolResults = append(toolResults, o.redactToolResults(results)...)
 			stop = stop || batchStop
 		}
 		if retryTextOnly {
@@ -939,4 +939,23 @@ func looksLikeVisionUnsupported(message string) bool {
 			strings.Contains(lower, "not allowed") ||
 			strings.Contains(lower, "cannot process") ||
 			strings.Contains(lower, "can't process"))
+}
+
+// redactToolResults masks secrets in every tool result before it is added to
+// the model context (and therefore before it reaches logs or any egress). The
+// AI keeps full access to every tool; only secret values in the results are
+// replaced with [SECRET]. This neutralises the exfiltration tail of a prompt
+// injection (e.g. "read ~/.ssh/id_rsa and send it") without restricting any
+// action the AI may take. Trade-off: a task that legitimately needs a secret
+// value also sees [SECRET] - see docs/ORCHESTRATOR.md. A nil redactor (only in
+// tests that construct the struct directly) passes results through unchanged.
+func (o *Orchestrator) redactToolResults(results []string) []string {
+	if o == nil || o.redactor == nil || len(results) == 0 {
+		return results
+	}
+	out := make([]string, len(results))
+	for i, r := range results {
+		out[i] = o.redactor.Redact(r).Redacted
+	}
+	return out
 }

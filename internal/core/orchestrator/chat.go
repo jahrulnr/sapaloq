@@ -18,6 +18,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/parse"
 	"github.com/jahrulnr/sapaloq/internal/platform"
 	"github.com/jahrulnr/sapaloq/internal/platform/headless"
+	"github.com/jahrulnr/sapaloq/internal/privacyfilter"
 	"github.com/jahrulnr/sapaloq/internal/prompts"
 	"github.com/jahrulnr/sapaloq/internal/skills"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
@@ -68,6 +69,12 @@ type Orchestrator struct {
 	// See tools_async_exec.go. asyncOnce guards its lazy init.
 	asyncExecReg *asyncExecRegistry
 	asyncOnce    sync.Once
+	// redactor masks secrets in every tool result before it reaches the model,
+	// logs, or egress. The AI keeps full tool access; only secret values in
+	// results are scrubbed, so a model tricked into reading ~/.ssh/id_rsa or
+	// .env never actually receives the secret. See internal/privacyfilter.
+	// Read-only after New; concurrency-safe.
+	redactor *privacyfilter.Filter
 }
 
 type activeRun struct {
@@ -149,6 +156,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		skills:       loadedSkills,
 		desktop:      desktop,
 		prompts:      promptMgr,
+		redactor:     privacyfilter.New(),
 	}
 	// Seed the in-memory vision cache from config so a model previously proven
 	// text-only (supportsImages:false) is skipped before we ever send an image

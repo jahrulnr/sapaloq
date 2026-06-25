@@ -1,7 +1,7 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-22 (parallel actors, persistent workspace, runtime variables)
+> Last updated: 2026-06-25 (tool-result secret redaction: vendored privacyfilter scrubs secrets from every tool result)
 
 ---
 
@@ -36,6 +36,8 @@
   mediator sharing a bounded session/task snapshot. It cannot write chat. Only
   unresolved decisions emit `decision.escalated` and reach the UI orchestrator.
 - **Sub-agent nodes** - sub-agent as **node** (local or remote Docker/VPS/EC2/SSH); registry SQLite + comm spec ([NODES.md](./NODES.md)).
+- **Tool output is untrusted data** - every tool result fed back to the model is wrapped in `<untrusted_data>…</untrusted_data>` by `toolObservationBody` (`prompt.go`), sanitized so a payload cannot forge a closing tag, and the shared persona prompt tells the model that anything inside those tags is DATA, never instructions. This mitigates the real class of **tool-output prompt injection** (file/web/exec content that genuinely contains hostile text) and raises the floor for weaker models; strong models (e.g. Opus 4.x) already resist it. Non-blocking - it changes framing only, not execution. **Scope note:** the wrapper only covers content that arrives *as tool output*; it does not, and cannot, guard text injected into chat-history/context or at the transport/provider layer (see `docs/STATUS.md` for the inconclusive field-trace attribution). Those require model task-fidelity (persona) and, for a confirmed provider/transport threat, path integrity - not this wrapper.
+- **Tool results are secret-redacted** - every tool result is passed through `redactToolResults` (`conversation.go`) before it enters the model context, using the vendored secrets-only `internal/privacyfilter` (subset of MIT [packyme/privacy-filter](https://github.com/packyme/privacy-filter), no external dep, built-in rules only). Secret *values* (private keys, OpenAI/AWS/GitHub/Slack/Google keys, JWTs, `password:`/`token=` assignments, high-entropy credentials) are replaced with `[SECRET]`. This neutralises the **exfiltration tail** of a prompt injection: even if the model is tricked into `cat ~/.ssh/id_rsa` or reading `.env`, the secret never actually reaches the model, the logs, or any egress. **This is not a sandbox** - the AI keeps full access to every tool; only sensitive values in results are masked (freedom, not a cage). Email/phone/IP are **deliberately left intact** (a credential is what makes "email + IP" a usable VPS login; strip the secret and the combo is defused). The redacted result is still wrapped as `<untrusted_data>`, so the two defences compose. **Trade-off (accepted, documented):** a task that legitimately needs a secret value (e.g. "read the DB password from `.env` and use it") will also see `[SECRET]`.
 
 ---
 
@@ -1284,6 +1286,32 @@ Small by design - anti poisoning.
 `node` references `nodes.name` in SQLite. Default: `local-default`. See [NODES.md](./NODES.md).
 
 Post-task: orchestrator emits `subagent.completed` → **learning-agent** async (prompt/skill builder, optional research).
+
+---
+
+## Peeking at agents (skill-based)
+
+The orchestrator does **not** need a dedicated monitoring tool to inspect
+sub-agents: everything an agent does is written under `state/` as plain JSON +
+logs, and Ask already has `read_file` / `glob` / `list_dir` / `search` / `exec`.
+A shipped default skill, **`peek-agents`** (`internal/skills/defaults/peek-agents/`,
+auto-seeded to `~/SapaLOQ/skills/`), teaches the orchestrator how to read those
+artifacts flexibly via the terminal.
+
+- **Artifacts** (resolve from the injected `state_path` runtime variable):
+  - `state/tasks/<id>/status.json` - outcome: `status`, `result`, `error`, `question`
+  - `state/tasks/<id>/plan.md` - planner output
+  - `state/workers/<id>/health.json` - liveness: `phase`, `last_heartbeat`, `pid`
+  - `state/workers/<id>/error.log` - chronological error trail
+- **Primary path**: internal tools (OS-agnostic, robust) - `glob` the worker
+  health files, `read_file` a task's `status.json`/`error.log`/`plan.md`.
+- **Flexible path**: `exec` with cross-OS examples (bash + PowerShell). The skill
+  bundles `scripts/peek.sh` (POSIX, **no `jq` dependency**) that prints a
+  one-line summary per agent and drills into a single task. JSON parsing uses
+  `read_file` / `python3 -c` / PowerShell `ConvertFrom-Json` - never an assumed
+  `jq` binary.
+- **Read-only**: peeking never edits artifacts; for a live terminal-state wait,
+  prefer `sapaloq_wait` / `sapaloq_get_task_status` over tight file polling.
 
 ---
 
