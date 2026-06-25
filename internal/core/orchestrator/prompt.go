@@ -366,6 +366,30 @@ func toolObservationBody(results []string) string {
 	return strings.Join(wrapped, "\n\n")
 }
 
+// sapaloqControlOpen/Close delimit a message authored by SapaLOQ itself - the
+// orchestrator's own autopilot continuation - as opposed to a genuine message
+// typed by the human user. Both reach the upstream API under the wire "user"
+// role (it is the only role besides assistant/system every provider accepts;
+// Anthropic has no "developer" role and rejects a mid-conversation "system"
+// one), so the ROLE alone cannot tell them apart. These markers do: anything
+// inside them is a SapaLOQ-generated steering message, and the ONLY unmarked
+// "user" turn is the real human. This is the same structural-marker approach
+// already used for tool output (<untrusted_data>), applied to the other class
+// of non-human input. The shared rules prompt tells the model what they mean.
+const (
+	sapaloqControlOpen  = "<sapaloq:autopilot>"
+	sapaloqControlClose = "</sapaloq:autopilot>"
+)
+
+// sapaloqControlBody wraps a SapaLOQ-authored steering message (the autopilot
+// continuation) in the <sapaloq:autopilot> markers so the model can tell it
+// apart from a real human "user" turn. The body is authored by SapaLOQ (not an
+// untrusted payload), so it is wrapped verbatim - no sanitization is needed the
+// way tool output needs it.
+func sapaloqControlBody(text string) string {
+	return sapaloqControlOpen + "\n" + text + "\n" + sapaloqControlClose
+}
+
 // calledToolsNote renders an explicit, in-transcript record of the tools the
 // assistant invoked on a turn, e.g. "[Called tools: sapaloq_spawn_agent]". It
 // is appended to the assistant message so the model sees proof that it acted -

@@ -82,7 +82,12 @@ func (b *sequenceBridge) Complete(_ context.Context, req bridge.Request) (<-chan
 			tool := parse.ToolCall{Name: "sapaloq_get_task_status", Arguments: args}
 			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
 		} else {
+			// Final turn: answer, then signal completion the only way a run
+			// can now end - an explicit terminal tool (no more "tool-less =
+			// stop"). The stop call rides on the same turn as the answer.
 			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "continued"}
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
@@ -101,6 +106,8 @@ func (b *thinkingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan b
 		out <- bridge.StreamEvent{Kind: bridge.EventThinkingDelta, Delta: "let me reason "}
 		out <- bridge.StreamEvent{Kind: bridge.EventThinkingDelta, Delta: "about this"}
 		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "final answer"}
+		stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+		out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
 	return out, nil
@@ -161,12 +168,14 @@ func (b *retryWithoutCloseBridge) ID() string              { return "retry-witho
 func (b *retryWithoutCloseBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
 func (b *retryWithoutCloseBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
 	b.calls++
-	out := make(chan bridge.StreamEvent, 2)
+	out := make(chan bridge.StreamEvent, 4)
 	if b.calls == 1 {
 		out <- bridge.StreamEvent{Kind: bridge.EventError, Error: "provider-bridge: upstream status 500: unavailable"}
 		return out, nil
 	}
 	out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "recovered"}
+	stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+	out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 	out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	return out, nil
 }
@@ -313,7 +322,7 @@ func (b *longSequenceBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps
 func (b *longSequenceBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
 	b.requests++
 	call := b.requests
-	out := make(chan bridge.StreamEvent, 3)
+	out := make(chan bridge.StreamEvent, 4)
 	go func() {
 		defer close(out)
 		if call <= b.tools {
@@ -322,6 +331,8 @@ func (b *longSequenceBridge) Complete(_ context.Context, _ bridge.Request) (<-ch
 			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
 		} else {
 			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "finished"}
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
@@ -454,7 +465,6 @@ func TestRunTurnLoopUnlimitedTurnsStillBoundedByGuards(t *testing.T) {
 		runID:             "actor-unlimited",
 		tools:             []string{"sapaloq_get_task_status"},
 		sink:              chatSink{o: o, out: out},
-		finishOnNoTool:    false,                // executor: only a terminal tool finishes it
 		maxInferenceTurns: unlimitedTurnsBudget, // < 0 → no turn ceiling
 		dispatch: func(context.Context, parse.ToolCall) turnOutcome {
 			return turnOutcome{text: "status", handled: true}
@@ -720,11 +730,10 @@ func TestWallTimeIsIdleNotTotal(t *testing.T) {
 		}
 	}()
 	cfg := turnConfig{
-		sessionID:      "s1",
-		runID:          "actor-busy",
-		tools:          []string{},
-		sink:           chatSink{o: o, out: out},
-		finishOnNoTool: true,
+		sessionID: "s1",
+		runID:     "actor-busy",
+		tools:     []string{},
+		sink:      chatSink{o: o, out: out},
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -757,11 +766,10 @@ func TestWallTimeCancelsStalledRun(t *testing.T) {
 		}
 	}()
 	cfg := turnConfig{
-		sessionID:      "s1",
-		runID:          "actor-stuck",
-		tools:          []string{},
-		sink:           chatSink{o: o, out: out},
-		finishOnNoTool: true,
+		sessionID: "s1",
+		runID:     "actor-stuck",
+		tools:     []string{},
+		sink:      chatSink{o: o, out: out},
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -810,6 +818,8 @@ func (b *malformedToolBridge) Complete(_ context.Context, req bridge.Request) (<
 			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
 		} else {
 			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "here is the answer"}
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
@@ -898,115 +908,37 @@ func TestRunConversationMalformedToolCallIsBounded(t *testing.T) {
 	}
 }
 
-// narrateThenNoOpBridge models a continueUntilNoOp role that narrates progress
-// (tool-less text) for a few turns, then signals completion with the bare NO_OP
-// sentinel. The loop must NOT finish on the narration turns and must finish on
-// the NO_OP turn.
-type narrateThenNoOpBridge struct {
+// repeatingTextBridge always replies with the SAME tool-less text and never
+// calls a terminal tool. Under the new "stop only via terminal tool" model the
+// run must NOT loop forever: the no-progress finish ends it CLEANLY (no error),
+// which is the common case of a model that answers and never says stop.
+type repeatingTextBridge struct {
 	calls    int
-	noOpAt   int
 	requests []bridge.Request
 }
 
-func (b *narrateThenNoOpBridge) ID() string              { return "narrate-then-noop" }
-func (b *narrateThenNoOpBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
-func (b *narrateThenNoOpBridge) Complete(_ context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
+func (b *repeatingTextBridge) ID() string              { return "repeating-text" }
+func (b *repeatingTextBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *repeatingTextBridge) Complete(_ context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
 	b.requests = append(b.requests, req)
 	b.calls++
-	call := b.calls
 	out := make(chan bridge.StreamEvent, 4)
 	go func() {
 		defer close(out)
-		if call >= b.noOpAt {
-			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "NO_OP"}
-		} else {
-			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: fmt.Sprintf("still working on step %d", call)}
-		}
+		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "Hai! Ada yang bisa kubantu?"}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
 	return out, nil
 }
 
-// TestContinueUntilNoOpFinishesOnSentinel proves a continueUntilNoOp role keeps
-// looping through tool-less narration and only finishes when the model replies
-// with the bare NO_OP sentinel.
-func TestContinueUntilNoOpFinishesOnSentinel(t *testing.T) {
-	fake := &narrateThenNoOpBridge{noOpAt: 3}
-	o := &Orchestrator{
-		memoryDir: t.TempDir(),
-		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
-		vision:    make(map[string]bool),
-		active:    make(map[string]*activeRun),
-	}
-	out := make(chan bridge.StreamEvent, 64)
-	go func() {
-		for range out {
-		}
-	}()
-	cfg := turnConfig{
-		sessionID:         "s1",
-		runID:             "actor-noop",
-		tools:             []string{},
-		sink:              chatSink{o: o, out: out},
-		finishOnNoTool:    true,
-		continueUntilNoOp: true,
-	}
-	done := make(chan error, 1)
-	go func() {
-		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
-			cfg:   o.cfg,
-			entry: config.LLMBridge{Key: "test", Model: "model"},
-			br:    fake,
-		}, "task", []bridge.Message{{Role: "user", Content: "go"}}, cfg)
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("continueUntilNoOp run should finish cleanly on NO_OP: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("continueUntilNoOp run did not finish")
-	}
-	close(out)
-	if fake.calls != 3 {
-		t.Fatalf("calls = %d, want it to narrate twice then finish on the NO_OP turn (3)", fake.calls)
-	}
-	// The narration turns must have triggered an internal continue nudge.
-	if len(fake.requests) < 2 {
-		t.Fatalf("expected at least 2 requests, got %d", len(fake.requests))
-	}
-	last := fake.requests[len(fake.requests)-1].Messages
-	nudge := last[len(last)-1].Content
-	if !strings.Contains(nudge, "NO_OP") {
-		t.Fatalf("continue nudge missing NO_OP instruction: %q", nudge)
-	}
-}
-
-// alwaysNarrateBridge never emits NO_OP; a continueUntilNoOp role must still
-// terminate, bounded by maxContinueNudges, instead of narrating forever.
-type alwaysNarrateBridge struct{ calls int }
-
-func (b *alwaysNarrateBridge) ID() string              { return "always-narrate" }
-func (b *alwaysNarrateBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
-func (b *alwaysNarrateBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
-	b.calls++
-	call := b.calls
-	out := make(chan bridge.StreamEvent, 4)
-	go func() {
-		defer close(out)
-		// Vary the text each turn so the no-progress hash guard does not fire;
-		// we want maxContinueNudges to be the bound under test.
-		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: fmt.Sprintf("thinking out loud %d", call)}
-		out <- bridge.StreamEvent{Kind: bridge.EventDone}
-	}()
-	return out, nil
-}
-
-// TestContinueUntilNoOpIsBounded proves a model that never emits NO_OP still
-// terminates: the loop ends once the continue-nudge budget is exhausted.
-func TestContinueUntilNoOpIsBounded(t *testing.T) {
-	fake := &alwaysNarrateBridge{}
+// TestToolLessTurnNeverFinishesOnAbsenceOfTool proves the polarity flip: a
+// tool-less turn does NOT end the run by itself (no "no-tool = stop", no NO_OP
+// sentinel). The run instead continues until the no-progress finish closes it
+// cleanly once the model just repeats itself. It also proves the continuation
+// fed back is the single content-blind nudge (mentions sapaloq_stop, never
+// NO_OP) and is never derived from the model's text.
+func TestToolLessTurnNeverFinishesOnAbsenceOfTool(t *testing.T) {
+	fake := &repeatingTextBridge{}
 	o := &Orchestrator{
 		memoryDir: t.TempDir(),
 		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
@@ -1019,12 +951,10 @@ func TestContinueUntilNoOpIsBounded(t *testing.T) {
 		}
 	}()
 	cfg := turnConfig{
-		sessionID:         "s1",
-		runID:             "actor-noop-bound",
-		tools:             []string{},
-		sink:              chatSink{o: o, out: out},
-		finishOnNoTool:    true,
-		continueUntilNoOp: true,
+		sessionID: "s1",
+		runID:     "actor-toolless",
+		tools:     []string{},
+		sink:      chatSink{o: o, out: out},
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -1032,90 +962,83 @@ func TestContinueUntilNoOpIsBounded(t *testing.T) {
 			cfg:   o.cfg,
 			entry: config.LLMBridge{Key: "test", Model: "model"},
 			br:    fake,
-		}, "task", []bridge.Message{{Role: "user", Content: "go"}}, cfg)
+		}, "task", []bridge.Message{{Role: "user", Content: "hai hai"}}, cfg)
 		done <- err
 	}()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("bounded continueUntilNoOp run should end cleanly, got: %v", err)
+			t.Fatalf("repeating tool-less run should finish cleanly via the no-progress finish: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("continueUntilNoOp run was not bounded")
+		t.Fatal("tool-less run did not finish - it must be bounded by the no-progress finish")
 	}
 	close(out)
-	// 1 initial turn + up to maxContinueNudges (8) nudged retries, then it ends.
-	if fake.calls < 2 || fake.calls > 9 {
-		t.Fatalf("calls = %d, want bounded continue nudges", fake.calls)
+	// It must have continued past the first turn (a tool-less turn is NOT a
+	// stop) and then been bounded - not run away.
+	if fake.calls < 2 {
+		t.Fatalf("calls = %d, want the run to continue past the first tool-less turn", fake.calls)
+	}
+	if fake.calls > config.DefaultOrchestratorConfig().Continuation.MaxNoProgressTurns+2 {
+		t.Fatalf("calls = %d, want the no-progress finish to bound it tightly", fake.calls)
+	}
+	// The continuation fed back must be the single content-blind nudge: it
+	// points at sapaloq_stop and must NOT resurrect the deleted NO_OP sentinel.
+	last := fake.requests[len(fake.requests)-1].Messages
+	cont := last[len(last)-1].Content
+	if !strings.Contains(cont, "sapaloq_stop") {
+		t.Fatalf("continuation should point at the terminal tool, got %q", cont)
+	}
+	if strings.Contains(cont, "NO_OP") {
+		t.Fatalf("continuation must not use the removed NO_OP sentinel, got %q", cont)
+	}
+	// The autopilot continuation is authored by SapaLOQ, not the human, so it
+	// MUST be wrapped in the <sapaloq:autopilot> markers - that is the only
+	// thing letting the model tell it apart from a real user turn (both ride
+	// the wire "user" role).
+	if !strings.Contains(cont, sapaloqControlOpen) || !strings.Contains(cont, sapaloqControlClose) {
+		t.Fatalf("autopilot continuation must be wrapped in <sapaloq:autopilot>…</sapaloq:autopilot>, got %q", cont)
+	}
+	// The genuine human turn (the first message) must NOT carry the marker -
+	// an unmarked user turn is precisely what identifies the real human.
+	if got := last[0].Content; strings.Contains(got, sapaloqControlOpen) {
+		t.Fatalf("the real user turn must stay unmarked, got %q", got)
 	}
 }
 
-// TestLooksLikeContinuationIntent pins the classifier behind continueOnIntent:
-// a tool-less turn that NARRATES a next step keeps the run going, while a final
-// answer finishes immediately.
-func TestLooksLikeContinuationIntent(t *testing.T) {
-	cont := []string{
-		"The nft mock returns a hardcoded item. Let me check the aggregate filter logic and how nft mode is wired.",
-		"I'll read the relevant files next.",
-		"Saya akan membaca file usecase-nya.",
-		"Selanjutnya saya periksa konfigurasi nft.",
-		"Here is my plan:",
-		"Let me enumerate the steps…",
-		"Now let me inspect the wiring.",
-	}
-	for _, s := range cont {
-		if !looksLikeContinuationIntent(s) {
-			t.Errorf("expected continuation intent for %q", s)
-		}
-	}
-	final := []string{
-		"The bug is in buildFilteredHistory; the WithinMonths filter excludes the 2026-06-10 item. Fix the boundary check.",
-		"Selesai. Semua test sudah hijau.",
-		"NO_OP",
-		"Yes, that is correct.",
-		"Done.",
-	}
-	for _, s := range final {
-		if looksLikeContinuationIntent(s) {
-			t.Errorf("did not expect continuation intent for %q", s)
-		}
-	}
+// stopToolBridge narrates for a couple of tool-less turns, then calls the
+// terminal tool. Under the new model ONLY that terminal tool ends the run.
+type stopToolBridge struct {
+	calls   int
+	stopAt  int
+	stopped bool
 }
 
-// narrateThenActBridge reproduces the exact stuck case from the evidence: turn 1
-// narrates a next step WITHOUT a tool call, turn 2 actually calls a tool, turn 3
-// gives the final answer. With continueOnIntent the run must NOT finish after
-// turn 1; it continues, runs the tool, and ends on the final answer.
-type narrateThenActBridge struct {
-	calls    int
-	requests []bridge.Request
-}
-
-func (b *narrateThenActBridge) ID() string              { return "narrate-then-act" }
-func (b *narrateThenActBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
-func (b *narrateThenActBridge) Complete(_ context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
-	b.requests = append(b.requests, req)
+func (b *stopToolBridge) ID() string              { return "stop-tool" }
+func (b *stopToolBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *stopToolBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
 	b.calls++
 	call := b.calls
 	out := make(chan bridge.StreamEvent, 4)
 	go func() {
 		defer close(out)
-		switch call {
-		case 1:
-			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "The nft mock returns a hardcoded item. Let me check how nft mode is wired."}
-		case 2:
-			tool := parse.ToolCall{Name: "read_file", Arguments: []byte(`{"path":"x"}`), Source: "openai"}
+		if call >= b.stopAt {
+			tool := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`), Source: "openai"}
 			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
-		default:
-			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "The bug is the WithinMonths boundary. Fix it."}
+		} else {
+			// Vary the text so the no-progress finish does not close the run
+			// first - we want the terminal tool to be what ends it.
+			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: fmt.Sprintf("working on step %d", call)}
 		}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
 	return out, nil
 }
 
-func TestContinueOnIntentNudgesThenActs(t *testing.T) {
-	fake := &narrateThenActBridge{}
+// TestRunFinishesOnTerminalTool proves the run keeps going through tool-less
+// narration turns and ends exactly when the model calls the terminal tool.
+func TestRunFinishesOnTerminalTool(t *testing.T) {
+	fake := &stopToolBridge{stopAt: 3}
 	o := &Orchestrator{
 		memoryDir: t.TempDir(),
 		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
@@ -1128,144 +1051,18 @@ func TestContinueOnIntentNudgesThenActs(t *testing.T) {
 		}
 	}()
 	cfg := turnConfig{
-		sessionID:        "s1",
-		runID:            "actor-intent",
-		tools:            []string{"read_file"},
-		sink:             chatSink{o: o, out: out},
-		finishOnNoTool:   true,
-		continueOnIntent: true,
-		dispatch: func(context.Context, parse.ToolCall) turnOutcome {
-			return turnOutcome{text: "file contents", handled: true}
+		sessionID: "s1",
+		runID:     "actor-stop",
+		tools:     []string{"sapaloq_stop"},
+		sink:      chatSink{o: o, out: out},
+		dispatch: func(_ context.Context, call parse.ToolCall) turnOutcome {
+			if call.Name == "sapaloq_stop" {
+				fake.stopped = true
+				return turnOutcome{text: "Stopped: done", handled: true, stop: true}
+			}
+			return turnOutcome{}
 		},
 	}
-	done := make(chan struct {
-		all strings.Builder
-		err error
-	}, 1)
-	go func() {
-		all, err := o.runTurnLoop(context.Background(), providerSnapshot{
-			cfg:   o.cfg,
-			entry: config.LLMBridge{Key: "test", Model: "model"},
-			br:    fake,
-		}, "task", []bridge.Message{{Role: "user", Content: "find the bug"}}, cfg)
-		done <- struct {
-			all strings.Builder
-			err error
-		}{all, err}
-	}()
-	select {
-	case r := <-done:
-		if r.err != nil {
-			t.Fatalf("continueOnIntent run should finish cleanly: %v", r.err)
-		}
-		if !strings.Contains(r.all.String(), "Fix it") {
-			t.Fatalf("final answer missing; got %q", r.all.String())
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("continueOnIntent run did not finish")
-	}
-	close(out)
-	if fake.calls != 3 {
-		t.Fatalf("calls = %d, want narrate(1) -> tool(2) -> final(3)", fake.calls)
-	}
-	// The narration turn must have triggered a continue nudge before the tool.
-	nudge := fake.requests[1].Messages[len(fake.requests[1].Messages)-1].Content
-	if !strings.Contains(nudge, "Continue") {
-		t.Fatalf("expected a continue nudge after narration, got %q", nudge)
-	}
-}
-
-// finalAnswerBridge gives a plain final answer with NO continuation cue on its
-// first turn; continueOnIntent must NOT add an extra turn for it.
-type finalAnswerBridge struct{ calls int }
-
-func (b *finalAnswerBridge) ID() string              { return "final-answer" }
-func (b *finalAnswerBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
-func (b *finalAnswerBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
-	b.calls++
-	out := make(chan bridge.StreamEvent, 4)
-	go func() {
-		defer close(out)
-		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "The answer is 42."}
-		out <- bridge.StreamEvent{Kind: bridge.EventDone}
-	}()
-	return out, nil
-}
-
-func TestContinueOnIntentFinalAnswerFinishesImmediately(t *testing.T) {
-	fake := &finalAnswerBridge{}
-	o := &Orchestrator{
-		memoryDir: t.TempDir(),
-		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
-		vision:    make(map[string]bool),
-		active:    make(map[string]*activeRun),
-	}
-	out := make(chan bridge.StreamEvent, 32)
-	go func() {
-		for range out {
-		}
-	}()
-	cfg := turnConfig{
-		sessionID:        "s1",
-		runID:            "actor-final",
-		tools:            []string{},
-		sink:             chatSink{o: o, out: out},
-		finishOnNoTool:   true,
-		continueOnIntent: true,
-	}
-	_, err := o.runTurnLoop(context.Background(), providerSnapshot{
-		cfg:   o.cfg,
-		entry: config.LLMBridge{Key: "test", Model: "model"},
-		br:    fake,
-	}, "task", []bridge.Message{{Role: "user", Content: "q"}}, cfg)
-	close(out)
-	if err != nil {
-		t.Fatalf("final-answer run should finish cleanly: %v", err)
-	}
-	if fake.calls != 1 {
-		t.Fatalf("calls = %d, want a single turn (no extra nudge for a final answer)", fake.calls)
-	}
-}
-
-// alwaysNarrateIntentBridge always narrates a next step but never acts; the
-// continueOnIntent nudge must be bounded so the run still terminates.
-type alwaysNarrateIntentBridge struct{ calls int }
-
-func (b *alwaysNarrateIntentBridge) ID() string              { return "always-narrate-intent" }
-func (b *alwaysNarrateIntentBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
-func (b *alwaysNarrateIntentBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
-	b.calls++
-	call := b.calls
-	out := make(chan bridge.StreamEvent, 4)
-	go func() {
-		defer close(out)
-		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: fmt.Sprintf("Let me check step %d next.", call)}
-		out <- bridge.StreamEvent{Kind: bridge.EventDone}
-	}()
-	return out, nil
-}
-
-func TestContinueOnIntentIsBounded(t *testing.T) {
-	fake := &alwaysNarrateIntentBridge{}
-	o := &Orchestrator{
-		memoryDir: t.TempDir(),
-		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
-		vision:    make(map[string]bool),
-		active:    make(map[string]*activeRun),
-	}
-	out := make(chan bridge.StreamEvent, 128)
-	go func() {
-		for range out {
-		}
-	}()
-	cfg := turnConfig{
-		sessionID:        "s1",
-		runID:            "actor-intent-bound",
-		tools:            []string{},
-		sink:             chatSink{o: o, out: out},
-		finishOnNoTool:   true,
-		continueOnIntent: true,
-	}
 	done := make(chan error, 1)
 	go func() {
 		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
@@ -1278,13 +1075,16 @@ func TestContinueOnIntentIsBounded(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("bounded continueOnIntent run should end cleanly: %v", err)
+			t.Fatalf("run should finish cleanly when the model calls the terminal tool: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("continueOnIntent run was not bounded")
+		t.Fatal("run did not finish on the terminal tool")
 	}
 	close(out)
-	if fake.calls < 2 || fake.calls > 9 {
-		t.Fatalf("calls = %d, want bounded intent nudges", fake.calls)
+	if !fake.stopped {
+		t.Fatal("terminal tool was never dispatched")
+	}
+	if fake.calls != 3 {
+		t.Fatalf("calls = %d, want narrate(1) -> narrate(2) -> stop(3)", fake.calls)
 	}
 }

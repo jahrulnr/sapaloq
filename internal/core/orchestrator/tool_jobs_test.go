@@ -139,11 +139,10 @@ func TestRunTurnLoopDispatchesProviderToolBatchInParallel(t *testing.T) {
 		}
 	}()
 	cfg := turnConfig{
-		sessionID:      "s1",
-		runID:          "actor-1",
-		tools:          []string{"read_file"},
-		sink:           chatSink{o: o, out: out},
-		finishOnNoTool: true,
+		sessionID: "s1",
+		runID:     "actor-1",
+		tools:     []string{"read_file"},
+		sink:      chatSink{o: o, out: out},
 		dispatch: func(context.Context, parse.ToolCall) turnOutcome {
 			started <- struct{}{}
 			<-release
@@ -216,11 +215,10 @@ func TestRunTurnLoopAppliesTargetedSteeringAtSafePoint(t *testing.T) {
 		entry: config.LLMBridge{Key: "test", Model: "model"},
 		br:    fake,
 	}, "task", []bridge.Message{{Role: "user", Content: "implement"}}, turnConfig{
-		sessionID:      "s1",
-		runID:          "agent-1",
-		sink:           chatSink{o: o, out: out},
-		finishOnNoTool: true,
-		dispatch:       func(context.Context, parse.ToolCall) turnOutcome { return turnOutcome{} },
+		sessionID: "s1",
+		runID:     "agent-1",
+		sink:      chatSink{o: o, out: out},
+		dispatch:  func(context.Context, parse.ToolCall) turnOutcome { return turnOutcome{} },
 	})
 	close(out)
 	if err != nil {

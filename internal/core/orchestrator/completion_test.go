@@ -187,8 +187,12 @@ func TestCompletionAnnouncementAuthoredByLLM(t *testing.T) {
 		{{Kind: bridge.EventResponseDelta, Delta: authored}},
 	}}
 
+	// Buffer generously: the announcer now runs through the shared turn loop,
+	// which (under "stop only via terminal tool") continues for a few internal
+	// turns until the no-progress finish. Each turn emits bus events, so a tiny
+	// buffer could drop the final republished completion before we drain it.
 	b := bus.New()
-	events, cancel := b.Subscribe(8)
+	events, cancel := b.Subscribe(128)
 	defer cancel()
 	o := &Orchestrator{chat: store, bus: b, cfg: speakEnabledCfg(), bridge: fake}
 

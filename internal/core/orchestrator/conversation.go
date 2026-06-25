@@ -55,12 +55,10 @@ func (o *Orchestrator) runConversationActor(ctx context.Context, snap providerSn
 	cfg := turnConfig{
 		sessionID:       sessionID,
 		runID:           runID,
-		tools:            askTools,
-		sink:             chatSink{o: o, out: out},
-		finishOnNoTool:   true,
-		continueOnIntent: true,
-		thinkingOut:      thinkingOut,
-		recordToolTurns:  true,
+		tools:           askTools,
+		sink:            chatSink{o: o, out: out},
+		thinkingOut:     thinkingOut,
+		recordToolTurns: true,
 		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
 			res := o.handleAskTool(ctx, snap, out, sessionID, fallbackTask, call)
 			return turnOutcome{text: res.text, handled: res.handled, stop: res.stop}
@@ -143,18 +141,6 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	// finishes instead of looping forever.
 	malformedToolTurns := 0
 	const maxMalformedToolTurns = 3
-
-	// Bounds how many internal "continue" follow-ups a tool-less turn may
-	// receive, shared by both continuation policies:
-	//   - continueUntilNoOp: the model must reply with the bare NO_OP sentinel
-	//     to finish; any other tool-less text gets a nudge to act or emit NO_OP.
-	//   - continueOnIntent: a tool-less turn that NARRATES a next step (but
-	//     deferred the tool call) gets a nudge to act or finalize.
-	// This caps those nudges so a model that narrates forever still terminates
-	// rather than burning turns; the other guards (wall-time, no-progress, turn
-	// cap) remain the outer bounds.
-	continueNudges := 0
-	const maxContinueNudges = 8
 
 	// maxInferenceTurns: a positive value caps the loop; a NEGATIVE value means
 	// UNLIMITED - the loop is then bounded only by the real anomaly guards
@@ -506,63 +492,16 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		if len(toolResults) > 0 {
 			malformedToolTurns = 0
 		}
-		// An explicit stop (sapaloq_stop / terminal tool) always ends the run.
-		// A tool-less turn ends it only for roles that finish naturally (chat,
-		// planner); an executor must signal completion via a terminal tool, so
-		// it keeps looping (bounded by the budgets + loop guards below) until it
-		// does. Narrating without acting is allowed - the budgets, not a
-		// bespoke narration guard, bound a misbehaving model.
-		//
-		// continueUntilNoOp flips the polarity for a finishOnNoTool role: a
-		// tool-less turn no longer ends the run on its own. Only the bare NO_OP
-		// sentinel finishes it; any other tool-less text is "still working" and
-		// gets one internal nudge to act or emit NO_OP, bounded by
-		// maxContinueNudges so a model that never says NO_OP still terminates.
+		// The ONLY explicit end signal is a terminal tool (chat: sapaloq_stop;
+		// sub-agent: sapaloq_complete_task/sapaloq_fail_task), surfaced here as
+		// `stop`. A tool-less turn NEVER ends the run - the absence of a tool
+		// call is not a completion signal, it is just a turn that narrated,
+		// reasoned, or answered without acting. We do NOT inspect the model's
+		// text to guess "done vs still working" (the old NO_OP/intent
+		// tebak-tebakan), and we do NOT use a second model to judge it. The run
+		// simply continues; the structural budgets below (turn cap, idle
+		// wall-time, MaxToolCalls, no-progress hash) are the only bounds.
 		if stop {
-			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
-			return all, nil
-		}
-		if cfg.finishOnNoTool && len(toolResults) == 0 {
-			// continueUntilNoOp role: finish only on the explicit NO_OP signal;
-			// any other tool-less text is "still working" and gets a nudge.
-			if cfg.continueUntilNoOp {
-				if isNoOpResponse(response.String()) {
-					out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
-					return all, nil
-				}
-				if continueNudges < maxContinueNudges {
-					continueNudges++
-					nudge := "If your work is complete, reply with exactly NO_OP and nothing " +
-						"else. Otherwise continue: issue the next tool call to make progress."
-					cleanMessages = append(cleanMessages,
-						bridge.Message{Role: "assistant", Content: response.String()},
-						bridge.Message{Role: "user", Content: nudge},
-					)
-					out.emit(runCtx, statusEvent(sessionID, "continuing - awaiting NO_OP or next tool call"))
-					continue
-				}
-				// Nudge budget exhausted: end rather than narrate forever.
-				out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
-				return all, nil
-			}
-			// continueOnIntent role: a tool-less turn that NARRATES a next step
-			// (but deferred the tool call to the next response) must not end the
-			// run - that is exactly the high-reasoning pattern that finished
-			// chat/planner prematurely. Nudge it to act or finalize, bounded.
-			// A turn that reads like a final answer falls through and finishes.
-			if cfg.continueOnIntent && continueNudges < maxContinueNudges && looksLikeContinuationIntent(response.String()) {
-				continueNudges++
-				nudge := "Continue: if a next step is needed, issue the tool call now. " +
-					"If you are done, reply with the final answer instead of narrating " +
-					"the next step."
-				cleanMessages = append(cleanMessages,
-					bridge.Message{Role: "assistant", Content: response.String()},
-					bridge.Message{Role: "user", Content: nudge},
-				)
-				out.emit(runCtx, statusEvent(sessionID, "continuing - completing the narrated next step"))
-				continue
-			}
-			// Final answer (or budget exhausted): finish the run.
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return all, nil
 		}
@@ -581,19 +520,41 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			lastOutcome = outcome
 			noProgressTurns = 0
 		}
-		// budget.MaxNoProgressTurns <= 0 disables this guard entirely (used to
-		// observe a model's raw behavior without the loop-breaker cutting in).
+		// No-progress finish. Now that the ONLY explicit end signal is a
+		// terminal tool, a model that keeps producing the SAME output without
+		// any new tool result is not "looping" - it has simply run out of things
+		// to do and did not call sapaloq_stop. That is the common case (a normal
+		// chat answer the model never explicitly closes), so we end the run
+		// CLEANLY (EventDone) rather than surfacing a scary "loop detected"
+		// error at the wrong place. Genuine tool-call thrash is bounded
+		// separately by MaxToolCalls / MaxIdenticalToolCalls; runaway narration
+		// is bounded by the turn cap + idle wall-time. budget.MaxNoProgressTurns
+		// <= 0 disables this finish entirely (observe raw model behavior).
 		if budget.MaxNoProgressTurns > 0 && noProgressTurns >= budget.MaxNoProgressTurns {
-			return all, fmt.Errorf("loop detected: no observable progress for %d inference turns", noProgressTurns)
+			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+			return all, nil
 		}
-		// Build the continuation prompt. A tool-less turn for a non-finishing
-		// role (executor narrating intent without acting) gets an explicit nudge
-		// to either act or signal completion; a normal tool turn feeds the
-		// results back as PURE DATA. All the steering that used to ride along
-		// with the tool output (observe/summarize/continue/usage pacing) now
-		// lives in the persona system prompt, so the tool turn stays clean -
-		// just <untrusted_data>-wrapped results - which models reason over best.
+		// Build the continuation prompt. A tool-less turn gets a single neutral,
+		// UNCONDITIONAL nudge - the same text every time, never derived from the
+		// model's response - reminding it that the run continues until it calls
+		// the terminal tool to stop. This is not a judgement of the model's text
+		// (we deleted that); it is just the message that keeps the loop fed so a
+		// tool-less turn doesn't replay an empty transcript. A normal tool turn
+		// instead feeds the results back as PURE DATA. All the steering that used
+		// to ride along with the tool output (observe/summarize/continue/usage
+		// pacing) now lives in the persona system prompt, so the tool turn stays
+		// clean - just <untrusted_data>-wrapped results - which models reason
+		// over best.
 		toolResultsBody := toolObservationBody(toolResults)
+		if len(toolResults) == 0 {
+			// SapaLOQ's own autopilot continuation, NOT a message from the
+			// human user. Wrap it in <sapaloq:autopilot> so the model never
+			// mistakes this system-generated nudge for the user typing
+			// "continue" - the only UNMARKED user turn is the real human.
+			toolResultsBody = sapaloqControlBody("Continue. When the request is fully handled " +
+				"and you have nothing left to do, call sapaloq_stop to finish.")
+			out.emit(runCtx, statusEvent(sessionID, "continuing - call sapaloq_stop to finish"))
+		}
 		// Persist tool results as a "tool" turn so they count toward context
 		// usage and auto-compaction. These messages ARE sent to the model (they
 		// are appended to cleanMessages below and replayed via contextMessages;
@@ -625,8 +586,12 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		// A turn carrying tool output is fed back under the dedicated "tool"
 		// role so the model can tell an observation apart from a user request
-		// (the wire layer maps it to an API-accepted role). A tool-less nudge
-		// is a genuine instruction, so it stays a "user" message.
+		// (the wire layer maps it to an API-accepted role). A tool-less
+		// autopilot continuation goes under "user" (the only role left once
+		// tool/system are unavailable mid-conversation) but its CONTENT is
+		// wrapped in <sapaloq:autopilot> by sapaloqControlBody above, so the
+		// model still distinguishes this system-generated nudge from a real
+		// human "user" turn - the role is "user", the marker says "not human".
 		continuationRole := "user"
 		if len(toolResults) > 0 {
 			continuationRole = "tool"

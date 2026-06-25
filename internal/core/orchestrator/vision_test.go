@@ -10,6 +10,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 func TestImageRejectionDetection(t *testing.T) {
@@ -59,6 +60,8 @@ func (b *visionErrorBridge) Complete(_ context.Context, req bridge.Request) (<-c
 			out <- bridge.StreamEvent{Kind: bridge.EventError, Error: "provider-bridge: upstream status 400: this model does not support image input"}
 		} else {
 			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "text-only answer"}
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
