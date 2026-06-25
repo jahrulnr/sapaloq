@@ -1,8 +1,13 @@
 // Package provider is a multi-model LLM bridge that speaks OpenAI Chat
 // Completions, Anthropic Messages, and Kimi (Moonshot) - selected automatically
 // from config + endpoint URL. The wire layer is the same regardless of
-// parser: HTTP/POST + Server-Sent Events; only the request body shape and
-// per-line event format differ.
+// parser: HTTP/POST; only the request body shape and per-event format differ.
+//
+// Each provider entry chooses its framing via the `stream` config flag
+// (default true): streaming dispatches token deltas as Server-Sent Events,
+// while non-stream sends a single request and parses one complete response.
+// Both paths normalise into the same WireEvent sequence, so the bridge and the
+// orchestrator above are agnostic to which framing produced a turn.
 package provider
 
 import (
@@ -112,6 +117,7 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 		Timeout:         b.entry.RequestTimeout(),
 		IdleTimeout:     b.entry.StreamIdleTimeout(),
 		MaxRetries:      b.entry.ResolveMaxRetries(),
+		Stream:          b.entry.StreamEnabled(),
 	}
 }
 

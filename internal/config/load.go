@@ -392,6 +392,17 @@ type LLMBridge struct {
 	// Retries only ever fire pre-stream, so emitted deltas are never
 	// duplicated. 0 → DefaultMaxRetries; negative disables retries.
 	MaxRetries int `json:"maxRetries,omitempty"`
+	// Stream toggles SSE streaming for the provider-bridge driver. It is a
+	// tri-state: nil (field absent) and true both mean "stream token deltas as
+	// Server-Sent Events" (the default, what every config has used so far);
+	// false means "send a single non-stream request and parse one complete
+	// response". Non-stream is useful for gateways/endpoints that buffer or
+	// don't support SSE, and for callers that prefer one atomic response over
+	// incremental deltas. It changes only the wire framing - the bridge still
+	// emits the same StreamEvent sequence to the orchestrator (a non-stream
+	// turn surfaces as one batch of events followed by done). Ignored by the
+	// cursor-bridge driver, which has its own transport. nil → true.
+	Stream *bool `json:"stream,omitempty"`
 }
 
 // DefaultRequestTimeoutSec is the per-inference-request timeout when a provider
@@ -457,6 +468,17 @@ func (b LLMBridge) ResolveMaxRetries() int {
 	default:
 		return n
 	}
+}
+
+// StreamEnabled reports whether the provider-bridge should use SSE streaming
+// for this entry. The field is tri-state via a *bool so an absent value keeps
+// the historical default (streaming) and is backward-compatible with every
+// existing config: nil → true, otherwise the explicit value.
+func (b LLMBridge) StreamEnabled() bool {
+	if b.Stream == nil {
+		return true
+	}
+	return *b.Stream
 }
 
 // LLMBridgeRoot is the top-level llmBridge config block - registry of

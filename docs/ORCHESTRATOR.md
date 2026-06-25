@@ -155,6 +155,13 @@ Per-role limits (defaults): `task-runner: 2`, `planner: 1`, `research: 1`, other
 
 Provider-bridge backends (OpenAI/Claude/Kimi/OpenRouter/TokenRouter/etc.) do not get Cursor's native IDE tool set. SapaLOQ exposes **role-scoped canonical tools** instead. Tool availability is resolved by role/mode before each LLM request; never expose Agent tools to Ask.
 
+**Streaming vs non-stream framing (provider-bridge only).** Each provider entry chooses its wire framing via the `stream` config flag (tri-state `*bool`, default `true`; resolved by `LLMBridge.StreamEnabled()`):
+
+- `stream: true` (or omitted) - the historical default. `Stream()` (`internal/bridges/provider/wire.go`) opens an HTTP/SSE connection and dispatches token deltas as they arrive, with the per-event idle watchdog (`StreamIdleTimeoutSec`) catching a wedged stream.
+- `stream: false` - `Stream()` routes to `complete()` (`internal/bridges/provider/complete.go`): one request with `stream:false` in the body, the full JSON response read and parsed once into the **same `WireEvent` sequence** the SSE handlers emit (thinking → text → tool calls). Useful for gateways/endpoints that buffer or don't support SSE.
+
+Both paths normalise into the same `WireEvent`s and flow through the same `handleWireEvent` (think-splitter, leak-scanner), so the bridge and the orchestrator are **agnostic** to which framing produced a turn - a non-stream turn simply surfaces as one batch of events followed by `done`. The same pre-stream retry budget (`maxRetries`, exponential backoff + jitter) applies; for non-stream the *whole* call is pre-stream, so a transient failure at any point is safe to retry without duplicating output. `cursor-bridge` ignores this flag (it has its own transport).
+
 | SapaLOQ mode | Role | Declared tools profile | Policy |
 |--------------|------|------------------------|--------|
 | **Ask** | `orchestrator` | spawn/status/clarification, assessment, web, light `desktop_*`, `exec` | Coordinate and explore; do not mutate task artifacts directly |

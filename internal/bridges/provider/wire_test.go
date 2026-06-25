@@ -65,6 +65,7 @@ func TestStreamOpenAIEndToEnd(t *testing.T) {
 		Messages:      []bridge.Message{{Role: "user", Content: "hi"}},
 		DeclaredTools: []string{"echo"},
 		Timeout:       5 * time.Second,
+		Stream:        true,
 	}
 
 	var events []WireEvent
@@ -152,6 +153,7 @@ func TestStreamKimiEndToEnd(t *testing.T) {
 		Messages:        []bridge.Message{{Role: "user", Content: "hi"}},
 		ReasoningEffort: "high",
 		Timeout:         5 * time.Second,
+		Stream:          true,
 	}
 
 	var events []WireEvent
@@ -224,6 +226,7 @@ func TestStreamClaudeEndToEnd(t *testing.T) {
 		Model:      "claude-sonnet-4-5",
 		Messages:   []bridge.Message{{Role: "user", Content: "hi"}},
 		Timeout:    5 * time.Second,
+		Stream:     true,
 	}
 
 	var events []WireEvent

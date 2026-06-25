@@ -69,6 +69,11 @@
           "maximum": 10,
           "default": 5,
           "description": "provider-bridge only. Extra attempts on a transient PRE-STREAM failure (connection error, or status 408/429/5xx) with exponential backoff + jitter. Retries never fire once SSE deltas start, so output is never duplicated. Mitigates flaky gateway 500s (e.g. Vercel AI Gateway behind api.blackbox.ai for Anthropic models). 0 → 5; -1 disables retries; clamped to 10."
+        },
+        "stream": {
+          "type": "boolean",
+          "default": true,
+          "description": "provider-bridge only. true (or omitted) streams token deltas as Server-Sent Events; false sends a single non-stream request and parses one complete response. Use false for gateways/endpoints that buffer or don't support SSE. Wire framing only - the bridge emits the same StreamEvent sequence either way (a non-stream turn surfaces as one batch of events + done). Ignored by cursor-bridge."
         }
       }
     }

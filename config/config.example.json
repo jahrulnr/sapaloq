@@ -56,7 +56,8 @@
         "credentialsEnv": "BLACKBOX_API_KEY",
         "parser": "openai",
         "contextWindow": 131072,
-        "maxRetries": 5
+        "maxRetries": 5,
+        "stream": true
       }
     ]
   },

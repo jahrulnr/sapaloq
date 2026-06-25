@@ -53,6 +53,13 @@ type WireOptions struct {
 	// 5xx). Retries fire only before the first SSE byte is dispatched, so no
 	// emitted delta is ever duplicated. Zero disables retries.
 	MaxRetries int
+	// Stream selects the wire framing. true (the default) opens an SSE stream
+	// and dispatches token deltas as they arrive; false sends a single
+	// non-stream request and parses one complete response, surfaced through the
+	// same WireHandler as one batch of WireEvents. Use false for gateways that
+	// buffer or don't support SSE. The IdleTimeout idle-gap check only applies
+	// to the streaming path (a non-stream call is bounded by Timeout alone).
+	Stream bool
 }
 
 // WireEvent is what the wire layer pushes back into the bridge.
@@ -71,6 +78,12 @@ type WireHandler func(ev WireEvent) bool
 func Stream(ctx context.Context, opts WireOptions, onEvent WireHandler) error {
 	if opts.Token == "" {
 		return fmt.Errorf("provider-bridge: token is required (set %s)", opts.Auth)
+	}
+	// Non-stream mode: one request, one complete response, parsed into the same
+	// WireEvents the SSE handlers emit. The bridge layer is agnostic to which
+	// path produced them.
+	if !opts.Stream {
+		return complete(ctx, opts, onEvent)
 	}
 	switch opts.Parser {
 	case ParserClaude:
@@ -125,7 +138,7 @@ func streamClaude(ctx context.Context, opts WireOptions, on WireHandler) error {
 func buildOpenAIRequestBody(opts WireOptions, fallbackModel string) ([]byte, error) {
 	req := openAIRequest{
 		Model:    defaultIfEmpty(opts.Model, fallbackModel),
-		Stream:   true,
+		Stream:   opts.Stream,
 		Messages: buildOpenAIMessages(opts.Messages, opts.Images),
 	}
 	if opts.ReasoningEffort != "" {
@@ -145,7 +158,7 @@ func buildOpenAIRequestBody(opts WireOptions, fallbackModel string) ([]byte, err
 func buildKimiRequestBody(opts WireOptions, fallbackModel string) ([]byte, error) {
 	req := openAIRequest{
 		Model:    defaultIfEmpty(opts.Model, fallbackModel),
-		Stream:   true,
+		Stream:   opts.Stream,
 		Messages: buildOpenAIMessages(opts.Messages, opts.Images),
 	}
 	if opts.ReasoningEffort != "" {
@@ -166,7 +179,7 @@ func buildKimiRequestBody(opts WireOptions, fallbackModel string) ([]byte, error
 func buildClaudeRequestBody(opts WireOptions, fallbackModel string) ([]byte, error) {
 	req := claudeRequest{
 		Model:     defaultIfEmpty(opts.Model, fallbackModel),
-		Stream:    true,
+		Stream:    opts.Stream,
 		MaxTokens: 8192,
 		Messages:  buildClaudeMessages(opts.Messages, opts.Images),
 	}
