@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-25 (tool-result **secret redaction** via vendored `privacyfilter`; tool output wrapped as `<untrusted_data>`; peek-agents default skill; provider-bridge pre-stream retry)
+> Last updated: 2026-06-25 (**tool turns are now pure `<untrusted_data>` data**: all steering moved into the `rules.md` system prompt (`## Working with tool output`), usage-readout removed, `[Called tools: …]` leak fixed; shared **`rules.md`** project-grounding prompt layer prepended to every role; tool-result **secret redaction** via vendored `privacyfilter`; peek-agents default skill; provider-bridge pre-stream retry)
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -135,6 +135,68 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   closer), and case-insensitive sanitizer variants (unrelated `<…>` untouched).
 - **Docs.** `docs/ORCHESTRATOR.md` (Ringkasan bullet), `docs/PROMPT-BUILDER-SOP.md`
   (persona baseline now carries the guard).
+
+---
+
+## Implemented this session (2026-06-25) - tool turns are pure data; steering moved to system prompt
+
+- **Need (field-traced).** A live Opus 4.x agent run (`orch-task-…173`) showed the
+  per-turn tool-result framing was *steering the agent from the `user`/`tool`
+  role* and degrading it: each tool turn carried `toolObservationBody`'s prose
+  ("Tool output observed (for your reasoning only - summarize … do not copy
+  verbatim …)") + `continueWithResultsSuffix` + a `usageReadout`
+  ("Usage turn N · tool-calls so far M"). Mixing rules into the data turn is the
+  opposite of what models prefer (rules in the **system** prompt, tool output as
+  **data**). Separately, the `[Called tools: …]` note **leaked into the
+  user-facing answer** (visible in the widget).
+- **Steering → system prompt.** All the tool-output handling rules now live once
+  in `internal/prompts/defaults/rules.md` (the `## Working with tool output`
+  section, inherited by every role): the `<untrusted_data>` guard, "reason then
+  continue the original request", and "summarize in your own words, never paste
+  raw output verbatim". (These rules are operational, so they belong in the
+  `rules` layer, not the `persona` character layer.)
+- **Tool turn → pure data.** `toolObservationBody` (`prompt.go`) now returns
+  **only** the `<untrusted_data>…</untrusted_data>`-wrapped results (sanitizer +
+  anti-bypass unchanged) - no instruction prose. `continueWithResultsSuffix` and
+  `usageReadout` are **removed**; the continuation built in `conversation.go` is
+  just the wrapped data.
+- **`[Called tools: …]` leak fixed (format mismatch).** `calledToolsNote` emitted
+  the note **unbracketed** (`"Called tools: …"`) while `calledToolsFilter` only
+  strips the bracketed `"[Called tools: "` prefix, so every echo leaked. The note
+  is now bracketed (`"[Called tools: …]"`) so the producer and the stripper match.
+- **Tests.** `tool_observation_test.go` (body is pure wrapped data, no prose;
+  anti-bypass still holds), `conversation_test.go` (`TestRunConversationFeedsToolResultsAsPureData`
+  replaces the usage-readout test; `TestCalledToolsNote` expects brackets),
+  `called_tools_filter_test.go` (`TestCalledToolsFilterStripsRealNote` drives the
+  real `calledToolsNote` output through the filter so they can't drift again),
+  `persona_test.go` unchanged (marker still present).
+- **Docs.** `docs/ORCHESTRATOR.md` (tool-output bullet + usage-readout removal),
+  `docs/PROMPT-BUILDER-SOP.md` (persona now owns tool-output rules).
+
+---
+
+## Implemented this session (2026-06-25) - shared `rules.md` project-grounding layer
+
+- **Need.** Every mode (ask/planner/agent/scribe) should ground itself in a
+  project's own rules before acting - read `AGENTS.md` / `AGENT.md` /
+  `README.md` / `**/skills/**/SKILL.md` when present - without duplicating that
+  instruction into each role file. The repo `AGENTS.md` is a contributor doc and
+  is **not** loaded by the runtime; this closes that gap on the AI side.
+- **Decision.** A second **role-agnostic shared layer** alongside the persona,
+  not a new mode. New default `internal/prompts/defaults/rules.md`, role key
+  `prompts.RoleRules = "rules"` registered in `prompts.go` (`fileFor`, `roles`),
+  embedded + materialized like every other prompt (editable at
+  `~/SapaLOQ/prompts/rules.md`, upgrade-if-unmodified via the sha256 manifest).
+- **Wiring.** `Orchestrator.systemPrompt(role)` now composes **persona → rules →
+  role** (joined by `\n\n---\n\n`). Each shared layer is never wrapped around
+  itself (`systemPrompt("rules")`/`("persona")` return the bare layer) and an
+  empty/missing layer is a no-op.
+- **Tests.** `internal/core/orchestrator/persona_test.go`:
+  `TestSystemPromptComposesPersonaRulesRole` (persona<rules<role ordering across
+  all roles) + `TestSystemPromptRulesNotDoubleWrapped`. `prompts_test.go` sync
+  + fallback lists extended to include `rules.md`/`RoleRules`.
+- **Docs.** `docs/PROMPT-BUILDER-SOP.md` (new "Shared rules (project grounding)"
+  section + updated composition diagram + embedded file list).
 
 ---
 

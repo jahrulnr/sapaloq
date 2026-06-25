@@ -525,11 +525,11 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		// Build the continuation prompt. A tool-less turn for a non-finishing
 		// role (executor narrating intent without acting) gets an explicit nudge
-		// to either act or signal completion; a normal tool turn gets the
-		// standard "continue using these results" follow-up.
-		// The literal continuation strings the model sees live in prompt.go
-		// (toolObservationBody / continueWithResultsSuffix / usageReadout) so
-		// every model-facing prompt fragment has one auditable home.
+		// to either act or signal completion; a normal tool turn feeds the
+		// results back as PURE DATA. All the steering that used to ride along
+		// with the tool output (observe/summarize/continue/usage pacing) now
+		// lives in the persona system prompt, so the tool turn stays clean -
+		// just <untrusted_data>-wrapped results - which models reason over best.
 		toolResultsBody := toolObservationBody(toolResults)
 		// Persist tool results as a "tool" turn so they count toward context
 		// usage and auto-compaction. These messages ARE sent to the model (they
@@ -543,10 +543,6 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			_ = o.chat.AppendTurn(ctx, sessionID, "tool", toolResultsBody, estimateTextTokens(toolResultsBody))
 		}
 		continuation := toolResultsBody
-		if len(toolResults) > 0 {
-			continuation += continueWithResultsSuffix()
-		}
-		continuation += usageReadout(inferenceTurn, toolCalls)
 		// Record the tool calls this turn actually made into the assistant
 		// message. response.String() carries only the model's text deltas - not
 		// the tool_call itself - so without this the next turn sees the model's

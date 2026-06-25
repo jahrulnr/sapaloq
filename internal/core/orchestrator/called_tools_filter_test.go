@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"strings"
 	"testing"
+
+	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 // feedAll streams the deltas through a fresh filter and returns the
@@ -24,6 +26,31 @@ func TestCalledToolsFilterDropsCompleteMarker(t *testing.T) {
 	got := feedAll("oke.[Called tools: write_file]")
 	if got != "oke." {
 		t.Fatalf("complete marker not dropped: %q", got)
+	}
+}
+
+// TestCalledToolsFilterStripsRealNote is the regression for the format-mismatch
+// leak (orch-task-…173, the "Called tools: exec" bleed into the user-facing
+// answer): the filter must strip the EXACT string calledToolsNote produces.
+// Before the fix the note was emitted unbracketed ("Called tools: …") while the
+// filter only matched the bracketed "[Called tools: " prefix, so every echoed
+// note leaked. Driving the real note through the filter keeps the producer and
+// the stripper in lockstep.
+func TestCalledToolsFilterStripsRealNote(t *testing.T) {
+	mk := func(names ...string) []scheduledTool {
+		tools := make([]scheduledTool, 0, len(names))
+		for _, n := range names {
+			tools = append(tools, scheduledTool{call: parse.ToolCall{Name: n}})
+		}
+		return tools
+	}
+	note := calledToolsNote(mk("exec", "read_file", "exec"))
+	if note == "" {
+		t.Fatal("precondition: note should be non-empty")
+	}
+	got := feedAll("Selesai memeriksa form.\n\n" + note)
+	if want := "Selesai memeriksa form.\n\n"; got != want {
+		t.Fatalf("real calledToolsNote echo not stripped:\n note=%q\n  got=%q\n want=%q", note, got, want)
 	}
 }
 

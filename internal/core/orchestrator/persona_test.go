@@ -10,6 +10,9 @@ import (
 // personaMarker is a stable phrase from internal/prompts/defaults/persona.md.
 const personaMarker = "Contract first"
 
+// rulesMarker is a stable phrase from internal/prompts/defaults/rules.md.
+const rulesMarker = "Read the project's rule files first"
+
 // TestSystemPromptPrependsPersona proves SapaLOQ's shared persona is woven into
 // every role's system prompt, while the role's own instructions are preserved.
 func TestSystemPromptPrependsPersona(t *testing.T) {
@@ -36,6 +39,55 @@ func TestSystemPromptPrependsPersona(t *testing.T) {
 		if pi, ri := strings.Index(got, personaMarker), strings.Index(got, tc.roleMarker); pi > ri {
 			t.Fatalf("systemPrompt(%q): persona should precede role content (persona@%d role@%d)", tc.role, pi, ri)
 		}
+	}
+}
+
+// TestSystemPromptComposesPersonaRulesRole proves the shared layers are woven
+// into every role's system prompt in the order persona → rules → role, with the
+// role's own instructions preserved.
+func TestSystemPromptComposesPersonaRulesRole(t *testing.T) {
+	o := &Orchestrator{} // nil prompt manager → embedded defaults via rolePrompt
+
+	cases := []struct {
+		role       string
+		roleMarker string // a phrase unique to that role's own prompt
+	}{
+		{prompts.RoleAsk, "Ask orchestrator"},
+		{prompts.RolePlanner, "planner"},
+		{prompts.RoleAgent, "executor"},
+		{prompts.RoleScribe, "scribe_write_note"},
+	}
+	for _, tc := range cases {
+		got := o.systemPrompt(tc.role)
+		pi := strings.Index(got, personaMarker)
+		ri := strings.Index(got, rulesMarker)
+		ci := strings.Index(got, tc.roleMarker)
+		if pi < 0 {
+			t.Fatalf("systemPrompt(%q) missing persona marker %q", tc.role, personaMarker)
+		}
+		if ri < 0 {
+			t.Fatalf("systemPrompt(%q) missing rules marker %q", tc.role, rulesMarker)
+		}
+		if ci < 0 {
+			t.Fatalf("systemPrompt(%q) lost its role content (marker %q)", tc.role, tc.roleMarker)
+		}
+		// Order must be persona → rules → role.
+		if !(pi < ri && ri < ci) {
+			t.Fatalf("systemPrompt(%q): expected order persona<rules<role (persona@%d rules@%d role@%d)", tc.role, pi, ri, ci)
+		}
+	}
+}
+
+// TestSystemPromptRulesNotDoubleWrapped proves asking for the rules role itself
+// returns the bare rules layer, not the shared layers prepended to it.
+func TestSystemPromptRulesNotDoubleWrapped(t *testing.T) {
+	o := &Orchestrator{}
+	got := o.systemPrompt(prompts.RoleRules)
+	if strings.Contains(got, personaMarker) {
+		t.Fatalf("rules role should not carry the persona layer")
+	}
+	if got != prompts.Default(prompts.RoleRules) {
+		t.Fatalf("systemPrompt(rules) should equal the bare rules default")
 	}
 }
 

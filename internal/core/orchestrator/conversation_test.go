@@ -258,10 +258,12 @@ func TestRunConversationContinuesAfterToolResult(t *testing.T) {
 	}
 }
 
-// TestRunConversationInjectsUsageReadout verifies the continuation message sent
-// back to the model carries a lightweight, informational usage readout (turn +
-// tool-calls so far) so the model has self-awareness to pace its own work.
-func TestRunConversationInjectsUsageReadout(t *testing.T) {
+// TestRunConversationFeedsToolResultsAsPureData verifies the continuation
+// message sent back to the model is PURE DATA: the tool result wrapped in
+// <untrusted_data> tags, with none of the old steering (observe/summarize/
+// continue) or usage-readout text. All that steering now lives in the persona
+// system prompt; the tool turn stays clean so the model reasons over it best.
+func TestRunConversationFeedsToolResultsAsPureData(t *testing.T) {
 	fake := &sequenceBridge{}
 	orch := &Orchestrator{
 		memoryDir: t.TempDir(),
@@ -289,11 +291,15 @@ func TestRunConversationInjectsUsageReadout(t *testing.T) {
 	// The 2nd request's last message is the continuation we built after turn 1
 	// (which made exactly one tool call).
 	got := fake.requests[1].Messages[len(fake.requests[1].Messages)-1].Content
-	if !strings.Contains(got, "--\n\nUsage") {
-		t.Fatalf("continuation missing usage readout: %q", got)
+	// Pure data: wrapped in <untrusted_data>, carrying the tool result.
+	if !strings.Contains(got, "<untrusted_data>") || !strings.Contains(got, "</untrusted_data>") {
+		t.Fatalf("continuation should wrap tool results in <untrusted_data>: %q", got)
 	}
-	if !strings.Contains(got, "tool-calls so far 1") {
-		t.Fatalf("usage readout should report 1 tool call so far: %q", got)
+	// No steering / usage-readout text should ride along anymore.
+	for _, banned := range []string{"Usage", "tool-calls so far", "Tool output observed", "Continue the original request"} {
+		if strings.Contains(got, banned) {
+			t.Fatalf("continuation should not contain steering text %q: %q", banned, got)
+		}
 	}
 }
 
@@ -580,10 +586,10 @@ func TestCalledToolsNote(t *testing.T) {
 		want  string
 	}{
 		{"none", nil, ""},
-		{"single", mk("sapaloq_spawn_agent"), "Called tools: sapaloq_spawn_agent"},
-		{"multiple distinct", mk("read_file", "exec"), "Called tools: read_file, exec"},
-		{"duplicates collapse", mk("sapaloq_spawn_agent", "sapaloq_spawn_agent"), "Called tools: sapaloq_spawn_agent ×2"},
-		{"mixed", mk("exec", "read_file", "exec"), "Called tools: exec ×2, read_file"},
+		{"single", mk("sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent]"},
+		{"multiple distinct", mk("read_file", "exec"), "[Called tools: read_file, exec]"},
+		{"duplicates collapse", mk("sapaloq_spawn_agent", "sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent ×2]"},
+		{"mixed", mk("exec", "read_file", "exec"), "[Called tools: exec ×2, read_file]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
