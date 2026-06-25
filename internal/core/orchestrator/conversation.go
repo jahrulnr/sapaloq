@@ -55,11 +55,12 @@ func (o *Orchestrator) runConversationActor(ctx context.Context, snap providerSn
 	cfg := turnConfig{
 		sessionID:       sessionID,
 		runID:           runID,
-		tools:           askTools,
-		sink:            chatSink{o: o, out: out},
-		finishOnNoTool:  true,
-		thinkingOut:     thinkingOut,
-		recordToolTurns: true,
+		tools:            askTools,
+		sink:             chatSink{o: o, out: out},
+		finishOnNoTool:   true,
+		continueOnIntent: true,
+		thinkingOut:      thinkingOut,
+		recordToolTurns:  true,
 		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
 			res := o.handleAskTool(ctx, snap, out, sessionID, fallbackTask, call)
 			return turnOutcome{text: res.text, handled: res.handled, stop: res.stop}
@@ -142,6 +143,18 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	// finishes instead of looping forever.
 	malformedToolTurns := 0
 	const maxMalformedToolTurns = 3
+
+	// Bounds how many internal "continue" follow-ups a tool-less turn may
+	// receive, shared by both continuation policies:
+	//   - continueUntilNoOp: the model must reply with the bare NO_OP sentinel
+	//     to finish; any other tool-less text gets a nudge to act or emit NO_OP.
+	//   - continueOnIntent: a tool-less turn that NARRATES a next step (but
+	//     deferred the tool call) gets a nudge to act or finalize.
+	// This caps those nudges so a model that narrates forever still terminates
+	// rather than burning turns; the other guards (wall-time, no-progress, turn
+	// cap) remain the outer bounds.
+	continueNudges := 0
+	const maxContinueNudges = 8
 
 	// maxInferenceTurns: a positive value caps the loop; a NEGATIVE value means
 	// UNLIMITED - the loop is then bounded only by the real anomaly guards
@@ -499,7 +512,57 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// it keeps looping (bounded by the budgets + loop guards below) until it
 		// does. Narrating without acting is allowed - the budgets, not a
 		// bespoke narration guard, bound a misbehaving model.
-		if stop || (cfg.finishOnNoTool && len(toolResults) == 0) {
+		//
+		// continueUntilNoOp flips the polarity for a finishOnNoTool role: a
+		// tool-less turn no longer ends the run on its own. Only the bare NO_OP
+		// sentinel finishes it; any other tool-less text is "still working" and
+		// gets one internal nudge to act or emit NO_OP, bounded by
+		// maxContinueNudges so a model that never says NO_OP still terminates.
+		if stop {
+			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+			return all, nil
+		}
+		if cfg.finishOnNoTool && len(toolResults) == 0 {
+			// continueUntilNoOp role: finish only on the explicit NO_OP signal;
+			// any other tool-less text is "still working" and gets a nudge.
+			if cfg.continueUntilNoOp {
+				if isNoOpResponse(response.String()) {
+					out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+					return all, nil
+				}
+				if continueNudges < maxContinueNudges {
+					continueNudges++
+					nudge := "If your work is complete, reply with exactly NO_OP and nothing " +
+						"else. Otherwise continue: issue the next tool call to make progress."
+					cleanMessages = append(cleanMessages,
+						bridge.Message{Role: "assistant", Content: response.String()},
+						bridge.Message{Role: "user", Content: nudge},
+					)
+					out.emit(runCtx, statusEvent(sessionID, "continuing - awaiting NO_OP or next tool call"))
+					continue
+				}
+				// Nudge budget exhausted: end rather than narrate forever.
+				out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+				return all, nil
+			}
+			// continueOnIntent role: a tool-less turn that NARRATES a next step
+			// (but deferred the tool call to the next response) must not end the
+			// run - that is exactly the high-reasoning pattern that finished
+			// chat/planner prematurely. Nudge it to act or finalize, bounded.
+			// A turn that reads like a final answer falls through and finishes.
+			if cfg.continueOnIntent && continueNudges < maxContinueNudges && looksLikeContinuationIntent(response.String()) {
+				continueNudges++
+				nudge := "Continue: if a next step is needed, issue the tool call now. " +
+					"If you are done, reply with the final answer instead of narrating " +
+					"the next step."
+				cleanMessages = append(cleanMessages,
+					bridge.Message{Role: "assistant", Content: response.String()},
+					bridge.Message{Role: "user", Content: nudge},
+				)
+				out.emit(runCtx, statusEvent(sessionID, "continuing - completing the narrated next step"))
+				continue
+			}
+			// Final answer (or budget exhausted): finish the run.
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return all, nil
 		}

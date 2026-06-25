@@ -63,6 +63,7 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 		tools:             o.toolsForRole(record.Role),
 		sink:              &subagentSink{o: o, taskID: record.ID},
 		finishOnNoTool:    record.Role != "task-runner",
+		continueOnIntent:  record.Role != "task-runner",
 		maxInferenceTurns: o.roleMaxTurns(record.Role),
 		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
 			o.publishTaskActivity(sessionID, *record, "Menjalankan `"+call.Name+"`.")
