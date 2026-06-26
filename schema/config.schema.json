@@ -278,7 +278,12 @@
             "maxWallTimeMinutes": { "type": "integer", "minimum": 1, "default": 30 },
             "maxNoProgressTurns": { "type": "integer", "minimum": 1, "default": 5 },
             "maxIdenticalToolCalls": { "type": "integer", "minimum": 1, "default": 5 },
-            "maxWaitSeconds": { "type": "integer", "minimum": 1, "default": 120 }
+            "maxWaitSeconds": { "type": "integer", "minimum": 1, "default": 120 },
+            "earlyToolExecution": {
+              "type": "boolean",
+              "default": false,
+              "description": "Experimental. When true, read-only assessment tools (read_file/search/list_dir/glob/read_image/web_search/web_fetch) detected in the live stream are dispatched before the turn's EventDone, so their results are computed in parallel with the rest of the stream. Off by default until validated against native + inline tool bridges."
+            }
           }
         },
         "compaction": {
@@ -288,7 +293,14 @@
             "backgroundThreshold": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.7 },
             "blockingThreshold": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.88 },
             "preserveRecentFraction": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.3 },
-            "resumeAfterCompaction": { "type": "boolean", "default": true }
+            "resumeAfterCompaction": { "type": "boolean", "default": true },
+            "useCheckpoints": { "type": "boolean", "default": true, "description": "Enables the LLM-authored checkpoint compaction model. When false, the legacy heuristic compaction path is used." },
+            "headroomPercent": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.05, "description": "Fraction of the context window that must remain free before forced compaction fires (0.05 = 5% headroom, fires at 95% used)." },
+            "steerPercent": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.85, "description": "Context usage at which autopilot suggests sapaloq_compact_session (non-blocking). Should be below the headroom threshold." },
+            "keepRecentTurns": { "type": "integer", "minimum": 1, "default": 4, "description": "Max turns retained in the post-checkpoint tail (in addition to the anchored last assistant turn)." },
+            "preserveLastAgentTurn": { "type": "boolean", "default": true, "description": "Hard rule: the post-checkpoint tail always includes the last assistant turn. Not disableable in v1." },
+            "preservePrecedingUserTurn": { "type": "boolean", "default": true, "description": "Also keep the user turn immediately before the anchored last assistant turn." },
+            "maxForceRetries": { "type": "integer", "minimum": 1, "default": 3, "description": "Max forced-compaction turn retries if the model refuses sapaloq_compact_session before the run errors out." }
           }
         },
         "antiContextPoisoning": {
@@ -347,6 +359,12 @@
             "speakOnTerminal": { "type": "boolean", "default": true, "description": "Inject a spoken assistant turn into the task session on done/failed/awaiting so a completion landing AFTER sapaloq_wait is still surfaced in chat (not just a card)." },
             "workerErrorLog": { "type": "boolean", "default": true, "description": "Write a per-worker error-only log at memory/workers/<task-id>/error.log for debugging." }
           }
+        },
+        "defaultContextWindowTokens": {
+          "type": "integer",
+          "minimum": 1024,
+          "default": 131072,
+          "description": "Fallback context window (tokens) used when a provider entry does not declare its own contextWindow. This is the tunable 'max context' floor for the context pill and compaction thresholds; moved out of a hardcoded code constant so it is configurable per install."
         },
         "clarification": {
           "type": "object",

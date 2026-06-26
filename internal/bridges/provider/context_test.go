@@ -119,3 +119,50 @@ func TestFitMessagesToContextPreservesRecentContent(t *testing.T) {
 		}
 	}
 }
+
+// TestFitMessagesToContextPreservesAllLeadingSystemMessages locks in the
+// post-checkpoint requirement: the Ask path stacks several leading system
+// messages (persona + runtime + negative guidance + prefetch + skills + the
+// checkpoint summary), and FitMessagesToContext must keep ALL of them at the
+// front when it trims the body - not just the first one. Dropping any
+// scaffolding block would break the next turn (missing persona, missing
+// checkpoint summary).
+func TestFitMessagesToContextPreservesAllLeadingSystemMessages(t *testing.T) {
+	systems := []bridge.Message{
+		{Role: "system", Content: "persona"},
+		{Role: "system", Content: "runtime context"},
+		{Role: "system", Content: "negative guidance"},
+		{Role: "system", Content: "[Checkpoint 1 summary]\n..."},
+	}
+	msgs := append([]bridge.Message{}, systems...)
+	for i := 0; i < 5; i++ {
+		msgs = append(msgs, bridge.Message{
+			Role:    "user",
+			Content: strings.Repeat("x", 4000), // 1000 tokens each
+		})
+	}
+	got := FitMessagesToContext(msgs, 2500)
+	// Every leading system message must survive, in order, at the front.
+	if len(got) < len(systems) {
+		t.Fatalf("all leading system messages must survive, got %d/%d", len(got), len(systems))
+	}
+	for i, want := range systems {
+		if got[i].Role != "system" || got[i].Content != want.Content {
+			t.Errorf("system[%d] = %+v, want %+v", i, got[i], want)
+		}
+	}
+	// No non-system message may appear before the system prefix.
+	for i := 0; i < len(systems); i++ {
+		if got[i].Role != "system" {
+			t.Errorf("position %d must be system, got %q", i, got[i].Role)
+		}
+	}
+	// Total must still fit the window.
+	total := 0
+	for _, m := range got {
+		total += EstimateTokens(m)
+	}
+	if total > 2500 {
+		t.Errorf("truncated set exceeds window: %d > 2500", total)
+	}
+}

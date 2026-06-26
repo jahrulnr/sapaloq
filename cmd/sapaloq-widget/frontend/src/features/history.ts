@@ -3,7 +3,7 @@
 // (list recent sessions, switch active session, start a new chat).
 import { ChatHistory, ContextUsage, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
 import type { ChatTurn, ChatUsage, SessionSummary } from '../core/types';
-import { appendMessage, appendThinkingBubble, clearMessages, parseTurnContent } from './messages';
+import { appendCheckpointDivider, appendMessage, appendThinkingBubble, clearMessages, parseTurnContent } from './messages';
 import { renderUsage } from './connection';
 import {
   getUserGroup,
@@ -17,16 +17,28 @@ function renderTurn(turn: ChatTurn) {
   // "tool" turns ([Tool results]…) are persisted only so they count toward
   // context usage - they are internal and must never surface as a chat bubble.
   if (turn.role === 'tool') return;
+  // "autopilot" turns are SapaLOQ-authored continuation nudges persisted for
+  // context accounting; they are never shown to the user.
+  if (turn.role === 'autopilot') return;
+  // Checkpoint marker turn: render a centered "Checkpoint n" divider followed
+  // by a collapsible summary card. The pre-checkpoint bubbles above it are
+  // muted by their archived flag (handled per-bubble below). This is the visual
+  // seam between archived and live history - the transcript stays complete.
+  if (turn.role === 'checkpoint') {
+    appendCheckpointDivider(turn.checkpoint_index || 0, turn.content);
+    return;
+  }
   if (turn.role === 'thinking') {
     appendThinkingBubble(turn.content);
     return;
   }
   const parsed = parseTurnContent(turn.content);
+  const archivedClass = turn.archived ? ' message--archived' : '';
   if (turn.role === 'user') {
     nextUserGroup();
-    appendMessage('message--user', parsed.text || parsed.attachments.map((item) => item.name).join(', '), getUserGroup(), turn.id, parsed.attachments);
-  } else if (turn.role === 'error') appendMessage('message--error', turn.content, getUserGroup(), turn.id);
-  else if (turn.role === 'assistant') appendMessage('message--assistant', turn.content, getUserGroup(), turn.id);
+    appendMessage(`message--user${archivedClass}`, parsed.text || parsed.attachments.map((item) => item.name).join(', '), getUserGroup(), turn.id, parsed.attachments);
+  } else if (turn.role === 'error') appendMessage(`message--error${archivedClass}`, turn.content, getUserGroup(), turn.id);
+  else if (turn.role === 'assistant') appendMessage(`message--assistant${archivedClass}`, turn.content, getUserGroup(), turn.id);
 }
 
 export async function restoreChatHistory() {

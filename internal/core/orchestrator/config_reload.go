@@ -61,7 +61,7 @@ func (o *Orchestrator) applyConfig(next config.Config) error {
 	o.cfg = next
 	o.entry = entry
 	o.bridge = br
-	o.progress = ProgressWriter{Dir: dirs.ProgressDir}
+	o.progress = newAsyncProgressWriter(ProgressWriter{Dir: dirs.ProgressDir})
 	// Repoint runtime-state dirs unconditionally: they track DataDir and must
 	// stay consistent even when the memory DB itself did not change. Previously
 	// workersDir/workers were left dangling on reload - a latent bug.

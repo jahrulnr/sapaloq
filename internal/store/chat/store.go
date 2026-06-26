@@ -25,7 +25,12 @@ type Turn struct {
 	TokenEstimate     int        `json:"token_estimate"`
 	IncludedInContext bool       `json:"included_in_context"`
 	CompactedAt       *time.Time `json:"compacted_at,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
+	// CheckpointIndex is 0/NULL for a normal turn, or N>0 when this turn is a
+	// checkpoint marker (role=checkpoint) created by the Nth compaction. The UI
+	// renders a "Checkpoint N" divider at these turns; the context assembler
+	// replays only the latest checkpoint summary + anchored tail.
+	CheckpointIndex int `json:"checkpoint_index,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // Usage summarizes active context usage for the widget.
@@ -262,6 +267,40 @@ func (s *Store) migrate(ctx context.Context) error {
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_facts_namespace_kind ON facts(namespace, kind, obsolete_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_facts_key ON facts(namespace, kind, key)`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+
+	// LLM-driven checkpoint compaction (migrations/002_checkpoints.sql). The
+	// original compaction schema stored a single summary turn + a compaction_runs
+	// row; the checkpoint model adds a monotonic per-session checkpoint_index and
+	// a reason, and marks the checkpoint turn itself with that index so the UI
+	// can render a "Checkpoint n" divider and the context assembler can replay
+	// only the latest checkpoint + anchored tail. Additive ALTERs upgrade an
+	// existing DB idempotently; a fresh DB also lands here.
+	ckptTurnCols := []struct{ name, ddl string }{
+		{"checkpoint_index", "checkpoint_index INTEGER"},
+	}
+	for _, c := range ckptTurnCols {
+		if err := s.addColumnIfMissing(ctx, "chat_turns", c.name, c.ddl); err != nil {
+			return err
+		}
+	}
+	ckptRunCols := []struct{ name, ddl string }{
+		{"checkpoint_index", "checkpoint_index INTEGER"},
+		{"reason", "reason TEXT NOT NULL DEFAULT ''"},
+		{"tail_start_turn_id", "tail_start_turn_id INTEGER"},
+	}
+	for _, c := range ckptRunCols {
+		if err := s.addColumnIfMissing(ctx, "compaction_runs", c.name, c.ddl); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_chat_turns_checkpoint ON chat_turns(session_id, checkpoint_index)`,
+		`CREATE INDEX IF NOT EXISTS idx_compaction_runs_session_idx ON compaction_runs(session_id, checkpoint_index)`,
 	} {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
@@ -571,12 +610,16 @@ func (s *Store) Turn(ctx context.Context, sessionID string, turnID int64) (Turn,
 	var t Turn
 	var included int
 	var compacted sql.NullString
+	var ckptIdx sql.NullInt64
 	var created string
-	err := s.db.QueryRowContext(ctx, `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, created_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, checkpoint_index, created_at
 		FROM chat_turns WHERE session_id=? AND id=?`, sessionID, turnID).
-		Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &created)
+		Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &ckptIdx, &created)
 	if err != nil {
 		return Turn{}, err
+	}
+	if ckptIdx.Valid {
+		t.CheckpointIndex = int(ckptIdx.Int64)
 	}
 	t.IncludedInContext = included == 1
 	if compacted.Valid && compacted.String != "" {
@@ -628,7 +671,7 @@ func (s *Store) deleteRelativeToTurn(ctx context.Context, sessionID string, turn
 }
 
 func (s *Store) ActiveTurns(ctx context.Context, sessionID string, includeCompacted bool) ([]Turn, error) {
-	query := `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, created_at FROM chat_turns WHERE session_id=?`
+	query := `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, checkpoint_index, created_at FROM chat_turns WHERE session_id=?`
 	if !includeCompacted {
 		query += ` AND included_in_context=1`
 	}
@@ -643,11 +686,15 @@ func (s *Store) ActiveTurns(ctx context.Context, sessionID string, includeCompac
 		var t Turn
 		var included int
 		var compacted sql.NullString
+		var ckptIdx sql.NullInt64
 		var created string
-		if err := rows.Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &created); err != nil {
+		if err := rows.Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &ckptIdx, &created); err != nil {
 			return nil, err
 		}
 		t.IncludedInContext = included == 1
+		if ckptIdx.Valid {
+			t.CheckpointIndex = int(ckptIdx.Int64)
+		}
 		if compacted.Valid && compacted.String != "" {
 			if parsed, err := time.Parse(time.RFC3339Nano, compacted.String); err == nil {
 				t.CompactedAt = &parsed
@@ -700,10 +747,169 @@ func (s *Store) Compact(ctx context.Context, sessionID string, keepRecent int, s
 	return cutoff, tx.Commit()
 }
 
+// Checkpoint is the read view of one compaction checkpoint for a session.
+type Checkpoint struct {
+	Index          int    `json:"index"`
+	SummaryTurnID  int64  `json:"summary_turn_id"`
+	Summary        string `json:"summary"`
+	Reason         string `json:"reason"`
+	CompactedTurns int    `json:"compacted_turns"`
+	TailStartTurnID int64 `json:"tail_start_turn_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// CheckpointResult is returned by CreateCheckpoint so the orchestrator can
+// rebuild its in-memory message slice (latest checkpoint summary + tail) and
+// emit a live UI event with the new index.
+type CheckpointResult struct {
+	Index          int    `json:"index"`
+	SummaryTurnID  int64  `json:"summary_turn_id"`
+	Reason         string `json:"reason"`
+	CompactedTurns int    `json:"compacted_turns"`
+	TailStartTurnID int64 `json:"tail_start_turn_id,omitempty"`
+}
+
+// TailPolicy describes which turns survive a compaction as the post-checkpoint
+// tail. The orchestrator computes it via computeTailPreserve (anchored on the
+// last assistant turn) and hands it to CreateCheckpoint so the store stays a
+// dumb persistence layer.
+type TailPolicy struct {
+	// ArchiveTurnIDs are the turn ids to mark included_in_context=0 (archived
+	// for UI, dropped from the model context). Everything NOT in this list and
+	// not the new checkpoint turn stays in context.
+	ArchiveTurnIDs []int64
+	// TailStartTurnID is the first turn of the preserved tail (the anchored
+	// last assistant turn or the turn before it). Stored on compaction_runs
+	// for audit/UI.
+	TailStartTurnID int64
+}
+
+// CreateCheckpoint persists one LLM-authored compaction checkpoint: it archives
+// the supplied turn ids (rows remain for the UI), inserts a checkpoint marker
+// turn (role=checkpoint) carrying the next monotonic per-session index, and
+// records a compaction_runs row with the reason + tail anchor. It does NOT
+// decide what to archive - the caller's TailPolicy does, so the anchoring rule
+// (always keep the last assistant turn) lives in the orchestrator. Returns the
+// new checkpoint index and summary turn id.
+func (s *Store) CreateCheckpoint(ctx context.Context, sessionID, summary, reason string, tail TailPolicy, estimate func(string) int) (CheckpointResult, error) {
+	if sessionID == "" {
+		sessionID = defaultSessionID
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	defer tx.Rollback()
+	// Next monotonic checkpoint index for this session.
+	var nextIndex int
+	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(checkpoint_index), 0) + 1 FROM compaction_runs WHERE session_id=?`, sessionID).Scan(&nextIndex)
+	// Archive the supplied turns (drop from model context, keep for UI).
+	archived := 0
+	for _, id := range tail.ArchiveTurnIDs {
+		if _, err := tx.ExecContext(ctx, `UPDATE chat_turns SET included_in_context=0, compacted_at=? WHERE id=? AND session_id=?`, now, id, sessionID); err != nil {
+			return CheckpointResult{}, err
+		}
+		archived++
+	}
+	// Insert the checkpoint marker turn itself. It is included_in_context=1 so
+	// the context assembler replays it as the latest summary; the UI renders it
+	// as a collapsible "Checkpoint n" card.
+	var seq int
+	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_turns WHERE session_id=?`, sessionID).Scan(&seq)
+	res, err := tx.ExecContext(ctx, `INSERT INTO chat_turns(session_id, seq, role, content, token_estimate, included_in_context, checkpoint_index, created_at) VALUES (?, ?, 'checkpoint', ?, ?, 1, ?, ?)`, sessionID, seq, summary, estimate(summary), nextIndex, now)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	summaryID, _ := res.LastInsertId()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO compaction_runs(session_id, summary_turn_id, compacted_turns, checkpoint_index, reason, tail_start_turn_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, sessionID, summaryID, archived, nextIndex, reason, nullInt64(tail.TailStartTurnID), now); err != nil {
+		return CheckpointResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET updated_at=? WHERE id=?`, now, sessionID); err != nil {
+		return CheckpointResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CheckpointResult{}, err
+	}
+	return CheckpointResult{Index: nextIndex, SummaryTurnID: summaryID, Reason: reason, CompactedTurns: archived, TailStartTurnID: tail.TailStartTurnID}, nil
+}
+
+// LatestCheckpoint returns the most recent checkpoint for a session (highest
+// checkpoint_index), with its summary text. Returns sql.ErrNoRows (wrapped) if
+// the session has no checkpoint yet.
+func (s *Store) LatestCheckpoint(ctx context.Context, sessionID string) (Checkpoint, error) {
+	var ck Checkpoint
+	var summaryID sql.NullInt64
+	var tailStart sql.NullInt64
+	var created string
+	err := s.db.QueryRowContext(ctx, `SELECT r.checkpoint_index, r.summary_turn_id, t.content, r.reason, r.compacted_turns, r.tail_start_turn_id, r.created_at
+		FROM compaction_runs r LEFT JOIN chat_turns t ON t.id = r.summary_turn_id
+		WHERE r.session_id=? ORDER BY r.checkpoint_index DESC LIMIT 1`, sessionID).
+		Scan(&ck.Index, &summaryID, &ck.Summary, &ck.Reason, &ck.CompactedTurns, &tailStart, &created)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	if summaryID.Valid {
+		ck.SummaryTurnID = summaryID.Int64
+	}
+	if tailStart.Valid {
+		ck.TailStartTurnID = tailStart.Int64
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, created); err == nil {
+		ck.CreatedAt = parsed
+	}
+	return ck, nil
+}
+
+// Checkpoints returns all checkpoints for a session, oldest first, for UI
+// divider rendering. Only metadata is returned (no summary body) to keep the
+// history payload small; the summary is loaded on expand from the turn itself.
+func (s *Store) Checkpoints(ctx context.Context, sessionID string) ([]Checkpoint, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT r.checkpoint_index, r.summary_turn_id, '', r.reason, r.compacted_turns, r.tail_start_turn_id, r.created_at
+		FROM compaction_runs r WHERE r.session_id=? ORDER BY r.checkpoint_index ASC`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Checkpoint
+	for rows.Next() {
+		var ck Checkpoint
+		var summaryID sql.NullInt64
+		var tailStart sql.NullInt64
+		var created string
+		if err := rows.Scan(&ck.Index, &summaryID, &ck.Summary, &ck.Reason, &ck.CompactedTurns, &tailStart, &created); err != nil {
+			return nil, err
+		}
+		if summaryID.Valid {
+			ck.SummaryTurnID = summaryID.Int64
+		}
+		if tailStart.Valid {
+			ck.TailStartTurnID = tailStart.Int64
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, created); err == nil {
+			ck.CreatedAt = parsed
+		}
+		out = append(out, ck)
+	}
+	return out, rows.Err()
+}
+
+// nullInt64 converts an int64 turn id to a sql.NullInt64 (0 -> NULL so the
+// audit column is nullable).
+func nullInt64(v int64) sql.NullInt64 {
+	if v <= 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: v, Valid: true}
+}
+
 func (s *Store) Usage(ctx context.Context, sessionID, provider, model string, contextWindow int) (Usage, error) {
 	turns, err := s.ActiveTurns(ctx, sessionID, false)
 	if err != nil {
-		return Usage{}, err
+		// Return a Usage that still carries the resolved context window + ids so
+		// callers (and the UI pill) don't degrade to "0/0" on a transient scan
+		// error. The used-token count is unknown, but the window is not.
+		return Usage{SessionID: sessionID, ContextWindow: contextWindow, Provider: provider, Model: model}, err
 	}
 	used := 0
 	for _, t := range turns {

@@ -46,6 +46,25 @@ type scheduledTool struct {
 	index   int
 	call    parse.ToolCall
 	execute func(context.Context) turnOutcome
+	// future, when non-nil, carries the outcome of a tool that was already
+	// dispatched mid-stream (early read-only execution). collectToolJobs reads
+	// it instead of re-dispatching, so the result that was computed in parallel
+	// with the rest of the stream is not recomputed.
+	future chan turnOutcome
+}
+
+// isReadOnlyAssessmentTool reports whether a tool is safe to execute
+// mid-stream (before the turn's EventDone): the read-only assessment + web
+// set shared across roles. These have no side effects, so running them early
+// only saves latency. Write/exec/lifecycle tools are NOT early-executed.
+func isReadOnlyAssessmentTool(name string) bool {
+	switch name {
+	case "read_file", "search", "list_dir", "glob", "read_image",
+		"web_search", "web_fetch":
+		return true
+	default:
+		return false
+	}
 }
 
 type toolJobResult struct {
@@ -121,7 +140,21 @@ func (s *toolJobScheduler) submitBatch(ctx context.Context, runID, sessionID str
 				delete(s.cancels, id)
 				s.mu.Unlock()
 			}()
-			result := s.run(jobCtx, job, item.execute)
+			var result toolJobResult
+			if item.future != nil {
+				// Early-executed tool: outcome already computed mid-stream.
+				// Wait for it (it may still be running) and publish the job
+				// lifecycle around the already-known outcome, so observability
+				// stays consistent without re-dispatching the tool.
+				select {
+				case outcome := <-item.future:
+					result = s.finishWithOutcome(jobCtx, job, outcome)
+				case <-ctx.Done():
+					result = s.finishCancelled(job, ctx.Err())
+				}
+			} else {
+				result = s.run(jobCtx, job, item.execute)
+			}
 			select {
 			case results <- result:
 			case <-ctx.Done():
@@ -186,6 +219,35 @@ func (s *toolJobScheduler) finishCancelled(job toolJob, err error) toolJobResult
 	s.persist(job)
 	s.publish(job)
 	return toolJobResult{job: job, outcome: turnOutcome{text: "Tool cancelled.", handled: true}}
+}
+
+// finishWithOutcome publishes the running/completed lifecycle for a tool whose
+// outcome was already computed (early read-only execution), without
+// re-invoking execute. Used so observability stays consistent when a tool ran
+// ahead of the batch.
+func (s *toolJobScheduler) finishWithOutcome(ctx context.Context, job toolJob, outcome turnOutcome) toolJobResult {
+	started := time.Now().UTC()
+	job.Status = toolJobRunning
+	job.StartedAt = &started
+	s.persist(job)
+	s.publish(job)
+
+	completed := time.Now().UTC()
+	job.CompletedAt = &completed
+	job.Result = outcome.text
+	if ctx.Err() != nil {
+		job.Status = toolJobCancelled
+		job.Error = ctx.Err().Error()
+	} else if strings.HasPrefix(strings.TrimSpace(outcome.text), "Error:") ||
+		strings.HasPrefix(strings.TrimSpace(outcome.text), "Command exited with error:") {
+		job.Status = toolJobFailed
+		job.Error = outcome.text
+	} else {
+		job.Status = toolJobCompleted
+	}
+	s.persist(job)
+	s.publish(job)
+	return toolJobResult{job: job, outcome: outcome}
 }
 
 func (s *toolJobScheduler) acquireLane(ctx context.Context, key string) (func(), bool) {

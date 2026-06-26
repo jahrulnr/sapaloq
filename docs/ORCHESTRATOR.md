@@ -1,7 +1,7 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-25 (tool-result secret redaction: vendored privacyfilter scrubs secrets from every tool result)
+> Last updated: 2026-06-26 (LLM-driven checkpoints: sapaloq_compact_session, forced headroom/overflow compaction, anchored tail, Checkpoint n UI divider)
 
 ---
 
@@ -875,6 +875,87 @@ status walaupun event bus in-memory terlewat. Widget meng-update satu card per
 `task_id`, bukan menambah bubble baru untuk setiap perubahan.
 
 Config: `orchestrator.progressStreaming` (see config.schema.json).
+
+---
+
+## Checkpoints (LLM-driven compaction)
+
+SapaLOQ replaces heuristic transcript truncation with **LLM-authored
+checkpoints**. The model writes the summary; the orchestrator owns checkpoint
+boundaries, persistence, and context assembly. The UI transcript stays
+complete; the **model** context is reduced to `latest checkpoint summary +
+anchored tail + system blocks`.
+
+### Triggers
+
+| Trigger | When | Behavior |
+|---------|------|----------|
+| **Model-initiated** | Model calls `sapaloq_compact_session{summary, reason}` | Blocking tool; checkpoint created from supplied summary |
+| **Force: headroom** | `usedTokens >= contextWindow * (1 - compaction.headroomPercent)` (default 5% remaining) | Loop pauses before next `Complete()`; forced steering turn makes the model call `sapaloq_compact_session` with a full summary before any other work |
+| **Force: overflow** | Provider 400 (`isContextOverflowError`) | Same forced compaction turn (replaces old `compactConversationMessages` retry) |
+| **Steer** | `usedTokens >= contextWindow * compaction.steerPercent` (default 85%) | Autopilot nudge *suggests* `sapaloq_compact_session`; not blocking until headroom |
+
+Forced turn is **blocking** — the loop does not call the bridge for normal work
+until the checkpoint is created. `compaction.maxForceRetries` (default 3) bounds
+retries if the model refuses the tool; on exhaustion the run emits an error and
+suggests `/compaction` or a shorter message (no silent heuristic fallback).
+
+### Anchored tail (anti-forget)
+
+After every compaction, the post-checkpoint tail **must always include the last
+assistant turn** so the model does not lose "what I just did." Algorithm
+(`computeTailPreserve`):
+
+1. Walk backward; find the latest `role=assistant` turn (skip `thinking`,
+   `tool`, `checkpoint`, `error`). If that turn *is* the summary tool-call turn
+   itself, anchor to the prior assistant turn.
+2. Optionally include the user turn immediately before it
+   (`preservePrecedingUserTurn`, default true).
+3. Extend backward up to `keepRecentTurns` (default 4) if room remains — but
+   never drop the anchored assistant turn.
+
+`preserveLastAgentTurn` (default true) enforces the anchor and is not
+disableable in v1.
+
+### Persistence
+
+- Pre-checkpoint turns: `included_in_context = 0`, `compacted_at = now` (rows
+  **remain** for UI).
+- Checkpoint turn: `role = checkpoint`, `content = summary`,
+  `checkpoint_index = n` (monotonic per session).
+- `compaction_runs` row: `checkpoint_index`, `reason`
+  (`model`|`force_headroom`|`force_overflow`|`manual`), `summary_turn_id`,
+  `compacted_turns`, `tail_start_turn_id`.
+
+### Two views
+
+- **UI** — full transcript + a `--- Checkpoint n ---` divider; pre-checkpoint
+  bubbles render with an `archived` style (muted); checkpoint summary turn is a
+  collapsible card (like thinking), collapsed by default.
+- **Model** — system prefix + latest checkpoint summary (as a `system` message)
+  + anchored tail (incl. last assistant turn) + re-injected prefetch/skills.
+
+`EventCheckpoint { index, reason, summary }` is emitted live so the UI can
+insert the divider without a history reload. Provider `FitMessagesToContext`
+protects **all** leading system messages contiguously so the multi-block prefix
+survives post-checkpoint window fitting.
+
+### Config
+
+```json
+"compaction": {
+  "useCheckpoints": true,
+  "headroomPercent": 0.05,
+  "steerPercent": 0.85,
+  "keepRecentTurns": 4,
+  "preserveLastAgentTurn": true,
+  "preservePrecedingUserTurn": true,
+  "maxForceRetries": 3
+}
+```
+
+Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md), `migrations/002_checkpoints.sql`,
+`internal/core/orchestrator/compaction.go`.
 
 ---
 

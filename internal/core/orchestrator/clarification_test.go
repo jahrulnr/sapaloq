@@ -53,7 +53,7 @@ func newClarifyOrchestrator(t *testing.T, br bridge.Bridge) *Orchestrator {
 		bridge:    br,
 		entry:     config.LLMBridge{Key: "k", Model: "m"},
 		workers:   newWorkerRegistry(filepath.Join(dir, "workers")),
-		progress:  ProgressWriter{Dir: filepath.Join(dir, "progress")},
+		progress:  newAsyncProgressWriter(ProgressWriter{Dir: filepath.Join(dir, "progress")}),
 	}
 }
 

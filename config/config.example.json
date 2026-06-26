@@ -144,7 +144,8 @@
       "notifyUserOnDone": false,
       "speakOnTerminal": true,
       "workerErrorLog": true
-    }
+    },
+    "defaultContextWindowTokens": 131072
   },
   "subAgents": {
     "roles": {

@@ -132,7 +132,7 @@ func TestRunBackgroundTaskSpeaksCompletion(t *testing.T) {
 		memoryDir:  dir,
 		workersDir: filepath.Join(dir, "workers"),
 		workers:    newWorkerRegistry(filepath.Join(dir, "workers")),
-		progress:   ProgressWriter{Dir: t.TempDir()},
+		progress:  newAsyncProgressWriter(ProgressWriter{Dir: t.TempDir()}),
 		chat:       store,
 		bus:        bus.New(),
 		cfg:        speakEnabledCfg(),

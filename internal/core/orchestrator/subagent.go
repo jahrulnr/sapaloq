@@ -79,6 +79,12 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	}
 
 	all, err := o.runTurnLoop(ctx, snap, record.Task, messages, cfg)
+	// Flush + close the per-task progress drain so the JSONL is fully
+	// persisted and the drain goroutine does not outlive the loop. runBackgroundTask
+	// also closes this; Close is idempotent and safe to call twice.
+	if o.progress != nil {
+		o.progress.Close(record.ID)
+	}
 	finalText := strings.TrimSpace(all.String())
 	if finalText == "" {
 		finalText = strings.TrimSpace(finalResult.String())

@@ -67,6 +67,40 @@ func (o *Orchestrator) runConversationActor(ctx context.Context, snap providerSn
 	return o.runTurnLoop(ctx, snap, fallbackTask, messages, cfg)
 }
 
+// runConversationActorSink is the turnSink-based variant used by the forced
+// checkpoint turn, which is launched from inside an already-running turn loop
+// that only holds a turnSink (not the raw channel). It wires a buffered channel
+// that drains into the sink so handleAskTool (which expects a chan) works
+// unchanged, and so the live EventCheckpoint still reaches the real UI.
+func (o *Orchestrator) runConversationActorSink(ctx context.Context, snap providerSnapshot, sink turnSink, sessionID, runID, fallbackTask string, messages []bridge.Message, thinkingOut *strings.Builder) (strings.Builder, error) {
+	ch := make(chan bridge.StreamEvent, 64)
+	drainCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		defer cancel()
+		for {
+			select {
+			case <-drainCtx.Done():
+				return
+			case ev := <-ch:
+				sink.emit(drainCtx, ev)
+			}
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:       sessionID,
+		runID:           runID,
+		tools:           askTools,
+		sink:            chatSink{o: o, out: ch},
+		thinkingOut:     thinkingOut,
+		recordToolTurns: true,
+		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
+			res := o.handleAskTool(ctx, snap, ch, sessionID, fallbackTask, call)
+			return turnOutcome{text: res.text, handled: res.handled, stop: res.stop}
+		},
+	}
+	return o.runTurnLoop(ctx, snap, fallbackTask, messages, cfg)
+}
+
 // runTurnLoop is the single multi-turn inference engine behind both chat and
 // every sub-agent role. The variable parts (tool surface, per-call dispatch,
 // output sink, finish policy, heartbeat) are supplied via turnConfig; the
@@ -172,22 +206,46 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// genuinely-working agent (advancing turns) from a wedged goroutine.
 		// Advancing a turn is progress - reset the inactivity deadline.
 		resetIdle()
-		out.beat(fmt.Sprintf("inference turn %d/%s", inferenceTurn, turnBudgetLabel))
-		if shouldCompactConversation(cleanMessages, snap.entry.ContextWindow, runtimeCfg.Compaction.BackgroundThreshold) &&
-			len(cleanMessages) > lastCompactedMessageCount+2 {
-			blocking := conversationTokenRatio(cleanMessages, snap.entry.ContextWindow) >= runtimeCfg.Compaction.BlockingThreshold
-			if blocking {
-				out.emit(runCtx, statusEvent(sessionID, "compacting"))
+	out.beat(fmt.Sprintf("inference turn %d/%s", inferenceTurn, turnBudgetLabel))
+	if runtimeCfg.Compaction.UseCheckpoints {
+		// LLM-driven checkpoint compaction: at the headroom threshold
+		// (default 5% remaining) inject a blocking forced-compaction turn
+		// that steers the model to call sapaloq_compact_session, then rebuild
+		// cleanMessages from the new checkpoint summary + anchored tail. The
+		// old heuristic compactConversationMessages path is skipped entirely.
+		if o.contextHeadroomReached(cleanMessages, snap.entry.ContextWindow, runtimeCfg.Compaction.HeadroomPercent) {
+			res, ok, ferr := o.forceCheckpoint(runCtx, snap, out, sessionID, fallbackTask, "force_headroom", cleanMessages)
+			if ferr != nil {
+				return all, ferr
 			}
-			cleanMessages = compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
-			lastCompactedMessageCount = len(cleanMessages)
-			if blocking {
-				out.emit(runCtx, statusEvent(sessionID, "working"))
-			}
-			if !runtimeCfg.Compaction.ResumeAfterCompaction {
-				return all, fmt.Errorf("continuation paused after compaction by configuration")
+			if ok {
+				rebuilt, rerr := o.rebuildAfterCheckpoint(ctx, sessionID, cleanMessages)
+				if rerr == nil {
+					cleanMessages = rebuilt
+					lastCompactedMessageCount = len(cleanMessages)
+				}
+				_ = res
+			} else {
+				// Model refused within the retry budget: surface an actionable
+				// error rather than silently falling back to heuristic compact.
+				return all, fmt.Errorf("context at %d%% and model did not compact within %d retries; run /compaction or shorten the conversation", o.contextPercent(cleanMessages, snap.entry.ContextWindow), runtimeCfg.Compaction.MaxForceRetries)
 			}
 		}
+	} else if shouldCompactConversation(cleanMessages, snap.entry.ContextWindow, runtimeCfg.Compaction.BackgroundThreshold) &&
+		len(cleanMessages) > lastCompactedMessageCount+2 {
+		blocking := conversationTokenRatio(cleanMessages, snap.entry.ContextWindow) >= runtimeCfg.Compaction.BlockingThreshold
+		if blocking {
+			out.emit(runCtx, statusEvent(sessionID, "compacting"))
+		}
+		cleanMessages = compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
+		lastCompactedMessageCount = len(cleanMessages)
+		if blocking {
+			out.emit(runCtx, statusEvent(sessionID, "working"))
+		}
+		if !runtimeCfg.Compaction.ResumeAfterCompaction {
+			return all, fmt.Errorf("continuation paused after compaction by configuration")
+		}
+	}
 
 		out.emit(runCtx, statusEvent(sessionID, "working"))
 		// Give every inference attempt its own cancellation scope. The outer
@@ -291,13 +349,33 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 						return all, fmt.Errorf("loop detected: identical tool call repeated %d times", identicalToolCalls)
 					}
 					call := *ev.ToolCall
-					pendingTools = append(pendingTools, scheduledTool{
+					item := scheduledTool{
 						index: len(pendingTools),
 						call:  call,
 						execute: func(ctx context.Context) turnOutcome {
 							return cfg.dispatch(withActorRunID(ctx, runID), call)
 						},
-					})
+					}
+					// Early read-only execution: when the experimental flag is
+					// on and the tool has no side effects, dispatch it now in
+					// a goroutine so its result is computed in parallel with
+					// the rest of the stream, instead of all tools waiting for
+					// the turn's EventDone before any of them start. The
+					// result is read back by collectToolJobs via `future`.
+					if budget.EarlyToolExecution && isReadOnlyAssessmentTool(call.Name) {
+						fut := make(chan turnOutcome, 1)
+						item.future = fut
+						earlyCtx, earlyCancel := context.WithCancel(runCtx)
+						go func() {
+							outcome := cfg.dispatch(withActorRunID(earlyCtx, runID), call)
+							select {
+							case fut <- outcome:
+							default:
+							}
+							earlyCancel()
+						}()
+					}
+					pendingTools = append(pendingTools, item)
 				}
 			case bridge.EventError:
 				if runCtx.Err() != nil {
@@ -391,17 +469,27 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			inferenceTurn--
 			continue
 		}
-		if retryCompacted {
-			// Force one compaction pass and re-run this same turn against the
-			// shrunken history. The failed attempt is already cancelled. If
-			// compaction can't shrink further (already minimal), recovery is
-			// impossible - surface the original overflow error rather than loop.
-			compacted := compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
-			if len(compacted) >= len(cleanMessages) {
-				return all, fmt.Errorf("context overflow and conversation already minimal: %s", lastErr)
+	if retryCompacted {
+		if runtimeCfg.Compaction.UseCheckpoints {
+			// Overflow 400: run a forced LLM-authored checkpoint turn instead of
+			// the heuristic compactConversationMessages retry. On success,
+			// rebuild cleanMessages from the new checkpoint + anchored tail and
+			// re-run this same turn. If the model refuses within the retry
+			// budget, surface the original overflow error (no silent heuristic
+			// fallback in v1).
+			_, ok, ferr := o.forceCheckpoint(runCtx, snap, out, sessionID, fallbackTask, "force_overflow", cleanMessages)
+			if ferr != nil {
+				return all, ferr
+			}
+			if !ok {
+				return all, fmt.Errorf("context overflow and model did not compact within %d retries: %s", runtimeCfg.Compaction.MaxForceRetries, lastErr)
+			}
+			rebuilt, rerr := o.rebuildAfterCheckpoint(ctx, sessionID, cleanMessages)
+			if rerr != nil || len(rebuilt) >= len(cleanMessages) {
+				return all, fmt.Errorf("context overflow and checkpoint did not shrink context: %s", lastErr)
 			}
 			forcedCompactions++
-			cleanMessages = compacted
+			cleanMessages = rebuilt
 			lastCompactedMessageCount = len(cleanMessages)
 			cleanMessages, images = extractImages(cleanMessages)
 			if len(images) > 0 && (visionDowngraded || !o.visionAllowed(snap.entry.Key, snap.entry.Model)) {
@@ -411,6 +499,26 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			inferenceTurn--
 			continue
 		}
+		// Legacy heuristic fallback (useCheckpoints=false): force one
+		// compaction pass and re-run this same turn against the shrunken
+		// history. The failed attempt is already cancelled. If compaction
+		// can't shrink further (already minimal), recovery is impossible -
+		// surface the original overflow error rather than loop.
+		compacted := compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
+		if len(compacted) >= len(cleanMessages) {
+			return all, fmt.Errorf("context overflow and conversation already minimal: %s", lastErr)
+		}
+		forcedCompactions++
+		cleanMessages = compacted
+		lastCompactedMessageCount = len(cleanMessages)
+		cleanMessages, images = extractImages(cleanMessages)
+		if len(images) > 0 && (visionDowngraded || !o.visionAllowed(snap.entry.Key, snap.entry.Model)) {
+			images = nil
+		}
+		out.emit(runCtx, statusEvent(sessionID, "working"))
+		inferenceTurn--
+		continue
+	}
 		if retryTransport {
 			// Wait a short exponential backoff (capped), then re-run this same
 			// turn. The broken attempt is already cancelled, and accumulated
@@ -512,8 +620,12 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// A model that truly spins forever is still bounded by the real safety
 		// nets: maxInferenceTurns (per-role turn cap), the wall-time budget,
 		// MaxToolCalls, and the no-progress hash guard right below (which fires
-		// only on genuinely identical, zero-progress turns).
-		outcome := fmt.Sprintf("%x", sha256.Sum256([]byte(response.String()+"\x00"+strings.Join(toolResults, "\x00"))))
+		// only on genuinely identical, zero-progress turns). The outcome is
+		// normalized before hashing so a model that paraphrases itself with
+		// only whitespace / punctuation / "[Called tools: …]" echo differences
+		// is still recognized as making no progress (the old exact-hash guard
+		// let such turns reset the counter and spin until the turn cap).
+		outcome := fmt.Sprintf("%x", sha256.Sum256([]byte(normalizeOutcomeForHash(response.String())+"\x00"+strings.Join(toolResults, "\x00"))))
 		if outcome == lastOutcome {
 			noProgressTurns++
 		} else {
@@ -548,14 +660,19 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		toolResultsBody := toolObservationBody(toolResults)
 		if len(toolResults) == 0 {
 			// SapaLOQ's own autopilot continuation, NOT a message from the
-			// human user. Wrap it in <sapaloq:autopilot> so the model never
+			// human user. The continuation is built from concrete session
+			// signals (running tasks, pending clarification, context fullness)
+			// + an escalation counter so repeated tool-less turns converge on a
+			// silent sapaloq_stop, instead of the old single static string that
+			// could not tell "a task needs your answer" from "you already
+			// answered". Wrapped in <sapaloq:autopilot> so the model never
 			// mistakes this system-generated nudge for the user typing
 			// "continue" - the only UNMARKED user turn is the real human.
-			toolResultsBody = sapaloqControlBody("Continue the existing task only if a concrete " +
-				"next step remains for YOU to take now. If the work is finished, or the only " +
-				"remaining work is running in the background (a delegated task you cannot " +
-				"advance), call `sapaloq_stop` immediately - stopping is a silent action, so " +
-				"do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
+			sig := o.sessionSignals(sessionID)
+			if cw := snap.entry.ContextWindow; cw > 0 {
+				sig.contextPercent = (estimateMessagesTokens(cleanMessages) * 100) / cw
+			}
+			toolResultsBody = buildAutopilotContinuation(inferenceTurn, toolResults, sig, runtimeCfg.Compaction.SteerPercent)
 			out.emit(runCtx, statusEvent(sessionID, "continuing - call `sapaloq_stop` to finish"))
 		}
 		// Persist tool results as a "tool" turn so they count toward context
@@ -568,6 +685,16 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// audit/accounting record. Chat-only (recordToolTurns).
 		if cfg.recordToolTurns && o.chat != nil && len(toolResults) > 0 {
 			_ = o.chat.AppendTurn(ctx, sessionID, "tool", toolResultsBody, estimateTextTokens(toolResultsBody))
+		}
+		// Persist a tool-less autopilot continuation as a dedicated "autopilot"
+		// turn so it counts toward ContextUsage / auto-compaction accounting
+		// (it occupies real context on the next turn) WITHOUT being replayed to
+		// the model from history (the live in-run cleanMessages already carries
+		// it) and WITHOUT surfacing as a chat bubble (the UI skips "autopilot"
+		// like it skips "thinking"). Use the outer ctx so a wall-time timeout
+		// does not drop the accounting record. Chat-only (recordToolTurns).
+		if cfg.recordToolTurns && o.chat != nil && len(toolResults) == 0 {
+			_ = o.chat.AppendTurn(ctx, sessionID, "autopilot", toolResultsBody, estimateTextTokens(toolResultsBody))
 		}
 		continuation := toolResultsBody
 		// Record the tool calls this turn actually made into the assistant
@@ -627,6 +754,51 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 
 func toolCallSignature(call parse.ToolCall) string {
 	return call.Name + "\x00" + strings.TrimSpace(string(call.Arguments))
+}
+
+// normalizeOutcomeForHash collapses the surface variation that does NOT
+// constitute real progress, so the no-progress hash treats paraphrases as
+// identical:
+//   - strips echoed "[Called tools: …]" / "[Tool: …]" notes (the same markers
+//     calledToolsFilter drops from the visible stream; a model imitating them
+//     is not making progress),
+//   - collapses all runs of whitespace to single spaces,
+//   - trims surrounding whitespace and strips common trailing punctuation
+//     variants so "Done." / "Done…" / "Done!" hash the same.
+//
+// It never inspects semantics - it is a pure surface normalization, so it
+// cannot mistake a genuinely different answer for a repeat (different words
+// still hash differently). The goal is only to stop the counter from resetting
+// on whitespace / punctuation / marker-echo drift.
+func normalizeOutcomeForHash(s string) string {
+	// Drop called-tools / tool marker spans the same way the visible-stream
+	// filter does: from the opening "[Called tools: " / "[Tool: " to the next
+	// "]".
+	for _, m := range calledToolsMarkers {
+		for {
+			i := strings.Index(s, m)
+			if i < 0 {
+				break
+			}
+			j := strings.IndexByte(s[i:], ']')
+			if j < 0 {
+				// No closer in this fragment; drop to end so a half-marker
+				// echo does not keep the turn "different".
+				s = s[:i]
+				break
+			}
+			s = s[:i] + s[i+j+1:]
+		}
+	}
+	// Collapse whitespace runs to a single space and trim. Fields handles
+	// tabs/newlines/multiple spaces uniformly.
+	s = strings.Join(strings.Fields(s), " ")
+	// Strip a small set of trailing punctuation variants that models emit
+	// interchangeably at the end of an otherwise-identical statement, then
+	// re-trim any whitespace the punctuation was hugging.
+	s = strings.TrimRight(s, ".…!?，。！？")
+	s = strings.TrimSpace(s)
+	return s
 }
 
 // calledToolsNote (the "[Called tools: …]" in-transcript record) now lives in

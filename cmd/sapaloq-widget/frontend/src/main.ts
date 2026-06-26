@@ -3,8 +3,6 @@
 // off the bootstrap sequence (history restore, context usage, ping loop). All
 // behaviour lives in the focused modules imported below.
 import './style.css';
-import { ContextUsage } from '../wailsjs/go/main/App';
-import type { ChatUsage } from './core/types';
 import { ComposeBox } from './ui/compose';
 import { APP_TEMPLATE } from './ui/template';
 import { getComposeInput } from './ui/dom';
@@ -16,7 +14,7 @@ import {
   setExpanded,
   toggleExpanded,
 } from './ui/window-layout';
-import { cycleRingState, renderUsage, runPing, startPingLoop } from './features/connection';
+import { cycleRingState, refreshUsage, runPing, startPingLoop } from './features/connection';
 import { autosizeCompose, toggleComposeExpand } from './ui/compose-ui';
 import { closeMessageMenu } from './features/messages';
 import { refreshSlashSuggest, slashKeydown } from './features/slash';
@@ -152,6 +150,9 @@ initDragAndDrop();
 
 void restoreChatHistory();
 void loadSessionList();
-void ContextUsage().then((usage) => renderUsage(usage as ChatUsage)).catch(() => undefined);
+// Best-effort initial context-usage read. If core isn't ready yet (race on
+// fresh open), this fails silently and refreshUsage() on the first successful
+// ping + the periodic usage timer fill the pill instead of leaving "0/0".
+void refreshUsage();
 startPingLoop();
 startRuntimeStatusLoop();

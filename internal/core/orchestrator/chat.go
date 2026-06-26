@@ -31,7 +31,7 @@ type Orchestrator struct {
 	entry          config.LLMBridge
 	bridge         bridge.Bridge
 	bus            *bus.Bus
-	progress       ProgressWriter
+	progress       *asyncProgressWriter
 	chat           *chatstore.Store
 	vault          *vault.Writer
 	memoryDir      string
@@ -138,7 +138,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		entry:        entry,
 		bridge:       b,
 		bus:          eventBus,
-		progress:     ProgressWriter{Dir: dirs.ProgressDir},
+		progress:     newAsyncProgressWriter(ProgressWriter{Dir: dirs.ProgressDir}),
 		chat:         chatStore,
 		vault:        vaultWriter,
 		memoryDir:    dirs.MemoryDir,
@@ -313,6 +313,11 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
 		usage, _ := o.ContextUsage(ctx, sessionID)
 		_ = o.chat.SnapshotUsage(ctx, usage)
+		// Flush + close the async progress drain for this session so the JSONL
+		// is fully persisted and the per-session goroutine does not leak.
+		if o.progress != nil {
+			o.progress.Close(sessionID)
+		}
 	}()
 	return out, nil
 }
@@ -375,6 +380,9 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 	_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
 	usage, _ := o.ContextUsage(ctx, sessionID)
 	_ = o.chat.SnapshotUsage(ctx, usage)
+	if o.progress != nil {
+		o.progress.Close(sessionID)
+	}
 }
 
 func (o *Orchestrator) setActiveGeneration(sessionID string, cancel context.CancelFunc) uint64 {

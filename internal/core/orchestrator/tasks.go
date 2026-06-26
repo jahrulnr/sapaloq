@@ -88,6 +88,7 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		Priority       string `json:"priority"`
 		CorrelationID  string `json:"correlation_id"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
+		Summary        string `json:"summary"`
 	}
 	if err := json.Unmarshal(call.Arguments, &args); err != nil {
 		// Tolerate raw control bytes in multi-line string values (see
@@ -249,6 +250,8 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			return askToolResult{text: fmt.Sprintf("generation and %d task(s) stopped: %s", stopped, reason), handled: true, stop: true}
 		}
 		return askToolResult{text: "Invalid stop scope: " + scope, handled: true}
+	case "sapaloq_compact_session":
+		return o.handleCompactSession(ctx, snap, chatSink{o: o, out: out}, sessionID, args.Summary, args.Reason)
 	case "sapaloq_send_steering":
 		target := strings.TrimSpace(args.TargetTaskID)
 		message := strings.TrimSpace(args.Message)
@@ -437,6 +440,11 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 			}
 		}
 		o.taskMu.Unlock()
+		// Flush + close the async progress drain for this task's JSONL so the
+		// per-task goroutine does not leak and the audit log is fully persisted.
+		if o.progress != nil {
+			o.progress.Close(record.ID)
+		}
 	}()
 
 	// Structural liveness: heartbeat for as long as THIS goroutine is alive,
@@ -556,25 +564,39 @@ func (o *Orchestrator) RecentTaskUpdates(limit int) []bridge.StreamEvent {
 	if err != nil {
 		return nil
 	}
-	records := make([]taskRecord, 0, len(entries))
+	// Catch-up exists so a widget that connects late still sees work that is
+	// IN FLIGHT (pending / in_progress / stopping) or paused waiting on the
+	// user (awaiting_clarification). Terminal tasks (done/failed/stopped) do
+	// NOT need rehydration: their result is already persisted as an assistant
+	// chat bubble (speakTaskCompletion) and shown by the chat-history restore.
+	// Re-emitting every historical terminal task made the chat room fill with a
+	// verbose status timeline ("planner gagal", "task-runner selesai", ...) on
+	// every widget open - the user only wants the live chat + tools.
+	live := make([]taskRecord, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		record, readErr := o.readTask(entry.Name())
-		if readErr == nil {
-			records = append(records, record)
+		if readErr != nil {
+			continue
+		}
+		switch record.Status {
+		case "pending", "in_progress", "stopping", "awaiting_clarification":
+			live = append(live, record)
+		default:
+			// terminal: skip - the outcome lives in chat history already
 		}
 	}
-	sort.Slice(records, func(i, j int) bool {
-		return records[i].UpdatedAt.After(records[j].UpdatedAt)
+	sort.Slice(live, func(i, j int) bool {
+		return live[i].UpdatedAt.After(live[j].UpdatedAt)
 	})
-	if len(records) > limit {
-		records = records[:limit]
+	if len(live) > limit {
+		live = live[:limit]
 	}
-	out := make([]bridge.StreamEvent, 0, len(records))
-	for i := len(records) - 1; i >= 0; i-- {
-		record := records[i]
+	out := make([]bridge.StreamEvent, 0, len(live))
+	for i := len(live) - 1; i >= 0; i-- {
+		record := live[i]
 		ev := taskUpdateEvent(record.SessionID, record)
 		if ev.Kind != "" {
 			out = append(out, ev)

@@ -4,7 +4,7 @@
 import type { StreamEvent, StreamTarget, StreamRenderer } from '../core/types';
 import { getMessageList, hasVisibleText, scrollMessagesToBottom } from '../ui/dom';
 import { renderMarkdown } from '../ui/markdown';
-import { appendMessage, wireAssistantFeedback } from './messages';
+import { appendCheckpointDivider, appendMessage, wireAssistantFeedback } from './messages';
 import { setRingState } from './connection';
 import { refreshRuntimeStatus } from './runtime-status';
 import { getUserGroup, nextMessageSeq, taskBubbles, taskStatuses } from '../core/state';
@@ -210,6 +210,13 @@ export function feedStreamEvent(r: StreamRenderer, event: StreamEvent) {
     // bubble + wires 👍/👎 on a settled one, so no extra guarding is needed.
     if (r.thinking) { flushStream(r.thinking); r.thinking = null; }
     if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
+  } else if (event.kind === 'checkpoint') {
+    // An LLM-authored compaction checkpoint was persisted mid-run. Flush the
+    // current turn's bubbles (so the next narration lands below the divider)
+    // and insert the centered "Checkpoint n" divider + collapsible summary.
+    if (r.thinking) { flushStream(r.thinking); r.thinking = null; }
+    if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
+    appendCheckpointDivider(event.checkpoint_index || 0, event.checkpoint_summary || '');
   } else if (event.kind === 'error') {
     clearProgressBubble();
     if (r.thinking) { flushStream(r.thinking); r.thinking = null; }

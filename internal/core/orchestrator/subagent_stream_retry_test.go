@@ -21,7 +21,7 @@ func newTestOrchestrator(t *testing.T) *Orchestrator {
 		memoryDir: dir,
 		cfg:       config.Config{},
 		workers:   newWorkerRegistry(filepath.Join(dir, "workers")),
-		progress:  ProgressWriter{Dir: filepath.Join(dir, "progress")},
+		progress:  newAsyncProgressWriter(ProgressWriter{Dir: filepath.Join(dir, "progress")}),
 	}
 }
 

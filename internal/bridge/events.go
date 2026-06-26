@@ -37,6 +37,11 @@ const (
 	// completion trigger that lets the chat surface "task done/failed" without
 	// the user polling. Carries TaskID/Role/Status plus a human Summary.
 	EventTaskUpdate EventKind = "task_update"
+	// EventCheckpoint signals that an LLM-authored compaction checkpoint was
+	// persisted mid-run. The UI uses CheckpointIndex to flush the current chat
+	// segment and insert a "Checkpoint n" divider before the next bubble; the
+	// summary is the model-authored markdown stored on the checkpoint turn.
+	EventCheckpoint EventKind = "checkpoint"
 )
 
 type StreamEvent struct {
@@ -64,6 +69,14 @@ type StreamEvent struct {
 	EventID       string    `json:"event_id,omitempty"`
 	CorrelationID string    `json:"correlation_id,omitempty"`
 	Version       int64     `json:"version,omitempty"`
+	// CheckpointIndex carries the new checkpoint index on EventCheckpoint (the
+	// Nth compaction for this session). Reason classifies the trigger
+	// ("model"|"force_headroom"|"force_overflow"|"manual"); Summary is the
+	// model-authored markdown summary, which the UI can render as a
+	// collapsible card.
+	CheckpointIndex int    `json:"checkpoint_index,omitempty"`
+	CheckpointReason string `json:"checkpoint_reason,omitempty"`
+	CheckpointSummary string `json:"checkpoint_summary,omitempty"`
 	At            time.Time `json:"at"`
 }
 

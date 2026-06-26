@@ -168,22 +168,74 @@ func (o *Orchestrator) ContextUsage(ctx context.Context, sessionID string) (chat
 		}
 	}
 	snap := o.snapshot()
-	usage, err := o.chat.Usage(ctx, sessionID, snap.entry.Key, snap.entry.Model, o.contextWindow())
+	contextWindow := o.contextWindow()
+	usage, err := o.chat.Usage(ctx, sessionID, snap.entry.Key, snap.entry.Model, contextWindow)
 	if err != nil {
+		// Persist the real context window even when the turn scan fails so the
+		// UI's context pill never degrades to "0/0" (a zero Usage looked like an
+		// uninitialised counter on widget open). The used-token count is
+		// unknown here, but the window itself is independent of the chat store.
+		usage.ContextWindow = contextWindow
+		usage.SessionID = sessionID
+		usage.Provider = snap.entry.Key
+		usage.Model = snap.entry.Model
 		return usage, err
 	}
+	// Defence in depth: if the store returned a zero window for any reason
+	// (e.g. a future code path forgets to pass it through), fall back to the
+	// orchestrator's resolved window so the UI pill is never 0/0.
+	if usage.ContextWindow <= 0 {
+		usage.ContextWindow = contextWindow
+	}
 	// Add the fixed per-request prompt overhead that the chat-turn sum ignores:
-	// the Ask system prompt plus the negative-guidance block are sent on every
-	// turn but never stored as chat_turns. Without this, usage (and the
-	// auto-compact threshold that reads it) understates how full the context
-	// window actually is.
-	overhead := estimateTextTokens(o.systemPrompt(prompts.RoleAsk))
-	overhead += estimateTextTokens(o.negativeGuidanceBlock(ctx))
-	usage.UsedTokens += overhead
+	// the Ask system prompt, runtime context block, negative guidance, prefetch
+	// and skills blocks are sent on every turn but never stored as chat_turns.
+	// Without this, usage (and the compaction thresholds that read it) understate
+	// how full the context window actually is, so the 5% headroom force-trigger
+	// can fire too late (after a provider 400). The latest user message is needed
+	// to size the prefetch/skills blocks accurately; best-effort (empty when no
+	// user turn is found).
+	userMsg := o.latestUserMessageContent(ctx, sessionID)
+	usage.UsedTokens += o.estimatePerTurnOverhead(ctx, sessionID, userMsg)
 	if usage.ContextWindow > 0 {
 		usage.Percent = (usage.UsedTokens * 100) / usage.ContextWindow
 	}
 	return usage, nil
+}
+
+// estimatePerTurnOverhead sums the rough token cost of the per-request system
+// blocks the orchestrator injects on every Ask turn but never persists as
+// chat_turns: the Ask system prompt (persona-wrapped), the runtime context
+// block, negative guidance, the prefetch packet, and the skills block. Keeping
+// this in one place and reusing it from both ContextUsage and the mid-run
+// headroom check prevents the two from drifting (a common cause of the
+// force-trigger firing after, not before, a provider overflow).
+func (o *Orchestrator) estimatePerTurnOverhead(ctx context.Context, sessionID, userMsg string) int {
+	overhead := estimateTextTokens(o.systemPrompt(prompts.RoleAsk))
+	overhead += estimateTextTokens(o.runtimeContextMessage().Content)
+	overhead += estimateTextTokens(o.negativeGuidanceBlock(ctx))
+	overhead += estimateTextTokens(o.prefetchBlock(ctx, sessionID, userMsg))
+	overhead += estimateTextTokens(o.skillsBlock(ctx, userMsg))
+	return overhead
+}
+
+// latestUserMessageContent returns the content of the most recent persisted
+// user turn for a session, or "" when there is none / the store is unavailable.
+// It is used to size the prefetch/skills overhead blocks accurately.
+func (o *Orchestrator) latestUserMessageContent(ctx context.Context, sessionID string) string {
+	if o.chat == nil {
+		return ""
+	}
+	turns, err := o.chat.ActiveTurns(ctx, sessionID, false)
+	if err != nil {
+		return ""
+	}
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == "user" {
+			return turns[i].Content
+		}
+	}
+	return ""
 }
 
 func responseEvent(sessionID, text string) bridge.StreamEvent {

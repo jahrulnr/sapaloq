@@ -106,10 +106,28 @@ func estimateTextTokens(text string) int {
 	return (len(text) + 3) / 4
 }
 
+// estimateMessagesTokens sums the rough token estimate across a slice of
+// messages. It mirrors conversationTokenRatio's accounting but returns the raw
+// token count so callers (e.g. the autopilot context-percent signal) can reuse
+// it without re-deriving the ratio.
+func estimateMessagesTokens(messages []bridge.Message) int {
+	total := 0
+	for _, m := range messages {
+		total += estimateTextTokens(m.Content)
+	}
+	return total
+}
+
 func (o *Orchestrator) contextWindow() int {
 	snap := o.snapshot()
 	if snap.entry.ContextWindow > 0 {
 		return snap.entry.ContextWindow
+	}
+	// Fall back to the configurable per-install default rather than a hidden
+	// code constant. DefaultContextWindowTokens is resolved via WithDefaults so
+	// a zero/absent value still yields a sane floor (see DefaultOrchestratorConfig).
+	if w := snap.cfg.Orchestrator.WithDefaults().DefaultContextWindowTokens; w > 0 {
+		return w
 	}
 	return defaultContextWindow
 }
@@ -390,6 +408,98 @@ func sapaloqControlBody(text string) string {
 	return sapaloqControlOpen + "\n" + text + "\n" + sapaloqControlClose
 }
 
+// autopilotSignals summarizes the live session state the autopilot continuation
+// can steer on. It is read from the in-process task roster + on-disk task
+// records so the model gets concrete facts ("a task is awaiting clarification")
+// instead of a content-blind nudge. Fields are derived, never guessed from the
+// model's own text.
+type autopilotSignals struct {
+	// runningTasks is the count of background tasks still in a non-terminal
+	// state (pending/in_progress/stopping) for this session.
+	runningTasks int
+	// awaitingClarification is true when any task in this session is paused
+	// waiting for the user/orchestrator to answer a clarification question.
+	awaitingClarification bool
+	// contextPercent is the estimated context window usage at this point
+	// (0..100). 0 means "unknown / not computed".
+	contextPercent int
+}
+
+// sessionSignals reads the live task roster + on-disk records for a session and
+// returns the derived signals the autopilot continuation steers on. Best-effort
+// (a read error yields an empty signal struct); it never blocks the loop.
+func (o *Orchestrator) sessionSignals(sessionID string) autopilotSignals {
+	var sig autopilotSignals
+	for _, id := range o.tasksForSession(sessionID) {
+		rec, err := o.readTask(id)
+		if err != nil {
+			continue
+		}
+		switch rec.Status {
+		case "pending", "in_progress", "stopping":
+			sig.runningTasks++
+		case "awaiting_clarification":
+			sig.awaitingClarification = true
+		}
+	}
+	return sig
+}
+
+// buildAutopilotContinuation composes the tool-less-turn continuation nudge from
+// concrete session signals + an escalation counter, instead of the old single
+// static string. It never judges the model's prose to infer "done"; it injects
+// facts ("a task is awaiting clarification") and an escalating instruction so
+// repeated tool-less turns converge on a silent sapaloq_stop.
+//
+//   - inferenceTurn: the 1-based index of the NEXT inference turn (i.e. how many
+//     tool-less turns have already happened). Used for escalation.
+//   - toolResults:   the results produced this turn (empty for a tool-less turn,
+//     which is the only path that calls this builder).
+//   - sig:           live session signals (running tasks, clarification, context).
+//   - steerPercent:  the soft compaction-steer threshold (0..1); when
+//     sig.contextPercent >= steerPercent*100 a non-blocking compact suggestion
+//     is appended. <=0 disables the steer.
+func buildAutopilotContinuation(inferenceTurn int, toolResults []string, sig autopilotSignals, steerPercent float64) string {
+	// Tool-less turn => no results to feed back. The continuation is pure
+	// steering authored by SapaLOQ.
+	var b strings.Builder
+
+	// Escalation: the first tool-less turn gets the full reasoning; turns >=3
+	// get a short imperative that suppresses re-narration. This bounds the
+	// "narrate without acting" tail without ever judging the text.
+	escalated := inferenceTurn >= 3
+
+	switch {
+	case sig.awaitingClarification:
+		b.WriteString("A delegated task is awaiting clarification from you. Relay its question to the user (or answer it via `sapaloq_answer_clarification`) before doing anything else; do NOT call sapaloq_stop while a clarification is pending.")
+	case sig.runningTasks > 0:
+		if escalated {
+			b.WriteString("Background work is still running and you have already acknowledged it. Invoke `sapaloq_stop` silently now - do not re-narrate status or repeat your acknowledgement.")
+		} else {
+			b.WriteString("Background task(s) are running and you cannot advance them from here. If you have already replied to the user, call `sapaloq_stop` immediately - stopping is a silent action, so do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
+		}
+	default:
+		// No background work at all: the model either answered the user or has
+		// nothing concrete left to do. The correct next action is almost always
+		// a silent stop.
+		if escalated {
+			b.WriteString("Invoke `sapaloq_stop` silently now - do not repeat your answer or write a sign-off. If a concrete next step genuinely remains for YOU to take now, take it with a single concrete action; otherwise stop.")
+		} else {
+			b.WriteString("Continue the existing task only if a concrete next step remains for YOU to take now. If the work is finished, or the only remaining work is running in the background (a delegated task you cannot advance), call `sapaloq_stop` immediately - stopping is a silent action, so do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
+		}
+	}
+
+	// Non-blocking compaction steer: when the context is getting full but has
+	// not yet hit the force threshold, suggest the model compact on its own
+	// initiative. This is advisory; the orchestrator still force-compacts at
+	// the headroom threshold.
+	if steerPercent > 0 && sig.contextPercent > 0 && float64(sig.contextPercent) >= steerPercent*100 {
+		b.WriteString(" The conversation is getting long; if you have a natural pause point, you may call `sapaloq_compact_session` with a structured summary of the thread so far to free up context before continuing.")
+	}
+
+	return sapaloqControlBody(b.String())
+}
+
 // calledToolsNote renders an explicit, in-transcript record of the tools the
 // assistant invoked on a turn, e.g. "[Called tools: sapaloq_spawn_agent]". It
 // is appended to the assistant message so the model sees proof that it acted -
@@ -430,16 +540,22 @@ func calledToolsNote(tools []scheduledTool) string {
 //  1. The Ask system prompt (persona-wrapped via systemPrompt)
 //  2. The runtime context block (paths, ROADMAP)
 //  3. Bounded per-turn blocks: negative guidance, memory prefetch, skills
-//  4. The persisted chat turns (excluding UI-only "thinking")
+//  4. The persisted chat turns (excluding UI-only "thinking" / "autopilot";
+//     "checkpoint" marker turns replay as a system summary)
 //  5. The latest user message, unless it is already the last persisted turn
 //
-// Auto-compaction is triggered here when the cached usage is at or above
-// autoCompactPercent of the model's context window, so a long session gets
-// trimmed before the next request instead of failing the call.
+// Legacy heuristic auto-compaction (compactActiveSession @ 80%) only runs when
+// the LLM checkpoint model is disabled (compaction.useCheckpoints=false). With
+// the checkpoint model on (the default), compaction is driven by the
+// sapaloq_compact_session tool + the force triggers in runTurnLoop, so a long
+// session is compacted by a model-authored checkpoint instead of a truncated
+// heuristic summary before the next request.
 func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUserMessage string) ([]bridge.Message, error) {
-	usage, err := o.ContextUsage(ctx, sessionID)
-	if err == nil && usage.ContextWindow > 0 && usage.Percent >= autoCompactPercent {
-		_, _ = o.compactActiveSession(ctx, sessionID, "auto")
+	if !o.snapshot().cfg.Orchestrator.WithDefaults().Compaction.UseCheckpoints {
+		usage, err := o.ContextUsage(ctx, sessionID)
+		if err == nil && usage.ContextWindow > 0 && usage.Percent >= autoCompactPercent {
+			_, _ = o.compactActiveSession(ctx, sessionID, "auto")
+		}
 	}
 	turns, err := o.chat.ActiveTurns(ctx, sessionID, false)
 	if err != nil {
@@ -467,6 +583,25 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 		// Thinking turns are persisted for the UI only - never replay reasoning
 		// back into the model's context window.
 		if role == "thinking" {
+			continue
+		}
+		// Autopilot continuation turns are persisted only for context
+		// accounting (they occupy real context in the live in-run slice). They
+		// are NOT replayed from history: the run that owns them carries them
+		// in cleanMessages, and a fresh turn after a restart would otherwise
+		// see stale SapaLOQ-authored nudges as if they were new input.
+		if role == "autopilot" {
+			continue
+		}
+		// Checkpoint marker turns (role=checkpoint, written by the LLM
+		// compaction path) are replayed as a system summary so the model
+		// treats the persisted checkpoint as durable context, not as a user
+		// or assistant turn. Only the LATEST checkpoint is in context
+		// (older ones were archived by included_in_context=0 when the next
+		// checkpoint was created), so replaying every included checkpoint
+		// turn naturally yields just the most recent one.
+		if role == "checkpoint" {
+			messages = append(messages, bridge.Message{Role: "system", Content: turn.Content})
 			continue
 		}
 		// "tool"/"error" turns keep their semantic role here; the wire layer

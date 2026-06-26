@@ -43,6 +43,37 @@ export function appendMessage(
   return item;
 }
 
+// appendCheckpointDivider inserts the visual seam between pre-checkpoint
+// (archived, muted) and post-checkpoint (live) history: a horizontal rule with
+// a small centered "Checkpoint n" label, followed by a collapsible summary
+// card (collapsed by default so it does not dominate the chat). The summary is
+// the model-authored markdown captured at compaction time; expanding it lets
+// the user recall what was compacted without leaving the transcript.
+export function appendCheckpointDivider(index: number, summary: string) {
+  const list = getMessageList();
+  if (!list) return;
+  const divider = document.createElement('div');
+  divider.className = 'checkpoint-divider';
+  const ruleBefore = document.createElement('span');
+  ruleBefore.className = 'checkpoint-divider__rule';
+  const label = document.createElement('span');
+  label.className = 'checkpoint-divider__label';
+  label.textContent = `Checkpoint ${index}`;
+  const ruleAfter = document.createElement('span');
+  ruleAfter.className = 'checkpoint-divider__rule';
+  divider.append(ruleBefore, label, ruleAfter);
+  list.appendChild(divider);
+  if (summary && summary.trim()) {
+    const card = document.createElement('details');
+    card.className = 'checkpoint-summary';
+    const summaryEl = document.createElement('summary');
+    summaryEl.textContent = 'Summary';
+    card.append(summaryEl, renderMarkdown(summary));
+    list.appendChild(card);
+  }
+  list.scrollTop = list.scrollHeight;
+}
+
 function renderMessageAttachments(attachments: PendingAttachment[]) {
   const wrap = document.createElement('div');
   wrap.className = 'message-attachments';

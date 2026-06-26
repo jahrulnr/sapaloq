@@ -47,10 +47,16 @@ type chatResult struct {
 }
 
 type chatTurn struct {
-	ID      int64  `json:"id"`
-	Seq     int    `json:"seq"`
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	ID              int64  `json:"id"`
+	Seq             int    `json:"seq"`
+	Role            string `json:"role"`
+	Content         string `json:"content"`
+	CheckpointIndex int    `json:"checkpoint_index,omitempty"`
+	// Archived is derived from included_in_context=0 + the presence of a later
+	// checkpoint: the turn is still shown (full transcript) but rendered muted
+	// as pre-checkpoint history. The widget computes it from the checkpoint
+	// boundary rather than stored, so we keep it lightweight here.
+	Archived bool `json:"archived,omitempty"`
 }
 
 type chatUsage struct {
@@ -151,11 +157,37 @@ func chatHistory(socketPath string) (chatHistoryResult, error) {
 	result.OK = true
 	result.SessionID = res.SessionID
 	result.Usage = mapUsage(res.Usage)
+	// The checkpoint divider is inserted by the frontend at each checkpoint
+	// turn (role=checkpoint). Pre-checkpoint turns are flagged archived
+	// (included_in_context=0) so the UI can mute them; they remain in the
+	// transcript because ActiveTurns(..., true) returns the full history.
 	for _, turn := range res.Turns {
-		if turn.Role == "system" {
+		switch turn.Role {
+		case "system", "tool", "autopilot":
+			// Internal/system turns are never rendered as chat bubbles (system
+			// is the prompt scaffolding; tool/autopilot are accounting-only).
+			continue
+		case "checkpoint":
+			// Checkpoint marker turns become a collapsible "Checkpoint n" card
+			// + divider; carry the index so the frontend labels it.
+			result.Turns = append(result.Turns, chatTurn{
+				ID:              turn.ID,
+				Seq:             turn.Seq,
+				Role:            turn.Role,
+				Content:         turn.Content,
+				CheckpointIndex: turn.CheckpointIndex,
+				Archived:        !turn.IncludedInContext,
+			})
 			continue
 		}
-		result.Turns = append(result.Turns, chatTurn{ID: turn.ID, Seq: turn.Seq, Role: turn.Role, Content: turn.Content})
+		result.Turns = append(result.Turns, chatTurn{
+			ID:              turn.ID,
+			Seq:             turn.Seq,
+			Role:            turn.Role,
+			Content:         turn.Content,
+			CheckpointIndex: turn.CheckpointIndex,
+			Archived:        !turn.IncludedInContext,
+		})
 	}
 	return result, nil
 }

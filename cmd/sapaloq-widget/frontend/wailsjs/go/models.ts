@@ -20,6 +20,9 @@ export namespace bridge {
 	    event_id?: string;
 	    correlation_id?: string;
 	    version?: number;
+	    checkpoint_index?: number;
+	    checkpoint_reason?: string;
+	    checkpoint_summary?: string;
 	    // Go type: time
 	    at: any;
 	
@@ -48,6 +51,9 @@ export namespace bridge {
 	        this.event_id = source["event_id"];
 	        this.correlation_id = source["correlation_id"];
 	        this.version = source["version"];
+	        this.checkpoint_index = source["checkpoint_index"];
+	        this.checkpoint_reason = source["checkpoint_reason"];
+	        this.checkpoint_summary = source["checkpoint_summary"];
 	        this.at = this.convertValues(source["at"], null);
 	    }
 	
@@ -154,6 +160,8 @@ export namespace main {
 	    seq: number;
 	    role: string;
 	    content: string;
+	    checkpoint_index?: number;
+	    archived?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new chatTurn(source);
@@ -165,6 +173,8 @@ export namespace main {
 	        this.seq = source["seq"];
 	        this.role = source["role"];
 	        this.content = source["content"];
+	        this.checkpoint_index = source["checkpoint_index"];
+	        this.archived = source["archived"];
 	    }
 	}
 	export class chatHistoryResult {

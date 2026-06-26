@@ -434,6 +434,17 @@ On **compaction signal** (context >80% or explicit):
 2. Re-query index for active task only
 3. Re-assemble - **do not** re-read all skills
 
+> **Deprecated — heuristic compaction is replaced by LLM-authored checkpoints
+> (see [ORCHESTRATOR.md § Checkpoints](./ORCHESTRATOR.md#checkpoints-llm-driven-compaction)).**
+> The 80% heuristic `compactActiveSession` and mid-run `compactConversationMessages`
+> paths are gated off by default (`compaction.useCheckpoints = true`). The new
+> model: the LLM writes the summary (via `sapaloq_compact_session` or a forced
+> compaction turn), the orchestrator persists a durable checkpoint, and the
+> model's context is rebuilt from **latest checkpoint summary + anchored tail**
+> (always including the last assistant turn) + system blocks. The UI keeps the
+> full transcript with a `--- Checkpoint n ---` seam; only the model context is
+> reduced. Index-first prefetch above remains the source of durable facts.
+
 ---
 
 ## Auto-learning loop

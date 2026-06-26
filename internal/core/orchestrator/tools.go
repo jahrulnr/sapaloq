@@ -47,6 +47,7 @@ var askTools = append(append([]string{
 	"sapaloq_send_steering",
 	"sapaloq_wait_events",
 	"sapaloq_stop",
+	"sapaloq_compact_session",
 	"exec",
 	"exec_async",
 	"exec_status",
@@ -449,4 +450,13 @@ func init() {
 	}`)
 
 	reg("desktop_dnd_status", `{"type":"object","properties":{}}`)
+
+	reg("sapaloq_compact_session", `{
+		"type":"object",
+		"properties":{
+			"summary":{"type":"string","description":"Structured markdown summary of the conversation so far: goals, decisions, open items, key facts. Do NOT repeat the last assistant message verbatim - it is preserved in context separately."},
+			"reason":{"type":"string","description":"Optional: why you are compacting now (e.g. 'thread long', 'natural pause')."}
+		},
+		"required":["summary"]
+	}`)
 }

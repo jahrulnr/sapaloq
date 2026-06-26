@@ -103,7 +103,7 @@ func TestSubAgentProgressDoesNotPersistBridgeDoneAsTaskCompletion(t *testing.T) 
 	}}
 	o := &Orchestrator{
 		memoryDir: t.TempDir(),
-		progress:  ProgressWriter{Dir: progressDir},
+		progress:  newAsyncProgressWriter(ProgressWriter{Dir: progressDir}),
 		cfg:       config.Config{},
 	}
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
@@ -221,7 +221,7 @@ func TestPublishTaskUpdateDoneAlwaysSurfaces(t *testing.T) {
 	events, cancel := b.Subscribe(8)
 	defer cancel()
 	dir := t.TempDir()
-	o := &Orchestrator{bus: b, cfg: config.Config{}, progress: ProgressWriter{Dir: dir}}
+	o := &Orchestrator{bus: b, cfg: config.Config{}, progress:  newAsyncProgressWriter(ProgressWriter{Dir: dir})}
 
 	o.publishTaskUpdate("s1", taskRecord{ID: "t1", Role: "task-runner", Status: "done", Result: "ok"})
 
@@ -242,26 +242,38 @@ func TestPublishTaskUpdateDoneAlwaysSurfaces(t *testing.T) {
 	}
 }
 
-func TestRecentTaskUpdatesRehydratesDurableState(t *testing.T) {
+func TestRecentTaskUpdatesRehydratesLiveStateOnly(t *testing.T) {
 	now := time.Now().UTC()
 	o := &Orchestrator{memoryDir: t.TempDir()}
+	// t1 is live (in_progress); t2 is terminal (failed) and must NOT be
+	// rehydrated - its outcome is already persisted as an assistant chat bubble
+	// via speakTaskCompletion, and re-emitting it made the chat room fill with a
+	// verbose status timeline on every widget open.
 	for _, record := range []taskRecord{
 		{ID: "t1", SessionID: "s1", Role: "task-runner", Status: "in_progress", CreatedAt: now, UpdatedAt: now},
 		{ID: "t2", SessionID: "s1", Role: "task-runner", Status: "failed", Error: "boom", CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+		{ID: "t3", SessionID: "s1", Role: "planner", Status: "done", Result: "ok", CreatedAt: now, UpdatedAt: now.Add(2 * time.Second)},
+		{ID: "t4", SessionID: "s1", Role: "task-runner", Status: "awaiting_clarification", Question: "which?", CreatedAt: now, UpdatedAt: now.Add(3 * time.Second)},
 	} {
 		if err := o.writeTask(record); err != nil {
 			t.Fatal(err)
 		}
 	}
 	events := o.RecentTaskUpdates(20)
+	// Only the live (in_progress) and paused (awaiting_clarification) tasks
+	// rehydrate; terminal done/failed are dropped.
 	if len(events) != 2 {
-		t.Fatalf("got %d updates, want 2", len(events))
+		t.Fatalf("got %d updates, want 2 (live + paused only): %+v", len(events), events)
 	}
-	if events[0].TaskID != "t1" || events[1].TaskID != "t2" {
-		t.Fatalf("updates not in chronological order: %+v", events)
+	ids := []string{events[0].TaskID, events[1].TaskID}
+	if ids[0] != "t1" || ids[1] != "t4" {
+		t.Fatalf("unexpected rehydrated tasks: %+v", ids)
 	}
-	if events[1].TaskStatus != "failed" || events[1].Summary == "" {
-		t.Fatalf("failed snapshot incomplete: %+v", events[1])
+	if events[0].TaskStatus != "in_progress" {
+		t.Fatalf("t1 status = %q, want in_progress", events[0].TaskStatus)
+	}
+	if events[1].TaskStatus != "awaiting_clarification" || events[1].Summary == "" {
+		t.Fatalf("paused snapshot incomplete: %+v", events[1])
 	}
 }
 
@@ -272,7 +284,7 @@ func TestRecoverOrphanedTasksFailsDetachedWorkers(t *testing.T) {
 	defer cancel()
 	o := &Orchestrator{
 		memoryDir: t.TempDir(),
-		progress:  ProgressWriter{Dir: t.TempDir()},
+		progress:  newAsyncProgressWriter(ProgressWriter{Dir: t.TempDir()}),
 		bus:       b,
 	}
 	for _, record := range []taskRecord{

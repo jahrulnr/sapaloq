@@ -62,7 +62,7 @@ func (o *Orchestrator) collectToolJobs(ctx context.Context, runID, sessionID str
 
 func toolIsBarrier(name string) bool {
 	switch name {
-	case "sapaloq_complete_task", "sapaloq_fail_task", "request_clarification", "sapaloq_stop":
+	case "sapaloq_complete_task", "sapaloq_fail_task", "request_clarification", "sapaloq_stop", "sapaloq_compact_session":
 		return true
 	default:
 		return false
