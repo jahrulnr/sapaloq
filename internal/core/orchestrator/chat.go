@@ -65,10 +65,10 @@ type Orchestrator struct {
 	skills           []skills.Skill
 	desktop          platform.Desktop
 	prompts          *prompts.Manager
-	// asyncExecReg is the in-process registry for non-blocking shell exec.
-	// See tools_async_exec.go. asyncOnce guards its lazy init.
-	asyncExecReg *asyncExecRegistry
-	asyncOnce    sync.Once
+	// bgJobsReg is the in-process registry for non-blocking (fire-and-forget)
+	// tool jobs. See tools_bg_jobs.go. bgJobsOnce guards its lazy init.
+	bgJobsReg   *bgJobRegistry
+	bgJobsOnce  sync.Once
 	// redactor masks secrets in every tool result before it reaches the model,
 	// logs, or egress. The AI keeps full tool access; only secret values in
 	// results are scrubbed, so a model tricked into reading ~/.ssh/id_rsa or

@@ -155,17 +155,19 @@ func TestRunShellCapturedCancelKillsGroup(t *testing.T) {
 	t.Fatalf("backgrounded child pid %d survived cancel (leak)", pid)
 }
 
-// TestAsyncExecBackgroundReachesTerminal ties the fix back to the async path:
-// an exec_async whose command backgrounds a child must still reach a terminal
-// state and not sit in "running" forever (the on-screen "stuck" symptom).
-func TestAsyncExecBackgroundReachesTerminal(t *testing.T) {
-	r := newTestRegistry(t)
+// TestBgJobBackgroundReachesTerminal ties the fix back to the fire-and-forget
+// path: a non-blocking exec whose command backgrounds a child must still
+// reach a terminal state and not sit in "running" forever (the on-screen
+// "stuck" symptom).
+func TestBgJobBackgroundReachesTerminal(t *testing.T) {
+	r := newTestBgRegistry(t)
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child.pid")
 	cmd := fmt.Sprintf(`( sleep 60 & echo $! > %q ); echo ok`, pidFile)
-	job := r.spawn(context.Background(), "run-x", "sess-x", cmd, dir, 10)
-	final := waitForTerminal(t, r, job.ID, 5*time.Second)
-	if final.Status != asyncExecCompleted {
+	o := &Orchestrator{}
+	job := r.spawn(context.Background(), "exec", "run-x", "sess-x", o.execBgRun(toolArgs{Command: cmd, Cwd: dir, TimeoutSeconds: 10}, "run-x"))
+	final := waitForBgTerminal(t, r, job.ID, 5*time.Second)
+	if final.Status != bgJobCompleted {
 		t.Fatalf("expected completed, got %s (err=%q out=%q)", final.Status, final.Error, final.Output)
 	}
 	if !strings.Contains(final.Output, "ok") {

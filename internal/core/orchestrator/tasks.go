@@ -89,6 +89,9 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		CorrelationID  string `json:"correlation_id"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 		Summary        string `json:"summary"`
+		Mode           string `json:"mode"`           // wait tool: time|tool|task|events
+		JobID          string `json:"job_id"`         // wait(tool) / sapaloq_cancel_job target
+		WaitForOutput  *bool  `json:"wait_for_output,omitempty"`
 	}
 	if err := json.Unmarshal(call.Arguments, &args); err != nil {
 		// Tolerate raw control bytes in multi-line string values (see
@@ -159,42 +162,126 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			response += "\n\nError: " + record.Error
 		}
 		return askToolResult{text: response, handled: true}
-	case "sapaloq_wait":
-		taskID := strings.TrimSpace(args.TaskID)
-		if taskID == "" {
-			taskID = o.latestTaskID()
+	case "wait":
+		mode := strings.TrimSpace(args.Mode)
+		if mode == "" {
+			mode = "time"
 		}
-		waitSecs := effectiveWaitSeconds(args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
-		o.emit(ctx, out, waitingEvent(sessionID, waitSecs))
-		record, changed, err := o.waitForTaskChange(ctx, taskID, args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
-		if err != nil {
-			if ctx.Err() != nil {
-				return askToolResult{text: "Wait cancelled.", handled: true, stop: true}
+		switch mode {
+		case "time":
+			waitSecs := effectiveWaitSeconds(args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
+			o.emit(ctx, out, waitingEvent(sessionID, waitSecs))
+			sleep := time.Duration(args.Seconds) * time.Second
+			if args.Seconds <= 0 {
+				sleep = time.Duration(waitSecs) * time.Second
 			}
-			return askToolResult{text: "Wait failed: " + err.Error(), handled: true}
+			if maxWait := snap.cfg.Orchestrator.Continuation.MaxWaitSeconds; maxWait > 0 && sleep > time.Duration(maxWait)*time.Second {
+				sleep = time.Duration(maxWait) * time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return askToolResult{text: "Wait cancelled.", handled: true, stop: true}
+			case <-time.After(sleep):
+			}
+			o.emit(ctx, out, statusEvent(sessionID, "working"))
+			return askToolResult{text: fmt.Sprintf("Waited %ds.", int(sleep.Seconds())), handled: true}
+		case "tool":
+			jobID := strings.TrimSpace(args.JobID)
+			if jobID == "" {
+				return askToolResult{text: "Error: job_id is required for wait mode=tool.", handled: true}
+			}
+			timeout := time.Duration(args.TimeoutSeconds) * time.Second
+			if args.TimeoutSeconds < 0 {
+				timeout = 30 * time.Second
+			}
+			if args.TimeoutSeconds == 0 {
+				timeout = 0
+			}
+			if timeout > 300*time.Second {
+				timeout = 300 * time.Second
+			}
+			reg := o.bgJobs()
+			if reg == nil {
+				return askToolResult{text: "Error: background job registry unavailable.", handled: true}
+			}
+			start := time.Now()
+			done, snap := reg.wait(jobID, timeout)
+			elapsed := time.Since(start)
+			view := bgJobToView(snap)
+			view["waited_ms"] = elapsed.Milliseconds()
+			if !done {
+				view["hint"] = "job is still running. Either call wait again with a larger timeout_seconds, sapaloq_cancel_job(job_id) to abort, or sapaloq_fail_task if it has been too long."
+			} else {
+				delete(view, "hint")
+			}
+			raw, err := json.Marshal(view)
+			if err != nil {
+				return askToolResult{text: fmt.Sprintf("Error: marshal wait result: %v", err), handled: true}
+			}
+			return askToolResult{text: string(raw), handled: true}
+		case "task":
+			taskID := strings.TrimSpace(args.TaskID)
+			if taskID == "" {
+				taskID = o.latestTaskID()
+			}
+			waitSecs := effectiveWaitSeconds(args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
+			o.emit(ctx, out, waitingEvent(sessionID, waitSecs))
+			record, changed, err := o.waitForTaskChange(ctx, taskID, args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
+			if err != nil {
+				if ctx.Err() != nil {
+					return askToolResult{text: "Wait cancelled.", handled: true, stop: true}
+				}
+				return askToolResult{text: "Wait failed: " + err.Error(), handled: true}
+			}
+			o.emit(ctx, out, statusEvent(sessionID, "working"))
+			if !changed {
+				return askToolResult{text: fmt.Sprintf(
+					"Task `%s` masih %s setelah jendela tunggu. Tidak perlu menunggu - aku akan otomatis mengabari di chat begitu task selesai/gagal/butuh keputusan (kamu juga bisa cek `sapaloq_get_task_status`).",
+					record.ID, record.Status), handled: true}
+			}
+			response := fmt.Sprintf("Task `%s` changed to **%s**.", record.ID, record.Status)
+			if record.Question != "" {
+				response += "\n\nNeeds clarification: " + record.Question
+			}
+			if record.Result != "" {
+				response += "\n\n" + record.Result
+			}
+			if record.Error != "" {
+				response += "\n\nError: " + record.Error
+			}
+			return askToolResult{text: response, handled: true}
+		case "events":
+			timeout := args.TimeoutSeconds
+			if timeout <= 0 {
+				timeout = 120
+			}
+			events := o.waitActorEvents(ctx, sessionID, time.Duration(timeout)*time.Second)
+			if len(events) == 0 {
+				return askToolResult{text: "No actor event arrived before the wait ended.", handled: true}
+			}
+			return askToolResult{text: actorEventsPrompt(events), handled: true}
+		default:
+			return askToolResult{text: "Error: unknown wait mode " + mode + " (use time|tool|task|events).", handled: true}
 		}
-		o.emit(ctx, out, statusEvent(sessionID, "working"))
-		if !changed {
-			// IMPORTANT: do NOT imply you will keep watching. This generation is
-			// about to end; the task keeps running in the background and its
-			// completion is delivered asynchronously (the orchestrator speaks it
-			// into chat on the terminal transition). Tell the user it will be
-			// surfaced automatically instead of promising to "wait a bit more".
-			return askToolResult{text: fmt.Sprintf(
-				"Task `%s` masih %s setelah jendela tunggu. Tidak perlu menunggu - aku akan otomatis mengabari di chat begitu task selesai/gagal/butuh keputusan (kamu juga bisa cek `sapaloq_get_task_status`).",
-				record.ID, record.Status), handled: true}
+	case "sapaloq_cancel_job":
+		jobID := strings.TrimSpace(args.JobID)
+		if jobID == "" {
+			return askToolResult{text: "Error: job_id is required.", handled: true}
 		}
-		response := fmt.Sprintf("Task `%s` changed to **%s**.", record.ID, record.Status)
-		if record.Question != "" {
-			response += "\n\nNeeds clarification: " + record.Question
+		reg := o.bgJobs()
+		if reg == nil {
+			return askToolResult{text: "Error: background job registry unavailable.", handled: true}
 		}
-		if record.Result != "" {
-			response += "\n\n" + record.Result
+		snap, ok := reg.cancel(jobID)
+		if !ok {
+			return askToolResult{text: fmt.Sprintf("Error: job_id %q not found.", jobID), handled: true}
 		}
-		if record.Error != "" {
-			response += "\n\nError: " + record.Error
+		view := bgJobToView(snap)
+		raw, err := json.Marshal(view)
+		if err != nil {
+			return askToolResult{text: fmt.Sprintf("Error: marshal cancel: %v", err), handled: true}
 		}
-		return askToolResult{text: response, handled: true}
+		return askToolResult{text: string(raw), handled: true}
 	case "sapaloq_answer_clarification":
 		answer := strings.TrimSpace(args.Answer)
 		if answer == "" {
@@ -271,16 +358,6 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			return askToolResult{text: "Failed to queue steering: " + err.Error(), handled: true}
 		}
 		return askToolResult{text: fmt.Sprintf("Steering queued for `%s`.", target), handled: true}
-	case "sapaloq_wait_events":
-		timeout := args.TimeoutSeconds
-		if timeout <= 0 {
-			timeout = 120
-		}
-		events := o.waitActorEvents(ctx, sessionID, time.Duration(timeout)*time.Second)
-		if len(events) == 0 {
-			return askToolResult{text: "No actor event arrived before the wait ended.", handled: true}
-		}
-		return askToolResult{text: actorEventsPrompt(events), handled: true}
 	case "desktop_notify":
 		return askToolResult{text: o.toolDesktopNotify(ctx, parseToolArgs(call.Arguments)), handled: true}
 	case "desktop_dnd_status":

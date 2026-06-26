@@ -370,7 +370,10 @@ func (s *toolJobScheduler) recoverOrphaned() {
 
 func toolConsumesWorkerSlot(name string) bool {
 	switch name {
-	case "sapaloq_wait", "sapaloq_wait_events", "sapaloq_wait_jobs":
+	// wait + sapaloq_cancel_job are quick control ops (a peek/cancel), not
+	// work: they must not consume a worker slot or a burst of polls would
+	// starve the actual tool workers.
+	case "wait", "sapaloq_cancel_job":
 		return false
 	default:
 		return true

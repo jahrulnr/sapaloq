@@ -33,26 +33,22 @@ var desktopTools = []string{
 
 // askTools: orchestrator coordinates and may assess lightly before delegating.
 // It also gets exec so simple host tasks (e.g. "read /etc/hosts", "run `id`")
-// don't require spawning a plan/agent. exec_async is also offered so Ask can
-// launch long-running or potentially-hanging commands without blocking the
-// turn loop; exec_status / exec_result / exec_cancel are part of the same
-// async-exec workflow.
+// don't require spawning a plan/agent. `wait` + `sapaloq_cancel_job` cover
+// non-blocking tool collection: any work tool can be fired with
+// wait_for_output:false and collected via wait{mode:tool}, or aborted via
+// sapaloq_cancel_job.
 var askTools = append(append([]string{
 	"sapaloq_spawn_plan",
 	"sapaloq_spawn_agent",
 	"sapaloq_spawn_scribe",
 	"sapaloq_get_task_status",
-	"sapaloq_wait",
+	"wait",
+	"sapaloq_cancel_job",
 	"sapaloq_answer_clarification",
 	"sapaloq_send_steering",
-	"sapaloq_wait_events",
 	"sapaloq_stop",
 	"sapaloq_compact_session",
 	"exec",
-	"exec_async",
-	"exec_status",
-	"exec_result",
-	"exec_cancel",
 }, readOnlyAssessmentTools...), desktopTools...)
 
 // scribeTools: a named sub-agent that captures notes into the user's storage by
@@ -60,43 +56,37 @@ var askTools = append(append([]string{
 // persist via scribe_write_note (NOT general file writes).
 var scribeTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"scribe_write_note",
+	"wait",
+	"sapaloq_cancel_job",
 	"sapaloq_update_task_progress",
 	"sapaloq_complete_task",
 	"sapaloq_fail_task",
 	"request_clarification",
 	"sapaloq_request_decision",
 	"sapaloq_send_steering",
-	"sapaloq_wait_events",
 )
 
 // planTools: planner. Assessment + exec (so it can investigate the host while
-// planning) + write/read its own plan markdown. exec_async + status/result/
-// cancel are also offered so a planner can launch a long probe (e.g. a build
-// or a network check) without hanging its own turn loop.
+// planning) + write/read its own plan markdown. `wait` + `sapaloq_cancel_job`
+// let a planner fire-and-forget a slow probe and collect it later.
 var planTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"exec",
-	"exec_async",
-	"exec_status",
-	"exec_result",
-	"exec_cancel",
+	"wait",
+	"sapaloq_cancel_job",
 	"write_plan",
 	"read_plan",
 	"request_clarification",
 	"sapaloq_request_decision",
 	"sapaloq_send_steering",
-	"sapaloq_wait_events",
 )
 
 // agentTools: full executor. Assessment + exec + write/edit/delete + lifecycle.
-// The async exec tools (exec_async / exec_status / exec_result / exec_cancel)
-// let the agent stay alive when a single command would otherwise wedge its
-// turn loop - see prompts/agent.md and tools_async_exec.go.
+// Any work tool can be fired with wait_for_output:false and collected via
+// `wait` (mode=tool); sapaloq_cancel_job aborts a running background job.
 var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"exec",
-	"exec_async",
-	"exec_status",
-	"exec_result",
-	"exec_cancel",
+	"wait",
+	"sapaloq_cancel_job",
 	"write_file",
 	"create_file",
 	"edit_file",
@@ -109,7 +99,6 @@ var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"desktop_notify",
 	"sapaloq_request_decision",
 	"sapaloq_send_steering",
-	"sapaloq_wait_events",
 )
 
 // staticToolsForRole returns the built-in declared-tool profile for a role.
@@ -173,7 +162,18 @@ func knownToolSet() map[string]struct{} {
 // init registers concrete JSON parameter schemas so the upstream model knows
 // the arguments for each tool (instead of an open object).
 func init() {
+	// waitForOutputExempt is the locked set of tools that do NOT get the
+	// wait_for_output argument: their result IS the lifecycle transition
+	// (sapaloq_compact_session, sapaloq_stop) and cannot be deferred. Every
+	// other registered tool gets the arg injected into its schema.
+	waitForOutputExempt := map[string]struct{}{
+		"sapaloq_compact_session": {},
+		"sapaloq_stop":            {},
+	}
 	reg := func(name, schema string) {
+		if _, exempt := waitForOutputExempt[name]; !exempt {
+			schema = injectWaitForOutput(schema)
+		}
 		provider.RegisterToolSchema(name, json.RawMessage(schema))
 	}
 
@@ -226,12 +226,6 @@ func init() {
 			"correlation_id":{"type":"string","description":"Optional id linking this steering to a prior decision or plan event."}
 		},
 		"required":["target_task_id","message"]
-	}`)
-	reg("sapaloq_wait_events", `{
-		"type":"object",
-		"properties":{
-			"timeout_seconds":{"type":"integer","minimum":1,"maximum":600,"default":120}
-		}
 	}`)
 	reg("sapaloq_request_decision", `{
 		"type":"object",
@@ -304,41 +298,6 @@ func init() {
 			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
 		},
 		"required":["command"]
-	}`)
-
-	reg("exec_async", `{
-		"type":"object",
-		"properties":{
-			"command":{"type":"string","description":"Any shell command to run on the host with full access. Returns immediately with a job_id; poll exec_status / exec_result to fetch the output. Use this for long-running or potentially-hanging commands (servers, watchers, network calls)."},
-			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded)."},
-			"timeout_seconds":{"type":"integer","description":"Per-job timeout enforced by the host (default 60, max 600)."}
-		},
-		"required":["command"]
-	}`)
-
-	reg("exec_status", `{
-		"type":"object",
-		"properties":{
-			"job_id":{"type":"string","description":"The job_id returned by exec_async."}
-		},
-		"required":["job_id"]
-	}`)
-
-	reg("exec_result", `{
-		"type":"object",
-		"properties":{
-			"job_id":{"type":"string","description":"The job_id returned by exec_async."},
-			"wait_seconds":{"type":"integer","description":"How long to block waiting for the job to finish (default 30, max 300). Use a small value in a poll loop, or a larger one-shot value when you are willing to wait. If the job is still running after the wait, the response is {status:'running', waited_ms, hint} - call exec_cancel(job_id) or sapaloq_fail_task if it has been too long."}
-		},
-		"required":["job_id"]
-	}`)
-
-	reg("exec_cancel", `{
-		"type":"object",
-		"properties":{
-			"job_id":{"type":"string","description":"The job_id returned by exec_async. The host kills the process and the job is marked cancelled; partial output (if any) is returned."}
-		},
-		"required":["job_id"]
 	}`)
 
 	reg("read_image", `{
@@ -459,4 +418,61 @@ func init() {
 		},
 		"required":["summary"]
 	}`)
+
+	// wait: the unified wait tool. mode selects behavior:
+	//   time   - sleep `seconds` (bounded by continuation.maxWaitSeconds).
+	//   tool   - collect a background job's result by job_id (replaces
+	//            exec_status/exec_result). timeout_seconds=0 = instant peek.
+	//   task   - wait for a sub-agent task to change state (replaces sapaloq_wait).
+	//   events - wait for actor/steering events (replaces sapaloq_wait_events).
+	reg("wait", `{
+		"type":"object",
+		"properties":{
+			"mode":{"type":"string","enum":["time","tool","task","events"],"description":"What to wait for."},
+			"seconds":{"type":"integer","minimum":1,"maximum":600,"description":"mode=time: how long to sleep (bounded by continuation.maxWaitSeconds)."},
+			"job_id":{"type":"string","description":"mode=tool: the job_id returned by a fire-and-forget tool (wait_for_output:false)."},
+			"task_id":{"type":"string","description":"mode=task: the sub-agent task id to watch. Omit to watch the latest task."},
+			"timeout_seconds":{"type":"integer","minimum":0,"maximum":600,"description":"mode=tool: how long to block for the job (default 30; 0 = instant peek). mode=events: how long to wait for an event (default 120)."}
+		},
+		"required":["mode"]
+	}`)
+
+	// sapaloq_cancel_job: cancel any background job by job_id (replaces
+	// exec_cancel, generalized to every fire-and-forget tool).
+	reg("sapaloq_cancel_job", `{
+		"type":"object",
+		"properties":{
+			"job_id":{"type":"string","description":"The job_id returned by a fire-and-forget tool (wait_for_output:false). The host cancels the running job and returns its partial output, if any."}
+		},
+		"required":["job_id"]
+	}`)
+}
+
+// injectWaitForOutput adds the wait_for_output property to a tool's JSON
+// schema. The argument defaults to true (blocking, current behavior); when
+// false, the tool is dispatched as a background job and returns immediately
+// with {job_id, status:"queued"} so the model can collect the result later
+// via the unified `wait` tool. Tools whose schema is an empty object
+// ({"type":"object","properties":{}}) get a properties object created.
+func injectWaitForOutput(schema string) string {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(schema), &m); err != nil {
+		// Malformed schema: register as-is rather than dropping the tool.
+		return schema
+	}
+	props, ok := m["properties"].(map[string]any)
+	if !ok {
+		props = map[string]any{}
+	}
+	props["wait_for_output"] = map[string]any{
+		"type":        "boolean",
+		"default":     true,
+		"description": "When true (default), the tool blocks and returns its result inline. When false, the tool is dispatched in the background and returns immediately with {job_id, status:'queued'}; collect the result later with wait {mode:'tool', job_id}. Use false for slow/long tools or when firing several in parallel.",
+	}
+	m["properties"] = props
+	out, err := json.Marshal(m)
+	if err != nil {
+		return schema
+	}
+	return string(out)
 }

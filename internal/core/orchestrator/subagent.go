@@ -7,6 +7,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -259,42 +260,26 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 	if !o.roleAllows(record.Role, call.Name) {
 		return subToolResult{text: fmt.Sprintf("Error: %s is not allowed for role %s.", call.Name, record.Role)}
 	}
-	// Shared read-only assessment + web tools.
+	// Shared read-only assessment + web + exec tools (honors wait_for_output).
 	if text, ok := o.runSharedTool(ctx, call); ok {
 		return subToolResult{text: text}
 	}
 	args := parseToolArgs(call.Arguments)
 	args = o.resolveActorArgs(ctx, args)
+	// Sub-agent work tools (write/edit/delete/scribe/notify/write_plan) also
+	// honor wait_for_output:false — dispatched to the background registry and
+	// collected later via `wait`. Lifecycle tools below intentionally ignore
+	// the flag (their result IS the transition and cannot be deferred).
+	if run, ok := o.subAgentWorkRunner(args, call.Name, record, result); ok {
+		if args.WaitForOutput != nil && !*args.WaitForOutput {
+			return subToolResult{text: o.spawnBgTool(ctx, call.Name, run)}
+		}
+		out, _ := run(ctx)
+		return subToolResult{text: out}
+	}
 	switch call.Name {
-	case "write_file":
-		return subToolResult{text: toolWriteFile(args, false)}
-	case "create_file":
-		return subToolResult{text: toolWriteFile(args, true)}
-	case "edit_file":
-		return subToolResult{text: toolEditFile(args)}
-	case "delete_file":
-		return subToolResult{text: toolDeleteFile(args)}
-	case "exec":
-		return subToolResult{text: o.toolExec(ctx, args)}
-	case "scribe_write_note":
-		return subToolResult{text: o.toolScribeWriteNote(args)}
-	case "desktop_notify":
-		return subToolResult{text: o.toolDesktopNotify(ctx, args)}
 	case "desktop_dnd_status":
 		return subToolResult{text: o.toolDesktopDNDStatus(ctx)}
-	case "write_plan":
-		md := strings.TrimSpace(args.Markdown)
-		if md == "" {
-			return subToolResult{text: "Error: markdown is required."}
-		}
-		result.Reset()
-		result.WriteString(md)
-		record.Result = md
-		_ = writeFileAtomic(filepath.Join(o.taskDir(record.ID), "plan.md"), []byte(md+"\n"), 0o600)
-		// Non-terminal: the planner may revise the plan (read it back, rewrite)
-		// before finishing. The loop ends naturally when the planner stops
-		// calling tools. The path is surfaced so the model knows where it lives.
-		return subToolResult{text: fmt.Sprintf("Plan saved to state/tasks/%s/plan.md. You may refine it (read it back with read_plan and rewrite) or stop to finalize.", record.ID)}
 	case "read_plan":
 		// Planner reads its OWN plan (to iterate); agent reads the handed-off
 		// plan it must execute.
@@ -363,17 +348,153 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			return subToolResult{text: "Error: " + err.Error()}
 		}
 		return subToolResult{text: fmt.Sprintf("Steering queued for `%s`.", target)}
-	case "sapaloq_wait_events":
-		timeout := args.TimeoutSeconds
-		if timeout <= 0 {
-			timeout = 120
+	case "wait":
+		mode := strings.TrimSpace(args.Mode)
+		if mode == "" {
+			mode = "time"
 		}
-		events := o.waitActorEvents(ctx, record.ID, time.Duration(timeout)*time.Second)
-		if len(events) == 0 {
-			return subToolResult{text: "No actor event arrived before the wait ended."}
+		switch mode {
+		case "time":
+			sleep := time.Duration(args.Seconds) * time.Second
+			if args.Seconds <= 0 {
+				sleep = 30 * time.Second
+			}
+			if sleep > 600*time.Second {
+				sleep = 600 * time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return subToolResult{text: "Wait cancelled."}
+			case <-time.After(sleep):
+			}
+			return subToolResult{text: fmt.Sprintf("Waited %ds.", int(sleep.Seconds()))}
+		case "tool":
+			jobID := strings.TrimSpace(args.JobID)
+			if jobID == "" {
+				return subToolResult{text: "Error: job_id is required for wait mode=tool."}
+			}
+			timeout := time.Duration(args.TimeoutSeconds) * time.Second
+			if args.TimeoutSeconds < 0 {
+				timeout = 30 * time.Second
+			}
+			if timeout > 300*time.Second {
+				timeout = 300 * time.Second
+			}
+			reg := o.bgJobs()
+			if reg == nil {
+				return subToolResult{text: "Error: background job registry unavailable."}
+			}
+			start := time.Now()
+			done, snap := reg.wait(jobID, timeout)
+			view := bgJobToView(snap)
+			view["waited_ms"] = time.Since(start).Milliseconds()
+			if !done {
+				view["hint"] = "job is still running. Either call wait again with a larger timeout_seconds, sapaloq_cancel_job(job_id) to abort, or sapaloq_fail_task if it has been too long."
+			} else {
+				delete(view, "hint")
+			}
+			raw, err := json.Marshal(view)
+			if err != nil {
+				return subToolResult{text: fmt.Sprintf("Error: marshal wait result: %v", err)}
+			}
+			return subToolResult{text: string(raw)}
+		case "task":
+			taskID := strings.TrimSpace(args.TaskID)
+			if taskID == "" {
+				taskID = o.latestTaskID()
+			}
+			record2, changed, err := o.waitForTaskChange(ctx, taskID, args.Seconds, 120)
+			if err != nil {
+				if ctx.Err() != nil {
+					return subToolResult{text: "Wait cancelled."}
+				}
+				return subToolResult{text: "Wait failed: " + err.Error()}
+			}
+			if !changed {
+				return subToolResult{text: fmt.Sprintf("Task `%s` masih %s setelah jendela tunggu.", record2.ID, record2.Status)}
+			}
+			resp := fmt.Sprintf("Task `%s` changed to **%s**.", record2.ID, record2.Status)
+			if record2.Question != "" {
+				resp += "\n\nNeeds clarification: " + record2.Question
+			}
+			if record2.Result != "" {
+				resp += "\n\n" + record2.Result
+			}
+			if record2.Error != "" {
+				resp += "\n\nError: " + record2.Error
+			}
+			return subToolResult{text: resp}
+		case "events":
+			timeout := args.TimeoutSeconds
+			if timeout <= 0 {
+				timeout = 120
+			}
+			events := o.waitActorEvents(ctx, record.ID, time.Duration(timeout)*time.Second)
+			if len(events) == 0 {
+				return subToolResult{text: "No actor event arrived before the wait ended."}
+			}
+			return subToolResult{text: actorEventsPrompt(events)}
+		default:
+			return subToolResult{text: "Error: unknown wait mode " + mode + " (use time|tool|task|events)."}
 		}
-		return subToolResult{text: actorEventsPrompt(events)}
+	case "sapaloq_cancel_job":
+		jobID := strings.TrimSpace(args.JobID)
+		if jobID == "" {
+			return subToolResult{text: "Error: job_id is required."}
+		}
+		reg := o.bgJobs()
+		if reg == nil {
+			return subToolResult{text: "Error: background job registry unavailable."}
+		}
+		snap, ok := reg.cancel(jobID)
+		if !ok {
+			return subToolResult{text: fmt.Sprintf("Error: job_id %q not found.", jobID)}
+		}
+		view := bgJobToView(snap)
+		raw, err := json.Marshal(view)
+		if err != nil {
+			return subToolResult{text: fmt.Sprintf("Error: marshal cancel: %v", err)}
+		}
+		return subToolResult{text: string(raw)}
 	default:
 		return subToolResult{text: "Error: unknown tool " + call.Name}
+	}
+}
+
+// subAgentWorkRunner returns the background-run function for a sub-agent work
+// tool (write_file/create_file/edit_file/delete_file/scribe_write_note/
+// desktop_notify/write_plan). Each reproduces the inline handler's behavior
+// so a fire-and-forget call collects the same result. write_plan mutates the
+// planner's result buffer + record (captured by pointer) exactly as the
+// inline path does. Returns (nil, false) for non-work names so the caller
+// falls through to the lifecycle switch.
+func (o *Orchestrator) subAgentWorkRunner(args toolArgs, name string, record *taskRecord, result *strings.Builder) (bgJobRun, bool) {
+	switch name {
+	case "write_file":
+		return func(context.Context) (string, error) { return toolWriteFile(args, false), nil }, true
+	case "create_file":
+		return func(context.Context) (string, error) { return toolWriteFile(args, true), nil }, true
+	case "edit_file":
+		return func(context.Context) (string, error) { return toolEditFile(args), nil }, true
+	case "delete_file":
+		return func(context.Context) (string, error) { return toolDeleteFile(args), nil }, true
+	case "scribe_write_note":
+		return func(context.Context) (string, error) { return o.toolScribeWriteNote(args), nil }, true
+	case "desktop_notify":
+		return func(ctx context.Context) (string, error) { return o.toolDesktopNotify(ctx, args), nil }, true
+	case "write_plan":
+		md := strings.TrimSpace(args.Markdown)
+		if md == "" {
+			return func(context.Context) (string, error) { return "Error: markdown is required.", nil }, true
+		}
+		return func(context.Context) (string, error) {
+			result.Reset()
+			result.WriteString(md)
+			record.Result = md
+			_ = writeFileAtomic(filepath.Join(o.taskDir(record.ID), "plan.md"), []byte(md+"\n"), 0o600)
+			return fmt.Sprintf("Plan saved to state/tasks/%s/plan.md. You may refine it (read it back with read_plan and rewrite) or stop to finalize.", record.ID), nil
+		}, true
+	default:
+		return nil, false
 	}
 }

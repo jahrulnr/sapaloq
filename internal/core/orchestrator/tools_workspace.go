@@ -79,8 +79,11 @@ type toolArgs struct {
 	Message        string   `json:"message"`
 	Priority       string   `json:"priority"`
 	CorrelationID  string   `json:"correlation_id"`
-	JobID          string   `json:"job_id"`       // exec_status / exec_result / exec_cancel
+	JobID          string   `json:"job_id"`       // wait / sapaloq_cancel_job target
 	WaitSeconds    int      `json:"wait_seconds"` // exec_result: optional poll window (0 = immediate)
+	Seconds        int      `json:"seconds"`      // wait(time): sleep duration
+	TaskID         string   `json:"task_id"`      // wait(task): sub-agent task to watch
+	WaitForOutput  *bool    `json:"wait_for_output,omitempty"` // fire-and-forget when false; nil defaults to true
 }
 
 func parseToolArgs(raw json.RawMessage) toolArgs {
@@ -491,7 +494,7 @@ func (o *Orchestrator) toolExec(ctx context.Context, args toolArgs) string {
 	}
 	text := res.Output
 	if res.TimedOut {
-		return fmt.Sprintf("Command timed out after %ds (process group killed). If this command is long-running (a server, watcher, or anything started with '&'), use exec_async instead so you can keep working and poll/cancel it.\n%s", timeout, text)
+		return fmt.Sprintf("Command timed out after %ds (process group killed). If this command is long-running (a server, watcher, or anything started with '&'), rerun it with wait_for_output:false so it runs in the background, then collect it via wait {mode:'tool', job_id:...}.\n%s", timeout, text)
 	}
 	if res.Cancelled {
 		return fmt.Sprintf("Command cancelled by host.\n%s", text)

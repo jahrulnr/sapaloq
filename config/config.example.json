@@ -165,7 +165,8 @@
           "request_clarification",
           "sapaloq_request_decision",
           "sapaloq_send_steering",
-          "sapaloq_wait_events"
+          "wait",
+          "sapaloq_cancel_job"
         ],
         "maxTurns": 12,
         "canEditConfig": false,
@@ -193,7 +194,8 @@
           "request_clarification",
           "sapaloq_request_decision",
           "sapaloq_send_steering",
-          "sapaloq_wait_events",
+          "wait",
+          "sapaloq_cancel_job",
           "desktop_notify"
         ],
         "canEditConfig": false,
@@ -216,7 +218,8 @@
           "request_clarification",
           "sapaloq_request_decision",
           "sapaloq_send_steering",
-          "sapaloq_wait_events"
+          "wait",
+          "sapaloq_cancel_job"
         ],
         "maxTurns": 8,
         "canEditConfig": false

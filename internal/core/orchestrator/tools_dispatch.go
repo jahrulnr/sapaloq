@@ -10,38 +10,53 @@ func runSharedTool(ctx context.Context, call parse.ToolCall) (string, bool) {
 	return (&Orchestrator{}).runSharedTool(ctx, call)
 }
 
-// runSharedTool handles the read-only assessment + web tools that any mode
-// (Ask, Plan, Agent) may call. Returns (result, handled). When handled is
-// false the caller falls through to mode-specific handlers.
+// runSharedTool handles the read-only assessment + web + exec tools that any
+// mode (Ask, Plan, Agent) may call. Returns (result, handled). When handled
+// is false the caller falls through to mode-specific handlers.
+//
+// Every work tool here honors wait_for_output: when the model passes
+// wait_for_output:false, the tool is dispatched into the background job
+// registry and this returns immediately with {job_id, status:"queued"}; the
+// model later collects the result via the unified `wait` tool (mode=tool).
+// When wait_for_output is true/nil, the tool runs inline and returns its
+// result (the pre-existing behavior).
 func (o *Orchestrator) runSharedTool(ctx context.Context, call parse.ToolCall) (string, bool) {
 	args := parseToolArgs(call.Arguments)
 	args = o.resolveActorArgs(ctx, args)
-	switch call.Name {
+	if run, ok := o.sharedToolRunner(ctx, args, call.Name); ok {
+		if args.WaitForOutput != nil && !*args.WaitForOutput {
+			return o.spawnBgTool(ctx, call.Name, run), true
+		}
+		out, _ := run(ctx)
+		return out, true
+	}
+	return "", false
+}
+
+// sharedToolRunner returns the background-run function for a shared work tool
+// (the read-only assessment set, web tools, and exec). Each returned func
+// reproduces the inline tool's behavior so a fire-and-forget call collects
+// the exact same result the inline path would have returned. Returns
+// (nil, false) for non-work tool names so the caller can fall through.
+func (o *Orchestrator) sharedToolRunner(ctx context.Context, args toolArgs, name string) (bgJobRun, bool) {
+	switch name {
 	case "read_file":
-		return toolReadFile(args), true
+		return func(context.Context) (string, error) { return toolReadFile(args), nil }, true
 	case "search":
-		return toolSearch(args), true
+		return func(context.Context) (string, error) { return toolSearch(args), nil }, true
 	case "list_dir":
-		return toolListDir(args), true
+		return func(context.Context) (string, error) { return toolListDir(args), nil }, true
 	case "glob":
-		return toolGlob(args), true
+		return func(context.Context) (string, error) { return toolGlob(args), nil }, true
 	case "read_image":
-		return toolReadImage(args), true
-	case "exec":
-		return o.toolExec(ctx, args), true
-	case "exec_async":
-		return o.toolExecAsync(ctx, args), true
-	case "exec_status":
-		return o.toolExecStatus(ctx, args), true
-	case "exec_result":
-		return o.toolExecResult(ctx, args), true
-	case "exec_cancel":
-		return o.toolExecCancel(ctx, args), true
+		return func(context.Context) (string, error) { return toolReadImage(args), nil }, true
 	case "web_fetch":
-		return toolWebFetch(ctx, args), true
+		return func(ctx context.Context) (string, error) { return toolWebFetch(ctx, args), nil }, true
 	case "web_search":
-		return toolWebSearch(ctx, args), true
+		return func(ctx context.Context) (string, error) { return toolWebSearch(ctx, args), nil }, true
+	case "exec":
+		return o.execBgRun(args, actorRunID(ctx)), true
 	default:
-		return "", false
+		return nil, false
 	}
 }

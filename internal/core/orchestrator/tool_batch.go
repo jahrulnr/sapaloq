@@ -62,6 +62,10 @@ func (o *Orchestrator) collectToolJobs(ctx context.Context, runID, sessionID str
 
 func toolIsBarrier(name string) bool {
 	switch name {
+	// Terminal lifecycle + compaction are barriers: their result mutates the
+	// actor's terminal state, so all ordinary jobs must finish first. `wait`
+	// and `sapaloq_cancel_job` are NOT barriers - they collect/control other
+	// jobs and must run alongside them.
 	case "sapaloq_complete_task", "sapaloq_fail_task", "request_clarification", "sapaloq_stop", "sapaloq_compact_session":
 		return true
 	default:
