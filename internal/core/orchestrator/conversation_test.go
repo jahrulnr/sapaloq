@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -989,6 +990,13 @@ func TestToolLessTurnNeverFinishesOnAbsenceOfTool(t *testing.T) {
 	if !strings.Contains(cont, "sapaloq_stop") {
 		t.Fatalf("continuation should point at the terminal tool, got %q", cont)
 	}
+	// The continuation must also frame stopping as a silent action (no status
+	// narration / sign-off) so the model stops calling the tool AND narrating.
+	// Use a stable keyword ("silent"), not the full sentence, to stay robust to
+	// minor wording tweaks.
+	if !strings.Contains(cont, "silent") {
+		t.Fatalf("continuation should frame stopping as a silent action, got %q", cont)
+	}
 	if strings.Contains(cont, "NO_OP") {
 		t.Fatalf("continuation must not use the removed NO_OP sentinel, got %q", cont)
 	}
@@ -1086,5 +1094,91 @@ func TestRunFinishesOnTerminalTool(t *testing.T) {
 	}
 	if fake.calls != 3 {
 		t.Fatalf("calls = %d, want narrate(1) -> narrate(2) -> stop(3)", fake.calls)
+	}
+}
+
+// TestRunEmitsTurnBoundaryBetweenTurns proves the orchestrator marks the seam
+// between inference turns with EventTurnBoundary - the UI hint that lets the
+// widget flush one bubble and start the next - and that it does NOT emit one
+// after the terminal tool ends the run (the final turn needs no boundary). For
+// stopAt:3 the sequence is narrate -> [boundary] -> narrate -> [boundary] ->
+// stop, so exactly 2 boundaries are expected, each appearing before the next
+// response_delta and never after EventDone.
+func TestRunEmitsTurnBoundaryBetweenTurns(t *testing.T) {
+	fake := &stopToolBridge{stopAt: 3}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 64)
+	var (
+		mu     sync.Mutex
+		kinds  []bridge.EventKind
+		drainW sync.WaitGroup
+	)
+	drainW.Add(1)
+	go func() {
+		defer drainW.Done()
+		for ev := range out {
+			mu.Lock()
+			kinds = append(kinds, ev.Kind)
+			mu.Unlock()
+		}
+	}()
+	cfg := turnConfig{
+		sessionID: "s1",
+		runID:     "actor-boundary",
+		tools:     []string{"sapaloq_stop"},
+		sink:      chatSink{o: o, out: out},
+		dispatch: func(_ context.Context, call parse.ToolCall) turnOutcome {
+			if call.Name == "sapaloq_stop" {
+				return turnOutcome{text: "Stopped: done", handled: true, stop: true}
+			}
+			return turnOutcome{}
+		},
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    fake,
+		}, "task", []bridge.Message{{Role: "user", Content: "go"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run should finish cleanly on the terminal tool: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not finish on the terminal tool")
+	}
+	close(out)
+	drainW.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	boundaries := 0
+	lastDoneIdx := -1
+	for i, k := range kinds {
+		if k == bridge.EventTurnBoundary {
+			boundaries++
+		}
+		if k == bridge.EventDone {
+			lastDoneIdx = i
+		}
+	}
+	if boundaries != 2 {
+		t.Fatalf("turn_boundary count = %d, want 2 (after each of the two narration turns), kinds=%v", boundaries, kinds)
+	}
+	// No boundary may appear after the orchestrator's final EventDone - the
+	// terminal turn must not be followed by a "start a new bubble" hint.
+	for i := lastDoneIdx + 1; i >= 0 && i < len(kinds); i++ {
+		if kinds[i] == bridge.EventTurnBoundary {
+			t.Fatalf("turn_boundary emitted after final done at index %d, kinds=%v", i, kinds)
+		}
 	}
 }

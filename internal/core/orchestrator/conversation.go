@@ -551,9 +551,12 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			// human user. Wrap it in <sapaloq:autopilot> so the model never
 			// mistakes this system-generated nudge for the user typing
 			// "continue" - the only UNMARKED user turn is the real human.
-			toolResultsBody = sapaloqControlBody("Continue. When the request is fully handled " +
-				"and you have nothing left to do, call sapaloq_stop to finish.")
-			out.emit(runCtx, statusEvent(sessionID, "continuing - call sapaloq_stop to finish"))
+			toolResultsBody = sapaloqControlBody("Continue the existing task only if a concrete " +
+				"next step remains for YOU to take now. If the work is finished, or the only " +
+				"remaining work is running in the background (a delegated task you cannot " +
+				"advance), call `sapaloq_stop` immediately - stopping is a silent action, so " +
+				"do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
+			out.emit(runCtx, statusEvent(sessionID, "continuing - call `sapaloq_stop` to finish"))
 		}
 		// Persist tool results as a "tool" turn so they count toward context
 		// usage and auto-compaction. These messages ARE sent to the model (they
@@ -600,6 +603,14 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			bridge.Message{Role: "assistant", Content: assistantContent},
 			bridge.Message{Role: continuationRole, Content: continuation},
 		)
+		// This turn did not end the run (no terminal tool, no no-progress
+		// finish - both return earlier), so the loop is about to feed the next
+		// inference turn. Mark the seam so the widget flushes the current
+		// assistant bubble and starts a fresh one; otherwise every turn's
+		// narration (turn 1, the <sapaloq:autopilot> continuation, turn 2, …)
+		// would pile into a single merged bubble. UI-only hint; never ends the
+		// run.
+		out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventTurnBoundary, SessionID: sessionID, At: time.Now().UTC()})
 		// Re-extract images from the freshly appended tool-results message so a
 		// read_image tool call (which returns inline-image markdown) becomes real
 		// vision input on the next turn - the same channel widget attachments use.

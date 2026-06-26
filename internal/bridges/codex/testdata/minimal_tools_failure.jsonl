@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"019f02bc-e7c3-7d42-8fa7-8e243abe737f"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"`[features].web_search` is deprecated and will be removed in a future release."}}
+{"type":"turn.started"}
+{"type":"error","message":"{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The following tools cannot be used with reasoning.effort 'minimal': image_gen, web_search.\",\"param\":\"tools\"},\"status\":400}"}
+{"type":"turn.failed","error":{"message":"{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The following tools cannot be used with reasoning.effort 'minimal': image_gen, web_search.\",\"param\":\"tools\"},\"status\":400}"}}

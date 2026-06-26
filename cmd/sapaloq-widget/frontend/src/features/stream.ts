@@ -202,6 +202,14 @@ export function feedStreamEvent(r: StreamRenderer, event: StreamEvent) {
     if (status === 'waiting' || status === 'thinking' || status === 'working' || status === 'compacting' || status === 'stopping') {
       appendProgressBubble(status, status === 'waiting' ? event.wait_seconds || 0 : 0);
     }
+  } else if (event.kind === 'turn_boundary') {
+    // The run looped to a new inference turn (e.g. an <sapaloq:autopilot>
+    // continuation). Flush the current turn's bubbles so the next turn's
+    // narration lands in a FRESH bubble instead of merging into the previous
+    // one. flushStream is null-safe and already drops an empty assistant
+    // bubble + wires 👍/👎 on a settled one, so no extra guarding is needed.
+    if (r.thinking) { flushStream(r.thinking); r.thinking = null; }
+    if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
   } else if (event.kind === 'error') {
     clearProgressBubble();
     if (r.thinking) { flushStream(r.thinking); r.thinking = null; }

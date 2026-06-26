@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/bridges/codex"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor"
 	"github.com/jahrulnr/sapaloq/internal/bridges/provider"
 	"github.com/jahrulnr/sapaloq/internal/bus"
@@ -211,6 +212,11 @@ func newBridge(cfg config.Config) (bridge.Bridge, error) {
 	}
 	if entry.Driver == "provider-bridge" {
 		if err := provider.Register(reg, entry); err != nil {
+			return nil, err
+		}
+	}
+	if entry.Driver == "codex-bridge" {
+		if err := codex.Register(reg, entry, cfg.Runtime); err != nil {
 			return nil, err
 		}
 	}

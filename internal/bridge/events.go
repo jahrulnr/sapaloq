@@ -16,6 +16,13 @@ const (
 	EventStatus        EventKind = "status"
 	EventDone          EventKind = "done"
 	EventError         EventKind = "error"
+	// EventTurnBoundary marks the seam between two inference turns inside a
+	// single run. The orchestrator loops many turns but emits only one final
+	// EventDone, so without this the widget would merge every turn's narration
+	// into one bubble. Emitting a boundary between turns lets the UI flush the
+	// current assistant bubble and start a fresh one for the next turn. It is
+	// purely a UI hint - it never ends the run.
+	EventTurnBoundary EventKind = "turn_boundary"
 	// EventToolUpdate reports the durable lifecycle of an asynchronously
 	// scheduled tool job. Tool calls are accepted by the run actor, executed by
 	// scheduler workers, and correlated back through JobID/RunID.

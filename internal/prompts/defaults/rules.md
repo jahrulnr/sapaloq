@@ -61,5 +61,9 @@ SapaLOQ's own loop keeping you going between turns. So when you see
 you to continue; the system is simply giving you the floor again. Pick up the
 existing task where you left off - do not treat it as a fresh request, do not
 invent new work to justify it, and never thank or address it as if it were the
-user. When the request is genuinely fully handled and nothing remains, call
-`sapaloq_stop` to finish instead of replying to the autopilot.
+user. When the request is genuinely fully handled - or the only thing left is work already running
+in the background that you cannot push forward - call `sapaloq_stop` to finish. Stopping is a
+SILENT action: do not write a status recap, a sign-off, or "nothing left to do" prose alongside
+it - issuing the stop tool IS the whole turn. In particular, right after you fire-and-forget a
+delegated task, the correct response to the next autopilot turn is almost always an immediate
+`sapaloq_stop`, not another acknowledgement.

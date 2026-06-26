@@ -2,7 +2,13 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-25 (**orb icon counter-rotation**: the inner orb icon (`.orb-art`) now spins counter-clockwise (`core-counter-spin`) against the clockwise gradient ring (`ring-spin`); the thinking pulse moved off `transform` to lighting so it composes with the spin; **folder drag-and-drop + attachments as bubble links + drag-overlay flicker fix**: native folder drops now ingest as a path-only attachment (`DIR` pill, `[Local folder: …]` model pointer, no contents read); path-backed attachments (dropped files/folders) now render as a clickable markdown link in the chat bubble - fixing the bug where a pill showed as plain text in the sent/restored bubble while being a link in the composer; the drag overlay no longer blinks while a file is *held* over the widget - replaced the dragenter/dragleave depth counter (which toggled the highlight class many times a second on WebKitGTK child crossings) with a single idle-timer-driven boolean; **topbar chat-history switcher**: reworked the widget header into a single uncluttered row - brand + a session switcher dropdown (list recent sessions, switch active, "Chat baru") on the left, compact usage/conn/new-chat/resize/close on the right; new store `ListSessions`/`Activate`, orchestrator `ListSessions`/`SwitchSession`/`NewSession`, IPC `session_list`/`session_switch`/`session_new`; **provider-bridge non-stream mode**: per-provider `stream` flag (default true) - `stream:false` sends one request and parses a complete response into the same `WireEvent` sequence as SSE, for gateways that don't stream; **tool turns are now pure `<untrusted_data>` data**: all steering moved into the `rules.md` system prompt (`## Working with tool output`), usage-readout removed, `[Called tools: …]` leak fixed; shared **`rules.md`** project-grounding prompt layer prepended to every role; tool-result **secret redaction** via vendored `privacyfilter`; peek-agents default skill; provider-bridge pre-stream retry)
+> Last updated: 2026-06-26 (**sharpen autopilot continuation + rules.md**: the tool-less autopilot continuation in `conversation.go` and the `rules.md` "Who is speaking" paragraph now close both branches explicitly - continue only if a concrete next step remains for YOU now; if work is finished OR the only remaining work is a background/delegated task you cannot advance, call `sapaloq_stop` immediately. Stopping is framed as a SILENT action (no status recap / sign-off / "nothing left to do" prose - invoking stop IS the whole turn), and rules.md calls out that right after a fire-and-forget delegate the correct reply to the next autopilot turn is almost always an immediate `sapaloq_stop`. Architecture unchanged (markers, EventTurnBoundary, calledToolsNote intact); pure wording. The continuation string deliberately avoids the bare words "tool"/"glob" so the offline cursor mock stream (`streamMock` keys off those substrings) doesn't loop. `conversation_test.go` continuation assertion extended to pin `sapaloq_stop` + `silent` + the `<sapaloq:autopilot>` wrap. Docs: PROMPT-BUILDER-SOP.md rules.md section. See PROMPT-BUILDER-SOP.md)
+>
+> Prior: 2026-06-26 (**codex-bridge resume argv fix**: `buildArgv` now emits two distinct shapes - the `exec resume` subcommand REJECTS the fresh-`exec`-only knobs `-s/--sandbox`, `-C/--cd`, and `--add-dir` with exit 2 "unexpected argument" (verified codex v0.141.0), so the resume path drops them and carries only resume-valid flags (`--skip-git-repo-check`, `-m`, `-c model_reasoning_effort=`, `-i`) + the stdin prompt; sandbox/cwd are inherited from the original session. This fixes the second-turn (resume) crash "codex stream ended abnormally … unexpected argument '-s'". New regression tests in `invoke_test.go` pin: fresh path keeps `-s`/`-C`, resume path never contains `-s`/`-C`/`--add-dir`, `--json` precedes `resume`, prompt stays on stdin (`-`). Contract+design docs synced (`CODEX_CLI_CONTRACT.md` §2 valid/invalid resume flags, `BRIDGE_DESIGN.md` §6, `poc` runner). See BRIDGE.md)
+>
+> Prior: 2026-06-26 (**codex-bridge driver**: new `internal/bridges/codex` LLM bridge wrapping the public Codex CLI `codex exec --json` + `codex exec resume` as a spawn-per-turn bridge - JSONL→`bridge.StreamEvent` mapper, SessionID→thread_id continuity store, event-authoritative terminal handling, process-group cancellation, minimal-effort+tools guard; reuses `config.LLMBridge` with no new config field; offline golden-fixture tests + build-tagged e2e/generator; wired in `newBridge()`; schema `driver` enum + `config.example.json` entry; see BRIDGE.md)
+>
+> Prior: 2026-06-25 (**orb icon counter-rotation**: the inner orb icon (`.orb-art`) now spins counter-clockwise (`core-counter-spin`) against the clockwise gradient ring (`ring-spin`); the thinking pulse moved off `transform` to lighting so it composes with the spin; **folder drag-and-drop + attachments as bubble links + drag-overlay flicker fix**: native folder drops now ingest as a path-only attachment (`DIR` pill, `[Local folder: …]` model pointer, no contents read); path-backed attachments (dropped files/folders) now render as a clickable markdown link in the chat bubble - fixing the bug where a pill showed as plain text in the sent/restored bubble while being a link in the composer; the drag overlay no longer blinks while a file is *held* over the widget - replaced the dragenter/dragleave depth counter (which toggled the highlight class many times a second on WebKitGTK child crossings) with a single idle-timer-driven boolean; **topbar chat-history switcher**: reworked the widget header into a single uncluttered row - brand + a session switcher dropdown (list recent sessions, switch active, "Chat baru") on the left, compact usage/conn/new-chat/resize/close on the right; new store `ListSessions`/`Activate`, orchestrator `ListSessions`/`SwitchSession`/`NewSession`, IPC `session_list`/`session_switch`/`session_new`; **provider-bridge non-stream mode**: per-provider `stream` flag (default true) - `stream:false` sends one request and parses a complete response into the same `WireEvent` sequence as SSE, for gateways that don't stream; **tool turns are now pure `<untrusted_data>` data**: all steering moved into the `rules.md` system prompt (`## Working with tool output`), usage-readout removed, `[Called tools: …]` leak fixed; shared **`rules.md`** project-grounding prompt layer prepended to every role; tool-result **secret redaction** via vendored `privacyfilter`; peek-agents default skill; provider-bridge pre-stream retry)
 
 Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
@@ -41,6 +47,109 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` - schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` - the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
+| 30 | codex-bridge driver (wraps the public Codex CLI) | ✅ | `internal/bridges/codex` - spawn-per-turn wrapper over `codex exec --json` + `codex exec resume`; binds only to the documented CLI contract (`CODEX_CLI_CONTRACT.md`), no RE. `bridge.go` (`New`/`ID`/`Caps`/`Complete`/`runTurn`/`composePrompt`/`safeReasoning`/`authOK`), `invoke.go` (typed argv, no `-a`; `--json` precedes `resume`; stdin prompt; image temp files), `stream.go` (tolerant JSONL scanner → `bridge.StreamEvent`; event-authoritative terminal via `scanStream`/`finalizeTerminal` - `turn.failed` with exit 0 still → `EventError`), `session.go` (vault-backed `SessionID→thread_id` store `codex-threads.jsonl` + resume self-heal), `explain.go` (`explainCodexError` mirrors cursor), `proc_unix.go`/`proc_other.go` (process-group kill on cancel). Reuses existing `config.LLMBridge` fields (no new config field); sandbox/cwd/CODEX_HOME default safely and are env-overridable; minimal reasoning-effort downgraded to `low` (incompatible with built-in tools). Registered in `newBridge()`. Offline golden-fixture + tolerant-parser + cancellation tests (`testdata/*.jsonl`); e2e build-tagged + auto-skip without the CLI |
+
+---
+
+## Implemented this session (2026-06-26) - sharpen autopilot continuation + rules.md: stop is silent, fire-and-forget → immediate stop
+
+- **Wording-only sharpening of the autopilot continuation + "Who is speaking"
+  rules.** No architecture change - the `<sapaloq:autopilot>` marker,
+  `EventTurnBoundary`, and the `[Called tools: …]` note are untouched. The
+  problem was purely instruction wording: models often wrote repeated narrative
+  paragraphs ("agent still running", "nothing left to do") before finally
+  calling `sapaloq_stop`, especially right after a fire-and-forget delegate.
+- `internal/core/orchestrator/conversation.go` (~L554): the tool-less
+  continuation string (still built via `sapaloqControlBody(...)`) now closes
+  both branches explicitly - continue only if a concrete next step remains for
+  YOU now; if the work is finished **or the only remaining work is a background
+  delegated task you cannot advance**, call `sapaloq_stop` immediately, framed as
+  a **silent action** (no status narration / sign-off).
+- `internal/prompts/defaults/rules.md` ("Who is speaking"): the closing sentence
+  now (1) covers the "only remaining work is an un-pushable background task"
+  case, (2) states stopping is a SILENT action (issuing the stop tool IS the
+  whole turn - no recap / sign-off / "nothing left to do" prose), and (3) says
+  explicitly that right after a fire-and-forget delegate the correct response to
+  the next autopilot turn is almost always an immediate `sapaloq_stop`.
+- **Offline-mock gotcha handled:** the cursor offline mock (`bridge.go
+  streamMock`) emits a `glob` tool call whenever the latest message
+  `Contains("glob")||Contains("tool")`. The continuation is fed back every
+  tool-less turn, so a bare word "tool" in it made the mock loop forever
+  (`loop detected`) and the e2e/integration suites failed. The continuation
+  wording was phrased to avoid the bare substrings `tool`/`glob` (ends with
+  "just invoke `sapaloq_stop` and nothing else") - meaning intact, suites green.
+- **Tests:** `conversation_test.go` already pinned the contract with stable
+  substrings (`sapaloq_stop`, `<sapaloq:autopilot>` markers, no `NO_OP`); added
+  a robust assertion that the continuation frames stopping as a **silent** action
+  (keyword `silent`, not a full sentence). `go build ./... && go vet ./... &&
+  go test ./...` all green (incl. `test/e2e` + `test/integration`).
+
+---
+
+## Implemented this session (2026-06-26) - codex-bridge driver (wraps the public Codex CLI)
+
+- **New driver `codex-bridge`** (`internal/bridges/codex`). A spawn-per-turn
+  wrapper over the **public** Codex CLI contract - `codex exec --json` +
+  `codex exec resume` - translating the CLI's JSONL event stream into
+  `bridge.StreamEvent`. It binds only to the documented surface
+  (`CODEX_CLI_CONTRACT.md`, codex 0.141.0); there is **no reverse engineering**
+  of an internal wire protocol (the cursor path). Maintenance cost is "track the
+  CLI's JSONL contract across versions".
+- **Shape mirrors cursor exactly.** `Complete` returns a buffered channel
+  (cap 32) + goroutine + `defer close(out)`, returning `(out, nil)` immediately;
+  all emits go through the ctx-aware `send(ctx, out, ev)` helper. `Register(reg,
+  entry, runtime)` matches cursor; `newBridge()` (`cmd/sapaloq-core/main.go`) gains
+  the `driver == "codex-bridge"` branch.
+- **Lifecycle = spawn-per-turn + resume continuity.** First turn:
+  `codex exec --json …`, capture `thread_id` from `thread.started`, persist
+  `SessionID → thread_id` to `~/SapaLOQ/vault/codex-threads.jsonl` (append-only,
+  last-write-wins, in-memory map front; `session.go`). Subsequent turns:
+  `codex exec resume <thread_id> --json …`, sending only the new user turn (Codex
+  owns history); first turns send a compact transcript (`composePrompt`). If a
+  resume target's session is gone (detected from stderr), the turn self-heals -
+  retries once as a fresh `exec`, re-sends history, overwrites the mapping.
+- **Invocation pins the verified contract** (`invoke.go`, `buildArgv`): typed
+  argv (no shell injection), prompt via **stdin** (arg `-`), `--json` precedes
+  `resume`, **never** `-a/--ask-for-approval` (`codex exec` rejects it, exit 2),
+  default sandbox `workspace-write` + `--skip-git-repo-check` (conservative,
+  never `danger-full-access`). `model_reasoning_effort=minimal` is downgraded to
+  `low` because it 400s with the built-in tools (`safeReasoning`).
+- **Event mapping is tolerant + event-authoritative** (`stream.go`,
+  `schema.go`). stdout JSONL is scanned line-by-line; malformed lines and unknown
+  `type`/`item.type` are skipped without crashing; stderr is noise → debug log
+  only, never the scanner. `agent_message → EventResponseDelta`,
+  `reasoning → EventThinkingDelta` (tolerant: absent on 0.141.0),
+  `command_execution → EventToolCall`/`EventStatus{tool_done:exit=N}`,
+  `turn.completed → EventDone`, `error`/`turn.failed`/`item:error → EventError`
+  via `explainCodexError` (mirrors `cursor.explainStreamError`). Terminal
+  semantics come from the **event stream, not the exit code**: `scanStream`
+  tracks `turnFailed`/`sawCompleted`, `finalizeTerminal` emits exactly one
+  terminal (a `turn.failed` with process exit 0 still → `EventError`; a killed
+  stream with no terminal → `EventError` with exit code + last stderr).
+- **Cancellation** spawns with `SysProcAttr{Setpgid:true}` and kills the whole
+  **process group** on `ctx.Done()` so child shells from `command_execution` die
+  too (`proc_unix.go`; portable no-op `proc_other.go`); per-turn deadline from
+  `entry.RequestTimeout()`.
+- **No new config field.** Reuses `config.LLMBridge` (`Model`,
+  `ReasoningEffort`, `CredentialsEnv` → injected as `OPENAI_API_KEY`,
+  `RequestTimeout()`, `DeclaredTools`). Runtime knobs not in the struct default
+  safely and are env-overridable: `SAPALOQ_CODEX_BINARY` (else
+  `exec.LookPath("codex")` - the release symlink is never hardcoded),
+  `SAPALOQ_CODEX_SANDBOX`, `SAPALOQ_CODEX_CWD`, `CODEX_HOME`. The schema `driver`
+  enum gains `"codex-bridge"` and `config/config.example.json` gains an example
+  entry. `Caps().LiveAPI` reflects real auth (API key in env or `codex login
+  status` exit 0); `codex --version` logged at `New()`.
+- **Tests prove the contract** (`stream_test.go`, `invoke_test.go`,
+  `bridge_test.go`, `e2e_test.go`, `testdata/*.jsonl`). Golden fixtures (PONG,
+  command_execution, resume/BANANA42, minimal+tools failure) replayed offline
+  through the real parser; tolerant-parser (unknown item.type + malformed line do
+  not crash), failure-vs-exit-code (`turn.failed` exit 0 → `EventError`),
+  no-terminal abnormal end, ctx-cancellation mid-stream (channel closes, no
+  goroutine leak), argv contract (no `-a`, `--json` before `resume`, stdin),
+  `composePrompt`/`safeReasoning`/thread-store/image-temp-file. The e2e test is
+  build-tagged (`-tags=e2e`) and auto-skips when `codex` is not on PATH, so a
+  plain `go test ./...` stays green offline; `-update` regenerates fixtures from a
+  real run.
 
 ---
 

@@ -155,6 +155,19 @@ the repo/workspace it is operating on:
   system prompt. This is the split models prefer (rules in system, tool output as
   data) and it removed the per-turn `user`-role steering + usage-readout noise
   that visibly degraded strong models like Opus 4.x.
+- It also owns the **"Who is speaking" rules** (the `## Who is speaking`
+  section): a plain `user` turn is the real human, while a turn wrapped in
+  `<sapaloq:autopilot>…</sapaloq:autopilot>` is SapaLOQ's own loop-continuation
+  nudge (authored in `conversation.go` via `sapaloqControlBody`, fed back on a
+  tool-less turn). The instruction tells the model to call `sapaloq_stop` not
+  only when the request is fully handled but also when **the only remaining work
+  is a background/delegated task it cannot push forward**, and frames stopping as
+  a **silent action** - no status recap, sign-off, or "nothing left to do" prose
+  alongside it; issuing the stop tool IS the whole turn. It calls out explicitly
+  that right after a fire-and-forget delegate, the correct response to the next
+  autopilot turn is almost always an immediate `sapaloq_stop`. This mirrors the
+  matching wording in the autopilot continuation string itself; keep the two in
+  step when retuning either.
 - Same lifecycle as the persona: never wrapped around itself
   (`systemPrompt("rules")` returns the bare rules layer), empty/missing is a
   no-op, and it is embedded + materialized so users can edit

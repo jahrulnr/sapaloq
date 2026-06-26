@@ -58,6 +58,13 @@
         "contextWindow": 131072,
         "maxRetries": 5,
         "stream": true
+      },
+      {
+        "key": "codex",
+        "driver": "codex-bridge",
+        "model": "gpt-5.5",
+        "reasoningEffort": "high",
+        "requestTimeoutSec": 600
       }
     ]
   },

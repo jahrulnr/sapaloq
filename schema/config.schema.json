@@ -18,8 +18,8 @@
         },
         "driver": {
           "type": "string",
-          "enum": ["cursor-bridge", "provider-bridge", "local-llama"],
-          "description": "Which bridge implementation to use. cursor-bridge = Cursor RE proxy; provider-bridge = direct OpenAI/Claude/Kimi API."
+          "enum": ["cursor-bridge", "provider-bridge", "codex-bridge", "local-llama"],
+          "description": "Which bridge implementation to use. cursor-bridge = Cursor RE proxy; provider-bridge = direct OpenAI/Claude/Kimi API; codex-bridge = wraps the public Codex CLI (codex exec --json + resume)."
         },
         "endpoint": { "type": "string" },
         "model": { "type": "string" },

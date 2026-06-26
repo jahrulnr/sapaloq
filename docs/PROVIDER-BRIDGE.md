@@ -1,7 +1,13 @@
 # SapaLOQ - Provider Bridge (OpenAI / Claude / Kimi)
 
 > **Multi-model LLM bridge** - speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
-> Last updated: 2026-06-25 (added pre-stream retry/backoff with `maxRetries` knob; documented `contextWindow` (input) vs `maxTokens` (output) knobs + 1M/128k example; clarified `[Called tools: …]` is a suppressed orchestrator note, not a recoverable inline call)
+> Last updated: 2026-06-26 (note the sibling `codex-bridge` driver — a separate family, see BRIDGE.md)
+
+> The `provider-bridge` is one of three LLM-bridge drivers. It is **distinct
+> from** the `cursor-bridge` (Cursor session proxy) and the `codex-bridge`
+> (wraps the public Codex CLI `codex exec --json`/`resume` as a spawn-per-turn
+> bridge — see [BRIDGE.md](./BRIDGE.md#codex-bridge-wraps-the-public-codex-cli)).
+> This document covers only the OpenAI/Claude/Kimi HTTP wire formats.
 
 Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
