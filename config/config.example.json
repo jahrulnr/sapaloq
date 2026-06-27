@@ -55,7 +55,8 @@
         "model": "blackboxai/anthropic/claude-opus-4.8",
         "credentialsEnv": "BLACKBOX_API_KEY",
         "parser": "openai",
-        "contextWindow": 131072,
+        "contextWindow": 1000000,
+        "maxTokens": 131072,
         "maxRetries": 5,
         "stream": true
       },
