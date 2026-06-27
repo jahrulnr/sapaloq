@@ -161,6 +161,7 @@ export namespace main {
 	    role: string;
 	    content: string;
 	    checkpoint_index?: number;
+	    created_at?: string;
 	    archived?: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -174,6 +175,7 @@ export namespace main {
 	        this.role = source["role"];
 	        this.content = source["content"];
 	        this.checkpoint_index = source["checkpoint_index"];
+	        this.created_at = source["created_at"];
 	        this.archived = source["archived"];
 	    }
 	}
@@ -181,6 +183,7 @@ export namespace main {
 	    ok: boolean;
 	    session_id: string;
 	    turns: chatTurn[];
+	    timeline?: bridge.StreamEvent[];
 	    usage?: chatUsage;
 	
 	    static createFrom(source: any = {}) {
@@ -192,6 +195,7 @@ export namespace main {
 	        this.ok = source["ok"];
 	        this.session_id = source["session_id"];
 	        this.turns = this.convertValues(source["turns"], chatTurn);
+	        this.timeline = this.convertValues(source["timeline"], bridge.StreamEvent);
 	        this.usage = this.convertValues(source["usage"], chatUsage);
 	    }
 	

@@ -276,7 +276,7 @@
             "maxToolCalls": { "type": "integer", "minimum": 1, "default": 512 },
             "maxParallelTools": { "type": "integer", "minimum": 1, "maximum": 64, "default": 8 },
             "maxWallTimeMinutes": { "type": "integer", "minimum": 1, "default": 30 },
-            "maxNoProgressTurns": { "type": "integer", "minimum": 1, "default": 5 },
+            "maxNoProgressTurns": { "type": "integer", "minimum": 1, "default": 10 },
             "maxIdenticalToolCalls": { "type": "integer", "minimum": 1, "default": 5 },
             "maxWaitSeconds": { "type": "integer", "minimum": 1, "default": 120 },
             "earlyToolExecution": {

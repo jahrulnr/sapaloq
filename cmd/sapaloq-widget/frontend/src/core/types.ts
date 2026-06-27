@@ -17,8 +17,9 @@ export type StreamEvent = {
   checkpoint_index?: number;
   checkpoint_reason?: string;
   checkpoint_summary?: string;
+  at?: string;
 };
-export type ChatTurn = { id: number; seq: number; role: string; content: string; checkpoint_index?: number; archived?: boolean };
+export type ChatTurn = { id: number; seq: number; role: string; content: string; checkpoint_index?: number; archived?: boolean; created_at?: string };
 export type SessionSummary = { id: string; title: string; active: boolean; turn_count: number; updated_at: string; created_at: string };
 export type ChatUsage = { session_id: string; used_tokens: number; context_window: number; percent: number; provider: string; model: string };
 export type ActorRuntimeStatus = { id: string; role: string; status: string; phase: string; workspace: string };

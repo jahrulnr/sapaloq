@@ -165,7 +165,61 @@ func rebuildMessagesFromCheckpoint(systemPrefix []bridge.Message, ckpt chatstore
 	return out
 }
 
-// handleCompactSession is the dispatcher for the sapaloq_compact_session tool.
+// orchestratorFallbackCheckpoint persists a checkpoint with an orchestrator-
+// authored summary when the model refuses sapaloq_compact_session. This
+// prevents a run from staying above the context window (and repeatedly
+// allocating an ever-growing message slice) when forced LLM compaction fails.
+func (o *Orchestrator) orchestratorFallbackCheckpoint(ctx context.Context, sessionID, reason string) (chatstore.CheckpointResult, bool, error) {
+	if o.chat == nil {
+		return chatstore.CheckpointResult{}, false, nil
+	}
+	summary, err := o.buildHeuristicCheckpointSummary(ctx, sessionID, reason)
+	if err != nil {
+		return chatstore.CheckpointResult{}, false, err
+	}
+	cfg := o.snapshot().cfg.Orchestrator.WithDefaults().Compaction
+	pcfg := preserveCfg{keepRecentTurns: cfg.KeepRecentTurns, preservePrecedingUser: cfg.PreservePrecedingUserTurn}
+	return o.createCheckpoint(ctx, sessionID, summary, reason, pcfg)
+}
+
+// buildHeuristicCheckpointSummary rolls older active turns into a bounded
+// markdown summary for orchestrator-driven compaction (fallback path).
+func (o *Orchestrator) buildHeuristicCheckpointSummary(ctx context.Context, sessionID, reason string) (string, error) {
+	turns, err := o.chat.ActiveTurns(ctx, sessionID, false)
+	if err != nil {
+		return "", err
+	}
+	if len(turns) <= 6 {
+		return "", fmt.Errorf("not enough history to compact")
+	}
+	var b strings.Builder
+	b.WriteString("## Checkpoint summary")
+	if reason != "" {
+		b.WriteString("\n\n_Auto-compacted by orchestrator (")
+		b.WriteString(reason)
+		b.WriteString(")_\n")
+	}
+	b.WriteString("\n\n")
+	for _, t := range turns[:len(turns)-4] {
+		if t.Role == "thinking" || t.Role == "autopilot" {
+			continue
+		}
+		line := strings.TrimSpace(t.Content)
+		if line == "" {
+			continue
+		}
+		if len(line) > 400 {
+			line = line[:400] + "…"
+		}
+		b.WriteString("- **")
+		b.WriteString(t.Role)
+		b.WriteString("**: ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String(), nil
+}
+
 // The model supplies a structured markdown summary; the orchestrator persists a
 // checkpoint (archiving pre-checkpoint turns for the UI, keeping the anchored
 // tail + summary in context) and emits a live EventCheckpoint so the widget can
@@ -174,7 +228,7 @@ func rebuildMessagesFromCheckpoint(systemPrefix []bridge.Message, ckpt chatstore
 func (o *Orchestrator) handleCompactSession(ctx context.Context, snap providerSnapshot, sink turnSink, sessionID, summary, reason string) askToolResult {
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
-		return askToolResult{text: "Error: summary is required for sapaloq_compact_session.", handled: true}
+		return askToolResult{text: "Error: summary is required for `sapaloq_compact_session`.", handled: true}
 	}
 	cfg := snap.cfg.Orchestrator.WithDefaults().Compaction
 	pcfg := preserveCfg{keepRecentTurns: cfg.KeepRecentTurns, preservePrecedingUser: cfg.PreservePrecedingUserTurn}
@@ -236,7 +290,7 @@ func (o *Orchestrator) forceCheckpoint(ctx context.Context, snap providerSnapsho
 		msgs := append([]bridge.Message{}, cleanMessages...)
 		msgs = append(msgs, bridge.Message{Role: "user", Content: steering})
 		// The compaction turn is bounded: runConversationActorSink drives the
-		// loop until a terminal tool or the no-progress finish. The
+		// loop until a terminal tool or the toolless-turn budget finish. The
 		// sapaloq_compact_session handler persists the checkpoint and emits
 		// EventCheckpoint inline; we detect success by reading the latest
 		// checkpoint afterward.
@@ -282,15 +336,76 @@ func (o *Orchestrator) contextPercent(messages []bridge.Message, contextWindow i
 	return (used * 100) / contextWindow
 }
 
+// effectiveContextPercent is the headroom/compaction trigger percentage. It
+// takes the higher of (a) persisted turn usage + per-request overhead from
+// ContextUsage and (b) the in-flight cleanMessages estimate. Image attachments
+// are stripped to placeholders in cleanMessages before inference, so (b) alone
+// would undercount huge pasted images and never fire forced compaction while
+// the UI pill already shows 100%+.
+func (o *Orchestrator) effectiveContextPercent(ctx context.Context, sessionID string, live []bridge.Message, contextWindow int) int {
+	livePct := o.contextPercent(live, contextWindow)
+	if o.chat == nil || sessionID == "" {
+		return livePct
+	}
+	usage, err := o.ContextUsage(ctx, sessionID)
+	if err != nil || usage.ContextWindow <= 0 {
+		return livePct
+	}
+	if livePct > usage.Percent {
+		return livePct
+	}
+	return usage.Percent
+}
+
+// shrinkContextForRun compacts the in-flight message slice before the next
+// inference attempt. When tryCheckpoint is true it attempts LLM/orchestrator
+// checkpoint compaction first; if that does not shrink the slice (or chat is
+// unavailable) it falls back to the legacy in-memory heuristic so overflow
+// recovery and tests without a store still work. Returns the (possibly
+// unchanged) slice and true when the slice shrank.
+func (o *Orchestrator) shrinkContextForRun(ctx context.Context, snap providerSnapshot, sink turnSink, sessionID, fallbackTask, reason string, cleanMessages []bridge.Message, tryCheckpoint bool) ([]bridge.Message, bool, error) {
+	runtimeCfg := snap.cfg.Orchestrator.WithDefaults()
+	preserve := runtimeCfg.Compaction.PreserveRecentFraction
+	before := len(cleanMessages)
+
+	if tryCheckpoint && runtimeCfg.Compaction.UseCheckpointsEnabled() {
+		var checkpointOK bool
+		var ferr error
+		_, checkpointOK, ferr = o.forceCheckpoint(ctx, snap, sink, sessionID, fallbackTask, reason, cleanMessages)
+		if ferr != nil {
+			return cleanMessages, false, ferr
+		}
+		if !checkpointOK {
+			var fbErr error
+			_, checkpointOK, fbErr = o.orchestratorFallbackCheckpoint(ctx, sessionID, reason+"_fallback")
+			if fbErr != nil {
+				return cleanMessages, false, fbErr
+			}
+		}
+		if checkpointOK {
+			rebuilt, rerr := o.rebuildAfterCheckpoint(ctx, sessionID, cleanMessages)
+			if rerr == nil && len(rebuilt) < before {
+				return rebuilt, true, nil
+			}
+		}
+	}
+
+	compacted := compactConversationMessages(cleanMessages, fallbackTask, preserve)
+	if len(compacted) < before {
+		return compacted, true, nil
+	}
+	return cleanMessages, false, nil
+}
+
 // contextHeadroomReached reports whether the in-flight context has consumed
 // (1 - headroomPercent) of the window - i.e. only headroomPercent remains. This
 // is the moment to inject a forced compaction turn so the next inference does
 // not overflow. headroomPercent is 0..1 (default 0.05 = 5% remaining).
-func (o *Orchestrator) contextHeadroomReached(messages []bridge.Message, contextWindow int, headroomPercent float64) bool {
+func (o *Orchestrator) contextHeadroomReached(ctx context.Context, sessionID string, messages []bridge.Message, contextWindow int, headroomPercent float64) bool {
 	if contextWindow <= 0 || headroomPercent <= 0 || headroomPercent >= 1 {
 		return false
 	}
-	pct := o.contextPercent(messages, contextWindow)
+	pct := o.effectiveContextPercent(ctx, sessionID, messages, contextWindow)
 	if pct <= 0 {
 		return false
 	}

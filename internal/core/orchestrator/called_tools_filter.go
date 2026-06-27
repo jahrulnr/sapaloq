@@ -7,6 +7,10 @@ import "strings"
 //
 //   - "[Called tools: " is the orchestrator's own anti double-spawn note (see
 //     calledToolsNote) which some models then echo back as prose.
+//   - "[Called tool: " (singular) is the same note re-emitted by models that
+//     imitate the convention with the wrong grammatical number - observed with
+//     opus echoing "[Called tool: sapaloq_stop]" as prose after a stop. Without
+//     stripping it the echo leaks into the chat bubble as noise.
 //   - "[Tool: " is the announce form some models (e.g. MiniMax-M3) emit in
 //     their content alongside a real native tool_call. The bare label (no
 //     trailing "{args}" object) is NOT a recoverable inline call - the
@@ -16,10 +20,10 @@ import "strings"
 //     emitting bare "[Tool: name]" labels instead of structured calls, which
 //     execute nothing and spiral into a stuck loop (orch-task-…103).
 //
-// Stripping both here, at the single point text deltas funnel to the user,
+// Stripping all three here, at the single point text deltas funnel to the user,
 // removes the noise AND breaks the imitation loop (the model never sees the
 // bad pattern echoed back).
-var calledToolsMarkers = []string{"[Called tools: ", "[Tool: "}
+var calledToolsMarkers = []string{"[Called tools: ", "[Called tool: ", "[Tool: "}
 
 // markerMatch classifies a buffered "[…" fragment against calledToolsMarkers.
 type markerMatch int

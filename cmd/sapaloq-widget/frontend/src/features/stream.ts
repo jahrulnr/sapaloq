@@ -7,6 +7,7 @@ import { renderMarkdown } from '../ui/markdown';
 import { appendCheckpointDivider, appendMessage, wireAssistantFeedback } from './messages';
 import { setRingState } from './connection';
 import { refreshRuntimeStatus } from './runtime-status';
+import { openTaskMonitor } from '../ui/task-monitor-overlay';
 import { getUserGroup, nextMessageSeq, taskBubbles, taskStatuses } from '../core/state';
 
 // ---------------------------------------------------------------------------
@@ -244,15 +245,22 @@ export function renderEvents(events: StreamEvent[]) {
   finishStreamRenderer(r);
 }
 
-// ---------------------------------------------------------------------------
-// Background task cards
-// ---------------------------------------------------------------------------
+export function renderTimelineEvent(event: StreamEvent, options?: { restore?: boolean }) {
+  if (event.kind === 'tool_call') {
+    appendMessage('message--tool', `tool: ${event.tool_call?.name || 'unknown'}`);
+    return;
+  }
+  if (event.kind === 'task_update') {
+    renderTaskUpdate(event, options);
+  }
+}
 
 // renderTaskUpdate surfaces asynchronous background sub-agent lifecycle
 // updates as one concise card per task. Snapshot catch-up can overlap queued
 // live events, so a stale active event must never regress an already-terminal
 // card.
-export function renderTaskUpdate(event: StreamEvent) {
+export function renderTaskUpdate(event: StreamEvent, options?: { restore?: boolean }) {
+  const restore = options?.restore === true;
   const status = event.task_status || '';
   const taskID = event.task_id || '';
   const previousStatus = taskID ? taskStatuses.get(taskID) : undefined;
@@ -266,18 +274,20 @@ export function renderTaskUpdate(event: StreamEvent) {
   // stays stuck pulsing ("responding") after the sub-agent has finished. The
   // bubble rendering below needs a summary; the ring state must not depend on it.
   if (taskID) taskStatuses.set(taskID, status);
-  if (status === 'pending' || status === 'in_progress') {
-    setRingState('delegating');
-  } else if (status === 'awaiting_clarification') {
-    setRingState('needs-input');
-  } else {
-    const active = [...taskStatuses.values()].some((value) => value === 'pending' || value === 'in_progress' || value === 'stopping');
-    if (!active) setRingState('idle');
-    // A terminal transition (done/failed/stopped) means the sub-agent has wound
-    // down. Refresh the runtime-status pill immediately instead of waiting up to
-    // 3s for the next poll - otherwise the "Agent" pill keeps blinking
-    // "finalizing" after the task is already finished.
-    if (terminal.has(status)) void refreshRuntimeStatus();
+  if (!restore) {
+    if (status === 'pending' || status === 'in_progress') {
+      setRingState('delegating');
+    } else if (status === 'awaiting_clarification') {
+      setRingState('needs-input');
+    } else {
+      const active = [...taskStatuses.values()].some((value) => value === 'pending' || value === 'in_progress' || value === 'stopping');
+      if (!active) setRingState('idle');
+      // A terminal transition (done/failed/stopped) means the sub-agent has wound
+      // down. Refresh the runtime-status pill immediately instead of waiting up to
+      // 3s for the next poll - otherwise the "Agent" pill keeps blinking
+      // "finalizing" after the task is already finished.
+      if (terminal.has(status)) void refreshRuntimeStatus();
+    }
   }
 
   // The card is a STATUS TIMELINE, not a result dump. It shows a one-line
@@ -318,10 +328,24 @@ export function renderTaskUpdate(event: StreamEvent) {
     if (!item) return;
     if (taskID) {
       item.dataset.taskId = taskID;
+      item.dataset.taskRole = role;
       taskBubbles.set(taskID, item);
+      // Clicking the card opens THIS specific task in the monitor pop-up. This
+      // is the cheap, multi-agent path: the runtime-strip "Agent" pill only
+      // resolves ONE actor per role, so several spawned agents are only
+      // reachable by clicking their own bubble.
+      item.classList.add('message--task-clickable');
+      item.setAttribute('role', 'button');
+      item.setAttribute('tabindex', '0');
+      const open = () => void openTaskMonitor({ taskID, role: item!.dataset.taskRole });
+      item.addEventListener('click', open);
+      item.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      });
     }
   } else {
     item.dataset.rawText = text;
+    item.dataset.taskRole = role;
     item.replaceChildren(renderMarkdown(text));
     scrollMessagesToBottom();
   }

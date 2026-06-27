@@ -2,9 +2,10 @@
 // ids when retrying or deleting a branch. Also owns the topbar history switcher
 // (list recent sessions, switch active session, start a new chat).
 import { ChatHistory, ContextUsage, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
-import type { ChatTurn, ChatUsage, SessionSummary } from '../core/types';
+import type { ChatTurn, ChatUsage, SessionSummary, StreamEvent } from '../core/types';
 import { appendCheckpointDivider, appendMessage, appendThinkingBubble, clearMessages, parseTurnContent } from './messages';
 import { renderUsage } from './connection';
+import { renderTimelineEvent } from './stream';
 import {
   getUserGroup,
   nextUserGroup,
@@ -41,12 +42,52 @@ function renderTurn(turn: ChatTurn) {
   else if (turn.role === 'assistant') appendMessage(`message--assistant${archivedClass}`, turn.content, getUserGroup(), turn.id);
 }
 
+function parseTimelineAt(iso?: string): number {
+  if (!iso) return 0;
+  const ts = Date.parse(iso);
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
+type TimelineItem =
+  | { kind: 'turn'; at: number; seq: number; turn: ChatTurn }
+  | { kind: 'event'; at: number; event: StreamEvent };
+
+export function buildMergedTimeline(turns: ChatTurn[], events: StreamEvent[]): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  for (const turn of turns) {
+    items.push({ kind: 'turn', at: parseTimelineAt(turn.created_at), seq: turn.seq, turn });
+  }
+  for (const event of events) {
+    if (event.kind !== 'tool_call' && event.kind !== 'task_update') continue;
+    items.push({ kind: 'event', at: parseTimelineAt(event.at), event });
+  }
+  items.sort((a, b) => {
+    if (a.at !== b.at) return a.at - b.at;
+    if (a.kind === 'turn' && b.kind === 'turn') return a.seq - b.seq;
+    return a.kind === 'turn' ? -1 : 1;
+  });
+  return items;
+}
+
+function renderTimeline(items: TimelineItem[]) {
+  for (const item of items) {
+    if (item.kind === 'turn') renderTurn(item.turn);
+    else renderTimelineEvent(item.event, { restore: true });
+  }
+}
+
 export async function restoreChatHistory() {
   try {
     const history = await ChatHistory();
     setSessionID(history.session_id || getSessionID());
     clearMessages();
-    (history.turns || []).forEach((turn: ChatTurn) => renderTurn(turn));
+    const turns = (history.turns || []) as ChatTurn[];
+    const timeline = (history.timeline || []) as StreamEvent[];
+    if (timeline.length) {
+      renderTimeline(buildMergedTimeline(turns, timeline));
+    } else {
+      turns.forEach((turn: ChatTurn) => renderTurn(turn));
+    }
     renderUsage(history.usage as ChatUsage | undefined);
   } catch {
     // Core may not be ready yet; ping loop will update connection state.

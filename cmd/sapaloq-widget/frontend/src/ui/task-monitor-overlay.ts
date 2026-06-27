@@ -35,10 +35,22 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let activeTab: Tab = 'planner';
 let activeSubTab: SubTab = 'activity';
 let escapeHandler: ((e: KeyboardEvent) => void) | null = null;
+// When the overlay is opened from a specific chat bubble we PIN that exact
+// task into its tab instead of resolving the tab's task from RuntimeStatus
+// (which only ever surfaces ONE actor per role - the latest - so multiple
+// spawned agents are otherwise invisible). The pin overrides role resolution
+// for its tab; the other tab still resolves normally.
+let pinnedTaskID = '';
+let pinnedTab: Tab | null = null;
 const actorState: Record<Tab, ActorState> = {
   planner: { taskID: '', active: false, lastEventCount: 0, last: null },
   agent: { taskID: '', active: false, lastEventCount: 0, last: null },
 };
+
+// tabForRole maps any sub-agent role to one of the two overlay tabs.
+function tabForRole(role: string): Tab {
+  return role === 'planner' ? 'planner' : 'agent';
+}
 
 function isSettled(actor: { status?: string; phase?: string } | undefined): boolean {
   if (!actor) return true;
@@ -48,15 +60,44 @@ function isSettled(actor: { status?: string; phase?: string } | undefined): bool
     phase === 'finalizing' || phase === 'exited';
 }
 
-function roleLabel(role: Tab): string {
-  return role === 'agent' ? 'Agent' : 'Planner';
+function roleLabel(role: Tab | string): string {
+  if (role === 'agent' || role === 'task-runner') return 'Agent';
+  if (role === 'planner') return 'Planner';
+  if (role === 'scribe') return 'Scribe';
+  return role ? String(role) : 'Actor';
 }
 
-// openTaskMonitor opens the pop-up. When opts.tab is provided, that tab is
-// activated; otherwise the last active tab is kept. Safe to call when an
-// overlay is already open (it just switches tabs).
-export async function openTaskMonitor(opts?: { tab?: Tab }) {
-  if (opts?.tab) activeTab = opts.tab;
+// openTaskMonitor opens the pop-up. Three call shapes:
+//   - { tab }                 → activate that tab, resolve its task by role
+//                               (the runtime-strip pill path).
+//   - { taskID, role }        → PIN that exact task into its role's tab (the
+//                               chat-bubble path) so a specific spawned agent
+//                               is shown even when several exist.
+// Safe to call when an overlay is already open (it just switches/pins).
+export async function openTaskMonitor(opts?: { tab?: Tab; taskID?: string; role?: string }) {
+  if (opts?.taskID) {
+    const tab = tabForRole(opts.role || 'task-runner');
+    // A new pin targeting a different task must reset that tab's incremental
+    // cursor so the stream is re-fetched from the start, not diffed against the
+    // previous task's event count.
+    if (pinnedTaskID !== opts.taskID) {
+      const st = actorState[tab];
+      st.taskID = opts.taskID;
+      st.lastEventCount = 0;
+      st.last = null;
+    }
+    pinnedTaskID = opts.taskID;
+    pinnedTab = tab;
+    activeTab = tab;
+  } else if (opts?.tab) {
+    activeTab = opts.tab;
+    // Opening a tab via its pill clears any pin on that tab so it tracks the
+    // live role actor again.
+    if (pinnedTab === opts.tab) {
+      pinnedTaskID = '';
+      pinnedTab = null;
+    }
+  }
   if (overlay) {
     void refreshAndRender();
     return;
@@ -76,6 +117,10 @@ export function closeTaskMonitor() {
     document.removeEventListener('keydown', escapeHandler);
     escapeHandler = null;
   }
+  // Clear any chat-bubble pin so the next open starts fresh (a stale pin must
+  // not silently override the pill path on the following open).
+  pinnedTaskID = '';
+  pinnedTab = null;
   overlay?.remove();
   overlay = null;
 }
@@ -141,7 +186,13 @@ function buildOverlay() {
 
   panel.append(header, tabs, subTabs, body);
   el.append(panel);
-  document.body.append(el);
+  // Mount INSIDE the chat popup (not document.body) so the overlay is clipped
+  // to the popup's rounded, overflow-hidden bounds and its backdrop only dims
+  // the chat surface - not the whole transparent widget window. Mounting on
+  // body made the modal escape the popup and float as an isolated black box
+  // over the desktop. Fall back to body if the popup is somehow absent.
+  const host = document.getElementById('popup') || document.body;
+  host.append(el);
   overlay = el;
 }
 
@@ -161,7 +212,12 @@ function attachDismissHandlers() {
 function switchTab(tab: Tab) {
   activeTab = tab;
   activeSubTab = 'activity';
-  void renderCurrent();
+  // Clicking a tab button shows that role's LIVE actor, so drop any pin on it.
+  if (pinnedTab === tab) {
+    pinnedTaskID = '';
+    pinnedTab = null;
+  }
+  void refreshAndRender();
 }
 
 function switchSubTab(sub: SubTab) {
@@ -182,14 +238,40 @@ async function refreshAndRender() {
   }
   const plannerActor = status?.actors?.find((a) => a.role === 'planner');
   const agentActor = status?.actors?.find((a) => a.role === 'task-runner');
-  actorState.planner.taskID = plannerActor?.id || '';
-  actorState.planner.active = !!plannerActor && !isSettled(plannerActor);
-  actorState.agent.taskID = agentActor?.id || '';
-  actorState.agent.active = !!agentActor && !isSettled(agentActor);
+  applyResolvedActor('planner', plannerActor?.id || '', !!plannerActor && !isSettled(plannerActor));
+  applyResolvedActor('agent', agentActor?.id || '', !!agentActor && !isSettled(agentActor));
+
+  // Pin override: force the pinned tab onto its specific task regardless of
+  // which actor the role currently resolves to. Liveness is derived from the
+  // task's own inspect status after fetch (a pinned task may already be
+  // terminal or no longer the role's active actor).
+  if (pinnedTaskID && pinnedTab) {
+    const st = actorState[pinnedTab];
+    if (st.taskID !== pinnedTaskID) {
+      st.taskID = pinnedTaskID;
+      st.lastEventCount = 0;
+      st.last = null;
+    }
+  }
 
   await fetchTab(activeTab);
   renderTabs();
   renderCurrent();
+}
+
+// applyResolvedActor sets a tab's task from RuntimeStatus, resetting the
+// incremental cursor when the resolved task id changes (a new actor for that
+// role) so the new task's stream is fetched from the start. A pinned tab is
+// left untouched (the pin owns its task id).
+function applyResolvedActor(tab: Tab, taskID: string, active: boolean) {
+  if (pinnedTab === tab && pinnedTaskID) return;
+  const st = actorState[tab];
+  if (st.taskID !== taskID) {
+    st.taskID = taskID;
+    st.lastEventCount = 0;
+    st.last = null;
+  }
+  st.active = active;
 }
 
 async function fetchTab(tab: Tab) {
@@ -203,6 +285,13 @@ async function fetchTab(tab: Tab) {
     const res = (await TaskInspect(state.taskID, state.lastEventCount)) as unknown as TaskInspectResult;
     state.last = res;
     state.lastEventCount = res.event_count ?? state.lastEventCount;
+    // For a pinned tab the RuntimeStatus role-actor liveness does not apply
+    // (the pin may target a different/older task), so derive liveness from the
+    // task's own inspect status.
+    if (pinnedTab === tab && pinnedTaskID) {
+      const s = (res.status || '').toLowerCase();
+      state.active = !(s === 'done' || s === 'failed' || s === 'stopped');
+    }
   } catch {
     // A stale id (task just ended + GC'd) leaves the last snapshot in place;
     // the header will show "tidak aktif" via the empty-taskID path next poll.
@@ -224,6 +313,9 @@ function renderCurrent() {
   const subTabs = overlay.querySelector('.task-monitor-subtabs') as HTMLElement | null;
   const body = overlay.querySelector('.task-monitor-body') as HTMLElement | null;
   if (!subTabs || !body) return;
+  // Auto-scroll-to-bottom follows the live stream. Respect a reader who
+  // scrolled up: only stick to the bottom when they were already there.
+  const stickToBottom = isNearBottom(body);
   body.replaceChildren();
   subTabs.replaceChildren();
   subTabs.hidden = true;
@@ -266,29 +358,65 @@ function renderCurrent() {
   } else {
     body.append(buildActivityPane(res));
   }
+  if (stickToBottom) scrollToBottom(body);
+}
+
+function isNearBottom(el: HTMLElement): boolean {
+  const threshold = 64;
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+}
+
+function scrollToBottom(el: HTMLElement): void {
+  el.scrollTop = el.scrollHeight;
 }
 
 function buildHeaderLine(res: TaskInspectResult, active: boolean): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'task-monitor-headline-wrap';
+
   const line = document.createElement('div');
   line.className = 'task-monitor-headline';
   const status = document.createElement('span');
   status.className = 'task-monitor-status';
   status.dataset.status = res.status || (active ? 'active' : 'idle');
   status.textContent = statusLabel(res.status, active);
-  const task = document.createElement('span');
-  task.className = 'task-monitor-task';
-  task.textContent = res.task || '(no task text)';
-  line.append(status, task);
+  const role = document.createElement('span');
+  role.className = 'task-monitor-role';
+  role.textContent = roleLabel(res.role);
+  line.append(status, role);
+  wrap.append(line);
+
+  // The task prompt can be very long (a planner's full planning brief). Render
+  // it as a collapsed, line-clamped block instead of an unbounded inline span
+  // so it never grows into a wall of text that pushes the tabs/overlap. The
+  // full text is still reachable by expanding the <details>.
+  const task = (res.task || '(no task text)').trim();
+  const details = document.createElement('details');
+  details.className = 'task-monitor-task-details';
+  const summary = document.createElement('summary');
+  summary.textContent = truncateForSummary(task);
+  const body = document.createElement('div');
+  body.className = 'task-monitor-task-body';
+  body.textContent = task;
+  details.append(summary, body);
+  wrap.append(details);
+
   if (res.question) {
     const q = document.createElement('div');
     q.className = 'task-monitor-question';
     q.textContent = '❓ ' + res.question;
-    const wrap = document.createElement('div');
-    wrap.className = 'task-monitor-headline-wrap';
-    wrap.append(line, q);
-    return wrap;
+    wrap.append(q);
   }
-  return line;
+  return wrap;
+}
+
+// truncateForSummary produces a one-line preview for the collapsed task
+// <details> summary. Keeps the header compact; the full text lives in the
+// expandable body.
+function truncateForSummary(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  if (oneLine.length <= 100) return oneLine || '(no task text)';
+  return oneLine.slice(0, 100) + '…';
 }
 
 function statusLabel(status: string, active: boolean): string {
@@ -347,6 +475,7 @@ function coalesceEvents(events: TaskInspectEvent[]): ActivityEntry[] {
   const out: ActivityEntry[] = [];
   let textBuf = '';
   let thinkBuf = '';
+  let turnNo = 0;
   const flushText = () => {
     if (textBuf.trim()) out.push({ kind: 'text', text: textBuf });
     textBuf = '';
@@ -373,7 +502,8 @@ function coalesceEvents(events: TaskInspectEvent[]): ActivityEntry[] {
       case 'turn_boundary':
         flushText();
         flushThinking();
-        out.push({ kind: 'turn', label: '— turn boundary —' });
+        turnNo++;
+        out.push({ kind: 'turn', label: `Turn ${turnNo}` });
         break;
       case 'task_update':
         flushText();
@@ -433,9 +563,22 @@ function renderActivityEntry(entry: ActivityEntry): HTMLElement {
     const label = document.createElement('span');
     label.className = 'task-monitor-entry-label';
     label.textContent = '🔧 ' + entry.name;
-    const args = document.createElement('code');
+    // Args render as a collapsed <details> code block: the summary is a
+    // one-line truncated preview, the body holds the full argument JSON so a
+    // long exec command / path stays tidy and expands in-place on click.
+    const args = document.createElement('details');
     args.className = 'task-monitor-tool-args';
-    args.textContent = truncateArgs(entry.args);
+    const summary = document.createElement('summary');
+    summary.textContent = truncateArgs(entry.args);
+    args.append(summary);
+    if (entry.args && entry.args.trim()) {
+      const full = document.createElement('code');
+      full.style.display = 'block';
+      full.style.whiteSpace = 'pre-wrap';
+      full.style.wordBreak = 'break-word';
+      full.textContent = entry.args.trim();
+      args.append(full);
+    }
     wrap.append(label, args);
     return wrap;
   }

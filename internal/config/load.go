@@ -627,6 +627,14 @@ type ContinuationConfig struct {
 	MaxToolCalls          int `json:"maxToolCalls"`
 	MaxParallelTools      int `json:"maxParallelTools"`
 	MaxWallTimeMinutes    int `json:"maxWallTimeMinutes"`
+	// MaxNoProgressTurns is the initial "toolless-turn budget" under the
+	// explicit-stop model: a turn that calls no tool is NOT a completion
+	// signal, so the run keeps looping while a model only narrates. Each
+	// tool-less turn burns 1 from this budget; each turn that calls a tool
+	// refills 1; once the model has made >10 tool calls total every turn is
+	// accepted and the budget is topped up (a productive agent is trusted).
+	// When the budget hits 0 the run ends cleanly. Default 10; a value <= 0
+	// disables the bound entirely (observe raw model behavior).
 	MaxNoProgressTurns    int `json:"maxNoProgressTurns"`
 	MaxIdenticalToolCalls int `json:"maxIdenticalToolCalls"`
 	MaxWaitSeconds        int `json:"maxWaitSeconds"`
@@ -653,8 +661,10 @@ type CompactionConfig struct {
 	// model writes the summary (via sapaloq_compact_session or a forced
 	// compaction turn), the orchestrator persists a checkpoint, and the model's
 	// context is rebuilt from the latest checkpoint summary + an anchored tail.
-	// When false, the legacy heuristic compaction path is used.
-	UseCheckpoints bool `json:"useCheckpoints"`
+	// When false, the legacy heuristic compaction path is used. Omitted from
+	// JSON means true (schema default); use a pointer so Go's zero-value false
+	// does not disable checkpoints for configs that predate this key.
+	UseCheckpoints *bool `json:"useCheckpoints,omitempty"`
 
 	// HeadroomPercent is the fraction of the context window that must remain
 	// free before a forced compaction turn is injected (default 0.05 = 5%).
@@ -697,7 +707,7 @@ func DefaultOrchestratorConfig() OrchestratorConfig {
 			MaxToolCalls:          512,
 			MaxParallelTools:      8,
 			MaxWallTimeMinutes:    30,
-			MaxNoProgressTurns:    5,
+			MaxNoProgressTurns:    10,
 			MaxIdenticalToolCalls: 5,
 			MaxWaitSeconds:        120,
 		},
@@ -713,7 +723,7 @@ func DefaultOrchestratorConfig() OrchestratorConfig {
 			BlockingThreshold:          0.88,
 			PreserveRecentFraction:     0.30,
 			ResumeAfterCompaction:      true,
-			UseCheckpoints:             true,
+			UseCheckpoints:             boolPtr(true),
 			HeadroomPercent:            0.05,
 			SteerPercent:               0.85,
 			KeepRecentTurns:            4,
@@ -781,10 +791,10 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 	// PreserveLastAgentTurn is a hard default; a false value is only honored
 	// when the user also explicitly set UseCheckpoints (i.e. they consciously
 	// configured the checkpoint path). This guards the anti-forget goal.
-	if !c.Compaction.PreserveLastAgentTurn && !c.Compaction.UseCheckpoints {
+	if !c.Compaction.PreserveLastAgentTurn && !c.Compaction.UseCheckpointsEnabled() {
 		c.Compaction.PreserveLastAgentTurn = defaults.Compaction.PreserveLastAgentTurn
 	}
-	if !c.Compaction.PreservePrecedingUserTurn && !c.Compaction.UseCheckpoints {
+	if !c.Compaction.PreservePrecedingUserTurn && !c.Compaction.UseCheckpointsEnabled() {
 		c.Compaction.PreservePrecedingUserTurn = defaults.Compaction.PreservePrecedingUserTurn
 	}
 	if c.Compaction.MaxForceRetries <= 0 {
@@ -795,6 +805,18 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 	}
 	c.Completion = c.Completion.WithDefaults()
 	return c
+}
+
+func boolPtr(v bool) *bool { return &v }
+
+// UseCheckpointsEnabled reports whether the LLM checkpoint compaction model is
+// active. Omitted JSON defaults to true per schema; only an explicit false
+// opts back into the legacy heuristic path.
+func (c CompactionConfig) UseCheckpointsEnabled() bool {
+	if c.UseCheckpoints != nil {
+		return *c.UseCheckpoints
+	}
+	return true
 }
 
 func DefaultConfig() Config {

@@ -934,10 +934,10 @@ func (b *repeatingTextBridge) Complete(_ context.Context, req bridge.Request) (<
 
 // TestToolLessTurnNeverFinishesOnAbsenceOfTool proves the polarity flip: a
 // tool-less turn does NOT end the run by itself (no "no-tool = stop", no NO_OP
-// sentinel). The run instead continues until the no-progress finish closes it
-// cleanly once the model just repeats itself. It also proves the continuation
-// fed back is the single content-blind nudge (mentions sapaloq_stop, never
-// NO_OP) and is never derived from the model's text.
+// sentinel). The run instead continues until the toolless-turn budget closes
+// it cleanly once the model just repeats itself. It also proves the
+// continuation fed back is the single content-blind nudge (mentions
+// sapaloq_stop, never NO_OP) and is never derived from the model's text.
 func TestToolLessTurnNeverFinishesOnAbsenceOfTool(t *testing.T) {
 	fake := &repeatingTextBridge{}
 	o := &Orchestrator{
@@ -969,10 +969,10 @@ func TestToolLessTurnNeverFinishesOnAbsenceOfTool(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("repeating tool-less run should finish cleanly via the no-progress finish: %v", err)
+			t.Fatalf("repeating tool-less run should finish cleanly via the toolless-turn budget: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("tool-less run did not finish - it must be bounded by the no-progress finish")
+		t.Fatal("tool-less run did not finish - it must be bounded by the toolless-turn budget")
 	}
 	close(out)
 	// It must have continued past the first turn (a tool-less turn is NOT a
@@ -981,7 +981,7 @@ func TestToolLessTurnNeverFinishesOnAbsenceOfTool(t *testing.T) {
 		t.Fatalf("calls = %d, want the run to continue past the first tool-less turn", fake.calls)
 	}
 	if fake.calls > config.DefaultOrchestratorConfig().Continuation.MaxNoProgressTurns+2 {
-		t.Fatalf("calls = %d, want the no-progress finish to bound it tightly", fake.calls)
+		t.Fatalf("calls = %d, want the toolless-turn budget to bound it tightly", fake.calls)
 	}
 	// The continuation fed back must be the single content-blind nudge: it
 	// points at sapaloq_stop and must NOT resurrect the deleted NO_OP sentinel.

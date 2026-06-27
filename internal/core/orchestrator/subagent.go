@@ -37,9 +37,10 @@ const minSubAgentMaxTurns = 1
 //   - dispatch:     handleSubAgentTool (terminal tools mutate record + stop)
 //   - sink:         progress JSONL + worker heartbeat (so a live stream never
 //     looks stalled to the watchdog - the recurring stall bug)
-//   - finish:       planner/scribe finish on a tool-less turn; an executor must
-//     call a terminal tool (the shared no-progress guard bounds a
-//     model that only narrates intent)
+//   - finish:       every role ends by calling an explicit terminal tool
+//     (sapaloq_stop / sapaloq_complete_task / sapaloq_fail_task). A tool-less
+//     turn is NOT a stop signal; the shared toolless-turn budget bounds a
+//     model that only narrates intent without ever stopping.
 //
 // record is mutated in place (Status/Result/Error/Question); the caller
 // persists the final state.
@@ -136,8 +137,11 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 		o.workerLogError(record.ID, "sub-agent loop ended: "+record.Error)
 		return
 	}
-	// No tools, no terminal signal, no error: an executor that never signalled
-	// completion is a failure; a non-executor (planner without a plan) is done.
+	// No tools, no terminal signal, no error: the loop ended via the
+	// toolless-turn budget (or the per-role turn cap) without the model ever
+	// calling sapaloq_stop / sapaloq_complete_task / sapaloq_fail_task. An
+	// executor that never signalled completion is a failure; a non-executor
+	// (planner without a plan) is done.
 	// NOTE: we intentionally do NOT fail a planner that finished cleanly with
 	// no plan.md - a planner may legitimately answer a question without
 	// producing a formal plan (see TestPlannerCompletesOnToolLessTurn). The
@@ -147,7 +151,7 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	// with no error is a real, non-failing outcome.
 	if record.Role == "task-runner" {
 		record.Status = "failed"
-		record.Error = "executor stopped without calling `sapaloq_complete_task` or `sapaloq_fail_task`"
+		record.Error = "executor stopped without calling `sapaloq_complete_task`, `sapaloq_fail_task`, or `sapaloq_stop`"
 		return
 	}
 	record.Status = "done"
@@ -162,8 +166,8 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 //     whole app can take hundreds of tool calls), so an arbitrary turn ceiling
 //     would force-fail a productive agent with "inference-turn budget
 //     exhausted". A genuinely stuck/looping model is still bounded by the real
-//     anomaly guards (no-progress, identical-tool, wall-time, tool-call) - none
-//     of which depend on the turn count.
+//     anomaly guards (toolless-turn budget, identical-tool, wall-time,
+//     tool-call) - none of which depend on the turn count.
 //   - Every other (short-lived) role - planner, scribe - falls back to the same
 //     budget the chat loop uses (Continuation.MaxInferenceTurns, default 128).
 func (o *Orchestrator) roleMaxTurns(role string) int {
@@ -316,6 +320,27 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		record.Error = reason
 		record.Status = "failed"
 		return subToolResult{text: "Task marked failed.", terminal: true}
+	case "sapaloq_stop":
+		// Explicit stop: available to EVERY sub-agent role (planner, agent,
+		// scribe) so the model itself ends its run instead of the orchestrator
+		// guessing "no tool = done". A clean stop resolves to `done` with the
+		// accumulated free-form text (or the reason) as the result; a planner's
+		// plan.md remains its authoritative result via resolveOutcome.
+		reason := strings.TrimSpace(args.Reason)
+		summary := strings.TrimSpace(result.String())
+		if summary == "" {
+			summary = reason
+		}
+		if summary == "" {
+			summary = "stopped by agent"
+		}
+		record.Result = summary
+		record.Status = "done"
+		msg := "Stopped."
+		if reason != "" {
+			msg = "Stopped: " + reason
+		}
+		return subToolResult{text: msg, terminal: true}
 	case "request_clarification", "sapaloq_request_decision":
 		question := strings.TrimSpace(args.Question)
 		if question == "" {

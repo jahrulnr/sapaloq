@@ -178,7 +178,8 @@ func TestTaskRunnerNarrationIsBoundedByTurnBudget(t *testing.T) {
 		return []bridge.StreamEvent{{Kind: bridge.EventResponseDelta, Delta: s}}
 	}
 	// Far more narration turns than the budget below, each re-phrased so the
-	// no-progress hash guard never trips - only the turn budget can stop it.
+	// run keeps looping - only the per-role turn budget can stop it here (the
+	// toolless-turn budget starts at 10 and these 4 turns never exhaust it).
 	turns := make([][]bridge.StreamEvent, 0, 12)
 	phrases := []string{
 		"Saya akan membuat js/script.js sekarang.",

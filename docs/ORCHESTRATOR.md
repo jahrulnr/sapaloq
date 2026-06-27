@@ -220,7 +220,7 @@ Ask-mode tool continuation is budgeted across several independent limits instead
 - `orchestrator.continuation.maxInferenceTurns` (code default `128`)
 - `maxToolCalls` (code default `512`)
 - `maxWallTimeMinutes` (code default `30`)
-- `maxNoProgressTurns` and `maxIdenticalToolCalls` (code default `5`)
+- `maxNoProgressTurns` (code default `10`, the toolless-turn budget) and `maxIdenticalToolCalls` (code default `5`)
 - `maxWaitSeconds` (code default `120`)
 
 > **Philosophy (per AGENTS.md golden rule #5 - "do not invent restrictions the

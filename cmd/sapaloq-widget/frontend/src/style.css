@@ -875,6 +875,13 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .message--tool { color: oklch(87% 0.08 150); background: oklch(73% 0.14 150 / 0.1); }
 .message--error { color: oklch(86% 0.11 28); background: oklch(67% 0.21 28 / 0.13); }
 .message--task { background: linear-gradient(135deg, oklch(68% 0.19 255 / 0.12), oklch(63% 0.22 285 / 0.06)); border-left: 3px solid var(--blue); }
+/* Clickable task card: opens this specific sub-agent in the monitor pop-up.
+   The hover/focus lift signals it is interactive (the cheap multi-agent path -
+   the runtime-strip pill only reaches one actor per role). */
+.message--task-clickable { cursor: pointer; transition: background 140ms ease, border-color 140ms ease, transform 120ms ease; }
+.message--task-clickable:hover { background: linear-gradient(135deg, oklch(68% 0.19 255 / 0.2), oklch(63% 0.22 285 / 0.1)); border-left-color: oklch(76% 0.15 205); }
+.message--task-clickable:focus-visible { outline: 2px solid oklch(76% 0.15 205 / 0.6); outline-offset: 2px; }
+.message--task-clickable:active { transform: scale(0.992); }
 /* Archived pre-checkpoint bubbles: still visible (full transcript) but muted
    so the live post-checkpoint history reads as the focus. The checkpoint
    divider below marks the seam. */
@@ -1459,36 +1466,49 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
    stops propagation so a click inside never dismisses; only X / Escape /
    backdrop do. */
 .task-monitor-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 1001;
+  z-index: 30;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: oklch(3% 0.015 255 / 0.78);
-  backdrop-filter: blur(14px);
+  padding: 10px;
+  background: oklch(3% 0.015 255 / 0.6);
+  backdrop-filter: blur(10px);
   cursor: pointer;
+  /* Inherit the popup's rounded clip so the backdrop never paints into the
+     popup's corner radius. */
+  border-radius: inherit;
 }
 .task-monitor-panel {
   cursor: default;
-  width: min(720px, 92vw);
-  height: min(70vh, 560px);
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--shell-strong);
   border: 1px solid var(--line);
-  border-radius: var(--popup-radius);
-  box-shadow: 0 30px 90px oklch(0% 0 0 / 0.65);
+  border-radius: calc(var(--popup-radius) - 4px);
   overflow: hidden;
+  /* Mirror the primary chat shell: translucent glassy gradient with the same
+     blue/magenta radial glows + inset top highlight, so the pop-up reads as a
+     chat surface and not a flat isolated black box laid over the UI. */
+  background:
+    radial-gradient(circle at 12% -8%, oklch(76% 0.15 205 / 0.14), transparent 30%),
+    radial-gradient(circle at 102% 18%, oklch(68% 0.2 330 / 0.12), transparent 32%),
+    linear-gradient(145deg, var(--shell-strong), var(--shell) 58%);
+  box-shadow:
+    inset 0 1px 0 oklch(100% 0 0 / 0.16),
+    inset 1px 0 0 oklch(100% 0 0 / 0.035);
 }
 .task-monitor-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
   color: var(--ink);
   font-size: 0.8rem;
+  background: oklch(100% 0 0 / 0.03);
 }
 .task-monitor-close {
   background: transparent;
@@ -1545,35 +1565,109 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
 .task-monitor-body {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 16px 18px;
+  padding: 14px 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  /* Let bubbles align to the start like the chat transcript; long content
+     wraps inside its own bubble instead of stretching the row. */
+  align-items: stretch;
+  scroll-behavior: smooth;
 }
-.task-monitor-headline-wrap { display: flex; flex-direction: column; gap: 4px; }
+.task-monitor-headline-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 2px 4px;
+}
 .task-monitor-headline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .task-monitor-status { font-size: 0.7rem; font-weight: 800; color: var(--ink); }
 .task-monitor-status[data-status='failed'] { color: var(--danger); }
 .task-monitor-status[data-status='done'] { color: var(--ok); }
 .task-monitor-status[data-status='stopped'] { color: var(--warn); }
-.task-monitor-task { color: var(--muted); font-size: 0.72rem; }
+.task-monitor-role {
+  color: var(--subtle);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .task-monitor-question { color: var(--accent-hot); font-size: 0.74rem; }
-
-.task-monitor-entry {
+/* Task prompt: a planner's brief can be huge. Keep it in a collapsed, clamped
+   block so the header stays one line and never grows into a wall of text. */
+.task-monitor-task-details {
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 8px 10px;
+  border-radius: 8px;
   background: var(--surface-1);
-  font-size: 0.74rem;
+  padding: 4px 8px;
+  font-size: 0.66rem;
+}
+.task-monitor-task-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  list-style: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-monitor-task-details > summary::-webkit-details-marker { display: none; }
+.task-monitor-task-details > summary::before { content: '▸ '; color: var(--subtle); }
+.task-monitor-task-details[open] > summary::before { content: '▾ '; }
+.task-monitor-task-details[open] > summary {
+  white-space: normal;
+  margin-bottom: 4px;
+  color: var(--subtle);
+}
+.task-monitor-task-body {
+  color: var(--ink);
+  font-size: 0.68rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 30vh;
+  overflow-y: auto;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+/* Activity entries render as chat-style translucent bubbles (mirroring
+   .message / .message--assistant / .message--tool / .message--thinking) so the
+   pop-up reads as a transcript, not a stack of flat outline boxes. Each tool
+   call, assistant text, and thinking block is its own bubble. */
+.task-monitor-entry {
+  position: relative;
+  max-width: min(92%, 660px);
+  border: 1px solid var(--line);
+  border-radius: 11px 11px 11px 4px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: linear-gradient(145deg, oklch(100% 0 0 / 0.09), oklch(100% 0 0 / 0.055));
+  font-size: 0.78rem;
+  line-height: 1.42;
+  box-shadow: 0 9px 20px oklch(0% 0 0 / 0.18), inset 0 1px 0 oklch(100% 0 0 / 0.035);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .task-monitor-entry-label {
   display: block;
   color: var(--accent);
   font-weight: 800;
-  font-size: 0.68rem;
-  margin-bottom: 4px;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  margin-bottom: 5px;
 }
 .task-monitor-entry-body { color: var(--ink); }
+/* Assistant text bubble: same translucent surface as .message--assistant. */
+.task-monitor-text {
+  background: linear-gradient(145deg, oklch(100% 0 0 / 0.095), oklch(100% 0 0 / 0.05));
+}
+.task-monitor-text .task-monitor-entry-label { color: oklch(76% 0.15 205); }
+.task-monitor-text .task-monitor-entry-body :where(p,ul,ol,pre,code) { margin: 0.2em 0; }
+/* Thinking bubble: muted, collapsible, mirroring .message--thinking. */
+.task-monitor-thinking {
+  background: linear-gradient(145deg, oklch(63% 0.22 285 / 0.08), oklch(100% 0 0 / 0.035));
+  border-color: oklch(63% 0.22 285 / 0.2);
+}
 .task-monitor-thinking summary {
   cursor: pointer;
   color: var(--muted);
@@ -1583,19 +1677,90 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
 .task-monitor-thinking summary::-webkit-details-marker { display: none; }
 .task-monitor-thinking summary::before { content: '▸ '; }
 .task-monitor-thinking[open] summary::before { content: '▾ '; }
-.task-monitor-text .task-monitor-entry-body :where(p,ul,ol,pre,code) { margin: 0.2em 0; }
-
-.task-monitor-tool { display: flex; flex-direction: column; gap: 4px; }
+/* Tool-call bubble: green-tinted like .message--tool. */
+.task-monitor-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: oklch(87% 0.08 150);
+  background: oklch(73% 0.14 150 / 0.1);
+  border-color: oklch(73% 0.14 150 / 0.28);
+}
+.task-monitor-tool .task-monitor-entry-label { color: oklch(80% 0.14 150); }
+/* Tool args: a collapsible code block so a long exec command/path stays tidy
+   by default and is expandable in-place. */
 .task-monitor-tool-args {
+  margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.66rem;
   color: var(--silver);
-  background: oklch(0% 0 0 / 0.25);
-  padding: 4px 6px;
-  border-radius: 6px;
+  background: oklch(0% 0 0 / 0.28);
+  padding: 6px 8px;
+  border-radius: 7px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid oklch(100% 0 0 / 0.06);
+}
+.task-monitor-tool-args > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--silver);
   white-space: pre-wrap;
   word-break: break-word;
 }
+.task-monitor-tool-args > summary::-webkit-details-marker { display: none; }
+.task-monitor-tool-args > summary::after { content: ' …'; color: var(--subtle); }
+.task-monitor-tool-args[open] > summary::after { content: ''; }
+.task-monitor-tool-args[open] > summary {
+  margin-bottom: 5px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid oklch(100% 0 0 / 0.08);
+}
+/* Turn boundary: a subtle centered divider (like the checkpoint divider) - it
+   is a seam in the transcript, not content. The ::before/::after rules flank
+   the centered label. */
+.task-monitor-turn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: none;
+  margin: 6px 0 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.task-monitor-turn::before,
+.task-monitor-turn::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: oklch(100% 0 0 / 0.16);
+}
+/* Status + task-activity lines: plain muted left-aligned text (a status hint
+   like "Menjalankan `read_file`." or "continuing - call sapaloq_stop"), not a
+   divider - they can be long and frequent. */
+.task-monitor-status-line,
+.task-monitor-task-line {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.66rem;
+  color: var(--subtle);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.task-monitor-task-line { color: var(--muted); }
 
 .task-monitor-turn,
 .task-monitor-status-line,

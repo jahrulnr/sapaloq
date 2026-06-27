@@ -126,7 +126,7 @@
       "maxToolCalls": 512,
       "maxParallelTools": 40,
       "maxWallTimeMinutes": 30,
-      "maxNoProgressTurns": 5,
+      "maxNoProgressTurns": 10,
       "maxIdenticalToolCalls": 5,
       "maxWaitSeconds": 120
     },

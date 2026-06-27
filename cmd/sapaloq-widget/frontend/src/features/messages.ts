@@ -13,6 +13,8 @@ import {
   resetMessageSeq,
   setUserGroup,
   spokenTaskIDs,
+  taskBubbles,
+  taskStatuses,
 } from '../core/state';
 import { copyText, deleteTurn, editText, retryTurn } from './message-actions';
 
@@ -165,6 +167,8 @@ export function clearMessages() {
   // otherwise a task spoken before the clear would be suppressed if it legitly
   // re-arrives live afterwards.
   spokenTaskIDs.clear();
+  taskBubbles.clear();
+  taskStatuses.clear();
 }
 
 export function closeMessageMenu() {

@@ -1,8 +1,13 @@
 package orchestrator
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/config"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
@@ -109,5 +114,76 @@ func TestIsReadOnlyAssessmentTool(t *testing.T) {
 		if isReadOnlyAssessmentTool(name) {
 			t.Errorf("isReadOnlyAssessmentTool(%q) = true, want false (side-effecting/lifecycle)", name)
 		}
+	}
+}
+
+func TestOrchestratorFallbackCheckpointArchivesOldTurns(t *testing.T) {
+	ctx := context.Background()
+	store, err := chatstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := store.ActiveSession(ctx, "p", "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		if err := store.AppendTurn(ctx, sessionID, role, fmt.Sprintf("turn %d content", i), 50); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{chat: store, cfg: config.Config{Orchestrator: config.DefaultOrchestratorConfig()}}
+	res, ok, err := o.orchestratorFallbackCheckpoint(ctx, sessionID, "test")
+	if err != nil || !ok {
+		t.Fatalf("fallback checkpoint: ok=%v err=%v", ok, err)
+	}
+	if res.Index != 1 {
+		t.Fatalf("index = %d, want 1", res.Index)
+	}
+	active, err := store.ActiveTurns(ctx, sessionID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) > 6 {
+		t.Fatalf("expected shrunk active tail, got %d turns", len(active))
+	}
+}
+
+func TestEffectiveContextPercentUsesPersistedAttachmentWeight(t *testing.T) {
+	ctx := context.Background()
+	store, err := chatstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := store.ActiveSession(ctx, "p", "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a pasted image turn: huge token_estimate in DB, placeholder in
+	// the live slice after extractImages strips the inline data URI.
+	huge := strings.Repeat("A", 3_600_000) // ~900k tokens at len/4
+	if err := store.AppendTurn(ctx, sessionID, "user", "![img.png](data:image/png;base64,"+huge+")", estimateTextTokens("![img.png](data:image/png;base64,"+huge+")")); err != nil {
+		t.Fatal(err)
+	}
+	o := &Orchestrator{chat: store}
+	live, images := extractImages([]bridge.Message{{Role: "user", Content: "[Image attachment: img.png]"}})
+	if len(images) != 0 {
+		t.Fatalf("expected stripped live slice without vision payload, got %d images", len(images))
+	}
+	const window = 900_000
+	livePct := o.contextPercent(live, window)
+	if livePct >= 50 {
+		t.Fatalf("live slice alone should be tiny after image strip, got %d%%", livePct)
+	}
+	effective := o.effectiveContextPercent(ctx, sessionID, live, window)
+	if effective < 95 {
+		t.Fatalf("effective = %d%%, want >=95 from persisted attachment estimate", effective)
+	}
+	if !o.contextHeadroomReached(ctx, sessionID, live, window, 0.05) {
+		t.Fatal("headroom should be reached when persisted usage exceeds 95%")
 	}
 }

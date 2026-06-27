@@ -108,6 +108,29 @@ describe('task-monitor-overlay', () => {
     const overlay = document.getElementById('task-monitor-overlay')!;
     const turns = overlay.querySelectorAll('.task-monitor-turn');
     expect(turns.length).toBe(1);
+    // The divider carries a numbered turn label (not the old "— turn boundary —").
+    expect(turns[0].textContent).toContain('Turn 1');
+  });
+
+  it('renders tool args as a collapsed details block with a truncated summary', async () => {
+    const longArgs = '{"command":"' + 'cd /tmp/profile && '.repeat(20) + '"}';
+    taskInspectMock.mockResolvedValue(makeInspect({
+      events: [
+        { kind: 'tool_call', tool_name: 'exec', tool_arguments: longArgs },
+      ],
+      event_count: 1,
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    await openTaskMonitor({ tab: 'planner' });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+    const overlay = document.getElementById('task-monitor-overlay')!;
+    const args = overlay.querySelector('.task-monitor-tool-args') as HTMLDetailsElement | null;
+    expect(args).not.toBeNull();
+    // Collapsed by default; the full argument body is reachable by expanding.
+    expect(args!.open).toBe(false);
+    expect(args!.querySelector('summary')?.textContent).toContain('…');
+    expect(args!.querySelector('code')?.textContent).toBe(longArgs.trim());
   });
 
   it('close button removes the overlay from the DOM', async () => {
@@ -157,11 +180,57 @@ describe('task-monitor-overlay', () => {
     expect(overlay.querySelector('.task-monitor-subtab[data-sub="plan"]')).toBeNull();
   });
 
+  it('pins a specific task when opened by task id (chat-bubble path)', async () => {
+    // RuntimeStatus resolves the role's CURRENT agent to a different task than
+    // the one we pin, proving the pin overrides role resolution so a non-latest
+    // spawned agent is still viewable.
+    runtimeStatusMock.mockResolvedValue({
+      actors: [makeActor('task-runner', 'in_progress', 'task-latest')],
+    });
+    taskInspectMock.mockImplementation(async (taskID: string) => makeInspect({
+      id: taskID, role: 'task-runner', task: 'older agent', status: 'done',
+      events: [{ kind: 'response_delta', delta: 'older agent work' }], event_count: 1,
+    }));
+    await openTaskMonitor({ taskID: 'task-older', role: 'task-runner' });
+    await vi.advanceTimersByTimeAsync(0);
+    const overlay = document.getElementById('task-monitor-overlay')!;
+    // The agent tab is active and inspected the PINNED task, not the latest.
+    const agentTab = overlay.querySelector('.task-monitor-tab[data-tab="agent"]') as HTMLButtonElement;
+    expect(agentTab.classList.contains('is-active')).toBe(true);
+    expect(taskInspectMock).toHaveBeenCalledWith('task-older', expect.any(Number));
+    expect(taskInspectMock).not.toHaveBeenCalledWith('task-latest', expect.any(Number));
+  });
+
   it('shows an idle empty state when the actor has no task id', async () => {
     runtimeStatusMock.mockResolvedValue({ actors: [] });
     await openTaskMonitor({ tab: 'planner' });
     await vi.advanceTimersByTimeAsync(0);
     const overlay = document.getElementById('task-monitor-overlay')!;
     expect(overlay.querySelector('.task-monitor-empty')?.textContent).toContain('tidak aktif');
+  });
+
+  // Regression: a planner's task prompt can be a huge planning brief. It used
+  // to render as an unbounded inline span that grew into a wall of text and
+  // broke the header layout. It must now live in a collapsed, clamped
+  // <details> whose summary is a single truncated line.
+  it('renders a long task prompt as a collapsed, truncated details block', async () => {
+    const longTask = 'dan /about, Drupal shim filters ' + 'x'.repeat(400);
+    taskInspectMock.mockResolvedValue(makeInspect({ task: longTask, plan: '# Plan\n- step' }));
+    await openTaskMonitor({ tab: 'planner' });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+    const overlay = document.getElementById('task-monitor-overlay')!;
+    const details = overlay.querySelector('.task-monitor-task-details') as HTMLDetailsElement | null;
+    expect(details).not.toBeNull();
+    // Collapsed by default so the header stays compact.
+    expect(details?.open).toBe(false);
+    const summary = details?.querySelector('summary');
+    expect(summary?.textContent?.endsWith('…')).toBe(true);
+    // The full text is reachable inside the expandable body, not spilled into
+    // the header line.
+    const bodyNode = details?.querySelector('.task-monitor-task-body');
+    expect(bodyNode?.textContent).toContain('xxxx');
+    // The inline task span that used to blow up the layout is gone.
+    expect(overlay.querySelector('.task-monitor-task')).toBeNull();
   });
 });

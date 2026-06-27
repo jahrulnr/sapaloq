@@ -206,7 +206,8 @@ func (s *Server) handleHistory(ctx context.Context, conn net.Conn, req Request, 
 		return
 	}
 	usage, _ := s.orch.ContextUsage(ctx, sessionID)
-	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Turns: turns, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
+	timeline := s.orch.SessionTimeline(sessionID)
+	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Turns: turns, Timeline: timeline, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
 }
 
 func (s *Server) handleSessionList(ctx context.Context, conn net.Conn, req Request, start time.Time) {

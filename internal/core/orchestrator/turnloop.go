@@ -71,10 +71,10 @@ type turnConfig struct {
 	// tool call is not a completion signal - it is just a turn that narrated,
 	// reasoned, or answered without acting, which every capable model does. The
 	// ONLY explicit end signal is a terminal tool (chat: sapaloq_stop;
-	// sub-agent: sapaloq_complete_task/sapaloq_fail_task) surfaced as
-	// turnOutcome.stop. Everything else keeps looping, bounded solely by the
-	// structural budgets (turn cap, idle wall-time, MaxToolCalls, no-progress
-	// hash). This deliberately drops the old "no-tool = stop" polarity and its
+	// sub-agent: sapaloq_stop / sapaloq_complete_task / sapaloq_fail_task)
+	// surfaced as turnOutcome.stop. Everything else keeps looping, bounded
+	// solely by the structural budgets (turn cap, idle wall-time, MaxToolCalls,
+	// toolless-turn budget). This deliberately drops the old "no-tool = stop" polarity and its
 	// tebak-tebakan tambalan (continueUntilNoOp/NO_OP sentinel, continueOnIntent
 	// narration heuristics): the logic was sound but it relied on the model
 	// behaving a way models do not reliably behave, so it stopped at the wrong
@@ -90,6 +90,10 @@ type turnConfig struct {
 	// maxInferenceTurns overrides the continuation budget's turn cap when > 0
 	// (sub-agent roles use roleMaxTurns); 0 means use the budget value.
 	maxInferenceTurns int
+	// suppressHeadroomCompaction skips the 95% headroom force-checkpoint path.
+	// Set for nested compaction sub-runs so they cannot recursively spawn another
+	// full turn loop (which would duplicate the entire message slice in RAM).
+	suppressHeadroomCompaction bool
 }
 
 // chatSink streams events to the live chat channel. beat is a no-op because the

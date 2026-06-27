@@ -52,6 +52,7 @@ type chatTurn struct {
 	Role            string `json:"role"`
 	Content         string `json:"content"`
 	CheckpointIndex int    `json:"checkpoint_index,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
 	// Archived is derived from included_in_context=0 + the presence of a later
 	// checkpoint: the turn is still shown (full transcript) but rendered muted
 	// as pre-checkpoint history. The widget computes it from the checkpoint
@@ -71,10 +72,11 @@ type chatUsage struct {
 }
 
 type chatHistoryResult struct {
-	OK        bool       `json:"ok"`
-	SessionID string     `json:"session_id"`
-	Turns     []chatTurn `json:"turns"`
-	Usage     *chatUsage `json:"usage,omitempty"`
+	OK        bool                 `json:"ok"`
+	SessionID string               `json:"session_id"`
+	Turns     []chatTurn           `json:"turns"`
+	Timeline  []bridge.StreamEvent `json:"timeline,omitempty"`
+	Usage     *chatUsage           `json:"usage,omitempty"`
 }
 
 type sessionSummary struct {
@@ -211,6 +213,7 @@ func chatHistory(socketPath string) (chatHistoryResult, error) {
 				Role:            turn.Role,
 				Content:         turn.Content,
 				CheckpointIndex: turn.CheckpointIndex,
+				CreatedAt:       turn.CreatedAt.UTC().Format(time.RFC3339Nano),
 				Archived:        !turn.IncludedInContext,
 			})
 			continue
@@ -221,9 +224,11 @@ func chatHistory(socketPath string) (chatHistoryResult, error) {
 			Role:            turn.Role,
 			Content:         turn.Content,
 			CheckpointIndex: turn.CheckpointIndex,
+			CreatedAt:       turn.CreatedAt.UTC().Format(time.RFC3339Nano),
 			Archived:        !turn.IncludedInContext,
 		})
 	}
+	result.Timeline = res.Timeline
 	return result, nil
 }
 

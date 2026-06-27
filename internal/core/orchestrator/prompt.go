@@ -471,7 +471,7 @@ func buildAutopilotContinuation(inferenceTurn int, toolResults []string, sig aut
 
 	switch {
 	case sig.awaitingClarification:
-		b.WriteString("A delegated task is awaiting clarification from you. Relay its question to the user (or answer it via `sapaloq_answer_clarification`) before doing anything else; do NOT call sapaloq_stop while a clarification is pending.")
+		b.WriteString("A delegated task is awaiting clarification from you. Relay its question to the user (or answer it via `sapaloq_answer_clarification`) before doing anything else; do NOT call `sapaloq_stop` while a clarification is pending.")
 	case sig.runningTasks > 0:
 		if escalated {
 			b.WriteString("Background work is still running and you have already acknowledged it. Invoke `sapaloq_stop` silently now - do not re-narrate status or repeat your acknowledgement.")
@@ -551,7 +551,7 @@ func calledToolsNote(tools []scheduledTool) string {
 // session is compacted by a model-authored checkpoint instead of a truncated
 // heuristic summary before the next request.
 func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUserMessage string) ([]bridge.Message, error) {
-	if !o.snapshot().cfg.Orchestrator.WithDefaults().Compaction.UseCheckpoints {
+	if !o.snapshot().cfg.Orchestrator.WithDefaults().Compaction.UseCheckpointsEnabled() {
 		usage, err := o.ContextUsage(ctx, sessionID)
 		if err == nil && usage.ContextWindow > 0 && usage.Percent >= autoCompactPercent {
 			_, _ = o.compactActiveSession(ctx, sessionID, "auto")

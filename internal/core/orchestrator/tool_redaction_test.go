@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/privacyfilter"
 )
 
@@ -56,7 +57,29 @@ func TestRedactToolResultsNilRedactor(t *testing.T) {
 	}
 }
 
-// TestRedactedResultStillWrappedAsUntrusted proves the two defences compose:
+// TestRedactToolResultsPreservesReadImageVision proves read_image inline
+// markdown survives redaction so extractImages can attach real vision input on
+// the next turn. Without the exemption, high-entropy base64 is replaced with
+// [SECRET] and the model goes blind to the image it just requested.
+func TestRedactToolResultsPreservesReadImageVision(t *testing.T) {
+	o := &Orchestrator{redactor: privacyfilter.New()}
+	raw := toolReadImage(toolArgs{Path: writePNG(t, t.TempDir(), "shot.png")})
+	out := o.redactToolResults([]string{raw})
+	if len(out) != 1 || out[0] != raw {
+		t.Fatalf("read_image result must pass through unchanged:\n got  %q\n want %q", truncate(out[0]), truncate(raw))
+	}
+	if strings.Contains(out[0], "[SECRET]") {
+		t.Fatalf("read_image base64 must not be redacted: %q", truncate(out[0]))
+	}
+	msgs, images := extractImages([]bridge.Message{{Role: "tool", Content: out[0]}})
+	if len(images) != 1 {
+		t.Fatalf("expected 1 vision image after redaction pipeline, got %+v", images)
+	}
+	if len(msgs) != 1 || strings.Contains(msgs[0].Content, "base64") {
+		t.Fatalf("extractImages should replace inline markdown with placeholder, got %q", msgs[0].Content)
+	}
+}
+
 // a redacted result still gets wrapped in <untrusted_data> by toolObservationBody.
 func TestRedactedResultStillWrappedAsUntrusted(t *testing.T) {
 	o := &Orchestrator{redactor: privacyfilter.New()}

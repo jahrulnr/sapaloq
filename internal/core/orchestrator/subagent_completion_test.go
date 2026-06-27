@@ -127,10 +127,10 @@ func TestSubAgentProgressDoesNotPersistBridgeDoneAsTaskCompletion(t *testing.T) 
 // unified "stop only via terminal tool" model, a non-executor role (planner)
 // that answers and then goes quiet WITHOUT calling a terminal tool still ends
 // as `done` (not `failed`). Unlike the old behavior it no longer finishes in a
-// single tool-less turn - the run continues until the no-progress finish closes
-// it cleanly - but the OUTCOME for a planner is still a clean completion. Only
-// an executor (task-runner) that never signals a terminal tool is treated as a
-// failure (see TestTaskRunnerFailsWhenItNeverSignalsTerminalState).
+// single tool-less turn - the run continues until the toolless-turn budget
+// closes it cleanly - but the OUTCOME for a planner is still a clean
+// completion. Only an executor (task-runner) that never signals a terminal
+// tool is treated as a failure (see TestTaskRunnerFailsWhenItNeverSignalsTerminalState).
 func TestPlannerFinishesCleanlyWithoutTerminalTool(t *testing.T) {
 	fake := &scriptedBridge{turns: [][]bridge.StreamEvent{
 		{{Kind: bridge.EventResponseDelta, Delta: "Here is the plan."}},
@@ -144,8 +144,8 @@ func TestPlannerFinishesCleanlyWithoutTerminalTool(t *testing.T) {
 	if rec.Status != "done" {
 		t.Fatalf("planner status = %q, want done", rec.Status)
 	}
-	// The run is bounded by the no-progress finish, so it takes more than one
-	// turn now; it must still be bounded (not run away).
+	// The run is bounded by the toolless-turn budget, so it takes more than
+	// one turn now; it must still be bounded (not run away).
 	if fake.call < 2 {
 		t.Fatalf("planner run should continue past the first tool-less turn, got %d", fake.call)
 	}
