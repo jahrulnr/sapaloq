@@ -1,120 +1,82 @@
-// Chat-history restore + turn rendering, plus the helpers that bind/clear turn
-// ids when retrying or deleting a branch. Also owns the topbar history switcher
-// (list recent sessions, switch active session, start a new chat).
+// Chat-history restore via BE-driven transcript API.
 import { ChatHistory, ContextUsage, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
-import type { ChatTurn, ChatUsage, SessionSummary, StreamEvent } from '../core/types';
-import { appendCheckpointDivider, appendMessage, appendSummaryPanel, appendThinkingBubble, clearMessages, parseTurnContent } from './messages';
+import type { ChatUsage, SessionSummary } from '../core/types';
+import { clearMessages } from './messages';
 import { renderUsage } from './connection';
-import { renderTimelineEvent } from './stream';
+import { mountChatTranscript, resetChatTranscriptState } from './transcript-pane';
 import {
   getUserGroup,
-  nextUserGroup,
   setSessionID,
   getSessionID,
 } from '../core/state';
-
-function renderTurn(turn: ChatTurn) {
-  if (!turn.content) return;
-  // "tool" turns ([Tool results]…) are persisted only so they count toward
-  // context usage - they are internal and must never surface as a chat bubble.
-  if (turn.role === 'tool') return;
-  // "autopilot" turns are SapaLOQ-authored continuation nudges persisted for
-  // context accounting; they are never shown to the user.
-  if (turn.role === 'autopilot') return;
-  // Checkpoint marker turn: render a centered "Checkpoint n" divider followed
-  // by a collapsible summary card. The pre-checkpoint bubbles above it are
-  // muted by their archived flag (handled per-bubble below). This is the visual
-  // seam between archived and live history - the transcript stays complete.
-  if (turn.role === 'checkpoint') {
-    appendCheckpointDivider(turn.checkpoint_index || 0, turn.content);
-    return;
-  }
-  if (turn.role === 'thinking') {
-    appendThinkingBubble(turn.content);
-    return;
-  }
-  const plannerSummary = turn.content.match(/^<!--sapaloq-planner-summary:([^>]+)-->\s*\n?([\s\S]*)$/);
-  if (turn.role === 'assistant' && plannerSummary) {
-    appendSummaryPanel({
-      label: 'Plan ready',
-      meta: `Planner · ${plannerSummary[1]}`,
-      content: plannerSummary[2],
-      variant: 'planner',
-      taskID: plannerSummary[1],
-      archived: turn.archived,
-    });
-    return;
-  }
-  const parsed = parseTurnContent(turn.content);
-  const archivedClass = turn.archived ? ' message--archived' : '';
-  if (turn.role === 'user') {
-    nextUserGroup();
-    appendMessage(`message--user${archivedClass}`, parsed.text || parsed.attachments.map((item) => item.name).join(', '), getUserGroup(), turn.id, parsed.attachments);
-  } else if (turn.role === 'error') appendMessage(`message--error${archivedClass}`, turn.content, getUserGroup(), turn.id);
-  else if (turn.role === 'assistant') appendMessage(`message--assistant${archivedClass}`, turn.content, getUserGroup(), turn.id);
-}
-
-function parseTimelineAt(iso?: string): number {
-  if (!iso) return 0;
-  const ts = Date.parse(iso);
-  return Number.isNaN(ts) ? 0 : ts;
-}
-
-type TimelineItem =
-  | { kind: 'turn'; at: number; seq: number; turn: ChatTurn }
-  | { kind: 'event'; at: number; event: StreamEvent };
-
-export function buildMergedTimeline(turns: ChatTurn[], events: StreamEvent[]): TimelineItem[] {
-  const items: TimelineItem[] = [];
-  // Legacy progress logs contain tool_call events but no tool_update/result.
-  // Restoring those creates empty activity shells (just border lines) because
-  // there is no durable response to expand. Live calls still render
-  // immediately; history restore only includes complete request/response
-  // pairs recorded by the current event format.
-  const completedToolIDs = new Set(events
-    .filter((event) => event.kind === 'tool_update' && event.tool_call?.id)
-    .map((event) => event.tool_call!.id as string));
-  for (const turn of turns) {
-    items.push({ kind: 'turn', at: parseTimelineAt(turn.created_at), seq: turn.seq, turn });
-  }
-  for (const event of events) {
-    if (event.kind !== 'tool_call' && event.kind !== 'tool_update' && event.kind !== 'task_update') continue;
-    if ((event.kind === 'tool_call' || event.kind === 'tool_update') &&
-        (!event.tool_call?.id || !completedToolIDs.has(event.tool_call.id))) continue;
-    items.push({ kind: 'event', at: parseTimelineAt(event.at), event });
-  }
-  items.sort((a, b) => {
-    if (a.at !== b.at) return a.at - b.at;
-    if (a.kind === 'turn' && b.kind === 'turn') return a.seq - b.seq;
-    return a.kind === 'turn' ? -1 : 1;
-  });
-  return items;
-}
-
-function renderTimeline(items: TimelineItem[]) {
-  for (const item of items) {
-    if (item.kind === 'turn') renderTurn(item.turn);
-    else renderTimelineEvent(item.event, { restore: true });
-  }
-}
 
 export async function restoreChatHistory() {
   try {
     const history = await ChatHistory();
     setSessionID(history.session_id || getSessionID());
     clearMessages();
-    const turns = (history.turns || []) as ChatTurn[];
-    const timeline = (history.timeline || []) as StreamEvent[];
-    if (timeline.length) {
-      renderTimeline(buildMergedTimeline(turns, timeline));
-    } else {
-      turns.forEach((turn: ChatTurn) => renderTurn(turn));
-    }
+    resetChatTranscriptState();
+    mountChatTranscript(history.transcript || []);
     renderUsage(history.usage as ChatUsage | undefined);
     return true;
   } catch {
-    // Core may not be ready yet; ping loop will update connection state.
     return false;
+  }
+}
+
+export function bindLatestGroupTurnID() {
+  const list = document.getElementById('message-list');
+  if (!list) return;
+  const users = Array.from(list.querySelectorAll<HTMLElement>('.message--user, .transcript-user'));
+  const last = users.at(-1);
+  if (last?.dataset.turnId) return;
+  const assistants = Array.from(list.querySelectorAll<HTMLElement>('.message--assistant, .transcript-text'));
+  const lastAssistant = assistants.at(-1);
+  if (last?.dataset.turnId) return;
+  void ChatHistory().then((history) => {
+    const turns = (history.transcript || []).filter((e) => e.kind === 'user');
+    const lastUser = turns.at(-1);
+    if (lastUser?.turn_id && last) last.dataset.turnId = `${lastUser.turn_id}`;
+    const lastText = (history.transcript || []).filter((e) => e.kind === 'text').at(-1);
+    if (lastText?.turn_id && lastAssistant) lastAssistant.dataset.turnId = `${lastText.turn_id}`;
+  });
+}
+
+export function removeRepliesAfterTurn(turnID: number): number {
+  const list = document.getElementById('message-list');
+  if (!list) return getUserGroup();
+  const target = list.querySelector<HTMLElement>(`[data-turn-id="${turnID}"]`);
+  if (!target) return getUserGroup();
+  const group = Number(target.dataset.group || getUserGroup());
+  let seen = false;
+  Array.from(list.querySelectorAll<HTMLElement>('.transcript-entry, .message')).forEach((node) => {
+    if (node === target || node.contains(target)) seen = true;
+    if (seen && node !== target && !target.contains(node)) node.remove();
+    else if (!seen && node.contains(target)) {
+      let n: HTMLElement | null = target;
+      while (n?.nextElementSibling) {
+        const next = n.nextElementSibling as HTMLElement;
+        next.remove();
+      }
+    }
+  });
+  const pane = list.querySelector('.transcript-pane');
+  if (pane && target.parentElement === pane) {
+    let found = false;
+    Array.from(pane.children).forEach((child) => {
+      if (child === target) found = true;
+      else if (found) child.remove();
+    });
+  }
+  return group;
+}
+
+export async function refreshContextUsage() {
+  try {
+    const usage = await ContextUsage();
+    renderUsage(usage as ChatUsage | undefined);
+  } catch {
+    // core offline
   }
 }
 
@@ -178,18 +140,15 @@ function renderSessionList(sessions: SessionSummary[]) {
     item.setAttribute('role', 'menuitem');
     item.dataset.sessionId = session.id;
     item.dataset.active = session.active ? 'true' : 'false';
-
     const title = document.createElement('span');
     title.className = 'history-item-title';
     title.textContent = sessionLabel(session);
     item.appendChild(title);
-
     const meta = document.createElement('span');
     meta.className = 'history-item-meta';
     const rel = relativeTime(session.updated_at);
     meta.textContent = `${session.turn_count} pesan${rel ? ` · ${rel}` : ''}`;
     item.appendChild(meta);
-
     if (session.active) {
       const dot = document.createElement('span');
       dot.className = 'history-item-dot';
@@ -200,18 +159,20 @@ function renderSessionList(sessions: SessionSummary[]) {
   }
 }
 
-// loadSessionList refreshes the dropdown contents and the switcher label from
-// the active session.
 export async function loadSessionList() {
   try {
-    const result = await ListSessions();
-    const sessions = (result.sessions || []) as SessionSummary[];
+    const sessions = await loadSessionListInner();
     renderSessionList(sessions);
     const active = sessions.find((session) => session.active);
     if (active) setSwitcherLabel(sessionLabel(active));
   } catch {
     renderSessionList([]);
   }
+}
+
+async function loadSessionListInner(): Promise<SessionSummary[]> {
+  const res = await ListSessions();
+  return (res.sessions || []) as SessionSummary[];
 }
 
 export async function openHistoryMenu() {
@@ -235,12 +196,10 @@ async function refreshAfterSessionChange() {
   try {
     renderUsage((await ContextUsage()) as ChatUsage);
   } catch {
-    // usage refresh is best-effort; the chat view already swapped.
+    // best-effort
   }
 }
 
-// switchSession activates an existing session and reloads the chat + usage so
-// the widget reflects the chosen conversation.
 export async function switchSession(sessionID: string) {
   if (!sessionID || sessionID === getSessionID()) {
     closeHistoryMenu();
@@ -257,7 +216,6 @@ export async function switchSession(sessionID: string) {
   await refreshAfterSessionChange();
 }
 
-// startNewSession spins up a fresh active chat and clears the view.
 export async function startNewSession() {
   try {
     const newID = await NewSession();
@@ -270,38 +228,4 @@ export async function startNewSession() {
   clearMessages();
   setSwitcherLabel(DEFAULT_LABEL);
   await refreshAfterSessionChange();
-}
-
-export async function bindLatestGroupTurnID() {
-  try {
-    const history = await ChatHistory();
-    const turns = (history.turns || []) as ChatTurn[];
-    const user = [...turns].reverse().find((turn) => turn.role === 'user');
-    if (!user) return 0;
-    document.querySelectorAll<HTMLElement>(`.message[data-group="${getUserGroup()}"]`).forEach((item) => {
-      item.dataset.turnId = `${user.id}`;
-    });
-    return user.id;
-  } catch {
-    return 0;
-  }
-}
-
-// removeRepliesAfterTurn clears stale assistant/thinking/tool/error bubbles that
-// belong to the retried user turn (and everything after it) so the regenerated
-// response can stream into the same group instead of stacking on top of the old
-// reply. Returns the group id of the retried user message so streamed events
-// render in the correct place.
-export function removeRepliesAfterTurn(turnID: number): number {
-  const user = document.querySelector<HTMLElement>(`.message--user[data-turn-id="${turnID}"]`);
-  if (!user) return getUserGroup();
-  const group = Number(user.dataset.group || getUserGroup());
-  document.querySelectorAll<HTMLElement>('#message-list > .message').forEach((item) => {
-    const itemGroup = Number(item.dataset.group || 0);
-    if (itemGroup < group) return;
-    if (item === user) return;
-    if (itemGroup === group && item.classList.contains('message--user')) return;
-    item.remove();
-  });
-  return group;
 }

@@ -30,7 +30,9 @@ type Turn struct {
 	// renders a "Checkpoint N" divider at these turns; the context assembler
 	// replays only the latest checkpoint summary + anchored tail.
 	CheckpointIndex int `json:"checkpoint_index,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	// GenerationID links a turn to the chat run (runSeq) that produced it.
+	GenerationID string    `json:"generation_id,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // Usage summarizes active context usage for the widget.
@@ -306,6 +308,9 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.addColumnIfMissing(ctx, "chat_turns", "generation_id", "generation_id TEXT"); err != nil {
+		return err
+	}
 
 	// FTS5 is optional with the modernc.org/sqlite build. Probe for it; if
 	// available, create facts_fts + sync triggers (mirroring
@@ -578,6 +583,10 @@ func (s *Store) AppendTurn(ctx context.Context, sessionID, role, content string,
 }
 
 func (s *Store) AppendTurnID(ctx context.Context, sessionID, role, content string, tokenEstimate int) (int64, error) {
+	return s.AppendTurnIDWithGeneration(ctx, sessionID, role, content, tokenEstimate, "")
+}
+
+func (s *Store) AppendTurnIDWithGeneration(ctx context.Context, sessionID, role, content string, tokenEstimate int, generationID string) (int64, error) {
 	if strings.TrimSpace(content) == "" {
 		return 0, nil
 	}
@@ -592,7 +601,7 @@ func (s *Store) AppendTurnID(ctx context.Context, sessionID, role, content strin
 	defer tx.Rollback()
 	var seq int
 	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_turns WHERE session_id=?`, sessionID).Scan(&seq)
-	res, err := tx.ExecContext(ctx, `INSERT INTO chat_turns(session_id, seq, role, content, token_estimate, included_in_context, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`, sessionID, seq, role, content, tokenEstimate, now)
+	res, err := tx.ExecContext(ctx, `INSERT INTO chat_turns(session_id, seq, role, content, token_estimate, included_in_context, generation_id, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`, sessionID, seq, role, content, tokenEstimate, nullString(generationID), now)
 	if err != nil {
 		return 0, err
 	}
@@ -612,9 +621,10 @@ func (s *Store) Turn(ctx context.Context, sessionID string, turnID int64) (Turn,
 	var compacted sql.NullString
 	var ckptIdx sql.NullInt64
 	var created string
-	err := s.db.QueryRowContext(ctx, `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, checkpoint_index, created_at
+	var genID sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, checkpoint_index, generation_id, created_at
 		FROM chat_turns WHERE session_id=? AND id=?`, sessionID, turnID).
-		Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &ckptIdx, &created)
+		Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &ckptIdx, &genID, &created)
 	if err != nil {
 		return Turn{}, err
 	}
@@ -626,6 +636,9 @@ func (s *Store) Turn(ctx context.Context, sessionID string, turnID int64) (Turn,
 		if parsed, parseErr := time.Parse(time.RFC3339Nano, compacted.String); parseErr == nil {
 			t.CompactedAt = &parsed
 		}
+	}
+	if genID.Valid {
+		t.GenerationID = genID.String
 	}
 	if parsed, parseErr := time.Parse(time.RFC3339Nano, created); parseErr == nil {
 		t.CreatedAt = parsed
@@ -671,7 +684,7 @@ func (s *Store) deleteRelativeToTurn(ctx context.Context, sessionID string, turn
 }
 
 func (s *Store) ActiveTurns(ctx context.Context, sessionID string, includeCompacted bool) ([]Turn, error) {
-	query := `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, checkpoint_index, created_at FROM chat_turns WHERE session_id=?`
+	query := `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, checkpoint_index, generation_id, created_at FROM chat_turns WHERE session_id=?`
 	if !includeCompacted {
 		query += ` AND included_in_context=1`
 	}
@@ -688,8 +701,12 @@ func (s *Store) ActiveTurns(ctx context.Context, sessionID string, includeCompac
 		var compacted sql.NullString
 		var ckptIdx sql.NullInt64
 		var created string
-		if err := rows.Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &ckptIdx, &created); err != nil {
+		var genID sql.NullString
+		if err := rows.Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &ckptIdx, &genID, &created); err != nil {
 			return nil, err
+		}
+		if genID.Valid {
+			t.GenerationID = genID.String
 		}
 		t.IncludedInContext = included == 1
 		if ckptIdx.Valid {
@@ -929,4 +946,11 @@ func (s *Store) SnapshotUsage(ctx context.Context, usage Usage) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO context_snapshots(session_id, used_tokens, context_window, percent, provider, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, usage.SessionID, usage.UsedTokens, usage.ContextWindow, usage.Percent, usage.Provider, usage.Model, now)
 	return err
+}
+
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

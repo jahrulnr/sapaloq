@@ -329,7 +329,7 @@ function showUserMessageMenu(item: HTMLElement) {
   activeMessageMenu = menu;
 }
 
-function wireUserMessage(item: HTMLElement, _text: string) {
+export function wireUserMessage(item: HTMLElement, _text: string) {
   item.tabIndex = 0;
   item.addEventListener('click', (event) => {
     if (window.getSelection()?.toString()) return;
@@ -344,7 +344,7 @@ function wireUserMessage(item: HTMLElement, _text: string) {
   });
 }
 
-function wireErrorMessage(item: HTMLElement) {
+export function wireErrorMessage(item: HTMLElement) {
   const actions = document.createElement('div');
   actions.className = 'message-inline-actions';
   actions.innerHTML = `<button type="button" title="Retry">↻</button>`;

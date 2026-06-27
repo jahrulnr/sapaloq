@@ -99,12 +99,20 @@ type turnConfig struct {
 // chatSink streams events to the live chat channel. beat is a no-op because the
 // chat run is observed in real time by the widget; it has no watchdog.
 type chatSink struct {
-	o   *Orchestrator
-	out chan<- bridge.StreamEvent
+	o         *Orchestrator
+	out       chan<- bridge.StreamEvent
+	sessionID string
+	widget    bool
 }
 
-func (s chatSink) emit(ctx context.Context, ev bridge.StreamEvent) { s.o.emit(ctx, s.out, ev) }
-func (s chatSink) beat(string)                                     {}
+func (s chatSink) emit(ctx context.Context, ev bridge.StreamEvent) {
+	if s.widget && s.sessionID != "" {
+		s.o.emitWidget(ctx, s.out, s.sessionID, ev)
+		return
+	}
+	s.o.emit(ctx, s.out, ev)
+}
+func (s chatSink) beat(string) {}
 
 // subagentSink records events to the per-task progress JSONL. It does NOT touch
 // the worker heartbeat (the structural ticker in runBackgroundTask owns that);

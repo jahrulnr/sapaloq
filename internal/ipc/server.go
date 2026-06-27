@@ -171,11 +171,15 @@ func (s *Server) writeStream(ctx context.Context, conn net.Conn, requestedSessio
 			sessionID = ev.SessionID
 		}
 		ring := orchestrator.RingStateFor(ev.Kind)
+		if ev.Kind == bridge.EventTranscript && ev.Transcript != nil && ev.Transcript.Finished {
+			ring = orchestrator.RingIdle
+		}
 		resp := Response{OK: true, Op: "event", SessionID: sessionID, Event: &ev, RingState: string(ring)}
 		// Usage requires a SQLite query; only attach it on terminal events so
 		// per-delta streaming stays fast (querying every token stalls the
 		// stream and makes it arrive in bursts).
-		if ev.Kind == bridge.EventDone || ev.Kind == bridge.EventError {
+		if ev.Kind == bridge.EventDone || ev.Kind == bridge.EventError ||
+			(ev.Kind == bridge.EventTranscript && ev.Transcript != nil && ev.Transcript.Finished) {
 			usage, _ := s.orch.ContextUsage(ctx, sessionID)
 			resp.Usage = &usage
 		}
@@ -200,14 +204,14 @@ func (s *Server) handleHistory(ctx context.Context, conn net.Conn, req Request, 
 			return
 		}
 	}
-	turns, err := s.orch.ActiveTurns(ctx, sessionID)
+	_, err := s.orch.ActiveTurns(ctx, sessionID)
 	if err != nil {
 		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
 		return
 	}
 	usage, _ := s.orch.ContextUsage(ctx, sessionID)
-	timeline := s.orch.SessionTimeline(sessionID)
-	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Turns: turns, Timeline: timeline, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
+	transcript, _ := s.orch.SessionTranscript(ctx, sessionID)
+	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Transcript: transcript, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
 }
 
 func (s *Server) handleSessionList(ctx context.Context, conn net.Conn, req Request, start time.Time) {

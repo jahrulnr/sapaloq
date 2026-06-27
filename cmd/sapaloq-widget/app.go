@@ -67,6 +67,16 @@ func (a *App) startup(ctx context.Context) {
 	})
 }
 
+func transcriptPatchFromEvent(ev bridge.StreamEvent) bridge.TranscriptPatch {
+	if ev.Transcript != nil {
+		return *ev.Transcript
+	}
+	return bridge.TranscriptPatch{
+		SessionID:    ev.SessionID,
+		GenerationID: ev.GenerationID,
+	}
+}
+
 func (a *App) shutdown(ctx context.Context) {
 	if a.stopWatch != nil {
 		close(a.stopWatch)
@@ -81,9 +91,7 @@ func (a *App) PingCore() (pingResult, error) {
 
 func (a *App) SendMessage(sessionID string, text string) (chatResult, error) {
 	return sendChatWithStatus(a.socketPath, sessionID, text, func(event bridge.StreamEvent) {
-		// Forward every stream event to the webview as it arrives so deltas
-		// render live instead of bursting when the call resolves.
-		runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+		runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
 	})
 }
 
@@ -113,7 +121,7 @@ func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 
 func (a *App) RetryChatTurn(sessionID string, turnID int64) (chatResult, error) {
 	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, func(event bridge.StreamEvent) {
-		runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+		runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
 	})
 }
 

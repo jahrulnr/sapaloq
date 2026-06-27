@@ -1,6 +1,12 @@
-export type { ActivityEntry, StreamLikeEvent, TranscriptPaneState } from './types';
-export { coalesceEvents } from './coalesce';
-export { isAutopilotNudge } from './autopilot';
+export type {
+  TranscriptEntry,
+  TranscriptEntryInput,
+  TranscriptEntryKind,
+  TranscriptPatch,
+  TranscriptPaneState,
+  ActivityEntry,
+} from './types';
+export { coerceTranscriptEntries } from './types';
 export {
   type ToolActivityCall,
   type ToolActivityMode,
@@ -14,7 +20,9 @@ export {
   getToolActivityHeader,
   toolPayloadSection,
 } from './tool-activity';
-export { renderActivityEntry, patchActivityEntry } from './render';
+export { renderTranscriptEntry, patchTranscriptEntry, renderActivityEntry, patchActivityEntry } from './render';
+export { renderTaskCardElement, patchTaskCardElement } from './task-card';
+export { wireTranscriptEntry, wireTranscriptPane } from './wire';
 export {
   emptyTranscriptState,
   createTranscriptPane,

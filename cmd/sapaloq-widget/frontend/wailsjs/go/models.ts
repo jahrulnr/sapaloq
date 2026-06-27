@@ -1,62 +1,56 @@
 export namespace bridge {
 	
-	export class StreamEvent {
+	export class TranscriptEntry {
+	    id: string;
 	    kind: string;
-	    session_id?: string;
-	    delta?: string;
-	    tool_call?: parse.ToolCall;
+	    generation_id?: string;
+	    turn_id?: number;
+	    seq?: number;
+	    // Go type: time
+	    at: any;
+	    archived?: boolean;
+	    text?: string;
+	    tool_id?: string;
+	    tool_name?: string;
+	    tool_args?: string;
 	    tool_result?: string;
-	    leak?: string;
-	    error?: string;
-	    status?: string;
-	    wait_seconds?: number;
+	    tool_status?: string;
 	    task_id?: string;
 	    task_role?: string;
 	    task_status?: string;
 	    summary?: string;
-	    run_id?: string;
-	    job_id?: string;
-	    parent_id?: string;
-	    target_id?: string;
-	    event_id?: string;
-	    correlation_id?: string;
-	    version?: number;
 	    checkpoint_index?: number;
 	    checkpoint_reason?: string;
-	    checkpoint_summary?: string;
-	    // Go type: time
-	    at: any;
+	    label?: string;
+	    wait_seconds?: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new StreamEvent(source);
+	        return new TranscriptEntry(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
 	        this.kind = source["kind"];
-	        this.session_id = source["session_id"];
-	        this.delta = source["delta"];
-	        this.tool_call = this.convertValues(source["tool_call"], parse.ToolCall);
+	        this.generation_id = source["generation_id"];
+	        this.turn_id = source["turn_id"];
+	        this.seq = source["seq"];
+	        this.at = this.convertValues(source["at"], null);
+	        this.archived = source["archived"];
+	        this.text = source["text"];
+	        this.tool_id = source["tool_id"];
+	        this.tool_name = source["tool_name"];
+	        this.tool_args = source["tool_args"];
 	        this.tool_result = source["tool_result"];
-	        this.leak = source["leak"];
-	        this.error = source["error"];
-	        this.status = source["status"];
-	        this.wait_seconds = source["wait_seconds"];
+	        this.tool_status = source["tool_status"];
 	        this.task_id = source["task_id"];
 	        this.task_role = source["task_role"];
 	        this.task_status = source["task_status"];
 	        this.summary = source["summary"];
-	        this.run_id = source["run_id"];
-	        this.job_id = source["job_id"];
-	        this.parent_id = source["parent_id"];
-	        this.target_id = source["target_id"];
-	        this.event_id = source["event_id"];
-	        this.correlation_id = source["correlation_id"];
-	        this.version = source["version"];
 	        this.checkpoint_index = source["checkpoint_index"];
 	        this.checkpoint_reason = source["checkpoint_reason"];
-	        this.checkpoint_summary = source["checkpoint_summary"];
-	        this.at = this.convertValues(source["at"], null);
+	        this.label = source["label"];
+	        this.wait_seconds = source["wait_seconds"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -157,35 +151,10 @@ export namespace main {
 	        this.active_turns = source["active_turns"];
 	    }
 	}
-	export class chatTurn {
-	    id: number;
-	    seq: number;
-	    role: string;
-	    content: string;
-	    checkpoint_index?: number;
-	    created_at?: string;
-	    archived?: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new chatTurn(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.seq = source["seq"];
-	        this.role = source["role"];
-	        this.content = source["content"];
-	        this.checkpoint_index = source["checkpoint_index"];
-	        this.created_at = source["created_at"];
-	        this.archived = source["archived"];
-	    }
-	}
 	export class chatHistoryResult {
 	    ok: boolean;
 	    session_id: string;
-	    turns: chatTurn[];
-	    timeline?: bridge.StreamEvent[];
+	    transcript?: bridge.TranscriptEntry[];
 	    usage?: chatUsage;
 	
 	    static createFrom(source: any = {}) {
@@ -196,8 +165,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ok = source["ok"];
 	        this.session_id = source["session_id"];
-	        this.turns = this.convertValues(source["turns"], chatTurn);
-	        this.timeline = this.convertValues(source["timeline"], bridge.StreamEvent);
+	        this.transcript = this.convertValues(source["transcript"], bridge.TranscriptEntry);
 	        this.usage = this.convertValues(source["usage"], chatUsage);
 	    }
 	
@@ -222,7 +190,8 @@ export namespace main {
 	export class chatResult {
 	    ok: boolean;
 	    session_id?: string;
-	    events: bridge.StreamEvent[];
+	    generation_id?: string;
+	    transcript?: bridge.TranscriptEntry[];
 	    usage?: chatUsage;
 	
 	    static createFrom(source: any = {}) {
@@ -233,7 +202,8 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ok = source["ok"];
 	        this.session_id = source["session_id"];
-	        this.events = this.convertValues(source["events"], bridge.StreamEvent);
+	        this.generation_id = source["generation_id"];
+	        this.transcript = this.convertValues(source["transcript"], bridge.TranscriptEntry);
 	        this.usage = this.convertValues(source["usage"], chatUsage);
 	    }
 	
@@ -255,7 +225,6 @@ export namespace main {
 		    return a;
 		}
 	}
-	
 	
 	export class droppedFile {
 	    path?: string;
@@ -408,42 +377,6 @@ export namespace main {
 		}
 	}
 	
-	export class taskInspectEvent {
-	    kind: string;
-	    delta?: string;
-	    tool_name?: string;
-	    tool_id?: string;
-	    tool_arguments?: string;
-	    tool_result?: string;
-	    status?: string;
-	    task_status?: string;
-	    summary?: string;
-	    error?: string;
-	    checkpoint_index?: number;
-	    checkpoint_reason?: string;
-	    at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new taskInspectEvent(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.kind = source["kind"];
-	        this.delta = source["delta"];
-	        this.tool_name = source["tool_name"];
-	        this.tool_id = source["tool_id"];
-	        this.tool_arguments = source["tool_arguments"];
-	        this.tool_result = source["tool_result"];
-	        this.status = source["status"];
-	        this.task_status = source["task_status"];
-	        this.summary = source["summary"];
-	        this.error = source["error"];
-	        this.checkpoint_index = source["checkpoint_index"];
-	        this.checkpoint_reason = source["checkpoint_reason"];
-	        this.at = source["at"];
-	    }
-	}
 	export class taskInspectResult {
 	    id: string;
 	    role: string;
@@ -454,7 +387,7 @@ export namespace main {
 	    question?: string;
 	    plan_task_id?: string;
 	    plan?: string;
-	    events: taskInspectEvent[];
+	    transcript?: bridge.TranscriptEntry[];
 	    event_count: number;
 	    updated_at: string;
 	
@@ -473,7 +406,7 @@ export namespace main {
 	        this.question = source["question"];
 	        this.plan_task_id = source["plan_task_id"];
 	        this.plan = source["plan"];
-	        this.events = this.convertValues(source["events"], taskInspectEvent);
+	        this.transcript = this.convertValues(source["transcript"], bridge.TranscriptEntry);
 	        this.event_count = source["event_count"];
 	        this.updated_at = source["updated_at"];
 	    }
@@ -495,29 +428,6 @@ export namespace main {
 		    }
 		    return a;
 		}
-	}
-
-}
-
-export namespace parse {
-	
-	export class ToolCall {
-	    id?: string;
-	    name: string;
-	    arguments?: number[];
-	    source?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ToolCall(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.arguments = source["arguments"];
-	        this.source = source["source"];
-	    }
 	}
 
 }

@@ -44,8 +44,8 @@ type TaskInspectResult struct {
 	Question   string               `json:"question,omitempty"`
 	PlanTaskID string               `json:"plan_task_id,omitempty"`
 	Plan       string               `json:"plan,omitempty"`
-	Events     []bridge.StreamEvent `json:"events"`
-	EventCount int                  `json:"event_count"`
+	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
+	EventCount int                      `json:"event_count"`
 	UpdatedAt  time.Time            `json:"updated_at"`
 }
 
@@ -89,11 +89,11 @@ func (o *Orchestrator) TaskInspect(taskID string, afterLine int) (TaskInspectRes
 		// A missing/empty progress file is not fatal - the task may be
 		// pending or a planner that hasn't emitted yet. Surface the record
 		// with an empty stream rather than failing the whole inspect.
-		result.Events = []bridge.StreamEvent{}
+		result.Transcript = []bridge.TranscriptEntry{}
 		result.EventCount = total
 		return result, nil
 	}
-	result.Events = events
+	result.Transcript = CoalesceEvents(taskID, events)
 	result.EventCount = total
 	return result, nil
 }

@@ -1,5 +1,5 @@
-import type { ActivityEntry, TranscriptPaneState } from './types';
-import { renderActivityEntry, patchActivityEntry } from './render';
+import type { TranscriptEntry, TranscriptPaneState } from './types';
+import { renderTranscriptEntry, patchTranscriptEntry } from './render';
 import type { ToolActivityMode } from './tool-activity';
 
 export function emptyTranscriptState(message: string, extraClass = ''): HTMLElement {
@@ -18,7 +18,7 @@ export function createTranscriptPane(): HTMLElement {
 export function mountTranscriptPane(
   body: HTMLElement,
   state: TranscriptPaneState,
-  entries: ActivityEntry[],
+  entries: TranscriptEntry[],
   emptyMessage: string,
   mode: ToolActivityMode = 'monitor',
   emptyExtraClass = '',
@@ -32,15 +32,18 @@ export function mountTranscriptPane(
     return;
   }
   const pane = createTranscriptPane();
-  for (const entry of entries) pane.append(renderActivityEntry(entry, mode));
+  for (const entry of entries) {
+    const el = renderTranscriptEntry(entry, mode);
+    if (!el.classList.contains('is-empty')) pane.append(el);
+  }
   body.append(pane);
-  state.renderedEntryCount = entries.length;
+  state.renderedEntryCount = pane.children.length;
 }
 
 export function syncTranscriptPane(
   body: HTMLElement,
   state: TranscriptPaneState,
-  entries: ActivityEntry[],
+  entries: TranscriptEntry[],
   emptyMessage: string,
   mode: ToolActivityMode = 'monitor',
   emptyExtraClass = '',
@@ -48,7 +51,9 @@ export function syncTranscriptPane(
   let pane = body.querySelector('.transcript-pane') as HTMLElement | null;
   body.querySelectorAll('.transcript-empty').forEach((node) => node.remove());
 
-  if (entries.length === 0) {
+  const visible = entries.filter((e) => e.kind !== 'text' || (e.text || '').trim());
+
+  if (visible.length === 0) {
     pane?.remove();
     if (!body.querySelector('.transcript-empty')) {
       body.append(emptyTranscriptState(emptyMessage, emptyExtraClass));
@@ -64,22 +69,23 @@ export function syncTranscriptPane(
   }
 
   const prev = state.renderedEntryCount;
-  const patchEnd = Math.min(prev, entries.length);
+  const patchEnd = Math.min(prev, visible.length);
   for (let i = 0; i < patchEnd; i++) {
     const el = pane.children[i] as HTMLElement | undefined;
-    if (!el || el.dataset.entryKind !== entries[i].kind) {
+    if (!el || el.dataset.entryKind !== visible[i].kind) {
       while (pane.children.length > i) pane.lastChild?.remove();
       state.renderedEntryCount = i;
-      for (let j = i; j < entries.length; j++) pane.append(renderActivityEntry(entries[j], mode));
-      state.renderedEntryCount = entries.length;
+      for (let j = i; j < visible.length; j++) pane.append(renderTranscriptEntry(visible[j], mode));
+      state.renderedEntryCount = pane.children.length;
       return;
     }
-    patchActivityEntry(el, entries[i]);
+    patchTranscriptEntry(el, visible[i], mode);
   }
 
-  for (let i = prev; i < entries.length; i++) {
-    pane.append(renderActivityEntry(entries[i], mode));
+  for (let i = prev; i < visible.length; i++) {
+    const el = renderTranscriptEntry(visible[i], mode);
+    if (!el.classList.contains('is-empty')) pane.append(el);
   }
-  while (pane.children.length > entries.length) pane.lastChild?.remove();
-  state.renderedEntryCount = entries.length;
+  while (pane.children.length > visible.length) pane.lastChild?.remove();
+  state.renderedEntryCount = pane.children.length;
 }

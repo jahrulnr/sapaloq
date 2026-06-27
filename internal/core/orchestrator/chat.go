@@ -78,8 +78,9 @@ type Orchestrator struct {
 }
 
 type activeRun struct {
-	id     uint64
-	cancel context.CancelFunc
+	id        uint64
+	cancel    context.CancelFunc
+	coalescer *TranscriptCoalescer
 }
 
 func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) (*Orchestrator, error) {
@@ -272,8 +273,8 @@ func (o *Orchestrator) emitChatTerminalError(ctx context.Context, out chan<- bri
 	if err == nil || errors.Is(err, errStreamErrorSurfaced) {
 		return
 	}
-	o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
-	o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+	o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+	o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 }
 
 func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) (<-chan bridge.StreamEvent, error) {
@@ -296,10 +297,11 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		if entry, ok := MatchRegistry(message, snap.cfg.Commands); ok {
 			debug.Debugf("orchestrator: slash route id=%s session=%s", entry.ID, sessionID)
 			o.handleSlash(ctx, out, sessionID, entry.ID, message)
-			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+			o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return
 		}
-		_ = o.chat.AppendTurn(ctx, sessionID, "user", message, estimateTextTokens(message))
+		genStr := fmt.Sprintf("%d", runID)
+		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "user", message, estimateTextTokens(message), genStr)
 		messages, err := o.contextMessages(ctx, sessionID, message)
 		if err != nil {
 			o.emitChatTerminalError(ctx, out, sessionID, err)
@@ -315,9 +317,9 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		// Persist reasoning as a show-only "thinking" turn before the answer so
 		// it survives a restart (excluded from the LLM context window).
 		if strings.TrimSpace(thinking.String()) != "" {
-			_ = o.chat.AppendTurn(ctx, sessionID, "thinking", thinking.String(), 0)
+			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
 		}
-		_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
+		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
 		usage, _ := o.ContextUsage(ctx, sessionID)
 		_ = o.chat.SnapshotUsage(ctx, usage)
 		// Flush + close the async progress drain for this session so the JSONL
@@ -325,6 +327,7 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		if o.progress != nil {
 			o.progress.Close(sessionID)
 		}
+		o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 	}()
 	return out, nil
 }
@@ -377,15 +380,17 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
 	}
+	genStr := fmt.Sprintf("%d", runID)
 	if strings.TrimSpace(thinking.String()) != "" {
-		_ = o.chat.AppendTurn(ctx, sessionID, "thinking", thinking.String(), 0)
+		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
 	}
-	_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
+	_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
 	usage, _ := o.ContextUsage(ctx, sessionID)
 	_ = o.chat.SnapshotUsage(ctx, usage)
 	if o.progress != nil {
 		o.progress.Close(sessionID)
 	}
+	o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 }
 
 func (o *Orchestrator) setActiveGeneration(sessionID string, cancel context.CancelFunc) uint64 {
@@ -395,9 +400,32 @@ func (o *Orchestrator) setActiveGeneration(sessionID string, cancel context.Canc
 	if previous := o.active[sessionID]; previous != nil {
 		previous.cancel()
 	}
-	o.active[sessionID] = &activeRun{id: runID, cancel: cancel}
+	genStr := fmt.Sprintf("%d", runID)
+	o.active[sessionID] = &activeRun{
+		id:        runID,
+		cancel:    cancel,
+		coalescer: NewTranscriptCoalescer(genStr),
+	}
 	o.activeMu.Unlock()
 	return runID
+}
+
+func (o *Orchestrator) activeGenerationString(sessionID string) string {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	if run := o.active[sessionID]; run != nil {
+		return fmt.Sprintf("%d", run.id)
+	}
+	return ""
+}
+
+func (o *Orchestrator) activeCoalescer(sessionID string) *TranscriptCoalescer {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	if run := o.active[sessionID]; run != nil {
+		return run.coalescer
+	}
+	return nil
 }
 
 func (o *Orchestrator) clearActiveGeneration(sessionID string, runID uint64) {
@@ -483,11 +511,86 @@ func (o *Orchestrator) emit(ctx context.Context, out chan<- bridge.StreamEvent, 
 	if o.bus != nil {
 		o.bus.Publish(topicFor(ev.Kind), ev)
 	}
+	return o.sendOut(ctx, out, ev)
+}
+
+// emitWidget logs the raw event, updates the live coalescer, and forwards only
+// transcript patches to the widget channel (full replace migration).
+func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, ev bridge.StreamEvent) bool {
+	if sessionID != "" {
+		ev.SessionID = sessionID
+	}
+	genID := o.activeGenerationString(sessionID)
+	if genID != "" {
+		ev.GenerationID = genID
+	}
+	_ = o.progress.Append(ev.SessionID, ev)
+	if o.bus != nil {
+		o.bus.Publish(topicFor(ev.Kind), ev)
+	}
+	coalescer := o.activeCoalescer(sessionID)
+	scratch := coalescer
+	if scratch == nil && widgetCoalesceKind(ev.Kind) {
+		scratch = NewTranscriptCoalescer(genID)
+	}
+	if scratch != nil && widgetCoalesceKind(ev.Kind) {
+		scratch.Apply(ev)
+	}
+	if !widgetPatchKind(ev.Kind) {
+		return true
+	}
+	var entries []bridge.TranscriptEntry
+	if o.chat != nil && coalescer != nil {
+		entries, _ = o.LiveSessionTranscript(ctx, sessionID, coalescer)
+	} else if scratch != nil {
+		entries = scratch.Entries()
+	}
+	finished := ev.Kind == bridge.EventError || ev.Kind == bridge.EventDone
+	patch := bridge.TranscriptPatch{
+		SessionID:    sessionID,
+		GenerationID: genID,
+		Entries:      entries,
+		Finished:     finished,
+	}
+	patchEv := bridge.StreamEvent{
+		Kind:         bridge.EventTranscript,
+		SessionID:    sessionID,
+		GenerationID: genID,
+		Transcript:   &patch,
+		At:           time.Now().UTC(),
+	}
+	return o.sendOut(ctx, out, patchEv)
+}
+
+func (o *Orchestrator) sendOut(ctx context.Context, out chan<- bridge.StreamEvent, ev bridge.StreamEvent) bool {
 	select {
 	case <-ctx.Done():
 		return false
 	case out <- ev:
 		return true
+	}
+}
+
+func widgetCoalesceKind(kind bridge.EventKind) bool {
+	switch kind {
+	case bridge.EventThinkingDelta, bridge.EventResponseDelta, bridge.EventToolCall,
+		bridge.EventToolUpdate, bridge.EventStatus, bridge.EventTurnBoundary,
+		bridge.EventTaskUpdate, bridge.EventError, bridge.EventCheckpoint, bridge.EventDone:
+		return true
+	default:
+		return false
+	}
+}
+
+func widgetPatchKind(kind bridge.EventKind) bool {
+	switch kind {
+	case bridge.EventThinkingDelta, bridge.EventResponseDelta, bridge.EventToolCall,
+		bridge.EventToolUpdate, bridge.EventStatus, bridge.EventTurnBoundary,
+		bridge.EventTaskUpdate, bridge.EventError, bridge.EventCheckpoint,
+		bridge.EventDone, bridge.EventTranscript:
+		return true
+	default:
+		return false
 	}
 }
 

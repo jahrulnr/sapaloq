@@ -56,7 +56,7 @@ func (o *Orchestrator) runConversationActor(ctx context.Context, snap providerSn
 		sessionID:       sessionID,
 		runID:           runID,
 		tools:           askTools,
-		sink:            chatSink{o: o, out: out},
+		sink:            chatSink{o: o, out: out, sessionID: sessionID, widget: true},
 		thinkingOut:     thinkingOut,
 		recordToolTurns: true,
 		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {

@@ -13,17 +13,16 @@ import { RuntimeStatus, TaskInspect } from '../../wailsjs/go/main/App';
 import type { main } from '../../wailsjs/go/models';
 import { renderMarkdown } from './markdown';
 import {
-  coalesceEvents,
   mountTranscriptPane,
   syncTranscriptPane,
   emptyTranscriptState,
+  type TranscriptEntry,
 } from './transcript';
 
 type Tab = 'planner' | 'agent';
 type SubTab = 'activity' | 'plan';
 
-type TaskInspectEvent = main.taskInspectEvent;
-type TaskInspectResult = main.taskInspectResult;
+type TaskInspectResult = main.taskInspectResult & { transcript?: TranscriptEntry[] };
 
 const POLL_INTERVAL_MS = 2000;
 const OVERLAY_ID = 'task-monitor-overlay';
@@ -32,14 +31,11 @@ interface ActorState {
   taskID: string;
   active: boolean;
   lastEventCount: number;
-  // Accumulated progress tail across incremental TaskInspect polls. Each poll
-  // only returns lines after lastEventCount, so replacing the prior slice
-  // makes the activity pane flash empty on the next poll.
-  events: TaskInspectEvent[];
   // Cached last inspect so a tab switch re-renders without a refetch.
   last: TaskInspectResult | null;
   // Number of coalesced activity entries already mounted in the DOM.
   renderedEntryCount: number;
+  transcript: TranscriptEntry[];
 }
 
 let overlay: HTMLDivElement | null = null;
@@ -55,8 +51,8 @@ let escapeHandler: ((e: KeyboardEvent) => void) | null = null;
 let pinnedTaskID = '';
 let pinnedTab: Tab | null = null;
 const actorState: Record<Tab, ActorState> = {
-  planner: { taskID: '', active: false, lastEventCount: 0, events: [], last: null, renderedEntryCount: 0 },
-  agent: { taskID: '', active: false, lastEventCount: 0, events: [], last: null, renderedEntryCount: 0 },
+  planner: { taskID: '', active: false, lastEventCount: 0, last: null, renderedEntryCount: 0, transcript: [] },
+  agent: { taskID: '', active: false, lastEventCount: 0, last: null, renderedEntryCount: 0, transcript: [] },
 };
 
 // When true, new activity sticks to the bottom. Flips false as soon as the
@@ -100,7 +96,7 @@ export async function openTaskMonitor(opts?: { tab?: Tab; taskID?: string; role?
       const st = actorState[tab];
       st.taskID = opts.taskID;
       st.lastEventCount = 0;
-      st.events = [];
+      st.transcript = [];
       st.last = null;
       st.renderedEntryCount = 0;
     }
@@ -140,7 +136,7 @@ export function closeTaskMonitor() {
   pinnedTaskID = '';
   pinnedTab = null;
   for (const tab of ['planner', 'agent'] as Tab[]) {
-    actorState[tab] = { taskID: '', active: false, lastEventCount: 0, events: [], last: null, renderedEntryCount: 0 };
+    actorState[tab] = { taskID: '', active: false, lastEventCount: 0, last: null, renderedEntryCount: 0, transcript: [] };
   }
   scrollFollow = true;
   overlay?.remove();
@@ -279,7 +275,7 @@ async function refreshAndRender() {
     if (st.taskID !== pinnedTaskID) {
       st.taskID = pinnedTaskID;
       st.lastEventCount = 0;
-      st.events = [];
+      st.transcript = [];
       st.last = null;
       st.renderedEntryCount = 0;
     }
@@ -300,7 +296,7 @@ function applyResolvedActor(tab: Tab, taskID: string, active: boolean) {
   if (st.taskID !== taskID) {
     st.taskID = taskID;
     st.lastEventCount = 0;
-    st.events = [];
+    st.transcript = [];
     st.last = null;
     st.renderedEntryCount = 0;
   }
@@ -312,26 +308,20 @@ async function fetchTab(tab: Tab) {
   if (!state.taskID) {
     state.last = null;
     state.lastEventCount = 0;
-    state.events = [];
+    state.transcript = [];
     return;
   }
   try {
-    const res = (await TaskInspect(state.taskID, state.lastEventCount)) as unknown as TaskInspectResult;
-    const delta = res.events || [];
-    if (delta.length > 0) state.events.push(...delta);
-    res.events = state.events;
+    const res = (await TaskInspect(state.taskID, 0)) as unknown as TaskInspectResult;
+    state.transcript = (res.transcript || []) as TranscriptEntry[];
     state.last = res;
     state.lastEventCount = res.event_count ?? state.lastEventCount;
-    // For a pinned tab the RuntimeStatus role-actor liveness does not apply
-    // (the pin may target a different/older task), so derive liveness from the
-    // task's own inspect status.
     if (pinnedTab === tab && pinnedTaskID) {
       const s = (res.status || '').toLowerCase();
       state.active = !(s === 'done' || s === 'failed' || s === 'stopped');
     }
   } catch {
-    // A stale id (task just ended + GC'd) leaves the last snapshot in place;
-    // the header will show "tidak aktif" via the empty-taskID path next poll.
+    // stale task id
   }
 }
 
@@ -538,7 +528,7 @@ function mountActivityPane(body: HTMLElement, state: ActorState, res: TaskInspec
   mountTranscriptPane(
     body,
     state,
-    coalesceEvents(res.events || []),
+    (res.transcript || state.transcript || []) as TranscriptEntry[],
     'Belum ada aktivitas',
     'monitor',
     'task-monitor-empty',
@@ -549,7 +539,7 @@ function syncActivityPane(body: HTMLElement, state: ActorState, res: TaskInspect
   syncTranscriptPane(
     body,
     state,
-    coalesceEvents(res.events || []),
+    (res.transcript || state.transcript || []) as TranscriptEntry[],
     'Belum ada aktivitas',
     'monitor',
     'task-monitor-empty',

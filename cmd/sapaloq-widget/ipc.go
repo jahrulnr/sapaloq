@@ -40,10 +40,11 @@ func defaultSocketPath() string {
 }
 
 type chatResult struct {
-	OK        bool                 `json:"ok"`
-	SessionID string               `json:"session_id,omitempty"`
-	Events    []bridge.StreamEvent `json:"events"`
-	Usage     *chatUsage           `json:"usage,omitempty"`
+	OK           bool                     `json:"ok"`
+	SessionID    string                   `json:"session_id,omitempty"`
+	GenerationID string                   `json:"generation_id,omitempty"`
+	Transcript   []bridge.TranscriptEntry   `json:"transcript,omitempty"`
+	Usage        *chatUsage               `json:"usage,omitempty"`
 }
 
 type chatTurn struct {
@@ -72,11 +73,10 @@ type chatUsage struct {
 }
 
 type chatHistoryResult struct {
-	OK        bool                 `json:"ok"`
-	SessionID string               `json:"session_id"`
-	Turns     []chatTurn           `json:"turns"`
-	Timeline  []bridge.StreamEvent `json:"timeline,omitempty"`
-	Usage     *chatUsage           `json:"usage,omitempty"`
+	OK         bool                     `json:"ok"`
+	SessionID  string                   `json:"session_id"`
+	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
+	Usage      *chatUsage               `json:"usage,omitempty"`
 }
 
 type sessionSummary struct {
@@ -137,18 +137,18 @@ type taskInspectEvent struct {
 // binding. The Events slice is the progress tail (newest last); EventCount is
 // the total line count on disk so the frontend can request the next slice.
 type taskInspectResult struct {
-	ID         string             `json:"id"`
-	Role       string             `json:"role"`
-	Status     string             `json:"status"`
-	Task       string             `json:"task"`
-	Result     string             `json:"result,omitempty"`
-	Error      string             `json:"error,omitempty"`
-	Question   string             `json:"question,omitempty"`
-	PlanTaskID string             `json:"plan_task_id,omitempty"`
-	Plan       string             `json:"plan,omitempty"`
-	Events     []taskInspectEvent `json:"events"`
-	EventCount int                `json:"event_count"`
-	UpdatedAt  string             `json:"updated_at"`
+	ID         string                   `json:"id"`
+	Role       string                   `json:"role"`
+	Status     string                   `json:"status"`
+	Task       string                   `json:"task"`
+	Result     string                   `json:"result,omitempty"`
+	Error      string                   `json:"error,omitempty"`
+	Question   string                   `json:"question,omitempty"`
+	PlanTaskID string                   `json:"plan_task_id,omitempty"`
+	Plan       string                   `json:"plan,omitempty"`
+	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
+	EventCount int                      `json:"event_count"`
+	UpdatedAt  string                   `json:"updated_at"`
 }
 
 func sendChat(socketPath, sessionID, message string) (chatResult, error) {
@@ -176,7 +176,13 @@ func sendChatWithStatus(socketPath, sessionID, message string, onEvent func(brid
 			result.Usage = mapUsage(res.Usage)
 		}
 		if res.Event != nil {
-			result.Events = append(result.Events, *res.Event)
+			ev := *res.Event
+			if ev.Kind == bridge.EventTranscript && ev.Transcript != nil {
+				if ev.GenerationID != "" {
+					result.GenerationID = ev.GenerationID
+				}
+				result.Transcript = ev.Transcript.Entries
+			}
 		}
 	}
 	result.OK = true
@@ -196,41 +202,7 @@ func chatHistory(socketPath string) (chatHistoryResult, error) {
 	result.OK = true
 	result.SessionID = res.SessionID
 	result.Usage = mapUsage(res.Usage)
-	// The checkpoint divider is inserted by the frontend at each checkpoint
-	// turn (role=checkpoint). Pre-checkpoint turns are flagged archived
-	// (included_in_context=0) so the UI can mute them; they remain in the
-	// transcript because ActiveTurns(..., true) returns the full history.
-	for _, turn := range res.Turns {
-		switch turn.Role {
-		case "system", "tool", "autopilot":
-			// Internal/system turns are never rendered as chat bubbles (system
-			// is the prompt scaffolding; tool/autopilot are accounting-only).
-			continue
-		case "checkpoint":
-			// Checkpoint marker turns become a collapsible "Checkpoint n" card
-			// + divider; carry the index so the frontend labels it.
-			result.Turns = append(result.Turns, chatTurn{
-				ID:              turn.ID,
-				Seq:             turn.Seq,
-				Role:            turn.Role,
-				Content:         turn.Content,
-				CheckpointIndex: turn.CheckpointIndex,
-				CreatedAt:       turn.CreatedAt.UTC().Format(time.RFC3339Nano),
-				Archived:        !turn.IncludedInContext,
-			})
-			continue
-		}
-		result.Turns = append(result.Turns, chatTurn{
-			ID:              turn.ID,
-			Seq:             turn.Seq,
-			Role:            turn.Role,
-			Content:         turn.Content,
-			CheckpointIndex: turn.CheckpointIndex,
-			CreatedAt:       turn.CreatedAt.UTC().Format(time.RFC3339Nano),
-			Archived:        !turn.IncludedInContext,
-		})
-	}
-	result.Timeline = res.Timeline
+	result.Transcript = res.Transcript
 	return result, nil
 }
 
@@ -324,7 +296,13 @@ func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, onEvent
 			result.Usage = mapUsage(res.Usage)
 		}
 		if res.Event != nil {
-			result.Events = append(result.Events, *res.Event)
+			ev := *res.Event
+			if ev.Kind == bridge.EventTranscript && ev.Transcript != nil {
+				if ev.GenerationID != "" {
+					result.GenerationID = ev.GenerationID
+				}
+				result.Transcript = ev.Transcript.Entries
+			}
 		}
 	}
 	result.OK = true
@@ -430,30 +408,9 @@ func taskInspect(socketPath, taskID string, afterLine int) (*taskInspectResult, 
 		ID: src.ID, Role: src.Role, Status: src.Status, Task: src.Task,
 		Result: src.Result, Error: src.Error, Question: src.Question,
 		PlanTaskID: src.PlanTaskID, Plan: src.Plan,
+		Transcript: src.Transcript,
 		EventCount: src.EventCount,
 		UpdatedAt:  src.UpdatedAt.Format(time.RFC3339Nano),
-	}
-	for _, ev := range src.Events {
-		evt := taskInspectEvent{
-			Kind:             string(ev.Kind),
-			Delta:            ev.Delta,
-			ToolResult:       ev.ToolResult,
-			Status:           ev.Status,
-			TaskStatus:       ev.TaskStatus,
-			Summary:          ev.Summary,
-			Error:            ev.Error,
-			CheckpointIndex:  ev.CheckpointIndex,
-			CheckpointReason: ev.CheckpointReason,
-			At:               ev.At.Format(time.RFC3339Nano),
-		}
-		if ev.ToolCall != nil {
-			evt.ToolName = ev.ToolCall.Name
-			evt.ToolID = ev.ToolCall.ID
-			if raw, err := json.Marshal(ev.ToolCall.Arguments); err == nil {
-				evt.ToolArguments = string(raw)
-			}
-		}
-		out.Events = append(out.Events, evt)
 	}
 	return out, nil
 }

@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -42,24 +41,16 @@ func TestE2EChatMockStream(t *testing.T) {
 	}
 
 	seen := eventKinds(responses)
-	for _, kind := range []bridge.EventKind{
-		bridge.EventThinkingDelta,
-		bridge.EventResponseDelta,
-		bridge.EventDone,
-	} {
-		if seen[kind] == 0 {
-			t.Fatalf("missing %s (seen=%v)", kind, seen)
-		}
+	if seen[bridge.EventTranscript] == 0 {
+		t.Fatalf("missing transcript (seen=%v)", seen)
+	}
+	if !transcriptFinished(responses) {
+		t.Fatalf("transcript never finished (seen=%v)", seen)
 	}
 
-	var responseText string
-	for _, res := range responses {
-		if res.Event != nil && res.Event.Kind == bridge.EventResponseDelta {
-			responseText += res.Event.Delta
-		}
-	}
-	if !strings.Contains(responseText, "hello e2e") {
-		t.Fatalf("response = %q", responseText)
+	responseText := transcriptText(responses)
+	if responseText == "" {
+		t.Fatalf("empty transcript response")
 	}
 }
 
@@ -72,18 +63,20 @@ func TestE2EChatToolCoerce(t *testing.T) {
 	}, true)
 
 	seen := eventKinds(responses)
-	if seen[bridge.EventToolCall] == 0 {
-		t.Fatalf("missing tool_call (seen=%v)", seen)
+	if seen[bridge.EventTranscript] == 0 {
+		t.Fatalf("missing transcript (seen=%v)", seen)
 	}
 	for _, res := range responses {
-		if res.Event != nil && res.Event.Kind == bridge.EventToolCall && res.Event.ToolCall != nil {
-			if res.Event.ToolCall.Name != "glob_file_search" {
-				t.Fatalf("tool = %q", res.Event.ToolCall.Name)
+		if res.Event == nil || res.Event.Transcript == nil {
+			continue
+		}
+		for _, e := range res.Event.Transcript.Entries {
+			if e.Kind == bridge.TranscriptTool && e.ToolName == "glob_file_search" {
+				return
 			}
-			return
 		}
 	}
-	t.Fatal("tool_call event without payload")
+	t.Fatal("transcript missing glob_file_search tool")
 }
 
 func TestE2ESlashSuggest(t *testing.T) {

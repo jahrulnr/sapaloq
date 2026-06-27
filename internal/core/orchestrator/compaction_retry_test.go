@@ -152,6 +152,13 @@ func TestRunConversationOverflowBoundedRetries(t *testing.T) {
 			if ev.Kind == bridge.EventError {
 				sawError = true
 			}
+			if ev.Kind == bridge.EventTranscript && ev.Transcript != nil {
+				for _, e := range ev.Transcript.Entries {
+					if e.Kind == bridge.TranscriptError {
+						sawError = true
+					}
+				}
+			}
 		}
 		close(done)
 	}()

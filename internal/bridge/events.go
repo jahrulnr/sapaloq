@@ -42,6 +42,9 @@ const (
 	// segment and insert a "Checkpoint n" divider before the next bubble; the
 	// summary is the model-authored markdown stored on the checkpoint turn.
 	EventCheckpoint EventKind = "checkpoint"
+	// EventTranscript carries a coalesced TranscriptPatch snapshot for the
+	// widget. Raw deltas are no longer forwarded to the webview.
+	EventTranscript EventKind = "transcript"
 )
 
 type StreamEvent struct {
@@ -82,7 +85,12 @@ type StreamEvent struct {
 	CheckpointIndex   int       `json:"checkpoint_index,omitempty"`
 	CheckpointReason  string    `json:"checkpoint_reason,omitempty"`
 	CheckpointSummary string    `json:"checkpoint_summary,omitempty"`
-	At                time.Time `json:"at"`
+	// GenerationID is the process-local chat run token (runSeq) used to drop
+	// stale live patches after stop/retry. Distinct from RunID (actor/tool-job).
+	GenerationID string `json:"generation_id,omitempty"`
+	// Transcript is populated on EventTranscript.
+	Transcript *TranscriptPatch `json:"transcript,omitempty"`
+	At         time.Time        `json:"at"`
 }
 
 func NewEvent(kind EventKind) StreamEvent {

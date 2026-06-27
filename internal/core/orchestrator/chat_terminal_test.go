@@ -14,15 +14,15 @@ func TestEmitChatTerminalErrorSendsDoneAfterError(t *testing.T) {
 	out := make(chan bridge.StreamEvent, 4)
 	o.emitChatTerminalError(context.Background(), out, "s1", errors.New("inference-turn budget exhausted after 128 turns"))
 	if len(out) != 2 {
-		t.Fatalf("events = %d, want 2 (error + done)", len(out))
+		t.Fatalf("events = %d, want 2 (error + done transcript patches)", len(out))
 	}
 	ev1 := <-out
 	ev2 := <-out
-	if ev1.Kind != bridge.EventError {
-		t.Fatalf("first kind = %q, want error", ev1.Kind)
+	if ev1.Kind != bridge.EventTranscript || ev1.Transcript == nil || !ev1.Transcript.Finished {
+		t.Fatalf("first event = %+v, want finished error transcript", ev1)
 	}
-	if ev2.Kind != bridge.EventDone {
-		t.Fatalf("second kind = %q, want done", ev2.Kind)
+	if ev2.Kind != bridge.EventTranscript || ev2.Transcript == nil || !ev2.Transcript.Finished {
+		t.Fatalf("second event = %+v, want finished done transcript", ev2)
 	}
 }
 

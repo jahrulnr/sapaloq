@@ -1,6 +1,41 @@
-// Shared transcript entry types — used by the main chat tool rows and the
-// sub-agent monitor activity pane.
+// BE-driven transcript entry types — mirror bridge.TranscriptEntry.
 
+export type TranscriptEntryKind =
+  | 'user'
+  | 'thinking'
+  | 'text'
+  | 'tool'
+  | 'status'
+  | 'task'
+  | 'checkpoint'
+  | 'error'
+  | 'progress';
+
+export type TranscriptEntry = {
+  id?: string;
+  kind: TranscriptEntryKind;
+  generation_id?: string;
+  turn_id?: number;
+  seq?: number;
+  at?: string;
+  archived?: boolean;
+  text?: string;
+  tool_id?: string;
+  tool_name?: string;
+  tool_args?: string;
+  tool_result?: string;
+  tool_status?: string;
+  task_id?: string;
+  task_role?: string;
+  task_status?: string;
+  summary?: string;
+  checkpoint_index?: number;
+  checkpoint_reason?: string;
+  label?: string;
+  wait_seconds?: number;
+};
+
+/** @deprecated Use TranscriptEntry */
 export type ActivityEntry =
   | { kind: 'thinking'; text: string }
   | { kind: 'text'; text: string }
@@ -8,18 +43,21 @@ export type ActivityEntry =
   | { kind: 'tool'; id: string; name: string; args: string; response?: string; status?: string }
   | { kind: 'status'; label: string };
 
-/** Minimal event shape for coalescing (StreamEvent + TaskInspectEvent). */
-export type StreamLikeEvent = {
-  kind: string;
-  delta?: string;
-  error?: string;
-  status?: string;
-  tool_id?: string;
-  tool_name?: string;
-  tool_arguments?: string;
-  tool_result?: string;
-};
-
 export type TranscriptPaneState = {
   renderedEntryCount: number;
 };
+
+export type TranscriptPatch = {
+  session_id?: string;
+  generation_id?: string;
+  entries?: TranscriptEntry[];
+  finished?: boolean;
+  turn_id?: number;
+};
+
+/** Wails/JSON payloads use plain string for kind — coerce at the UI boundary. */
+export type TranscriptEntryInput = Omit<TranscriptEntry, 'kind'> & { kind: string };
+
+export function coerceTranscriptEntries(entries: ReadonlyArray<TranscriptEntryInput>): TranscriptEntry[] {
+  return entries.map((entry) => ({ ...entry, kind: entry.kind as TranscriptEntryKind }));
+}

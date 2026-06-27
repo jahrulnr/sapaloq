@@ -74,14 +74,14 @@ func TestTaskInspectReadsRecordProgressAndPlan(t *testing.T) {
 	if got.Plan == "" || !strings.Contains(got.Plan, "step one") {
 		t.Fatalf("plan markdown missing/got=%q", got.Plan)
 	}
-	if len(got.Events) != 3 {
-		t.Fatalf("event count = %d, want 3", len(got.Events))
-	}
 	if got.EventCount != 3 {
 		t.Fatalf("event_count = %d, want 3", got.EventCount)
 	}
-	if got.Events[1].Delta != "Hello " || got.Events[2].Delta != "world" {
-		t.Fatalf("event order/delta mismatch: %q %q", got.Events[1].Delta, got.Events[2].Delta)
+	if len(got.Transcript) != 2 {
+		t.Fatalf("transcript entries = %d, want 2 (thinking+text)", len(got.Transcript))
+	}
+	if got.Transcript[0].Kind != bridge.TranscriptThinking || got.Transcript[1].Text != "Hello world" {
+		t.Fatalf("transcript mismatch: %+v", got.Transcript)
 	}
 }
 
@@ -99,10 +99,9 @@ func TestTaskInspectAfterLineIncremental(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.EventCount != 4 || len(first.Events) != 4 {
-		t.Fatalf("first fetch: count=%d events=%d", first.EventCount, len(first.Events))
+	if first.EventCount != 4 || len(first.Transcript) != 1 || first.Transcript[0].Text != "abcd" {
+		t.Fatalf("first fetch: count=%d transcript=%+v", first.EventCount, first.Transcript)
 	}
-	// Incremental: only events after line 2.
 	second, err := o.TaskInspect("task-inc", 2)
 	if err != nil {
 		t.Fatal(err)
@@ -110,11 +109,8 @@ func TestTaskInspectAfterLineIncremental(t *testing.T) {
 	if second.EventCount != 4 {
 		t.Fatalf("event_count should stay total, got %d", second.EventCount)
 	}
-	if len(second.Events) != 2 {
-		t.Fatalf("incremental events = %d, want 2", len(second.Events))
-	}
-	if second.Events[0].Delta != "c" || second.Events[1].Delta != "d" {
-		t.Fatalf("incremental order mismatch: %q %q", second.Events[0].Delta, second.Events[1].Delta)
+	if len(second.Transcript) != 1 || second.Transcript[0].Text != "cd" {
+		t.Fatalf("incremental transcript = %+v, want cd", second.Transcript)
 	}
 }
 
@@ -137,7 +133,6 @@ func TestTaskInspectUnknownTask(t *testing.T) {
 func TestTaskInspectAgentPlanViaPlanTaskID(t *testing.T) {
 	agent := taskRecord{ID: "task-agent", Role: "task-runner", Status: "in_progress", Task: "execute", PlanTaskID: "task-plan", UpdatedAt: time.Now().UTC()}
 	o := writeInspectFixture(t, agent, nil, "")
-	// The handed-off plan lives in the planner's task dir, not the agent's.
 	planDir := o.taskDir("task-plan")
 	if err := os.MkdirAll(planDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -164,7 +159,7 @@ func TestTaskInspectMissingProgressReturnsRecord(t *testing.T) {
 	if got.Status != "pending" {
 		t.Fatalf("status=%q want pending", got.Status)
 	}
-	if len(got.Events) != 0 {
-		t.Fatalf("events should be empty, got %d", len(got.Events))
+	if len(got.Transcript) != 0 {
+		t.Fatalf("transcript should be empty, got %d", len(got.Transcript))
 	}
 }

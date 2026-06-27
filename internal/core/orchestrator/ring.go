@@ -23,6 +23,8 @@ func RingStateFor(kind bridge.EventKind) RingState {
 		// A turn seam is mid-run: the run is still active, so keep the orb
 		// busy. Mapping it to idle would flicker the orb between every turn.
 		return RingThinking
+	case bridge.EventTranscript:
+		return RingThinking
 	case bridge.EventError, bridge.EventDone:
 		return RingIdle
 	default:

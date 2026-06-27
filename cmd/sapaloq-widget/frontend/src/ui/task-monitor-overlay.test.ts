@@ -11,13 +11,13 @@ vi.mock('../../wailsjs/go/main/App', () => ({
 
 import { openTaskMonitor, closeTaskMonitor } from './task-monitor-overlay';
 
-function makeInspect(overrides: Partial<{ id: string; role: string; status: string; task: string; plan: string; events: Array<Record<string, unknown>>; event_count: number }>) {
+function makeInspect(overrides: Partial<{ id: string; role: string; status: string; task: string; plan: string; transcript: Array<Record<string, unknown>>; event_count: number }>) {
   return {
     id: 'task-1',
     role: 'planner',
     status: 'in_progress',
     task: 'plan the work',
-    events: [],
+    transcript: [],
     event_count: 0,
     updated_at: '2026-06-27T07:00:00Z',
     ...overrides,
@@ -69,11 +69,10 @@ describe('task-monitor-overlay', () => {
 
   it('coalesces consecutive response deltas into a single assistant text entry', async () => {
     taskInspectMock.mockResolvedValue(makeInspect({
-      events: [
-        { kind: 'thinking_delta', delta: 'hmm' },
-        { kind: 'response_delta', delta: 'Hello ' },
-        { kind: 'response_delta', delta: 'world' },
-        { kind: 'tool_call', tool_name: 'read_file', tool_arguments: '{"path":"/tmp/x"}' },
+      transcript: [
+        { kind: 'thinking', text: 'hmm' },
+        { kind: 'text', text: 'Hello world' },
+        { kind: 'tool', tool_name: 'read_file', tool_args: '{"path":"/tmp/x"}' },
       ],
       event_count: 4,
     }));
@@ -94,10 +93,9 @@ describe('task-monitor-overlay', () => {
 
   it('splits assistant text at turn boundaries without a divider row', async () => {
     taskInspectMock.mockResolvedValue(makeInspect({
-      events: [
-        { kind: 'response_delta', delta: 'turn 1' },
-        { kind: 'turn_boundary' },
-        { kind: 'response_delta', delta: 'turn 2' },
+      transcript: [
+        { kind: 'text', text: 'turn 1' },
+        { kind: 'text', text: 'turn 2' },
       ],
       event_count: 3,
     }));
@@ -115,9 +113,8 @@ describe('task-monitor-overlay', () => {
 
   it('drops ephemeral Menjalankan task hints from the activity stream', async () => {
     taskInspectMock.mockResolvedValue(makeInspect({
-      events: [
-        { kind: 'task_update', summary: 'Menjalankan `exec`.' },
-        { kind: 'tool_call', tool_id: 'call-1', tool_name: 'exec', tool_arguments: '{"command":"ls"}' },
+      transcript: [
+        { kind: 'tool', tool_id: 'call-1', tool_name: 'exec', tool_args: '{"command":"ls"}' },
       ],
       event_count: 2,
     }));
@@ -132,10 +129,10 @@ describe('task-monitor-overlay', () => {
 
   it('renders autopilot continuing nudges as a right-aligned user bubble', async () => {
     taskInspectMock.mockResolvedValue(makeInspect({
-      events: [
-        { kind: 'response_delta', delta: 'Working on files.' },
-        { kind: 'status', status: 'continuing - call `sapaloq_stop` to finish' },
-        { kind: 'response_delta', delta: 'Next step.' },
+      transcript: [
+        { kind: 'text', text: 'Working on files.' },
+        { kind: 'user', text: 'continuing - call `sapaloq_stop` to finish' },
+        { kind: 'text', text: 'Next step.' },
       ],
       event_count: 3,
     }));
@@ -154,9 +151,8 @@ describe('task-monitor-overlay', () => {
   it('renders request and response inside one expandable tool activity block', async () => {
     const longArgs = '{"command":"' + 'cd /tmp/profile && '.repeat(20) + '"}';
     taskInspectMock.mockResolvedValue(makeInspect({
-      events: [
-        { kind: 'tool_call', tool_id: 'call-1', tool_name: 'exec', tool_arguments: longArgs },
-        { kind: 'tool_update', tool_id: 'call-1', tool_name: 'exec', tool_result: 'installed successfully', status: 'completed' },
+      transcript: [
+        { kind: 'tool', tool_id: 'call-1', tool_name: 'exec', tool_args: longArgs, tool_result: 'installed successfully', tool_status: 'completed' },
       ],
       event_count: 2,
     }));
@@ -217,7 +213,7 @@ describe('task-monitor-overlay', () => {
       actors: [makeActor('planner', 'in_progress', 'task-p'), makeActor('task-runner', 'in_progress', 'task-a')],
     });
     taskInspectMock.mockImplementation(async (taskID: string) => makeInspect({
-      id: taskID, role: 'task-runner', task: 'agent work', events: [{ kind: 'response_delta', delta: 'working' }],
+      id: taskID, role: 'task-runner', task: 'agent work', transcript: [{ kind: 'text', text: 'working' }],
       event_count: 1,
     }));
     await openTaskMonitor({ tab: 'agent' });
@@ -240,7 +236,7 @@ describe('task-monitor-overlay', () => {
     });
     taskInspectMock.mockImplementation(async (taskID: string) => makeInspect({
       id: taskID, role: 'task-runner', task: 'older agent', status: 'done',
-      events: [{ kind: 'response_delta', delta: 'older agent work' }], event_count: 1,
+      transcript: [{ kind: 'text', text: 'older agent work' }], event_count: 1,
     }));
     await openTaskMonitor({ taskID: 'task-older', role: 'task-runner' });
     await vi.advanceTimersByTimeAsync(0);
@@ -288,11 +284,11 @@ describe('task-monitor-overlay', () => {
   it('keeps accumulated activity across incremental polls with no new lines', async () => {
     taskInspectMock
       .mockResolvedValueOnce(makeInspect({
-        events: [{ kind: 'response_delta', delta: 'building profile' }],
+        transcript: [{ kind: 'text', text: 'building profile' }],
         event_count: 1,
       }))
       .mockResolvedValueOnce(makeInspect({
-        events: [],
+        transcript: [{ kind: 'text', text: 'building profile' }],
         event_count: 1,
       }));
     await openTaskMonitor({ tab: 'planner' });
@@ -304,19 +300,16 @@ describe('task-monitor-overlay', () => {
     overlay = document.getElementById('task-monitor-overlay')!;
     expect(overlay.querySelector('.task-monitor-empty')).toBeNull();
     expect(overlay.querySelector('.transcript-text')?.textContent).toContain('building profile');
-    expect(taskInspectMock).toHaveBeenLastCalledWith('task-1', 1);
+    expect(taskInspectMock).toHaveBeenLastCalledWith('task-1', 0);
   });
 
   it('preserves collapsed tool state across incremental polls', async () => {
     taskInspectMock
       .mockResolvedValueOnce(makeInspect({
-        events: [
-          { kind: 'tool_call', tool_id: 'call-1', tool_name: 'exec', tool_arguments: '{}' },
-          { kind: 'tool_update', tool_id: 'call-1', tool_name: 'exec', tool_result: 'ok', status: 'completed' },
-        ],
+        transcript: [{ kind: 'tool', tool_id: 'call-1', tool_name: 'exec', tool_args: '{}', tool_result: 'ok', tool_status: 'completed' }],
         event_count: 2,
       }))
-      .mockResolvedValueOnce(makeInspect({ events: [], event_count: 2 }));
+      .mockResolvedValueOnce(makeInspect({ transcript: [{ kind: 'tool', tool_id: 'call-1', tool_name: 'exec', tool_args: '{}', tool_result: 'ok', tool_status: 'completed' }], event_count: 2 }));
     await openTaskMonitor({ tab: 'planner' });
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
@@ -333,11 +326,11 @@ describe('task-monitor-overlay', () => {
   it('does not auto-scroll when the reader has scrolled away from the bottom', async () => {
     taskInspectMock
       .mockResolvedValueOnce(makeInspect({
-        events: [{ kind: 'response_delta', delta: 'line one' }],
+        transcript: [{ kind: 'text', text: 'line one' }],
         event_count: 1,
       }))
       .mockResolvedValueOnce(makeInspect({
-        events: [{ kind: 'response_delta', delta: 'line two' }],
+        transcript: [{ kind: 'text', text: 'line two' }],
         event_count: 2,
       }));
     await openTaskMonitor({ tab: 'planner' });
