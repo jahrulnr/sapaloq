@@ -10,6 +10,10 @@ export function ChatHistory() {
   return window['go']['main']['App']['ChatHistory']();
 }
 
+export function ClipboardGetImage() {
+  return window['go']['main']['App']['ClipboardGetImage']();
+}
+
 export function ContextUsage() {
   return window['go']['main']['App']['ContextUsage']();
 }

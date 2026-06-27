@@ -2,7 +2,11 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-27 (**actor unification**: foreground Ask + background planner/agent/scribe share `runActor`/`dispatchTool`/`buildActorMessages` in `actor.go` + `prompt.go`; sub-agent turns persist under `state/tasks/{id}/turns.json`; orphan `in_progress` tasks auto-resume when durable turns exist; widget sub-agent monitor hydrates via `ActorInspect` and live `actor_id` transcript bus patches; context usage pill in monitor header)
+> Last updated: 2026-06-28 (**compose paste fix v2**: unified `ingestComposePaste` uses Wails `ClipboardGetText` for context-menu URL paste; Linux `ClipboardGetImage` reads GTK clipboard for Ctrl+V screenshots when WebKit omits image payloads)
+>
+> Prior: 2026-06-28 (**compose UX fixes**: slash popover no longer steals Enter — Tab accepts suggestions, Enter submits; WebKitGTK image paste via `kind:"string"` + `type:"image/*"` clipboard items; custom compose context menu for Cut/Copy/Paste when the native Linux menu is suppressed in Wails)
+>
+> Prior: 2026-06-27 (**actor unification**: foreground Ask + background planner/agent/scribe share `runActor`/`dispatchTool`/`buildActorMessages` in `actor.go` + `prompt.go`; sub-agent turns persist under `state/tasks/{id}/turns.json`; orphan `in_progress` tasks auto-resume when durable turns exist; widget sub-agent monitor hydrates via `ActorInspect` and live `actor_id` transcript bus patches; context usage pill in monitor header)
 >
 > Prior: 2026-06-26 (**sharpen autopilot continuation + rules.md**: the tool-less autopilot continuation in `conversation.go` and the `rules.md` "Who is speaking" paragraph now close both branches explicitly - continue only if a concrete next step remains for YOU now; if work is finished OR the only remaining work is a background/delegated task you cannot advance, call `sapaloq_stop` immediately. Stopping is framed as a SILENT action (no status recap / sign-off / "nothing left to do" prose - invoking stop IS the whole turn), and rules.md calls out that right after a fire-and-forget delegate the correct reply to the next autopilot turn is almost always an immediate `sapaloq_stop`. Architecture unchanged (markers, EventTurnBoundary, calledToolsNote intact); pure wording. The continuation string deliberately avoids the bare words "tool"/"glob" so the offline cursor mock stream (`streamMock` keys off those substrings) doesn't loop. `conversation_test.go` continuation assertion extended to pin `sapaloq_stop` + `silent` + the `<sapaloq:autopilot>` wrap. Docs: PROMPT-BUILDER-SOP.md rules.md section. See PROMPT-BUILDER-SOP.md)
 >
@@ -50,6 +54,42 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` - the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
 | 30 | codex-bridge driver (wraps the public Codex CLI) | ✅ | `internal/bridges/codex` - spawn-per-turn wrapper over `codex exec --json` + `codex exec resume`; binds only to the documented CLI contract (`CODEX_CLI_CONTRACT.md`), no RE. `bridge.go` (`New`/`ID`/`Caps`/`Complete`/`runTurn`/`composePrompt`/`safeReasoning`/`authOK`), `invoke.go` (typed argv, no `-a`; `--json` precedes `resume`; stdin prompt; image temp files), `stream.go` (tolerant JSONL scanner → `bridge.StreamEvent`; event-authoritative terminal via `scanStream`/`finalizeTerminal` - `turn.failed` with exit 0 still → `EventError`), `session.go` (vault-backed `SessionID→thread_id` store `codex-threads.jsonl` + resume self-heal), `explain.go` (`explainCodexError` mirrors cursor), `proc_unix.go`/`proc_other.go` (process-group kill on cancel). Reuses existing `config.LLMBridge` fields (no new config field); sandbox/cwd/CODEX_HOME default safely and are env-overridable; minimal reasoning-effort downgraded to `low` (incompatible with built-in tools). Registered in `newBridge()`. Offline golden-fixture + tolerant-parser + cancellation tests (`testdata/*.jsonl`); e2e build-tagged + auto-skip without the CLI |
+
+---
+
+## Implemented this session (2026-06-28) - compose paste fix v2 (Wails/GTK clipboard)
+
+- **Context-menu Paste was a no-op.** `execCommand('paste')` returned `true` on
+  WebKitGTK without inserting anything, so the `readText()` fallback never ran.
+  Removed that path. All paste (Ctrl+V and menu Paste) now flows through
+  `features/compose-paste.ts` → `ingestComposePaste`.
+- **URL/text paste via Wails runtime.** When the paste event / `navigator.clipboard`
+  is empty (typical for menu Paste in Wails), fall back to Wails
+  `ClipboardGetText()` which reads the GTK clipboard directly.
+- **Image paste via GTK.** WebKitGTK paste events often omit image bytes. Added
+  Go `ClipboardGetImage()` (`clipboard_linux.go` via `gtk_clipboard_wait_for_image`
+  → PNG) as the last-resort path for Ctrl+V screenshots; frontend inserts an IMG
+  pill from the returned data URI.
+- **Tests:** `compose-paste.test.ts` (DataTransfer text, Wails text fallback,
+  Wails image fallback).
+
+## Implemented this session (2026-06-28) - compose UX: Enter submit, image paste, context menu
+
+- **Slash popover no longer blocks Enter.** `slashKeydown` accepts suggestions on
+  **Tab** only; **Enter** passes through to the compose box submit handler so
+  `/model`, `/help`, etc. can be sent while suggestions are visible. Arrow keys
+  and Escape unchanged. `features/slash.ts`, `features/slash-keyboard.test.ts`.
+- **Ctrl+V image paste on WebKitGTK.** Clipboard screenshots often arrive as
+  `DataTransferItem` with `kind:"string"` + `type:"image/png"` rather than
+  `kind:"file"`. New `features/clipboard.ts` detects attachable clipboard
+  payloads; `addClipboardItems` async-collects image blobs via `getType()`.
+  Compose paste routes files/images through `onPasteAttachable`.
+  `features/clipboard.test.ts`.
+- **Right-click paste menu.** Wails/WebKitGTK frameless windows suppress the
+  native contenteditable context menu on Linux. Added
+  `ui/compose-context-menu.ts` (Undo/Redo/Cut/Copy/Paste/Select all) wired from
+  `main.ts`; Paste reuses `execCommand('paste')` so the same handlers as Ctrl+V
+  run. `style.css` `.compose-context-menu`.
 
 ---
 

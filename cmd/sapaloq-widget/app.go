@@ -204,6 +204,19 @@ func (a *App) SyncInputShape(collapsed bool) {
 	scheduleInputShape(collapsed)
 }
 
+// clipboardImage is returned when the system clipboard holds a raster image.
+type clipboardImage struct {
+	DataURI string `json:"data_uri"`
+	MIME    string `json:"mime"`
+	Size    int    `json:"size"`
+}
+
+// ClipboardGetImage reads a PNG snapshot of the current clipboard image, if any.
+// WebKitGTK paste events often omit image payloads; GTK clipboard is authoritative on Linux.
+func (a *App) ClipboardGetImage() (*clipboardImage, error) {
+	return clipboardGetImageLinux()
+}
+
 // droppedFile is the payload returned by ReadDroppedFile for the frontend.
 // Images and other binary files are returned as a data URI; text files are
 // returned as plain text so the widget can inline them into the prompt.

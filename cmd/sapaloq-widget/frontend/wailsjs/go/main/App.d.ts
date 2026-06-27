@@ -7,6 +7,8 @@ export function ActorInspect(arg1:string,arg2:number):Promise<main.taskInspectRe
 
 export function ChatHistory():Promise<main.chatHistoryResult>;
 
+export function ClipboardGetImage():Promise<main.clipboardImage>;
+
 export function ContextUsage():Promise<main.chatUsage>;
 
 export function DeleteChatTurn(arg1:string,arg2:number):Promise<void>;

@@ -5,6 +5,9 @@ import { ReadDroppedFile } from '../../wailsjs/go/main/App';
 import type { AttachmentData } from '../ui/compose';
 import { appendMessage } from './messages';
 import { getCompose } from '../core/state';
+import { collectClipboardImageFiles } from './clipboard';
+
+export { transferHasAttachable } from './clipboard';
 
 function fileToDataURI(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -49,7 +52,8 @@ export async function addFiles(files: FileList | File[]) {
 
 export async function addClipboardItems(clipboard: DataTransfer | null) {
   if (!clipboard) return false;
-  const files = collectTransferFiles(clipboard);
+  let files = collectTransferFiles(clipboard);
+  if (!files.length) files = await collectClipboardImageFiles(clipboard);
   if (!files.length) return false;
   await addFiles(files);
   return true;
@@ -92,7 +96,7 @@ export async function addDroppedPaths(paths: string[]) {
   }
 }
 
-function dataURIToFile(dataURI: string, fallbackName = 'dropped-image'): File | null {
+export function dataURIToFile(dataURI: string, fallbackName = 'dropped-image'): File | null {
   const match = /^data:([^;,]+)?(;base64)?,(.*)$/.exec(dataURI.trim());
   if (!match) return null;
   const mime = match[1] || 'application/octet-stream';

@@ -74,9 +74,14 @@ describe('slash keyboard navigation', () => {
     expect(replaceRange).toHaveBeenCalledWith(0, 6, '/model minimax-free');
   });
 
-  it('Enter autocompletes after navigating', () => {
+  it('Enter does not consume when the popover is open (message submit passes through)', () => {
+    expect(slashKeydown(key('Enter'))).toBe(false);
+  });
+
+  it('Tab still autocompletes after navigating', () => {
     slashKeydown(key('ArrowDown'));
-    slashKeydown(key('Enter'));
+    const handled = slashKeydown(key('Tab'));
+    expect(handled).toBe(true);
     expect(replaceRange).toHaveBeenCalledWith(0, 6, '/model kimi');
   });
 
