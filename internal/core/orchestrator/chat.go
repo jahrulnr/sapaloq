@@ -294,10 +294,20 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		defer close(out)
 		defer o.clearActiveGeneration(sessionID, runID)
 		defer cancel()
+		activeSessionID := sessionID
 		if entry, ok := MatchRegistry(message, snap.cfg.Commands); ok {
 			debug.Debugf("orchestrator: slash route id=%s session=%s", entry.ID, sessionID)
-			o.handleSlash(ctx, out, sessionID, entry.ID, message)
-			o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+			if entry.ID == "reset" {
+				if newID := o.handleSlash(ctx, out, activeSessionID, entry.ID, message); newID != "" {
+					o.migrateActiveRun(activeSessionID, newID, runID)
+					activeSessionID = newID
+					o.emitSlash(ctx, out, newID, responseEvent(newID, "Session reset. Starting a fresh active chat."))
+					o.emitSessionReset(ctx, out, newID, runID, true)
+				}
+			} else {
+				o.handleSlash(ctx, out, activeSessionID, entry.ID, message)
+			}
+			o.emitWidget(ctx, out, activeSessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: activeSessionID, At: time.Now().UTC()})
 			return
 		}
 		genStr := fmt.Sprintf("%d", runID)
@@ -434,6 +444,62 @@ func (o *Orchestrator) clearActiveGeneration(sessionID string, runID uint64) {
 		delete(o.active, sessionID)
 	}
 	o.activeMu.Unlock()
+}
+
+// migrateActiveRun moves the in-flight generation/coalescer from one session id
+// to another (e.g. after /reset creates a fresh chat session mid-request).
+func (o *Orchestrator) migrateActiveRun(oldID, newID string, runID uint64) {
+	if oldID == "" || newID == "" || oldID == newID {
+		return
+	}
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	run := o.active[oldID]
+	if run == nil || run.id != runID {
+		return
+	}
+	delete(o.active, oldID)
+	genStr := fmt.Sprintf("%d", runID)
+	o.active[newID] = &activeRun{
+		id:        runID,
+		cancel:    run.cancel,
+		coalescer: NewTranscriptCoalescer(genStr),
+	}
+}
+
+// emitSlash forwards slash-command output through the widget transcript path.
+func (o *Orchestrator) emitSlash(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, ev bridge.StreamEvent) bool {
+	return o.emitWidget(ctx, out, sessionID, ev)
+}
+
+// emitSessionReset tells the widget to discard the current transcript and render
+// the supplied snapshot. Only call after the backend has persisted the reset.
+func (o *Orchestrator) emitSessionReset(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, runID uint64, finished bool) bool {
+	genStr := fmt.Sprintf("%d", runID)
+	var entries []bridge.TranscriptEntry
+	if coalescer := o.activeCoalescer(sessionID); coalescer != nil {
+		entries = coalescer.Entries()
+	}
+	if o.chat != nil {
+		if live, err := o.LiveSessionTranscript(ctx, sessionID, o.activeCoalescer(sessionID)); err == nil && len(live) > 0 {
+			entries = live
+		}
+	}
+	patch := bridge.TranscriptPatch{
+		SessionID:    sessionID,
+		GenerationID: genStr,
+		Entries:      entries,
+		Reset:        true,
+		Finished:     finished,
+	}
+	patchEv := bridge.StreamEvent{
+		Kind:         bridge.EventTranscript,
+		SessionID:    sessionID,
+		GenerationID: genStr,
+		Transcript:   &patch,
+		At:           time.Now().UTC(),
+	}
+	return o.sendOut(ctx, out, patchEv)
 }
 
 func (o *Orchestrator) StopChat(sessionID string) bool {

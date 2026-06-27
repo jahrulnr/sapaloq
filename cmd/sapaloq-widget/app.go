@@ -110,8 +110,9 @@ func (a *App) SwitchSession(sessionID string) (string, error) {
 	return switchSession(a.socketPath, sessionID)
 }
 
-// NewSession starts a fresh active chat session and returns its id.
-func (a *App) NewSession() (string, error) {
+// NewSession starts a fresh active chat session. Reset is true when the backend
+// has persisted the new empty session; the frontend must clear only on that signal.
+func (a *App) NewSession() (sessionNewResult, error) {
 	return newSession(a.socketPath)
 }
 

@@ -53,6 +53,8 @@ export type TranscriptPatch = {
   entries?: TranscriptEntry[];
   finished?: boolean;
   turn_id?: number;
+  /** BE signals the widget to discard the current transcript and render entries. */
+  reset?: boolean;
 };
 
 /** Wails/JSON payloads use plain string for kind — coerce at the UI boundary. */

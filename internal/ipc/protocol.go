@@ -32,6 +32,7 @@ type Response struct {
 	Turns       []chatstore.Turn                `json:"turns,omitempty"`
 	Timeline    []bridge.StreamEvent            `json:"timeline,omitempty"`
 	Transcript  []bridge.TranscriptEntry        `json:"transcript,omitempty"`
+	Reset       bool                            `json:"reset,omitempty"`
 	Usage       *chatstore.Usage                `json:"usage,omitempty"`
 	Runtime     *orchestrator.RuntimeStatus      `json:"runtime,omitempty"`
 	Sessions    []chatstore.SessionSummary      `json:"sessions,omitempty"`

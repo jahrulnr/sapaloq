@@ -100,13 +100,13 @@ func TestSubAgentSharedToolStillHonorsRolePolicy(t *testing.T) {
 	call := parse.ToolCall{Name: "exec", Arguments: []byte(`{"command":"printf allowed"}`)}
 
 	planner := &taskRecord{ID: "plan", Role: "planner"}
-	got := o.handleSubAgentTool(context.Background(), planner, &strings.Builder{}, call)
+	got := o.handleSubAgentTool(context.Background(), planner, &strings.Builder{}, call, nil)
 	if !strings.Contains(got.text, "allowed") {
 		t.Fatalf("planner exec should run for exploration, got %q", got.text)
 	}
 
 	scribe := &taskRecord{ID: "scribe", Role: "scribe"}
-	got = o.handleSubAgentTool(context.Background(), scribe, &strings.Builder{}, call)
+	got = o.handleSubAgentTool(context.Background(), scribe, &strings.Builder{}, call, nil)
 	if !strings.Contains(got.text, "not allowed for role scribe") {
 		t.Fatalf("scribe poisoned exec should be denied, got %q", got.text)
 	}

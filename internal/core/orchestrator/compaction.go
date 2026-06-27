@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
@@ -443,6 +444,92 @@ func (o *Orchestrator) rebuildAfterCheckpoint(ctx context.Context, sessionID str
 		return live, err
 	}
 	return rebuildMessagesFromCheckpoint(prefix, ckpt, turns), nil
+}
+
+// subAgentCompactCtx wires in-memory compaction for background sub-agents
+// (planner / task-runner / scribe). Sub-agents do not persist turns to the
+// chat store, so LLM checkpoints are applied directly to the live message
+// slice owned by runTurnLoop.
+type subAgentCompactCtx struct {
+	messages        *[]bridge.Message
+	fallbackTask    string
+	sink            turnSink
+	taskID          string
+	parentSessionID string
+	checkpointIndex int
+}
+
+// compactMessagesWithSummary replaces the heuristic mid-run checkpoint body
+// with a model-authored summary while preserving leading system blocks and a
+// recent tail of conversation messages.
+func compactMessagesWithSummary(messages []bridge.Message, originalTask, summary string, preserveRecentFraction float64) []bridge.Message {
+	summary = strings.TrimSpace(summary)
+	if summary == "" || len(messages) <= 6 {
+		return messages
+	}
+	if preserveRecentFraction <= 0 || preserveRecentFraction >= 1 {
+		preserveRecentFraction = 0.30
+	}
+	bodyStart := 0
+	prefix := make([]bridge.Message, 0, 4)
+	for i, m := range messages {
+		if m.Role != "system" {
+			bodyStart = i
+			break
+		}
+		prefix = append(prefix, m)
+	}
+	body := messages[bodyStart:]
+	keep := int(math.Ceil(float64(len(body)) * preserveRecentFraction))
+	if keep < 4 {
+		keep = 4
+	}
+	if keep >= len(body) {
+		return messages
+	}
+	cut := len(body) - keep
+	var checkpoint strings.Builder
+	checkpoint.WriteString("[Checkpoint summary]\n")
+	checkpoint.WriteString(summary)
+	checkpoint.WriteString("\n\nOriginal task: ")
+	checkpoint.WriteString(truncateForCheckpoint(originalTask, 600))
+	checkpoint.WriteString("\nResume from the recent messages below. Do not restart completed work.")
+	compacted := make([]bridge.Message, 0, len(prefix)+1+keep)
+	compacted = append(compacted, prefix...)
+	compacted = append(compacted, bridge.Message{Role: "system", Content: checkpoint.String()})
+	compacted = append(compacted, body[cut:]...)
+	return compacted
+}
+
+func (o *Orchestrator) handleSubAgentCompactSession(ctx context.Context, c *subAgentCompactCtx, summary, reason string) (string, bool) {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return "Error: summary is required for `sapaloq_compact_session`.", true
+	}
+	if c == nil || c.messages == nil {
+		return "Nothing to compact yet - continue your work.", true
+	}
+	msgs := *c.messages
+	preserve := o.snapshot().cfg.Orchestrator.WithDefaults().Compaction.PreserveRecentFraction
+	compacted := compactMessagesWithSummary(msgs, c.fallbackTask, summary, preserve)
+	if len(compacted) >= len(msgs) {
+		return "Nothing to compact yet - the recent tail already covers the active context. Continue your work; you do not need to compact again right now.", true
+	}
+	*c.messages = compacted
+	c.checkpointIndex++
+	if reason == "" {
+		reason = "model"
+	}
+	if c.sink != nil {
+		ev := bridge.NewEvent(bridge.EventCheckpoint)
+		ev.SessionID = c.parentSessionID
+		ev.TaskID = c.taskID
+		ev.CheckpointIndex = c.checkpointIndex
+		ev.CheckpointReason = reason
+		ev.CheckpointSummary = summary
+		c.sink.emit(ctx, ev)
+	}
+	return fmt.Sprintf("Checkpoint %d created. Your context now carries the summary + the most recent turns (including your last action). Continue from there.", c.checkpointIndex), true
 }
 
 func itoa(n int) string {

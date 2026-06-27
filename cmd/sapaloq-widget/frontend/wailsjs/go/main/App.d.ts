@@ -11,7 +11,7 @@ export function DeleteChatTurn(arg1:string,arg2:number):Promise<void>;
 
 export function ListSessions():Promise<main.sessionListResult>;
 
-export function NewSession():Promise<string>;
+export function NewSession():Promise<main.sessionNewResult>;
 
 export function NotificationSound():Promise<string>;
 

@@ -94,6 +94,8 @@ type turnConfig struct {
 	// Set for nested compaction sub-runs so they cannot recursively spawn another
 	// full turn loop (which would duplicate the entire message slice in RAM).
 	suppressHeadroomCompaction bool
+	// compactCtx enables in-memory LLM checkpoint compaction for sub-agents.
+	compactCtx *subAgentCompactCtx
 }
 
 // chatSink streams events to the live chat channel. beat is a no-op because the

@@ -84,7 +84,7 @@ func TestPlanWriteIsIterable(t *testing.T) {
 	var result strings.Builder
 
 	first, _ := json.Marshal(map[string]string{"markdown": "## Goal\nv1\n"})
-	res := o.handleSubAgentTool(nil, rec, &result, parse.ToolCall{Name: "write_plan", Arguments: first})
+	res := o.handleSubAgentTool(nil, rec, &result, parse.ToolCall{Name: "write_plan", Arguments: first}, nil)
 	if res.terminal {
 		t.Fatalf("write_plan_markdown must NOT be terminal (planner needs to iterate)")
 	}
@@ -93,14 +93,14 @@ func TestPlanWriteIsIterable(t *testing.T) {
 	}
 
 	// Planner reads its own plan back.
-	readRes := o.handleSubAgentTool(nil, rec, &result, parse.ToolCall{Name: "read_plan", Arguments: []byte(`{}`)})
+	readRes := o.handleSubAgentTool(nil, rec, &result, parse.ToolCall{Name: "read_plan", Arguments: []byte(`{}`)}, nil)
 	if !strings.Contains(readRes.text, "v1") {
 		t.Fatalf("planner should read its own plan, got: %s", readRes.text)
 	}
 
 	// Revise.
 	second, _ := json.Marshal(map[string]string{"markdown": "## Goal\nv2 revised\n"})
-	o.handleSubAgentTool(nil, rec, &result, parse.ToolCall{Name: "write_plan", Arguments: second})
+	o.handleSubAgentTool(nil, rec, &result, parse.ToolCall{Name: "write_plan", Arguments: second}, nil)
 	if got := o.readPlanMarkdown(rec.ID); !strings.Contains(got, "v2 revised") {
 		t.Fatalf("revision not persisted, got: %q", got)
 	}

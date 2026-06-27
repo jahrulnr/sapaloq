@@ -43,8 +43,9 @@ type chatResult struct {
 	OK           bool                     `json:"ok"`
 	SessionID    string                   `json:"session_id,omitempty"`
 	GenerationID string                   `json:"generation_id,omitempty"`
-	Transcript   []bridge.TranscriptEntry   `json:"transcript,omitempty"`
+	Transcript   []bridge.TranscriptEntry `json:"transcript,omitempty"`
 	Usage        *chatUsage               `json:"usage,omitempty"`
+	Reset        bool                     `json:"reset,omitempty"`
 }
 
 type chatTurn struct {
@@ -91,6 +92,13 @@ type sessionSummary struct {
 type sessionListResult struct {
 	OK       bool             `json:"ok"`
 	Sessions []sessionSummary `json:"sessions"`
+}
+
+type sessionNewResult struct {
+	OK         bool                     `json:"ok"`
+	SessionID  string                   `json:"session_id"`
+	Reset      bool                     `json:"reset,omitempty"`
+	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
 }
 
 type actorRuntimeStatus struct {
@@ -181,6 +189,12 @@ func sendChatWithStatus(socketPath, sessionID, message string, onEvent func(brid
 				if ev.GenerationID != "" {
 					result.GenerationID = ev.GenerationID
 				}
+				if ev.Transcript.Reset {
+					result.Reset = true
+				}
+				if ev.Transcript.SessionID != "" {
+					result.SessionID = ev.Transcript.SessionID
+				}
 				result.Transcript = ev.Transcript.Entries
 			}
 		}
@@ -245,19 +259,25 @@ func switchSession(socketPath, sessionID string) (string, error) {
 	return responses[0].SessionID, nil
 }
 
-func newSession(socketPath string) (string, error) {
+func newSession(socketPath string) (sessionNewResult, error) {
+	var result sessionNewResult
 	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_new"})
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	if len(responses) == 0 || !responses[0].OK {
 		message := "core error"
 		if len(responses) > 0 && responses[0].Message != "" {
 			message = responses[0].Message
 		}
-		return "", fmt.Errorf("%s", message)
+		return result, fmt.Errorf("%s", message)
 	}
-	return responses[0].SessionID, nil
+	res := responses[0]
+	result.OK = true
+	result.SessionID = res.SessionID
+	result.Reset = res.Reset
+	result.Transcript = res.Transcript
+	return result, nil
 }
 
 func deleteChatTurn(socketPath, sessionID string, turnID int64) error {

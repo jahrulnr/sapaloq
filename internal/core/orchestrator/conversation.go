@@ -119,6 +119,10 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	thinkingOut := cfg.thinkingOut
 	var all strings.Builder
 	cleanMessages, images := extractImages(messages)
+	if cfg.compactCtx != nil {
+		cfg.compactCtx.messages = &cleanMessages
+		cfg.compactCtx.fallbackTask = fallbackTask
+	}
 	// One-shot: once we've dropped images and retried text-only we never
 	// re-attach them in this run, so a model that can't see images degrades
 	// gracefully instead of looping on the same 400.
@@ -226,6 +230,17 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			if o.contextHeadroomReached(runCtx, sessionID, cleanMessages, snap.entry.ContextWindow, runtimeCfg.Compaction.HeadroomPercent) &&
 				len(cleanMessages) > lastCompactedMessageCount+2 {
 				out.emit(runCtx, statusEvent(sessionID, "compacting"))
+				if cfg.compactCtx != nil {
+					before := len(cleanMessages)
+					compacted := compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
+					if len(compacted) < before {
+						cleanMessages = compacted
+						lastCompactedMessageCount = len(cleanMessages)
+						out.emit(runCtx, statusEvent(sessionID, "working"))
+					} else {
+						return all, fmt.Errorf("context at %d%% and compaction could not shrink history", o.contextPercent(cleanMessages, snap.entry.ContextWindow))
+					}
+				} else {
 				shrunk, ok, cerr := o.shrinkContextForRun(runCtx, snap, out, sessionID, fallbackTask, "force_headroom", cleanMessages, true)
 				if cerr != nil {
 					return all, cerr
@@ -236,6 +251,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				cleanMessages = shrunk
 				lastCompactedMessageCount = len(cleanMessages)
 				out.emit(runCtx, statusEvent(sessionID, "working"))
+				}
 			}
 		} else if !runtimeCfg.Compaction.UseCheckpointsEnabled() {
 		pct := o.effectiveContextPercent(runCtx, sessionID, cleanMessages, snap.entry.ContextWindow)

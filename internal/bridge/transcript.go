@@ -54,4 +54,9 @@ type TranscriptPatch struct {
 	Entries      []TranscriptEntry `json:"entries"`
 	Finished     bool              `json:"finished,omitempty"`
 	TurnID       int64             `json:"turn_id,omitempty"`
+	// Reset tells the widget to discard the current transcript DOM and replace
+	// it with Entries (usually empty for a fresh session). Only set after the
+	// backend has persisted the new/empty session so the UI never clears on a
+	// failed reset.
+	Reset bool `json:"reset,omitempty"`
 }

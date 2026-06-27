@@ -59,15 +59,23 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 	// result to fall back on.
 	var finalResult strings.Builder
 
+	compactCtx := &subAgentCompactCtx{
+		fallbackTask:    record.Task,
+		sink:            &subagentSink{o: o, taskID: record.ID},
+		taskID:          record.ID,
+		parentSessionID: sessionID,
+	}
+
 	cfg := turnConfig{
 		sessionID:         subSession,
 		runID:             record.ID,
 		tools:             o.toolsForRole(record.Role),
-		sink:              &subagentSink{o: o, taskID: record.ID},
+		sink:              compactCtx.sink,
+		compactCtx:        compactCtx,
 		maxInferenceTurns: o.roleMaxTurns(record.Role),
 		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
 			o.publishTaskActivity(sessionID, *record, "Menjalankan `"+call.Name+"`.")
-			res := o.handleSubAgentTool(ctx, record, &finalResult, call)
+			res := o.handleSubAgentTool(ctx, record, &finalResult, call, compactCtx)
 			text := ""
 			if res.text != "" {
 				text = fmt.Sprintf("[%s] %s", call.Name, res.text)
@@ -255,7 +263,7 @@ type subToolResult struct {
 
 // handleSubAgentTool executes a tool call inside a sub-agent loop: shared
 // assessment tools plus plan/lifecycle/clarification tools.
-func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecord, result *strings.Builder, call parse.ToolCall) subToolResult {
+func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecord, result *strings.Builder, call parse.ToolCall, compactCtx *subAgentCompactCtx) subToolResult {
 	o.auditTool(record.SessionID, "subagent:"+record.Role, call)
 	// Enforce role policy before dispatching shared tools. Shared means the
 	// implementation is reusable across roles, not that every role may invoke
@@ -296,6 +304,10 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			return subToolResult{text: "No plan available yet."}
 		}
 		return subToolResult{text: plan}
+	case "sapaloq_compact_session":
+		args := parseToolArgs(call.Arguments)
+		text, _ := o.handleSubAgentCompactSession(ctx, compactCtx, args.Summary, args.Reason)
+		return subToolResult{text: text}
 	case "sapaloq_update_task_progress":
 		note := strings.TrimSpace(args.Note)
 		if note == "" {

@@ -18,32 +18,38 @@ import (
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
-func (o *Orchestrator) handleSlash(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, id, message string) {
+// handleSlash runs a registered slash command. It returns a non-empty session id
+// when the active chat session changed (e.g. /reset, /clear).
+func (o *Orchestrator) handleSlash(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, id, message string) string {
 	switch id {
 	case "settings":
 		o.handleSettings(ctx, out, sessionID, message)
 	case "compaction":
 		count, err := o.compactActiveSession(ctx, sessionID, "manual")
 		if err != nil {
-			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
-			return
+			o.emitSlash(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+			return ""
 		}
-		o.emit(ctx, out, responseEvent(sessionID, fmt.Sprintf("Compaction complete. %d older turns summarized.", count)))
+		o.emitSlash(ctx, out, sessionID, responseEvent(sessionID, fmt.Sprintf("Compaction complete. %d older turns summarized.", count)))
 	case "reset":
 		snap := o.snapshot()
 		newID, err := o.chat.Reset(ctx, snap.entry.Key, snap.entry.Model)
 		if err != nil {
-			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
-			return
+			o.emitSlash(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+			return ""
 		}
-		o.emit(ctx, out, responseEvent(newID, "Session reset. Starting a fresh active chat."))
+		if o.progress != nil {
+			o.progress.Close(sessionID)
+		}
+		return newID
 	case "model":
 		o.handleModel(ctx, out, sessionID, message)
 	case "thinking":
 		o.handleThinking(ctx, out, sessionID, message)
 	default:
-		o.emit(ctx, out, settingsEvent(sessionID, id))
+		o.emitSlash(ctx, out, sessionID, settingsEvent(sessionID, id))
 	}
+	return ""
 }
 
 func (o *Orchestrator) compactActiveSession(ctx context.Context, sessionID, reason string) (int, error) {

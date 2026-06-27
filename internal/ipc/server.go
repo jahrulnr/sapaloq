@@ -242,7 +242,8 @@ func (s *Server) handleSessionNew(ctx context.Context, conn net.Conn, req Reques
 		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
 		return
 	}
-	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, ServerMs: time.Since(start).Milliseconds()})
+	transcript, _ := s.orch.SessionTranscript(ctx, sessionID)
+	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Transcript: transcript, Reset: true, ServerMs: time.Since(start).Milliseconds()})
 }
 
 func (s *Server) handleUsage(ctx context.Context, conn net.Conn, req Request, start time.Time) {

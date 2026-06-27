@@ -1,6 +1,7 @@
 // Chat-history restore via BE-driven transcript API.
 import { ChatHistory, ContextUsage, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
 import type { ChatUsage, SessionSummary } from '../core/types';
+import { applyChatResetFromBE } from './apply-session-reset';
 import { clearMessages } from './messages';
 import { renderUsage } from './connection';
 import { mountChatTranscript, resetChatTranscriptState } from './transcript-pane';
@@ -102,7 +103,7 @@ function sessionLabel(session: SessionSummary): string {
   return session.title?.trim() || DEFAULT_LABEL;
 }
 
-function setSwitcherLabel(text: string) {
+export function setSwitcherLabel(text: string) {
   const el = document.getElementById('history-current');
   if (el) el.textContent = text || DEFAULT_LABEL;
 }
@@ -218,14 +219,23 @@ export async function switchSession(sessionID: string) {
 
 export async function startNewSession() {
   try {
-    const newID = await NewSession();
-    if (newID) setSessionID(newID);
+    const res = await NewSession();
+    if (!res.reset) return;
+    applyChatResetFromBE({
+      session_id: res.session_id,
+      entries: res.transcript,
+      reset: true,
+    });
+    setSwitcherLabel(DEFAULT_LABEL);
+    void loadSessionList();
+    try {
+      renderUsage((await ContextUsage()) as ChatUsage);
+    } catch {
+      // best-effort
+    }
   } catch {
     return;
   } finally {
     closeHistoryMenu();
   }
-  clearMessages();
-  setSwitcherLabel(DEFAULT_LABEL);
-  await refreshAfterSessionChange();
 }

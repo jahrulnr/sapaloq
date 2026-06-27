@@ -9,8 +9,9 @@ import { autosizeCompose, resetComposeSize, setComposeDisabled } from '../ui/com
 import { renderUsage, setConnection, setRingState, runPing } from './connection';
 import { appendMessage, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
+import { applyChatResetFromBE } from './apply-session-reset';
 import { mountChatTranscript, resetChatTranscriptState, syncChatTranscript } from './transcript-pane';
-import { bindLatestGroupTurnID, removeRepliesAfterTurn, restoreChatHistory } from './history';
+import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory, setSwitcherLabel } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus } from './runtime-status';
 import { notifyCompletion, primeNotifications } from './notifications';
@@ -52,6 +53,13 @@ function clearProgressFromTranscript() {
 }
 
 function applyTranscriptPatch(patch: TranscriptPatch) {
+  if (patch.reset) {
+    applyChatResetFromBE(patch);
+    if (patch.finished) releaseInFlightTurn();
+    void loadSessionList();
+    setSwitcherLabel('SapaLOQ');
+    return;
+  }
   if (!patch.entries?.length) return;
   if (activeGeneration && patch.generation_id && patch.generation_id !== activeGeneration) return;
   syncChatTranscript(patch.entries);
@@ -73,14 +81,21 @@ async function sendText(text: string, _visibleText = text, _attachments: Attachm
   resetChatTranscriptState();
   try {
     const res = await SendMessage(getSessionID(), text);
-    setSessionID(res.session_id || getSessionID());
     if (res.generation_id) activeGeneration = res.generation_id;
-    if (res.transcript?.length) mountChatTranscript(res.transcript);
+    if (res.reset) {
+      applyChatResetFromBE({
+        session_id: res.session_id,
+        entries: res.transcript,
+        reset: true,
+      });
+      void loadSessionList();
+      setSwitcherLabel('SapaLOQ');
+    } else {
+      if (res.session_id) setSessionID(res.session_id);
+      if (res.transcript?.length) mountChatTranscript(res.transcript);
+    }
     await bindLatestGroupTurnID();
     renderUsage(res.usage as ChatUsage | undefined);
-    if (text.trim() === '/reset' || text.trim() === '/clear') {
-      await restoreChatHistory();
-    }
     void runPing();
   } catch (err) {
     const message = errorText(err);
