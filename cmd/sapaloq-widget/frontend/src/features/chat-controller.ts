@@ -2,7 +2,7 @@
 import { DeleteChatTurn, RetryChatTurn, SendMessage, StopChat } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { AttachmentData } from '../ui/compose';
-import type { ChatUsage, TranscriptPatch } from '../core/types';
+import type { ChatUsage, StreamEvent, TranscriptPatch } from '../core/types';
 import { errorText, getComposeInput, getMessageList } from '../ui/dom';
 import { ICON_SEND, ICON_STOP } from '../ui/icons';
 import { autosizeCompose, resetComposeSize, setComposeDisabled } from '../ui/compose-ui';
@@ -10,7 +10,7 @@ import { renderUsage, setConnection, setRingState, runPing } from './connection'
 import { appendMessage, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
 import { applyChatResetFromBE } from './apply-session-reset';
-import { mountChatTranscript, resetChatTranscriptState, syncChatTranscript, syncChatTranscriptStateFromDOM } from './transcript-pane';
+import { syncChatTranscript, syncChatTranscriptStateFromDOM } from './transcript-pane';
 import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus } from './runtime-status';
@@ -25,6 +25,7 @@ import {
   setSessionID,
   setSubmitting,
   setUserGroup,
+  spokenTaskIDs,
 } from '../core/state';
 
 let activeGeneration: string | null = null;
@@ -127,17 +128,17 @@ async function retryMessage(turnID: number) {
   if (!turnID || isSubmitting() || !input) return;
   closeMessageMenu();
   setUserGroup(removeRepliesAfterTurn(turnID));
+  syncChatTranscriptStateFromDOM();
   setRingState('thinking');
   setSubmitting(true);
   setSubmittingUI(true);
   setComposeDisabled(true);
   activeGeneration = null;
-  resetChatTranscriptState();
   try {
     const res = await RetryChatTurn(getSessionID(), turnID);
     setSessionID(res.session_id || getSessionID());
     if (res.generation_id) activeGeneration = res.generation_id;
-    if (res.transcript?.length) mountChatTranscript(res.transcript);
+    if (res.transcript?.length) syncChatTranscript(res.transcript);
     await bindLatestGroupTurnID();
     renderUsage(res.usage as ChatUsage | undefined);
   } catch (err) {
@@ -210,7 +211,11 @@ export function initChatController() {
         void refreshRuntimeStatus();
       }
     });
-    EventsOn('sapaloq:stream', (event: { kind?: string; task_status?: string; task_role?: string; summary?: string }) => {
+    EventsOn('sapaloq:stream', (event: StreamEvent) => {
+      if (event.kind === 'response_delta' && event.task_id) {
+        applySpokenTaskCompletion(event);
+        return;
+      }
       if (event.kind === 'task_update') {
         void restoreChatHistory();
         void refreshRuntimeStatus();
@@ -221,6 +226,15 @@ export function initChatController() {
     // Wails runtime only
   }
   primeNotifications();
+}
+
+/** Live follow-up when a background sub-agent finishes (tool-like completion). */
+export function applySpokenTaskCompletion(event: StreamEvent): boolean {
+  if (event.kind !== 'response_delta' || !event.task_id || !event.delta?.trim()) return false;
+  if (spokenTaskIDs.has(event.task_id)) return false;
+  spokenTaskIDs.add(event.task_id);
+  void restoreChatHistory();
+  return true;
 }
 
 function maybeNotifyTaskCompletion(event: { task_status?: string; task_role?: string; summary?: string }) {

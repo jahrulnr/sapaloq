@@ -3,7 +3,7 @@
 > Setiap spawn sub-agent dapat **system-prompt per role**.
 > Setelah task selesai: **automation-learning** (SapaLOQ) + orchestrator hooks → prompt/skill builder.
 > Learning **tidak hanya** dari interaksi user - bisa **research internet** untuk best practice.
-> Last updated: 2026-06-24 (ask.md: spawn-before-acknowledge ordering on delegation/plan handoff)
+> Last updated: 2026-06-28 (runtime context block: `workspace=` now reflects persisted actor cwd)
 
 Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [FEEDBACK-SOP.md](./FEEDBACK-SOP.md)
 
@@ -179,8 +179,10 @@ the repo/workspace it is operating on:
 | `dir` | `~/SapaLOQ/prompts` | Where role `.md` files + `prompts.manifest.json` live |
 
 Every Ask/Planner/Agent context also receives a generated system block with
-`config_path`, `memory_path`, `state_path`, `workspace`, and related runtime
-variables. The same map is materialized to `~/SapaLOQ/etc/ROADMAP.md`.
+`config_path`, `memory_path`, `state_path`, `workspace` (the **persisted actor
+cwd** for that session/task — not the install default), and related runtime
+variables. The same map is materialized to `~/SapaLOQ/etc/ROADMAP.md` (ROADMAP
+uses the install default workspace when no actor id is available).
 
 > This is the **base template** layer of step 1 above; the learning-side builder still layers task slices / overlays on top at assemble time.
 5. Optional: **research** best practice → cite sources → merge into skill

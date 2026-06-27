@@ -138,9 +138,12 @@ func (o *Orchestrator) contextWindow() int {
 
 // runtimeContextMessage is the always-injected system block that names the
 // on-disk paths SapaLOQ uses, so the model never has to guess where prompts /
-// skills / state live. Cheap to build (no I/O) and bounded in size.
-func (o *Orchestrator) runtimeContextMessage() bridge.Message {
+// skills / state live. actorRunID selects the persisted actor cwd (Ask session
+// id for foreground chat; task id for background actors). Cheap to build (no I/O
+// beyond optional workspace state read) and bounded in size.
+func (o *Orchestrator) runtimeContextMessage(actorRunID string) bridge.Message {
 	dirs := config.RuntimeDirs(o.snapshot().cfg)
+	workspace := o.actorCWD(actorRunID)
 	content := fmt.Sprintf(`---
 # SapaLOQ runtime variables
 
@@ -156,8 +159,8 @@ run_path=%s
 etc_path=%s
 runtime_roadmap=%s
 
-Use these paths instead of guessing. Relative tool paths resolve from the actor workspace.`,
-		o.cfgPath, dirs.DataDir, dirs.MemoryDir, dirs.StateDir, dirs.WorkspaceDir,
+Use these paths instead of guessing. workspace is this actor's persisted cwd and project root; relative tool paths and default exec cwd resolve from it.`,
+		o.cfgPath, dirs.DataDir, dirs.MemoryDir, dirs.StateDir, workspace,
 		dirs.PromptsDir, dirs.SkillsDir, dirs.VaultDir, dirs.RunDir, dirs.EtcDir,
 		filepath.Join(dirs.EtcDir, "ROADMAP.md"))
 	return bridge.Message{Role: "system", Content: content}
@@ -171,7 +174,7 @@ func (o *Orchestrator) materializeRuntimeRoadmap() {
 	if dirs.EtcDir == "" {
 		return
 	}
-	content := o.runtimeContextMessage().Content + `
+	content := o.runtimeContextMessage("").Content + `
 
 # Workspace contract
 - Every actor starts at workspace unless it has a persisted cwd.
@@ -574,7 +577,7 @@ func (o *Orchestrator) buildForegroundActorMessages(ctx context.Context, session
 	}
 	messages := make([]bridge.Message, 0, len(turns)+6)
 	messages = append(messages, bridge.Message{Role: "system", Content: o.systemPrompt(prompts.RoleAsk)})
-	messages = append(messages, o.runtimeContextMessage())
+	messages = append(messages, o.runtimeContextMessage(sessionID))
 	if block := o.negativeGuidanceBlock(ctx); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
@@ -597,7 +600,7 @@ func (o *Orchestrator) buildBackgroundActorMessages(ctx context.Context, record 
 		systemContent = "You are a background SapaLOQ task agent. Use your tools, then return a concise final result."
 	}
 	messages := []bridge.Message{{Role: "system", Content: systemContent}}
-	messages = append(messages, o.runtimeContextMessage())
+	messages = append(messages, o.runtimeContextMessage(record.ID))
 	if record.Role == "task-runner" && record.PlanTaskID != "" {
 		if plan := o.readPlanMarkdown(record.PlanTaskID); plan != "" {
 			messages = append(messages, bridge.Message{

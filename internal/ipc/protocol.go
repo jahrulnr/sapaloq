@@ -18,6 +18,7 @@ type Request struct {
 	Query      string `json:"query,omitempty"`
 	Signal     string `json:"signal,omitempty"`
 	Correction string `json:"correction,omitempty"`
+	Path       string `json:"path,omitempty"`
 }
 
 type Response struct {
@@ -38,4 +39,5 @@ type Response struct {
 	Sessions     []chatstore.SessionSummary       `json:"sessions,omitempty"`
 	TaskInspect  *orchestrator.TaskInspectResult  `json:"task_inspect,omitempty"`
 	ActorInspect *orchestrator.ActorInspectResult `json:"actor_inspect,omitempty"`
+	Path         string                           `json:"path,omitempty"`
 }

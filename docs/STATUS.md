@@ -2,7 +2,21 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**compose paste fix v2**: unified `ingestComposePaste` uses Wails `ClipboardGetText` for context-menu URL paste; Linux `ClipboardGetImage` reads GTK clipboard for Ctrl+V screenshots when WebKit omits image payloads)
+> Last updated: 2026-06-28 (**sub-agent completion follow-up**: speak before task_update bus; widget handles task-stamped response_delta)
+>
+> Prior: 2026-06-28 (**folder drop link fix**: user bubbles run `parseTurnContent` before markdown; `[Local folder: path]` converts to `[name](path)` when backend strips metadata)
+>
+> Prior: 2026-06-28 (**retry purges tools**: chat retry drops stale exec/tool rows from progress JSONL + DOM, not only assistant turns)
+>
+> Prior: 2026-06-28 (**per-session workspace**: WORKSPACE card keyed by chat room; refresh on session switch; no cross-room cache bleed)
+>
+> Prior: 2026-06-28 (**error retry UX**: error ↻ resolves preceding user turn id; retry button survives transcript patches; retry syncs incrementally instead of remounting full history)
+>
+> Prior: 2026-06-28 (**runtime prompt workspace**: `runtimeContextMessage` injects persisted Ask-session cwd into `workspace=` system block, not install default)
+>
+> Prior: 2026-06-28 (**workspace picker**: WORKSPACE runtime card opens native GTK directory dialog; user sets Ask-session cwd via `workspace_set` IPC; hidden dot-directories visible in dialog)
+>
+> Prior: 2026-06-28 (**compose paste fix v2**: unified `ingestComposePaste` uses Wails `ClipboardGetText` for context-menu URL paste; Linux `ClipboardGetImage` reads GTK clipboard for Ctrl+V screenshots when WebKit omits image payloads)
 >
 > Prior: 2026-06-28 (**compose UX fixes**: slash popover no longer steals Enter — Tab accepts suggestions, Enter submits; WebKitGTK image paste via `kind:"string"` + `type:"image/*"` clipboard items; custom compose context menu for Cut/Copy/Paste when the native Linux menu is suppressed in Wails)
 >
@@ -56,6 +70,78 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (wraps the public Codex CLI) | ✅ | `internal/bridges/codex` - spawn-per-turn wrapper over `codex exec --json` + `codex exec resume`; binds only to the documented CLI contract (`CODEX_CLI_CONTRACT.md`), no RE. `bridge.go` (`New`/`ID`/`Caps`/`Complete`/`runTurn`/`composePrompt`/`safeReasoning`/`authOK`), `invoke.go` (typed argv, no `-a`; `--json` precedes `resume`; stdin prompt; image temp files), `stream.go` (tolerant JSONL scanner → `bridge.StreamEvent`; event-authoritative terminal via `scanStream`/`finalizeTerminal` - `turn.failed` with exit 0 still → `EventError`), `session.go` (vault-backed `SessionID→thread_id` store `codex-threads.jsonl` + resume self-heal), `explain.go` (`explainCodexError` mirrors cursor), `proc_unix.go`/`proc_other.go` (process-group kill on cancel). Reuses existing `config.LLMBridge` fields (no new config field); sandbox/cwd/CODEX_HOME default safely and are env-overridable; minimal reasoning-effort downgraded to `low` (incompatible with built-in tools). Registered in `newBridge()`. Offline golden-fixture + tolerant-parser + cancellation tests (`testdata/*.jsonl`); e2e build-tagged + auto-skip without the CLI |
 
 ---
+
+## Implemented this session (2026-06-28) - sub-agent completion speaks into chat
+
+- **Agent/planner finish now surfaces an orchestrator follow-up bubble**, not
+  only a toast/card. Root cause: `task_update` reached the widget before
+  `speakTaskCompletion` persisted the assistant turn, and the live
+  `response_delta` handler was missing after the transcript refactor.
+- **Backend:** `publishTaskUpdateDirect` calls `speakTaskCompletion` before
+  publishing `task_update` on the bus.
+- **Frontend:** `applySpokenTaskCompletion` handles task-stamped
+  `response_delta` from `sapaloq:stream` (deduped via `spokenTaskIDs`).
+- **Tests:** `completion_test.go`, `chat-completion.test.ts`.
+
+## Implemented this session (2026-06-28) - folder drop renders as link in bubble
+
+- **Dropped folders no longer show as raw `[Local folder: /path]` text.** Backend
+  transcript strips attachment metadata but kept the model pointer; the widget
+  now runs `parseTurnContent` before rendering user bubbles and converts those
+  pointers into clickable `[name](path)` markdown links.
+- **Tests:** `compose.test.ts`, `render-user.test.ts`.
+
+## Implemented this session (2026-06-28) - retry purges stale tool rows
+
+- **Chat retry no longer leaves exec/tool bubbles behind.** `RetryChat` now purges
+  matching generations from the session progress JSONL (tools were persisted there
+  but not removed with SQLite turns). Refreshes the live transcript base before
+  regenerating.
+- **Frontend:** `removeRepliesAfterTurn` strips all pane siblings after the user
+  turn (including `.tool-activity`) and clears the tool-activity cache.
+- **Tests:** `chat_retry_test.go`, `history-retry.test.ts`.
+
+## Implemented this session (2026-06-28) - per-session workspace (chat rooms)
+
+- **Each chat room keeps its own WORKSPACE.** Persisted under
+  `state/workspaces/{sessionID}.json`; the widget cache is now keyed by
+  `session_id` (no global fallback that showed the previous room's path after
+  switch or restart).
+- **Session switch / new chat** triggers immediate `refreshRuntimeStatus` so the
+  card reflects the active room's cwd.
+- **Tests:** `workspace_session_test.go`, updated `runtime-status-workspace.test.ts`.
+
+## Implemented this session (2026-06-28) - error retry UX
+
+- **Error ↻ is clickable again.** Live error rows had no user `turn_id` and
+  `patchTranscriptEntry` wiped the inline retry button on every stream update.
+  Retry now resolves the preceding user turn; the button lives outside the
+  markdown body and is re-wired after patches.
+- **Retry only replays the failed turn.** Frontend no longer
+  `mountChatTranscript` on retry (full history flash); it trims replies after the
+  user turn and incrementally `syncChatTranscript` like a normal send.
+- **Tests:** `messages-error.test.ts`.
+
+## Implemented this session (2026-06-28) - runtime prompt workspace injection
+
+- **`workspace=` in the runtime system block now matches the UI card.** Ask turns
+  pass the chat `session_id` into `runtimeContextMessage`; background actors pass
+  their task id. The block uses `actorCWD` (persisted via WORKSPACE picker /
+  `cd` / `workspace_set`) instead of the install default `~/SapaLOQ/workspace`.
+- **Test:** `prompt_runtime_test.go`.
+
+## Implemented this session (2026-06-28) - workspace picker (user-controlled cwd)
+
+- **WORKSPACE card is now user-controlled.** Clicking the runtime WORKSPACE tile
+  opens the OS-native directory chooser via Wails `OpenDirectoryDialog`
+  (`PickWorkspaceFolder` in Go; Nautilus-style on GNOME). Hidden dot-directories
+  are visible; cancel leaves cwd unchanged.
+- **Backend:** `Orchestrator.SetSessionWorkspace` persists Ask cwd via existing
+  `state/workspaces/{sessionID}.json`; IPC op `workspace_set`; `RuntimeStatus`
+  exposes `session_workspace` for the card label (`data-workspace-path` for dialog
+  default).
+- **Tests:** `workspace_set_test.go`, `workspace_path_test.go`,
+  `ui/workspace-picker.test.ts`, `runtime-status-workspace.test.ts`.
 
 ## Implemented this session (2026-06-28) - compose paste fix v2 (Wails/GTK clipboard)
 

@@ -155,6 +155,11 @@ func (a *App) RuntimeStatus() (*runtimeStatus, error) {
 	return runtimeInfo(a.socketPath)
 }
 
+// SetWorkspace persists the active chat session workspace (Ask actor cwd).
+func (a *App) SetWorkspace(sessionID, path string) (workspaceSetResult, error) {
+	return setWorkspace(a.socketPath, sessionID, path)
+}
+
 // TaskInspect returns the durable state + a tail of a sub-agent's progress
 // stream for the "Planner & Agent" pop-up. afterLine is the number of progress
 // lines the caller has already seen (0 on first open).

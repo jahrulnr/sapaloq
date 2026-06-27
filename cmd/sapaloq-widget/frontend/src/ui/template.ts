@@ -39,10 +39,10 @@ export const APP_TEMPLATE = `
           <article class="actor-tile" data-state="idle"><span class="actor-signal"></span><span><b>Planner</b><small>idle</small></span></article>
           <article class="actor-tile" data-state="idle"><span class="actor-signal"></span><span><b>Agent</b><small>idle</small></span></article>
         </div>
-        <div class="runtime-workspace" id="runtime-workspace" title="Workspace aktif">
+        <button type="button" class="runtime-workspace runtime-workspace--clickable" id="runtime-workspace" title="Pilih workspace" aria-label="Pilih workspace" style="--wails-draggable: no-drag">
           <span class="runtime-kicker">WORKSPACE</span>
           <strong>~/SapaLOQ/workspace</strong>
-        </div>
+        </button>
       </section>
       <div class="popup-body">
         <div class="message-list" id="message-list"></div>

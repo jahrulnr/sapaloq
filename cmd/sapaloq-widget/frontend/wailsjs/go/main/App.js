@@ -50,6 +50,10 @@ export function OpenExternal(arg1) {
   return window['go']['main']['App']['OpenExternal'](arg1);
 }
 
+export function PickWorkspaceFolder(arg1) {
+  return window['go']['main']['App']['PickWorkspaceFolder'](arg1);
+}
+
 export function PingCore() {
   return window['go']['main']['App']['PingCore']();
 }
@@ -68,6 +72,10 @@ export function RuntimeStatus() {
 
 export function SendMessage(arg1, arg2) {
   return window['go']['main']['App']['SendMessage'](arg1, arg2);
+}
+
+export function SetWorkspace(arg1, arg2) {
+  return window['go']['main']['App']['SetWorkspace'](arg1, arg2);
 }
 
 export function SlashSuggest(arg1) {

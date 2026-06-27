@@ -120,7 +120,9 @@ type runtimeStatus struct {
 	DataPath      string               `json:"data_path"`
 	MemoryPath    string               `json:"memory_path"`
 	StatePath     string               `json:"state_path"`
-	WorkspacePath string               `json:"workspace_path"`
+	WorkspacePath    string               `json:"workspace_path"`
+	SessionID        string               `json:"session_id,omitempty"`
+	SessionWorkspace string               `json:"session_workspace,omitempty"`
 	Actors        []actorRuntimeStatus `json:"actors"`
 }
 
@@ -402,6 +404,7 @@ func runtimeInfo(socketPath string) (*runtimeStatus, error) {
 		Provider: src.Provider, Model: src.Model, Driver: src.Driver,
 		Reasoning: src.Reasoning, ConfigPath: src.ConfigPath, DataPath: src.DataPath,
 		MemoryPath: src.MemoryPath, StatePath: src.StatePath, WorkspacePath: src.WorkspacePath,
+		SessionID: src.SessionID, SessionWorkspace: src.SessionWorkspace,
 	}
 	for _, actor := range src.Actors {
 		out.Actors = append(out.Actors, actorRuntimeStatus{

@@ -269,3 +269,63 @@ func (o *Orchestrator) readSessionProgressEvents(sessionID string) ([]bridge.Str
 	}
 	return out, sc.Err()
 }
+
+func generationIDsAfterTurn(turns []chatstore.Turn, user chatstore.Turn) map[string]struct{} {
+	drop := make(map[string]struct{})
+	for _, t := range turns {
+		if t.Seq > user.Seq && t.GenerationID != "" {
+			drop[t.GenerationID] = struct{}{}
+		}
+	}
+	return drop
+}
+
+// purgeSessionProgressForRetry rewrites the session progress JSONL after a chat
+// retry, dropping tool/task stream events from deleted generations so the widget
+// transcript does not keep stale exec rows.
+func (o *Orchestrator) purgeSessionProgressForRetry(sessionID string, dropGenerations map[string]struct{}, userTurnAt time.Time) error {
+	dir := o.progressDir()
+	if dir == "" || sessionID == "" {
+		return nil
+	}
+	if o.progress != nil {
+		o.progress.Close(sessionID)
+	}
+	path := filepath.Join(dir, "orch-"+sessionID+".jsonl")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	lines := strings.Split(string(raw), "\n")
+	kept := make([]byte, 0, len(raw))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var ev bridge.StreamEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			continue
+		}
+		if shouldDropProgressEvent(ev, dropGenerations, userTurnAt) {
+			continue
+		}
+		kept = append(kept, line...)
+		kept = append(kept, '\n')
+	}
+	if len(kept) == 0 {
+		return os.Remove(path)
+	}
+	return writeFileAtomic(path, kept, 0o600)
+}
+
+func shouldDropProgressEvent(ev bridge.StreamEvent, dropGenerations map[string]struct{}, userTurnAt time.Time) bool {
+	if ev.GenerationID != "" {
+		_, drop := dropGenerations[ev.GenerationID]
+		return drop
+	}
+	return !ev.At.IsZero() && ev.At.After(userTurnAt)
+}

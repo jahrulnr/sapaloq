@@ -435,12 +435,24 @@ func (o *Orchestrator) RetryChat(ctx context.Context, sessionID string, turnID i
 	if turn.Role != "user" {
 		return nil, fmt.Errorf("turn %d is not a user message", turnID)
 	}
+	allTurns, err := o.chat.ActiveTurns(ctx, sessionID, true)
+	if err != nil {
+		return nil, err
+	}
+	dropGens := generationIDsAfterTurn(allTurns, turn)
+	if gen := o.activeGenerationString(sessionID); gen != "" {
+		dropGens[gen] = struct{}{}
+	}
 	if err := o.chat.DeleteAfterTurn(ctx, sessionID, turnID); err != nil {
+		return nil, err
+	}
+	if err := o.purgeSessionProgressForRetry(sessionID, dropGens, turn.CreatedAt); err != nil {
 		return nil, err
 	}
 	out := make(chan bridge.StreamEvent, 32)
 	runCtx, cancel := context.WithCancel(ctx)
 	runID := o.setActiveGeneration(sessionID, cancel)
+	o.refreshActiveTranscriptBase(ctx, sessionID)
 	go o.completeExistingTurn(runCtx, cancel, runID, snap, out, sessionID, turn.Content)
 	return out, nil
 }

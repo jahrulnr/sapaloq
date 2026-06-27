@@ -35,6 +35,10 @@ export type { ToolActivityCall };
 let activeMessageMenu: HTMLElement | null = null;
 const toolActivityByID = new Map<string, HTMLElement>();
 
+export function clearToolActivityCache() {
+  toolActivityByID.clear();
+}
+
 function findToolActivity(call: ToolActivityCall): HTMLElement | undefined {
   if (call.id) {
     const byID = toolActivityByID.get(call.id);
@@ -271,13 +275,18 @@ export function parseTurnContent(content: string): { text: string; attachments: 
     const attachment = decodeAttachmentMeta(match[1]);
     if (attachment) attachments.push(attachment);
   }
+  const linkedPaths = new Set<string>();
   // Replace each attachment metadata marker with a clickable markdown link when
   // the attachment is path-backed (native file/folder drop), so a restored
   // bubble renders the same link as the live one. Pathless attachments (browser
   // /pasted) collapse to nothing here and surface via the "N attachments" badge.
   let text = content.replace(metadata, (_match, encoded) => {
     const a = decodeAttachmentMeta(encoded);
-    return a && a.path ? `[${a.name}](${a.path})` : '';
+    if (a?.path) {
+      linkedPaths.add(a.path);
+      return `[${a.name}](${a.path})`;
+    }
+    return '';
   });
   text = text.replace(/\n*!\[([^\]]*)\]\((data:image\/[^)]+)\)/g, (_match, name, dataURI) => {
     const existing = attachments.find((item) => item.name === name);
@@ -286,10 +295,26 @@ export function parseTurnContent(content: string): { text: string; attachments: 
     return '';
   });
   text = text.replace(/\n*--- file: ([^\n]+) \(([^)]+)\) ---[\s\S]*?--- end file: \1 ---/g, '');
-  // The chip/link already shows the name/path, so drop the model-facing
-  // "[Local file: …]" / "[Local folder: …]" pointers to avoid duplication.
-  text = text.replace(/\n*\[Local file:[^\]]*\]/g, '');
-  text = text.replace(/\n*\[Local folder:[^\]]*\]/g, '');
+  // Backend transcript strips metadata markers but keeps model pointers like
+  // `[Local folder: /path]`. Convert those to bubble links; skip when metadata
+  // already produced a link for the same path.
+  text = text.replace(/\[Local folder:\s*([^\]]+)\]/g, (_match, rawPath) => {
+    const path = rawPath.trim();
+    if (!path || linkedPaths.has(path)) return '';
+    linkedPaths.add(path);
+    const name = path.split('/').filter(Boolean).pop() || path;
+    return `[${name}](${path})`;
+  });
+  text = text.replace(/\[Local file:\s*([^\]]+)\]/g, (_match, inner) => {
+    const body = inner.trim();
+    if (!body) return '';
+    const atMatch = /^(.+?)\s+at\s+(\S+)/.exec(body);
+    const path = (atMatch ? atMatch[2] : body).trim();
+    if (!path || linkedPaths.has(path)) return '';
+    linkedPaths.add(path);
+    const name = atMatch ? atMatch[1].trim() : (path.split('/').filter(Boolean).pop() || path);
+    return `[${name}](${path})`;
+  });
   return { text: text.trim(), attachments };
 }
 
@@ -356,17 +381,45 @@ export function wireUserMessage(item: HTMLElement, _text: string) {
   });
 }
 
+function resolveRetryTurnID(item: HTMLElement): number {
+  const groupID = item.dataset.group || '';
+  if (groupID) {
+    const user = document.querySelector<HTMLElement>(
+      `.message--user[data-group="${groupID}"], .transcript-user[data-group="${groupID}"]`,
+    );
+    const id = Number(user?.dataset.turnId || 0);
+    if (id > 0) return id;
+  }
+  let prev: Element | null = item.previousElementSibling;
+  while (prev) {
+    if (prev instanceof HTMLElement &&
+        (prev.classList.contains('message--user') || prev.classList.contains('transcript-user'))) {
+      const id = Number(prev.dataset.turnId || 0);
+      if (id > 0) return id;
+    }
+    prev = prev.previousElementSibling;
+  }
+  const users = document.querySelectorAll<HTMLElement>('.message--user, .transcript-user');
+  return Number(users[users.length - 1]?.dataset.turnId || 0);
+}
+
 export function wireErrorMessage(item: HTMLElement) {
-  const actions = document.createElement('div');
-  actions.className = 'message-inline-actions';
-  actions.innerHTML = `<button type="button" title="Retry">↻</button>`;
-  const [retry] = Array.from(actions.querySelectorAll<HTMLButtonElement>('button'));
-  retry?.addEventListener('click', (event) => {
+  let actions = item.querySelector('.message-inline-actions');
+  if (!actions) {
+    actions = document.createElement('div');
+    actions.className = 'message-inline-actions';
+    actions.innerHTML = `<button type="button" title="Retry">↻</button>`;
+    item.append(actions);
+  }
+  const retry = actions.querySelector<HTMLButtonElement>('button');
+  if (!retry || retry.dataset.retryWired === '1') return;
+  retry.dataset.retryWired = '1';
+  retry.addEventListener('click', (event) => {
+    event.preventDefault();
     event.stopPropagation();
-    const turnID = Number(item.dataset.turnId || 0);
-    if (turnID) retryTurn(turnID);
+    const turnID = resolveRetryTurnID(item);
+    if (turnID > 0) retryTurn(turnID);
   });
-  item.append(actions);
 }
 
 // resolveAssistantTurnID returns the turn id to attribute feedback to. Assistant

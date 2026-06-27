@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-27 (sub-agent monitor: `ActorInspect` hydrate + live `sapaloq:transcript` bus patches with `actor_id`; chat pane ignores `actor_id` patches)
+> Last updated: 2026-06-28 (WORKSPACE runtime card opens native GTK directory dialog; user sets Ask-session cwd; hidden dot-directories visible)
 
 **Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
 
@@ -73,9 +73,12 @@ durable task snapshots and then live events, so a completion or failure cannot
 disappear merely because the widget was disconnected.
 
 The header includes a compact telemetry rail showing the active model/provider,
-live Planner and Agent slots with their current phase, and the effective actor
-workspace. It refreshes every three seconds and immediately after task events;
-the existing task cards remain the detailed lifecycle history.
+live Planner and Agent slots with their current phase, and the effective Ask
+session workspace (`session_workspace`). Clicking the WORKSPACE tile opens the
+OS-native directory chooser (GTK/Nautilus-style on GNOME; hidden dot-directories
+visible); the choice persists per chat session via `workspace_set` IPC. It
+refreshes every three seconds and immediately after task
+events; the existing task cards remain the detailed lifecycle history.
 
 ### Visual language
 

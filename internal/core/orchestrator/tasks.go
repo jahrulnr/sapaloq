@@ -590,13 +590,13 @@ func (o *Orchestrator) publishTaskUpdateDirect(sessionID string, record taskReco
 		return
 	}
 	_ = o.progress.Append(record.ID, ev)
+	// Persist + republish the spoken completion BEFORE the task_update bus
+	// event. The widget restores history on task_update; if we publish first
+	// the assistant turn is not in SQLite yet and the follow-up bubble is missing.
+	o.speakTaskCompletion(sessionID, record)
 	if o.bus != nil {
 		o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
 	}
-	// Event-driven completion: on a terminal transition, also SPEAK the outcome
-	// into the conversation so a finish that lands after sapaloq_wait returns is
-	// surfaced as a real chat message, not just a card. Idempotent per task id.
-	o.speakTaskCompletion(sessionID, record)
 }
 
 func (o *Orchestrator) publishTaskActivity(sessionID string, record taskRecord, summary string) {

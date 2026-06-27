@@ -1,12 +1,14 @@
 import { renderMarkdown } from '../markdown';
 import { hasVisibleText } from '../dom';
 import type { TranscriptEntry } from './types';
+import { parseTurnContent } from '../../features/messages';
 import {
   createToolActivityElement,
   patchToolActivityElement,
   type ToolActivityMode,
 } from './tool-activity';
 import { renderTaskCardElement, patchTaskCardElement } from './task-card';
+import { wireErrorMessage } from '../../features/messages';
 import { wireTranscriptEntry } from './wire';
 
 function toolEntryFromTranscript(entry: TranscriptEntry) {
@@ -65,6 +67,7 @@ export function renderTranscriptEntry(
     }
     el = wrap;
   } else if (entry.kind === 'user') {
+    const displayText = parseTurnContent(entry.text || '').text || entry.text || '';
     const wrap = document.createElement('div');
     wrap.className = `transcript-entry transcript-user message message--user${entry.archived ? ' message--archived' : ''}`;
     wrap.dataset.entryKind = 'user';
@@ -72,7 +75,7 @@ export function renderTranscriptEntry(
     if (entry.id) wrap.dataset.entryId = entry.id;
     const body = document.createElement('div');
     body.className = 'transcript-entry-body';
-    body.append(renderMarkdown(entry.text || ''));
+    body.append(renderMarkdown(displayText));
     wrap.append(body);
     el = wrap;
   } else if (entry.kind === 'tool') {
@@ -136,7 +139,11 @@ export function renderTranscriptEntry(
     wrap.className = `transcript-entry transcript-error message message--error${entry.archived ? ' message--archived' : ''}`;
     wrap.dataset.entryKind = 'error';
     wrap.dataset.rawText = entry.text || '';
-    wrap.append(renderMarkdown(entry.text || ''));
+    if (entry.id) wrap.dataset.entryId = entry.id;
+    const body = document.createElement('div');
+    body.className = 'transcript-entry-body';
+    body.append(renderMarkdown(entry.text || ''));
+    wrap.append(body);
     el = wrap;
   } else if (entry.kind === 'progress') {
     const wrap = document.createElement('div');
@@ -173,7 +180,11 @@ export function patchTranscriptEntry(el: HTMLElement, entry: TranscriptEntry, _m
     const body = el.querySelector('.transcript-entry-body') || el;
     if (body instanceof HTMLElement && entry.text !== undefined) {
       const target = body.classList.contains('transcript-entry-body') ? body : el;
-      target.replaceChildren(renderMarkdown(entry.text));
+      const displayText = entry.kind === 'user'
+        ? (parseTurnContent(entry.text).text || entry.text)
+        : entry.text;
+      target.replaceChildren(renderMarkdown(displayText));
+      if (entry.kind === 'error') wireErrorMessage(el);
     }
     return;
   }

@@ -34,8 +34,10 @@ import {
   toggleHistoryMenu,
 } from './features/history';
 import { startRuntimeStatusLoop } from './features/runtime-status';
+import { initWorkspacePicker } from './ui/workspace-picker';
 
 document.querySelector('#app')!.innerHTML = APP_TEMPLATE;
+initWorkspacePicker();
 
 void initWindowLayout();
 

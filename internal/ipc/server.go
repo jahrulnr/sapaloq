@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
@@ -125,6 +126,17 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		case "runtime_status":
 			status := s.orch.RuntimeStatus()
 			write(conn, Response{OK: true, Op: req.Op, Runtime: &status, ServerMs: time.Since(start).Milliseconds()})
+		case "workspace_set":
+			cleaned, err := s.orch.SetSessionWorkspace(ctx, req.SessionID, req.Path)
+			if err != nil {
+				write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+				continue
+			}
+			sessionID := strings.TrimSpace(req.SessionID)
+			if sessionID == "" {
+				sessionID, _ = s.orch.ActiveSession(ctx)
+			}
+			write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Path: cleaned, ServerMs: time.Since(start).Milliseconds()})
 		case "task_inspect":
 			inspect, err := s.orch.TaskInspect(req.TaskID, req.AfterLine)
 			if err != nil {
