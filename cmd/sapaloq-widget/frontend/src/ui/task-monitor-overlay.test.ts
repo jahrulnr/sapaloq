@@ -92,7 +92,7 @@ describe('task-monitor-overlay', () => {
     expect(thinking.length).toBe(1);
   });
 
-  it('emits a turn boundary divider between turns', async () => {
+  it('splits assistant text at turn boundaries without a divider row', async () => {
     taskInspectMock.mockResolvedValue(makeInspect({
       events: [
         { kind: 'response_delta', delta: 'turn 1' },
@@ -106,13 +106,31 @@ describe('task-monitor-overlay', () => {
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
     const overlay = document.getElementById('task-monitor-overlay')!;
-    const turns = overlay.querySelectorAll('.task-monitor-turn');
-    expect(turns.length).toBe(1);
-    // The divider carries a numbered turn label (not the old "— turn boundary —").
-    expect(turns[0].textContent).toContain('Turn 1');
+    expect(overlay.querySelectorAll('.task-monitor-turn')).toHaveLength(0);
+    const texts = overlay.querySelectorAll('.task-monitor-text');
+    expect(texts).toHaveLength(2);
+    expect(texts[0].textContent).toContain('turn 1');
+    expect(texts[1].textContent).toContain('turn 2');
   });
 
-  it('renders request and response inside one collapsed tool activity block', async () => {
+  it('drops ephemeral Menjalankan task hints from the activity stream', async () => {
+    taskInspectMock.mockResolvedValue(makeInspect({
+      events: [
+        { kind: 'task_update', summary: 'Menjalankan `exec`.' },
+        { kind: 'tool_call', tool_id: 'call-1', tool_name: 'exec', tool_arguments: '{"command":"ls"}' },
+      ],
+      event_count: 2,
+    }));
+    await openTaskMonitor({ tab: 'planner' });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+    const overlay = document.getElementById('task-monitor-overlay')!;
+    expect(overlay.querySelector('.task-monitor-task-line')).toBeNull();
+    expect(overlay.textContent).not.toContain('Menjalankan');
+    expect(overlay.querySelectorAll('.task-monitor-tool')).toHaveLength(1);
+  });
+
+  it('renders request and response inside one expandable tool activity block', async () => {
     const longArgs = '{"command":"' + 'cd /tmp/profile && '.repeat(20) + '"}';
     taskInspectMock.mockResolvedValue(makeInspect({
       events: [
@@ -140,6 +158,9 @@ describe('task-monitor-overlay', () => {
     tool!.click();
     expect(tool!.classList.contains('is-open')).toBe(true);
     expect(tool!.querySelector<HTMLElement>('.task-monitor-tool-body')?.hidden).toBe(false);
+    tool!.click();
+    expect(tool!.classList.contains('is-open')).toBe(false);
+    expect(tool!.querySelector<HTMLElement>('.task-monitor-tool-body')?.hidden).toBe(true);
   });
 
   it('close button removes the overlay from the DOM', async () => {
@@ -241,5 +262,72 @@ describe('task-monitor-overlay', () => {
     expect(bodyNode?.textContent).toContain('xxxx');
     // The inline task span that used to blow up the layout is gone.
     expect(overlay.querySelector('.task-monitor-task')).toBeNull();
+  });
+
+  it('keeps accumulated activity across incremental polls with no new lines', async () => {
+    taskInspectMock
+      .mockResolvedValueOnce(makeInspect({
+        events: [{ kind: 'response_delta', delta: 'building profile' }],
+        event_count: 1,
+      }))
+      .mockResolvedValueOnce(makeInspect({
+        events: [],
+        event_count: 1,
+      }));
+    await openTaskMonitor({ tab: 'planner' });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+    let overlay = document.getElementById('task-monitor-overlay')!;
+    expect(overlay.querySelector('.task-monitor-text')?.textContent).toContain('building profile');
+    await vi.advanceTimersByTimeAsync(2000);
+    overlay = document.getElementById('task-monitor-overlay')!;
+    expect(overlay.querySelector('.task-monitor-empty')).toBeNull();
+    expect(overlay.querySelector('.task-monitor-text')?.textContent).toContain('building profile');
+    expect(taskInspectMock).toHaveBeenLastCalledWith('task-1', 1);
+  });
+
+  it('preserves collapsed tool state across incremental polls', async () => {
+    taskInspectMock
+      .mockResolvedValueOnce(makeInspect({
+        events: [
+          { kind: 'tool_call', tool_id: 'call-1', tool_name: 'exec', tool_arguments: '{}' },
+          { kind: 'tool_update', tool_id: 'call-1', tool_name: 'exec', tool_result: 'ok', status: 'completed' },
+        ],
+        event_count: 2,
+      }))
+      .mockResolvedValueOnce(makeInspect({ events: [], event_count: 2 }));
+    await openTaskMonitor({ tab: 'planner' });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+    const tool = document.querySelector('.task-monitor-tool') as HTMLElement;
+    expect(tool.classList.contains('is-open')).toBe(false);
+    tool.click();
+    expect(tool.classList.contains('is-open')).toBe(true);
+    tool.click();
+    expect(tool.classList.contains('is-open')).toBe(false);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(tool.classList.contains('is-open')).toBe(false);
+  });
+
+  it('does not auto-scroll when the reader has scrolled away from the bottom', async () => {
+    taskInspectMock
+      .mockResolvedValueOnce(makeInspect({
+        events: [{ kind: 'response_delta', delta: 'line one' }],
+        event_count: 1,
+      }))
+      .mockResolvedValueOnce(makeInspect({
+        events: [{ kind: 'response_delta', delta: 'line two' }],
+        event_count: 2,
+      }));
+    await openTaskMonitor({ tab: 'planner' });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+    const body = document.querySelector('.task-monitor-body') as HTMLElement;
+    Object.defineProperty(body, 'scrollHeight', { value: 1200, configurable: true });
+    Object.defineProperty(body, 'clientHeight', { value: 400, configurable: true });
+    body.scrollTop = 100;
+    body.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(body.scrollTop).toBe(100);
   });
 });

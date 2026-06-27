@@ -877,6 +877,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .tool-activity {
   width: 100%;
   max-width: none;
+  align-self: stretch;
   min-height: 34px;
   padding: 8px 10px;
   overflow: hidden;
@@ -887,6 +888,8 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.035);
   font: 650 0.7rem/1.35 ui-monospace, "SF Mono", Menlo, monospace;
   cursor: pointer;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -909,7 +912,8 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .tool-activity[data-complete='true'] .tool-activity__status { color: oklch(76% 0.1 150); }
 .tool-activity__body {
   display: grid;
-  margin: 8px -10px -8px;
+  margin-top: 8px;
+  min-width: 0;
   border-top: 1px solid oklch(100% 0 0 / 0.09);
   background: oklch(10% 0.008 255 / 0.72);
   cursor: default;
@@ -933,12 +937,14 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .tool-activity__section[data-state='error'] .tool-activity__section-label { color: oklch(78% 0.12 28); }
 .tool-activity__section pre {
   max-height: 260px;
+  max-width: 100%;
   margin: 0;
   overflow: auto;
   padding: 7px 10px 10px;
   color: oklch(78% 0.015 255);
   font: 0.66rem/1.48 ui-monospace, "SF Mono", Menlo, monospace;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
   user-select: text;
   -webkit-user-select: text;
@@ -1782,6 +1788,11 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
    .message / .message--assistant / .message--tool / .message--thinking) so the
    pop-up reads as a transcript, not a stack of flat outline boxes. Each tool
    call, assistant text, and thinking block is its own bubble. */
+.task-monitor-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .task-monitor-entry {
   position: relative;
   max-width: min(92%, 660px);
@@ -1839,6 +1850,8 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
   box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.035);
   font: 650 0.7rem/1.35 ui-monospace, monospace;
   cursor: pointer;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -1858,7 +1871,8 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
   text-transform: uppercase;
 }
 .task-monitor-tool-body {
-  margin: 8px -10px -8px;
+  margin-top: 8px;
+  min-width: 0;
   border-top: 1px solid oklch(100% 0 0 / 0.09);
   background: oklch(10% 0.008 255 / 0.7);
   cursor: default;
@@ -1878,12 +1892,14 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
 .task-monitor-tool-section[data-status='failed'] > span { color: oklch(78% 0.12 28); }
 .task-monitor-tool-section pre {
   max-height: 280px;
+  max-width: 100%;
   margin: 0;
   overflow: auto;
   padding: 7px 10px 10px;
   color: oklch(78% 0.015 255);
   font: 0.66rem/1.48 ui-monospace, monospace;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 /* Turn boundary: a subtle centered divider (like the checkpoint divider) - it

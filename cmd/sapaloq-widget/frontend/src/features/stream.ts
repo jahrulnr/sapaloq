@@ -197,6 +197,7 @@ export function feedStreamEvent(r: StreamRenderer, event: StreamEvent) {
     pushStream(r.thinking, event.delta || '');
   } else if (event.kind === 'tool_call') {
     setRingState('delegating');
+    clearProgressBubble();
     if (r.thinking) { flushStream(r.thinking); r.thinking = null; }
     if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
     appendToolActivity(event.tool_call || { name: 'unknown' });
@@ -216,8 +217,12 @@ export function feedStreamEvent(r: StreamRenderer, event: StreamEvent) {
     pushStream(r.assistant, delta);
   } else if (event.kind === 'status') {
     const status = event.status;
-    if (status === 'waiting' || status === 'thinking' || status === 'working' || status === 'compacting' || status === 'stopping') {
+    // "working" is emitted for most of a run; tool rows + task cards already
+    // show activity. A persistent working bubble makes the chat feel stuck.
+    if (status === 'waiting' || status === 'thinking' || status === 'compacting' || status === 'stopping') {
       appendProgressBubble(status, status === 'waiting' ? event.wait_seconds || 0 : 0);
+    } else if (status === 'working') {
+      clearProgressBubble();
     }
   } else if (event.kind === 'turn_boundary') {
     // The run looped to a new inference turn (e.g. an <sapaloq:autopilot>
@@ -291,6 +296,12 @@ export function renderTaskUpdate(event: StreamEvent, options?: { restore?: boole
   const terminal = new Set(['done', 'failed', 'stopped']);
   if (previousStatus && terminal.has(previousStatus) && !terminal.has(status)) return;
   const role = event.task_role || 'task';
+
+  // A live sub-agent starting or running replaces the generic waiting/thinking
+  // bubble with the task card + monitorable activity.
+  if (!restore && (status === 'pending' || status === 'in_progress')) {
+    clearProgressBubble();
+  }
 
   // Record the latest status and recompute the orb's busy ring FIRST, before any
   // early return. A terminal transition (done/failed/stopped) must always clear
