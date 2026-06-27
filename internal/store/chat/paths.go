@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // storePaths resolves JSON persistence locations under state/.
@@ -29,13 +30,16 @@ func resolveStorePaths(memoryDir string) storePaths {
 		stateDir:    stateDir,
 		rolloutDir:  filepath.Join(stateDir, "rollout"),
 		sessionsDir: filepath.Join(stateDir, "sessions"),
-		memoryDir:   filepath.Join(stateDir, "memory"),
+		memoryDir:   memoryDir,
 		configDir:   filepath.Join(stateDir, "config"),
 	}
 }
 
-func (p storePaths) sessionsIndex() string  { return filepath.Join(p.sessionsDir, "index.json") }
+func (p storePaths) sessionsIndex() string { return filepath.Join(p.sessionsDir, "index.json") }
 func (p storePaths) sessionDir(id string) string {
+	if strings.HasPrefix(id, "task-") {
+		return filepath.Join(p.stateDir, "tasks", id)
+	}
 	return filepath.Join(p.sessionsDir, id)
 }
 func (p storePaths) sessionTurns(id string) string {
@@ -89,22 +93,22 @@ type sessionsIndex struct {
 }
 
 type compactionRecord struct {
-	CheckpointIndex  int    `json:"checkpoint_index"`
-	SummaryTurnID    int64  `json:"summary_turn_id"`
-	CompactedTurns   int    `json:"compacted_turns"`
-	Reason           string `json:"reason"`
-	TailStartTurnID  int64  `json:"tail_start_turn_id,omitempty"`
-	CreatedAt        string `json:"created_at"`
+	CheckpointIndex int    `json:"checkpoint_index"`
+	SummaryTurnID   int64  `json:"summary_turn_id"`
+	CompactedTurns  int    `json:"compacted_turns"`
+	Reason          string `json:"reason"`
+	TailStartTurnID int64  `json:"tail_start_turn_id,omitempty"`
+	CreatedAt       string `json:"created_at"`
 }
 
 type feedbackRecord struct {
-	ID         int64  `json:"id"`
-	SessionID  string `json:"session_id"`
-	TurnID     *int64 `json:"turn_id,omitempty"`
-	Signal     string `json:"signal"`
+	ID         int64   `json:"id"`
+	SessionID  string  `json:"session_id"`
+	TurnID     *int64  `json:"turn_id,omitempty"`
+	Signal     string  `json:"signal"`
 	Reward     float64 `json:"reward"`
-	Correction string `json:"correction,omitempty"`
-	CreatedAt  string `json:"created_at"`
+	Correction string  `json:"correction,omitempty"`
+	CreatedAt  string  `json:"created_at"`
 }
 
 type hotCacheRecord struct {

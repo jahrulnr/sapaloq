@@ -186,7 +186,10 @@ func turnToEntry(t chatstore.Turn) []bridge.TranscriptEntry {
 		}
 		e := base
 		e.Kind = bridge.TranscriptText
-		e.Text = t.Content
+		e.Text = stripCalledToolsForDisplay(t.Content)
+		if strings.TrimSpace(e.Text) == "" {
+			return nil
+		}
 		return []bridge.TranscriptEntry{e}
 	default:
 		return nil

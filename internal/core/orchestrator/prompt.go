@@ -19,8 +19,8 @@ package orchestrator
 //   - The bounded per-turn system blocks
 //       negativeGuidanceBlock, prefetchBlock, skillsBlock
 //   - The two message-assembly entry points
-//       contextMessages (Ask / chat)
-//       buildSubAgentMessages (planner / task-runner / scribe)
+//       buildActorMessages (all roles: ask / planner / task-runner / scribe)
+//       contextMessages — thin wrapper for foreground ask
 //   - The small token-estimator helper that every block size check relies on
 //       estimateTextTokens, defaultContextWindow, autoCompactPercent
 //
@@ -537,21 +537,31 @@ func calledToolsNote(tools []scheduledTool) string {
 // Message assembly
 // ---------------------------------------------------------------------------
 
-// contextMessages builds the full message slice for an Ask / chat turn:
-//  1. The Ask system prompt (persona-wrapped via systemPrompt)
-//  2. The runtime context block (paths, ROADMAP)
-//  3. Bounded per-turn blocks: negative guidance, memory prefetch, skills
-//  4. The persisted chat turns (excluding UI-only "thinking" / "autopilot";
-//     "checkpoint" marker turns replay as a system summary)
-//  5. The latest user message, unless it is already the last persisted turn
-//
-// Legacy heuristic auto-compaction (compactActiveSession @ 80%) only runs when
-// the LLM checkpoint model is disabled (compaction.useCheckpoints=false). With
-// the checkpoint model on (the default), compaction is driven by isolated
-// orchestrator summarization + the force triggers in runTurnLoop, so a long
-// session is compacted by a model-authored checkpoint instead of a truncated
-// heuristic summary before the next request.
+// buildActorMessages assembles the model-facing message slice for any actor.
+// Foreground ask gets prefetch/skills/negative blocks; background actors replay
+// durable turns from turns.json under their actor id (chat-* or task-*).
+func (o *Orchestrator) buildActorMessages(ctx context.Context, actor ActorRun) ([]bridge.Message, error) {
+	if len(actor.Messages) > 0 {
+		return actor.Messages, nil
+	}
+	if actor.Foreground {
+		return o.buildForegroundActorMessages(ctx, actor.ParentSessionID, actor.TaskText)
+	}
+	if actor.Record == nil {
+		return nil, fmt.Errorf("background actor %s has no task record", actor.ID)
+	}
+	return o.buildBackgroundActorMessages(ctx, actor.Record), nil
+}
+
+// contextMessages builds the full message slice for an Ask / chat turn.
 func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUserMessage string) ([]bridge.Message, error) {
+	return o.buildForegroundActorMessages(ctx, sessionID, latestUserMessage)
+}
+
+func (o *Orchestrator) buildForegroundActorMessages(ctx context.Context, sessionID, latestUserMessage string) ([]bridge.Message, error) {
+	if o.chat == nil {
+		return []bridge.Message{{Role: "user", Content: latestUserMessage}}, nil
+	}
 	if !o.snapshot().cfg.Orchestrator.WithDefaults().Compaction.UseCheckpointsEnabled() {
 		usage, err := o.ContextUsage(ctx, sessionID)
 		if err == nil && usage.ContextWindow > 0 && usage.Percent >= autoCompactPercent {
@@ -562,64 +572,84 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 	if err != nil {
 		return nil, err
 	}
-	messages := make([]bridge.Message, 0, len(turns)+1)
+	messages := make([]bridge.Message, 0, len(turns)+6)
 	messages = append(messages, bridge.Message{Role: "system", Content: o.systemPrompt(prompts.RoleAsk)})
 	messages = append(messages, o.runtimeContextMessage())
 	if block := o.negativeGuidanceBlock(ctx); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
-	// Index-first prefetch (Context-SOP Fase 1): assemble a bounded memory
-	// packet from companion.db and inject it as a system block so the model has
-	// the right facts before acting - and, when confidence is high, a directive
-	// not to explore the filesystem first. Best-effort: a low-confidence/empty
-	// packet renders "" and is skipped.
 	if block := o.prefetchBlock(ctx, sessionID, latestUserMessage); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
 	if block := o.skillsBlock(ctx, latestUserMessage); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
-	for _, turn := range turns {
-		role := turn.Role
-		// Thinking turns are persisted for the UI only - never replay reasoning
-		// back into the model's context window.
-		if role == "thinking" {
-			continue
-		}
-		// Autopilot continuation turns are persisted only for context
-		// accounting (they occupy real context in the live in-run slice). They
-		// are NOT replayed from history: the run that owns them carries them
-		// in cleanMessages, and a fresh turn after a restart would otherwise
-		// see stale SapaLOQ-authored nudges as if they were new input.
-		if role == "autopilot" {
-			continue
-		}
-		// Checkpoint marker turns (role=checkpoint, written by the LLM
-		// compaction path) are replayed as a system summary so the model
-		// treats the persisted checkpoint as durable context, not as a user
-		// or assistant turn. Only the LATEST checkpoint is in context
-		// (older ones were archived by included_in_context=0 when the next
-		// checkpoint was created), so replaying every included checkpoint
-		// turn naturally yields just the most recent one.
-		if role == "checkpoint" {
-			messages = append(messages, bridge.Message{Role: "system", Content: turn.Content})
-			continue
-		}
-		// "tool"/"error" turns keep their semantic role here; the wire layer
-		// (wireRole) maps them to an API-accepted role at request-build time.
-		// Centralizing the mapping there keeps live and replayed turns
-		// consistent and lets a tool observation stay distinguishable from a
-		// user request for as long as possible.
-		content := turn.Content
-		if role == "assistant" {
-			content = stripPlannerSummaryMarker(content)
-		}
-		messages = append(messages, bridge.Message{Role: role, Content: content})
-	}
+	messages = append(messages, actorTurnsToMessages(turns)...)
 	if len(turns) == 0 || turns[len(turns)-1].Content != latestUserMessage {
 		messages = append(messages, bridge.Message{Role: "user", Content: latestUserMessage})
 	}
 	return messages, nil
+}
+
+func (o *Orchestrator) buildBackgroundActorMessages(ctx context.Context, record *taskRecord) []bridge.Message {
+	systemContent := o.systemPrompt(record.Role)
+	if strings.TrimSpace(systemContent) == "" {
+		systemContent = "You are a background SapaLOQ task agent. Use your tools, then return a concise final result."
+	}
+	messages := []bridge.Message{{Role: "system", Content: systemContent}}
+	messages = append(messages, o.runtimeContextMessage())
+	if record.Role == "task-runner" && record.PlanTaskID != "" {
+		if plan := o.readPlanMarkdown(record.PlanTaskID); plan != "" {
+			messages = append(messages, bridge.Message{
+				Role:    "system",
+				Content: "Approved plan to execute (read it as authoritative; satisfy every item under ## Acceptance):\n\n" + plan,
+			})
+		}
+	}
+	var turns []chatstore.Turn
+	if o.chat != nil {
+		turns, _ = o.chat.ActiveTurns(ctx, record.ID, false)
+	}
+	if len(turns) == 0 {
+		messages = append(messages, bridge.Message{Role: "user", Content: record.Task})
+	} else {
+		messages = append(messages, actorTurnsToMessages(turns)...)
+	}
+	if strings.TrimSpace(record.Answer) != "" {
+		messages = append(messages, bridge.Message{
+			Role:    "user",
+			Content: "Answer to your clarification question: " + strings.TrimSpace(record.Answer) + "\nContinue the task using this answer.",
+		})
+	}
+	return messages
+}
+
+func actorTurnsToMessages(turns []chatstore.Turn) []bridge.Message {
+	out := make([]bridge.Message, 0, len(turns))
+	for _, turn := range turns {
+		role := turn.Role
+		if role == "thinking" || role == "autopilot" {
+			continue
+		}
+		if role == "checkpoint" {
+			out = append(out, bridge.Message{Role: "system", Content: turn.Content})
+			continue
+		}
+		content := turn.Content
+		if role == "assistant" {
+			content = stripPlannerSummaryMarker(content)
+		}
+		if role != "assistant" && role != "user" && role != "system" && role != "tool" && role != "error" {
+			role = "user"
+		}
+		out = append(out, bridge.Message{Role: role, Content: content})
+	}
+	return out
+}
+
+// buildSubAgentMessages is retained for tests; new code should use buildActorMessages.
+func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Message {
+	return o.buildBackgroundActorMessages(context.Background(), record)
 }
 
 func stripPlannerSummaryMarker(content string) string {
@@ -632,54 +662,6 @@ func stripPlannerSummaryMarker(content string) string {
 		return content
 	}
 	return strings.TrimSpace(content[end+3:])
-}
-
-// buildSubAgentMessages assembles the system + user context for a sub-agent,
-// including the user's original intent and (for agents) the handed-off plan
-// with its acceptance criteria.
-func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Message {
-	// Role system prompts are file-driven and replaceable (internal/prompts):
-	// the on-disk copy is preferred, falling back to the embeded default. An
-	// unknown role gets a minimal generic prompt.
-	systemContent := o.systemPrompt(record.Role)
-	if strings.TrimSpace(systemContent) == "" {
-		systemContent = "You are a background SapaLOQ task agent. Use your tools, then return a concise final result."
-	}
-
-	messages := []bridge.Message{{Role: "system", Content: systemContent}}
-	messages = append(messages, o.runtimeContextMessage())
-
-	// Hand off the plan (goal + acceptance criteria) to the agent.
-	if record.Role == "task-runner" && record.PlanTaskID != "" {
-		if plan := o.readPlanMarkdown(record.PlanTaskID); plan != "" {
-			messages = append(messages, bridge.Message{
-				Role:    "system",
-				Content: "Approved plan to execute (read it as authoritative; satisfy every item under ## Acceptance):\n\n" + plan,
-			})
-		}
-	}
-
-	messages = append(messages, bridge.Message{Role: "user", Content: record.Task})
-
-	// Resume path: if the task has a persisted transcript (it was paused on a
-	// clarification), replay it so the sub-agent continues with its prior
-	// context. When an Answer is present, append it as the resume nudge.
-	if len(record.Transcript) > 0 {
-		for _, turn := range record.Transcript {
-			role := turn.Role
-			if role != "assistant" && role != "user" && role != "system" {
-				role = "user"
-			}
-			messages = append(messages, bridge.Message{Role: role, Content: turn.Content})
-		}
-	}
-	if strings.TrimSpace(record.Answer) != "" {
-		messages = append(messages, bridge.Message{
-			Role:    "user",
-			Content: "Answer to your clarification question: " + strings.TrimSpace(record.Answer) + "\nContinue the task using this answer.",
-		})
-	}
-	return messages
 }
 
 // readPlanMarkdown loads the persisted plan for a task ID. It is path-safe by

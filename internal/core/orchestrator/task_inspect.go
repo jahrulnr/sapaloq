@@ -1,20 +1,13 @@
 package orchestrator
 
-// task_inspect.go exposes the per-task detail the widget's "Planner & Agent"
-// pop-up needs: the durable task record (status.json), a tail of the progress
-// stream (orch-<taskID>.jsonl), and the persisted plan markdown. It is the
-// read-only surface the frontend polls every couple of seconds while a
-// sub-agent is active, so a user can watch a planner/agent think, call tools,
-// and write its plan without leaving the chat.
-//
-// The progress JSONL is read straight off disk (the same file the
-// asyncProgressWriter appends to), so TaskInspect is safe to call from the IPC
-// server without coordinating with the live sub-agent goroutine. The
-// afterLine parameter lets the frontend fetch only the events appended since
-// its last poll, keeping each response bounded even for long runs.
+// task_inspect.go exposes per-actor detail for the widget sub-agent monitor:
+// durable task status (status.json), coalesced transcript from turns.json, and
+// plan markdown. ActorInspect hydrates cold-open; live updates arrive on the
+// transcript bus (actor_id) while the monitor is open.
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,28 +18,73 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 )
 
-// maxTaskInspectEvents caps the number of progress events returned in one
-// TaskInspect response. The frontend polls incrementally (afterLine), so this
-// only bounds a single cold-open of a very long run; the tail is the most
-// recent events, which is what a user opening the pop-up mid-run wants to see.
+type ActorInspectResult = TaskInspectResult
+
+// ActorInspect is the actor-generic transcript read API. Background actors use
+// task-scoped turns/checkpoints and rollout data; the legacy TaskInspect API is
+// retained for one compatibility release.
+func (o *Orchestrator) ActorInspect(actorID string, afterLine int) (ActorInspectResult, error) {
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" || filepath.Base(actorID) != actorID || strings.Contains(actorID, "..") {
+		return ActorInspectResult{}, fmt.Errorf("valid actor_id is required")
+	}
+	record, err := o.readTask(actorID)
+	if err != nil {
+		return ActorInspectResult{}, err
+	}
+	result := ActorInspectResult{
+		ID: record.ID, Role: record.Role, Status: record.Status, Task: record.Task,
+		Result: record.Result, Error: record.Error, Question: record.Question,
+		PlanTaskID: record.PlanTaskID, UpdatedAt: record.UpdatedAt,
+	}
+	planID := record.ID
+	if record.Role != "planner" && record.PlanTaskID != "" {
+		planID = record.PlanTaskID
+	}
+	result.Plan = o.readPlanMarkdown(planID)
+	entries, transcriptErr := o.SessionTranscript(context.Background(), actorID)
+	if transcriptErr != nil {
+		entries = []bridge.TranscriptEntry{}
+	}
+	result.EventCount = len(entries)
+	if afterLine > 0 && afterLine < len(entries) {
+		entries = entries[afterLine:]
+	} else if afterLine >= len(entries) {
+		entries = []bridge.TranscriptEntry{}
+	}
+	if len(entries) > maxTaskInspectEvents {
+		entries = entries[len(entries)-maxTaskInspectEvents:]
+	}
+	result.Transcript = entries
+	if usage, uerr := o.ContextUsage(context.Background(), actorID); uerr == nil {
+		result.Usage = &bridge.TranscriptUsage{
+			UsedTokens: usage.UsedTokens, ContextWindow: usage.ContextWindow,
+			Percent: usage.Percent, Provider: usage.Provider, Model: usage.Model,
+		}
+	}
+	return result, nil
+}
+
+// maxTaskInspectEvents bounds a single cold-open hydrate response.
 const maxTaskInspectEvents = 2000
 
 // TaskInspectResult is the JSON shape the widget renders in the pop-up. The
 // Events slice is the progress tail (newest last); EventCount is the total
 // line count on disk so the frontend can request the next incremental slice.
 type TaskInspectResult struct {
-	ID         string               `json:"id"`
-	Role       string               `json:"role"`
-	Status     string               `json:"status"`
-	Task       string               `json:"task"`
-	Result     string               `json:"result,omitempty"`
-	Error      string               `json:"error,omitempty"`
-	Question   string               `json:"question,omitempty"`
-	PlanTaskID string               `json:"plan_task_id,omitempty"`
-	Plan       string               `json:"plan,omitempty"`
+	ID         string                   `json:"id"`
+	Role       string                   `json:"role"`
+	Status     string                   `json:"status"`
+	Task       string                   `json:"task"`
+	Result     string                   `json:"result,omitempty"`
+	Error      string                   `json:"error,omitempty"`
+	Question   string                   `json:"question,omitempty"`
+	PlanTaskID string                   `json:"plan_task_id,omitempty"`
+	Plan       string                   `json:"plan,omitempty"`
 	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
+	Usage      *bridge.TranscriptUsage   `json:"usage,omitempty"`
 	EventCount int                      `json:"event_count"`
-	UpdatedAt  time.Time            `json:"updated_at"`
+	UpdatedAt  time.Time                `json:"updated_at"`
 }
 
 // TaskInspect returns the durable state + a tail of the progress stream for a

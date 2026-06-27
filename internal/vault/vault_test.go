@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -69,5 +70,34 @@ func TestReadEntriesLimit(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("len = %d", len(entries))
+	}
+}
+
+func TestAppendRedactsAndBoundsArguments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tool-calls.jsonl")
+	w, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
+	raw, _ := json.Marshal(map[string]string{"command": "curl -H token=" + secret})
+	if err := w.Append(Entry{RawName: "exec", Arguments: raw, Reason: "executed"}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := ReadEntries(path, 1)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("read: entries=%d err=%v", len(entries), err)
+	}
+	if string(entries[0].Arguments) == string(raw) || strings.Contains(string(entries[0].Arguments), secret) {
+		t.Fatalf("secret argument was not redacted: %s", entries[0].Arguments)
+	}
+
+	large := json.RawMessage(`{"content":"` + strings.Repeat("x", maxAuditArgumentsBytes) + `"}`)
+	if err := w.Append(Entry{RawName: "create_file", Arguments: large, Reason: "executed"}); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ = ReadEntries(path, 1)
+	if len(entries[0].Arguments) >= maxAuditArgumentsBytes {
+		t.Fatalf("large arguments were not bounded: %d", len(entries[0].Arguments))
 	}
 }

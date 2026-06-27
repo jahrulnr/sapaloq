@@ -22,6 +22,16 @@ func feedAll(deltas ...string) string {
 
 // TestCalledToolsFilterDropsCompleteMarker: a marker fully contained in one
 // delta is removed, surrounding text preserved.
+func TestStripCalledToolsMarkersTrailingNote(t *testing.T) {
+	got := stripCalledToolsForDisplay("Folder aman.\n\n[Called tools: sapaloq_spawn_agent]")
+	if got != "Folder aman." {
+		t.Fatalf("trailing note not stripped: %q", got)
+	}
+	if strings.TrimSpace(StripCalledToolsMarkers("[Called tools: sapaloq_stop]")) != "" {
+		t.Fatal("note-only assistant turn should strip to empty")
+	}
+}
+
 func TestCalledToolsFilterDropsCompleteMarker(t *testing.T) {
 	got := feedAll("oke.[Called tools: write_file]")
 	if got != "oke." {

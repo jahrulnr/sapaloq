@@ -1,12 +1,15 @@
 package vault
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/jahrulnr/sapaloq/internal/privacyfilter"
 )
 
 // Entry records a provider tool call. It serves two purposes:
@@ -56,9 +59,10 @@ func (o Options) withDefaults() Options {
 }
 
 type Writer struct {
-	path string
-	opts Options
-	mu   sync.Mutex
+	path     string
+	opts     Options
+	redactor *privacyfilter.Filter
+	mu       sync.Mutex
 }
 
 // New constructs a Writer with the default rotation policy (5 MiB / keep 3).
@@ -73,7 +77,7 @@ func NewWithOptions(path string, opts Options) (*Writer, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	return &Writer{path: path, opts: opts.withDefaults()}, nil
+	return &Writer{path: path, opts: opts.withDefaults(), redactor: privacyfilter.New()}, nil
 }
 
 // Append writes one entry as a JSON line, rotating first when the primary file
@@ -83,6 +87,7 @@ func (w *Writer) Append(entry Entry) error {
 	if entry.At.IsZero() {
 		entry.At = time.Now().UTC()
 	}
+	entry.Arguments = sanitizeArguments(w.redactor, entry.Arguments)
 	b, err := json.Marshal(entry)
 	if err != nil {
 		return err
@@ -108,6 +113,60 @@ func (w *Writer) Append(entry Entry) error {
 	defer f.Close()
 	_, err = f.Write(b)
 	return err
+}
+
+const maxAuditArgumentsBytes = 16 * 1024
+
+func sanitizeArguments(redactor *privacyfilter.Filter, raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	if len(raw) > maxAuditArgumentsBytes {
+		sum := sha256.Sum256(raw)
+		b, _ := json.Marshal(map[string]any{
+			"omitted": true,
+			"bytes":   len(raw),
+			"sha256":  fmt.Sprintf("%x", sum[:]),
+		})
+		return b
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		text := string(raw)
+		if redactor != nil {
+			text = redactor.Redact(text).Redacted
+		}
+		b, _ := json.Marshal(map[string]any{"invalid_json": true, "redacted": text})
+		return b
+	}
+	value = redactAuditValue(redactor, value)
+	b, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`{"omitted":true}`)
+	}
+	return b
+}
+
+func redactAuditValue(redactor *privacyfilter.Filter, value any) any {
+	switch typed := value.(type) {
+	case string:
+		if redactor != nil {
+			typed = redactor.Redact(typed).Redacted
+		}
+		return typed
+	case []any:
+		for i := range typed {
+			typed[i] = redactAuditValue(redactor, typed[i])
+		}
+		return typed
+	case map[string]any:
+		for key, child := range typed {
+			typed[key] = redactAuditValue(redactor, child)
+		}
+		return typed
+	default:
+		return value
+	}
 }
 
 // rotate cascades the numbered siblings: drop the oldest (>KeepFiles), shift

@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-25 (orb icon counter-rotates vs the ring; folder drag-and-drop + attachments render as bubble links + drag-overlay flicker fix; topbar one row + chat-history switcher)
+> Last updated: 2026-06-27 (sub-agent monitor: `ActorInspect` hydrate + live `sapaloq:transcript` bus patches with `actor_id`; chat pane ignores `actor_id` patches)
 
 **Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
 

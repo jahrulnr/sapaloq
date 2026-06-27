@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -117,7 +116,7 @@ func attemptPost(ctx context.Context, opts WireOptions, body []byte) ([]byte, er
 		return nil, retryableError{err: err}
 	}
 	defer resp.Body.Close()
-	raw, readErr := io.ReadAll(resp.Body)
+	raw, readErr := readProviderBody(resp.Body, maxProviderResponseBytes)
 	if resp.StatusCode != http.StatusOK {
 		statusErr := fmt.Errorf("provider-bridge: upstream status %d: %s", resp.StatusCode, upstreamErrorBody(raw))
 		if isRetryableStatus(resp.StatusCode) {

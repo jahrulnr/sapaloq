@@ -50,6 +50,10 @@ func (a *App) startup(ctx context.Context) {
 		switch event.Kind {
 		case bridge.EventTaskUpdate:
 			runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+		case bridge.EventTranscript:
+			if event.ActorID != "" {
+				runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
+			}
 		case bridge.EventResponseDelta:
 			// CRITICAL: only forward SPOKEN-COMPLETION deltas (those stamped
 			// with a TaskID) from the watch stream. A live chat turn's
@@ -156,6 +160,11 @@ func (a *App) RuntimeStatus() (*runtimeStatus, error) {
 // lines the caller has already seen (0 on first open).
 func (a *App) TaskInspect(taskID string, afterLine int) (*taskInspectResult, error) {
 	return taskInspect(a.socketPath, taskID, afterLine)
+}
+
+// ActorInspect is the actor-generic replacement for TaskInspect.
+func (a *App) ActorInspect(actorID string, afterLine int) (*taskInspectResult, error) {
+	return actorInspect(a.socketPath, actorID, afterLine)
 }
 
 // NotificationSound returns the embedded completion chime as a data: URI the

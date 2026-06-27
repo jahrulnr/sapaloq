@@ -14,7 +14,7 @@ package orchestrator
 // These tests are GATED: without SAPALOQ_BLACKBOX_E2E=1 and a working token in
 // the configured env var they t.Skip, so `go test ./...` stays green offline.
 // They live in package orchestrator (not e2e) so they can drive the internal
-// runSubAgentLoop / providerSnapshot / spawnBackground seams directly.
+// runTaskActor / providerSnapshot / spawnBackground seams directly.
 
 import (
 	"context"
@@ -324,7 +324,7 @@ func TestSimulatePlannerToolingToPlanSummary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	o.runSubAgentLoop(ctx, snap, "sim-2", rec)
+	o.runTaskActor(ctx, snap, "sim-2", rec)
 
 	if rec.Status != "done" {
 		t.Fatalf("planner status = %q, want done (err=%q)", rec.Status, rec.Error)
@@ -381,7 +381,7 @@ func TestSimulateAgentReadPlanWorkSummary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	o.runSubAgentLoop(ctx, snap, "sim-3", rec)
+	o.runTaskActor(ctx, snap, "sim-3", rec)
 
 	if rec.Status != "done" {
 		t.Fatalf("agent status = %q, want done (err=%q)", rec.Status, rec.Error)

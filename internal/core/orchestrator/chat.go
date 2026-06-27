@@ -67,8 +67,8 @@ type Orchestrator struct {
 	prompts          *prompts.Manager
 	// bgJobsReg is the in-process registry for non-blocking (fire-and-forget)
 	// tool jobs. See tools_bg_jobs.go. bgJobsOnce guards its lazy init.
-	bgJobsReg   *bgJobRegistry
-	bgJobsOnce  sync.Once
+	bgJobsReg  *bgJobRegistry
+	bgJobsOnce sync.Once
 	// redactor masks secrets in every tool result before it reaches the model,
 	// logs, or egress. The AI keeps full tool access; only secret values in
 	// results are scrubbed, so a model tricked into reading ~/.ssh/id_rsa or
@@ -174,6 +174,10 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	// Ensure the local-default execution node exists so spawns always have a
 	// routable in-proc target. Best-effort.
 	o.bootstrapLocalDefaultNode(context.Background())
+	// One-shot bridge from the legacy status.json-embedded transcript to the
+	// actor-scoped durable turns store used by every role.
+	o.migrateLegacyTaskTranscripts()
+	o.pruneRuntimeArtifacts(time.Now().UTC())
 	// A process restart loses in-memory worker goroutines. Persisted tasks that
 	// still claim pending/in_progress/stopping would otherwise leave the user
 	// staring at a task that can never advance.
@@ -182,6 +186,43 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 }
 
 func (o *Orchestrator) Bus() *bus.Bus { return o.bus }
+
+// Close cancels actor work, drains progress writers, and flushes the event WAL.
+// It is safe to call during signal-driven shutdown while publishers are exiting.
+func (o *Orchestrator) Close() {
+	if o == nil {
+		return
+	}
+	o.activeMu.Lock()
+	for _, run := range o.active {
+		run.cancel()
+	}
+	o.activeMu.Unlock()
+	o.taskMu.Lock()
+	for _, cancel := range o.taskCancels {
+		cancel()
+	}
+	o.taskMu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		o.taskMu.Lock()
+		remaining := len(o.taskCancels)
+		o.taskMu.Unlock()
+		if remaining == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if o.progress != nil {
+		o.progress.CloseAll()
+	}
+	if o.chat != nil {
+		_ = o.chat.Close()
+	}
+	if o.bus != nil {
+		o.bus.Close()
+	}
+}
 
 func (o *Orchestrator) toolJobs() *toolJobScheduler {
 	o.schedulerMu.Lock()

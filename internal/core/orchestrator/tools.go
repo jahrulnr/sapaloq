@@ -7,12 +7,9 @@ import (
 )
 
 // Tool profiles per execution mode (see docs/ORCHESTRATOR.md "Ask → Plan →
-// Agent"). Ask coordinates; Plan does read-only assessment + writes a plan;
-// Agent does read-only assessment + write/exec + task lifecycle.
-//
-// All three now share a common set of read-only assessment tools so Ask and
-// Plan are no longer "blind" - they can read files, search, list directories,
-// and run web research before deciding or planning.
+// Agent"). Ask and Agent share the same workspace tool surface; behavioral
+// differences are prompt-driven (delegation, spawn, fire-and-forget). Plan is
+// read-only on the project plus write_plan; scribe is assessment + notes.
 
 var readOnlyAssessmentTools = []string{
 	"read_file",
@@ -31,12 +28,9 @@ var desktopTools = []string{
 	"desktop_dnd_status",
 }
 
-// askTools: orchestrator coordinates and may assess lightly before delegating.
-// It also gets exec so simple host tasks (e.g. "read /etc/hosts", "run `id`")
-// don't require spawning a plan/agent. `wait` + `sapaloq_cancel_job` cover
-// non-blocking tool collection: any work tool can be fired with
-// wait_for_output:false and collected via wait{mode:tool}, or aborted via
-// sapaloq_cancel_job.
+// askTools: full workspace surface for the foreground Ask actor. Behavioral
+// differences vs background executors live in the Ask system prompt (when to
+// delegate, fire-and-forget spawn, etc.) — not in a reduced tool allowlist.
 var askTools = append(append([]string{
 	"sapaloq_spawn_plan",
 	"sapaloq_spawn_agent",
@@ -48,6 +42,10 @@ var askTools = append(append([]string{
 	"sapaloq_send_steering",
 	"sapaloq_stop",
 	"exec",
+	"write_file",
+	"create_file",
+	"edit_file",
+	"delete_file",
 }, readOnlyAssessmentTools...), desktopTools...)
 
 // scribeTools: a named sub-agent that captures notes into the user's storage by

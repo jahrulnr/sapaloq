@@ -104,7 +104,12 @@ func streamOpenAI(ctx context.Context, opts WireOptions, on WireHandler) error {
 	}
 	acc := toolprovider.NewAccumulatorOpenAI("openai_inline")
 	handler := newOpenAILineHandler(acc, on)
-	return runSSE(ctx, opts, body, handler.Handle)
+	err = runSSE(ctx, opts, body, handler.Handle)
+	if err == nil {
+		_ = handler.flushAndStop()
+		return nil
+	}
+	return err
 }
 
 // streamKimi handles Moonshot AI / Kimi models. The wire is identical to
@@ -118,7 +123,12 @@ func streamKimi(ctx context.Context, opts WireOptions, on WireHandler) error {
 	}
 	acc := toolprovider.NewAccumulatorKimi("kimi_inline")
 	handler := newKimiLineHandler(acc, on)
-	return runSSE(ctx, opts, body, handler.Handle)
+	err = runSSE(ctx, opts, body, handler.Handle)
+	if err == nil {
+		_ = handler.flushAndStop()
+		return nil
+	}
+	return err
 }
 
 // streamClaude handles Anthropic Messages API. The event stream is JSON
@@ -130,7 +140,12 @@ func streamClaude(ctx context.Context, opts WireOptions, on WireHandler) error {
 	}
 	acc := toolprovider.NewAccumulatorClaude("claude_inline")
 	handler := newClaudeLineHandler(acc, on)
-	return runSSE(ctx, opts, body, handler.Handle)
+	err = runSSE(ctx, opts, body, handler.Handle)
+	if err == nil {
+		_ = handler.flushAndStop()
+		return nil
+	}
+	return err
 }
 
 // buildOpenAIRequestBody assembles the OpenAI Chat Completions body for the
@@ -177,11 +192,13 @@ func buildKimiRequestBody(opts WireOptions, fallbackModel string) ([]byte, error
 
 // buildClaudeRequestBody assembles the Anthropic Messages body.
 func buildClaudeRequestBody(opts WireOptions, fallbackModel string) ([]byte, error) {
+	system, messages := buildClaudePayload(opts.Messages, opts.Images)
 	req := claudeRequest{
 		Model:     defaultIfEmpty(opts.Model, fallbackModel),
 		Stream:    opts.Stream,
 		MaxTokens: 8192,
-		Messages:  buildClaudeMessages(opts.Messages, opts.Images),
+		System:    system,
+		Messages:  messages,
 	}
 	if opts.MaxTokens > 0 {
 		req.MaxTokens = opts.MaxTokens
@@ -267,7 +284,10 @@ func attemptSSE(ctx context.Context, opts WireOptions, body []byte, onLine func(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, readErr := readProviderBody(resp.Body, maxProviderErrorBytes)
+		if readErr != nil {
+			raw = []byte(readErr.Error())
+		}
 		statusErr := fmt.Errorf("provider-bridge: upstream status %d: %s", resp.StatusCode, upstreamErrorBody(raw))
 		if isRetryableStatus(resp.StatusCode) {
 			return retryableError{err: statusErr}
@@ -487,6 +507,12 @@ type sseReader struct {
 	r *bufio.Reader
 }
 
+const (
+	maxProviderResponseBytes = 32 * 1024 * 1024
+	maxProviderErrorBytes    = 64 * 1024
+	maxSSELineBytes          = 8 * 1024 * 1024
+)
+
 func newSSEReader(rd io.Reader) *sseReader {
 	return &sseReader{r: bufio.NewReaderSize(rd, 64*1024)}
 }
@@ -495,13 +521,37 @@ func newSSEReader(rd io.Reader) *sseReader {
 // from the underlying reader. Empty reads return ("", nil) and the caller
 // should keep looping until EOF.
 func (s *sseReader) ReadLine() ([]byte, error) {
+	var out bytes.Buffer
 	for {
-		line, err := s.r.ReadBytes('\n')
-		if len(line) > 0 {
-			return bytes.TrimRight(line, "\r\n"), nil
+		fragment, err := s.r.ReadSlice('\n')
+		if len(fragment) > 0 {
+			if out.Len()+len(fragment) > maxSSELineBytes {
+				return nil, fmt.Errorf("provider-bridge: SSE event exceeds %d bytes", maxSSELineBytes)
+			}
+			_, _ = out.Write(fragment)
+			if err == nil {
+				return bytes.TrimRight(out.Bytes(), "\r\n"), nil
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
 		}
 		if err != nil {
+			if out.Len() > 0 && err == io.EOF {
+				return bytes.TrimRight(out.Bytes(), "\r\n"), io.EOF
+			}
 			return nil, err
 		}
 	}
+}
+
+func readProviderBody(r io.Reader, limit int64) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("provider-bridge: response exceeds %d bytes", limit)
+	}
+	return raw, nil
 }

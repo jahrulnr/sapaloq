@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"fmt"
+
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/debug"
 )
@@ -38,11 +40,24 @@ func estimateTotalTokens(messages []bridge.Message) int {
 // Pass window=0 to no-op (returns messages as-is). Pass window<0 to disable
 // truncation entirely.
 func FitMessagesToContext(messages []bridge.Message, window int) []bridge.Message {
-	if window <= 0 {
+	fitted, err := FitMessagesToContextStrict(messages, window)
+	if err != nil {
+		// Compatibility wrapper for callers that only need best-effort sizing.
+		// The live bridge uses the strict variant and surfaces the error.
 		return messages
 	}
+	return fitted
+}
+
+// FitMessagesToContextStrict preserves the complete current input turn. It
+// returns an explicit error when the fixed system prefix or latest non-system
+// message cannot fit, rather than silently sending a system-only request.
+func FitMessagesToContextStrict(messages []bridge.Message, window int) ([]bridge.Message, error) {
+	if window <= 0 {
+		return messages, nil
+	}
 	if estimateTotalTokens(messages) <= window {
-		return messages
+		return messages, nil
 	}
 	// Peel off EVERY leading system message - they must remain contiguous at
 	// the front of the output (most APIs reject system messages elsewhere).
@@ -57,6 +72,15 @@ func FitMessagesToContext(messages []bridge.Message, window int) []bridge.Messag
 	remaining := messages[systemCount:]
 	systemTokens := estimateTotalTokens(systemMsgs)
 	budget := window - systemTokens
+	if budget <= 0 {
+		return nil, fmt.Errorf("provider-bridge: system prompt requires %d tokens, exceeding context window %d", systemTokens, window)
+	}
+	if len(remaining) > 0 {
+		latestTokens := EstimateTokens(remaining[len(remaining)-1])
+		if latestTokens > budget {
+			return nil, fmt.Errorf("provider-bridge: current input requires %d tokens but only %d remain after system prompts; shorten the message or attachment", latestTokens, budget)
+		}
+	}
 	// Walk from the end, keeping the most recent turns. Stop when adding
 	// the next would exceed the remaining budget.
 	kept := make([]bridge.Message, 0, len(remaining))
@@ -74,7 +98,7 @@ func FitMessagesToContext(messages []bridge.Message, window int) []bridge.Messag
 		out := make([]bridge.Message, 0, systemCount+len(kept))
 		out = append(out, systemMsgs...)
 		out = append(out, kept...)
-		return out
+		return out, nil
 	}
-	return kept
+	return kept, nil
 }

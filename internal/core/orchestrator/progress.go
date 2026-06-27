@@ -67,14 +67,20 @@ func isTerminalProgressEvent(ev bridge.StreamEvent) bool {
 type asyncProgressWriter struct {
 	inner ProgressWriter
 	mu    sync.Mutex
+	closed bool
 	// streams maps sessionID -> *sessionStream
 	streams map[string]*sessionStream
 }
 
 type sessionStream struct {
-	ch     chan bridge.StreamEvent
+	ch     chan progressRequest
 	done   chan struct{}
 	closed bool
+}
+
+type progressRequest struct {
+	event *bridge.StreamEvent
+	ack   chan struct{}
 }
 
 func newAsyncProgressWriter(inner ProgressWriter) *asyncProgressWriter {
@@ -89,38 +95,50 @@ func (a *asyncProgressWriter) Append(sessionID string, ev bridge.StreamEvent) er
 	if a == nil || a.inner.Dir == "" || sessionID == "" {
 		return nil
 	}
-	if isTerminalProgressEvent(ev) {
-		// Synchronous write for terminal events, then ensure the async drain
-		// has flushed everything enqueued before this point by draining the
-		// channel inline (ordering: async deltas before, terminal after).
-		a.flushSync(sessionID)
-		return a.inner.Append(sessionID, ev)
-	}
 	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return nil
+	}
 	s, ok := a.streams[sessionID]
 	if !ok {
 		s = a.startLocked(sessionID)
 	}
-	a.mu.Unlock()
-	select {
-	case s.ch <- ev:
-	default:
-		// Buffer full: drop the delta rather than block the inference loop.
+	if isTerminalProgressEvent(ev) {
+		ack := make(chan struct{})
+		// Holding a.mu while enqueueing makes Close unable to close this channel
+		// between lookup and send. The dedicated writer is the only consumer, so
+		// FIFO ordering is preserved and the terminal ack means it is on disk.
+		s.ch <- progressRequest{event: &ev, ack: ack}
+		a.mu.Unlock()
+		<-ack
+		return nil
 	}
+	select {
+	case s.ch <- progressRequest{event: &ev}:
+	default:
+		// Buffer full: drop only high-frequency non-terminal progress.
+	}
+	a.mu.Unlock()
 	return nil
 }
 
 // startLocked launches the per-session drain goroutine. Caller holds a.mu.
 func (a *asyncProgressWriter) startLocked(sessionID string) *sessionStream {
 	s := &sessionStream{
-		ch:   make(chan bridge.StreamEvent, asyncProgressBuffered),
+		ch:   make(chan progressRequest, asyncProgressBuffered),
 		done: make(chan struct{}),
 	}
 	a.streams[sessionID] = s
 	go func() {
 		defer close(s.done)
-		for ev := range s.ch {
-			_ = a.inner.Append(sessionID, ev)
+		for req := range s.ch {
+			if req.event != nil {
+				_ = a.inner.Append(sessionID, *req.event)
+			}
+			if req.ack != nil {
+				close(req.ack)
+			}
 		}
 	}()
 	return s
@@ -131,19 +149,19 @@ func (a *asyncProgressWriter) startLocked(sessionID string) *sessionStream {
 // (more deltas may arrive on the next turn).
 func (a *asyncProgressWriter) flushSync(sessionID string) {
 	a.mu.Lock()
-	s, ok := a.streams[sessionID]
-	a.mu.Unlock()
-	if !ok {
+	if a.closed {
+		a.mu.Unlock()
 		return
 	}
-	for {
-		select {
-		case ev := <-s.ch:
-			_ = a.inner.Append(sessionID, ev)
-		default:
-			return
-		}
+	s, ok := a.streams[sessionID]
+	if !ok {
+		a.mu.Unlock()
+		return
 	}
+	ack := make(chan struct{})
+	s.ch <- progressRequest{ack: ack}
+	a.mu.Unlock()
+	<-ack
 }
 
 // Close terminates the async drain for a session and flushes remaining events.
@@ -160,4 +178,22 @@ func (a *asyncProgressWriter) Close(sessionID string) {
 	a.mu.Unlock()
 	close(s.ch)
 	<-s.done
+}
+
+func (a *asyncProgressWriter) CloseAll() {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	a.closed = true
+	streams := a.streams
+	a.streams = make(map[string]*sessionStream)
+	for _, s := range streams {
+		s.closed = true
+		close(s.ch)
+	}
+	a.mu.Unlock()
+	for _, s := range streams {
+		<-s.done
+	}
 }

@@ -26,7 +26,8 @@ SIMULATE_RUN ?= TestSimulate
 # default - registers the systemd --user service. This is the DEVELOPMENT path;
 # end users should use install.sh (downloads a prebuilt release).
 BIN_DIR ?= $(HOME)/.local/bin
-DATA_DIR ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME),$(HOME)/.config)/sapaloq
+CONFIG_DIR ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME),$(HOME)/.config)/sapaloq
+DATA_DIR ?= $(HOME)/SapaLOQ
 DATA_HOME ?= $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)
 INSTALL_SERVICE ?= 1
 INSTALL_AUTOSTART ?= 1
@@ -95,7 +96,7 @@ run: desktop-entry
 		for p in "$$widget_pid" "$$core_pid"; do \
 			if [[ -n "$$p" ]]; then wait "$$p" 2>/dev/null || true; fi; \
 		done; \
-		rm -f $$HOME/.config/sapaloq/run/sapaloq.sock 2>/dev/null || true; \
+		rm -f $$HOME/SapaLOQ/run/sapaloq.sock 2>/dev/null || true; \
 		echo "SapaLOQ stopped."; \
 	}; \
 	trap cleanup INT TERM EXIT; \
@@ -230,12 +231,12 @@ install:
 	else \
 		echo "[warn] wails not found; skipping GUI widget. Install: go install github.com/wailsapp/wails/v2/cmd/wails@latest" >&2; \
 	fi; \
-	mkdir -p "$(DATA_DIR)" "$(DATA_DIR)/memory" "$(DATA_DIR)/state" "$(DATA_DIR)/run" "$(DATA_DIR)/vault"; \
-	cfg="$(DATA_DIR)/config.json"; \
+	install -d -m 0700 "$(CONFIG_DIR)" "$(DATA_DIR)" "$(DATA_DIR)/memory" "$(DATA_DIR)/state" "$(DATA_DIR)/run" "$(DATA_DIR)/vault"; \
+	cfg="$(CONFIG_DIR)/config.json"; \
 	if [[ -f "$$cfg" ]]; then \
 		echo "    config exists, leaving it untouched: $$cfg"; \
 	elif [[ -f config/config.example.json ]]; then \
-		cp config/config.example.json "$$cfg"; \
+		install -m 0600 config/config.example.json "$$cfg"; \
 		echo "    seeded default config: $$cfg"; \
 	else \
 		echo "[warn] no config/config.example.json; run 'sapaloq-core doctor'" >&2; \
@@ -272,4 +273,5 @@ uninstall:
 	rm -f "$(DATA_HOME)/applications/sapaloq.desktop"; \
 	command -v update-desktop-database >/dev/null 2>&1 && \
 		update-desktop-database "$(DATA_HOME)/applications" >/dev/null 2>&1 || true; \
-	echo "==> Done. Config and data kept at: $(DATA_DIR)"
+	echo "==> Done. Config kept at: $(CONFIG_DIR)"; \
+	echo "==> Runtime data kept at: $(DATA_DIR)"

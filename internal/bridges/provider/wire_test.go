@@ -224,9 +224,13 @@ func TestStreamClaudeEndToEnd(t *testing.T) {
 		Endpoint:   server.URL,
 		Token:      "sk-ant-test",
 		Model:      "claude-sonnet-4-5",
-		Messages:   []bridge.Message{{Role: "user", Content: "hi"}},
-		Timeout:    5 * time.Second,
-		Stream:     true,
+		Messages: []bridge.Message{
+			{Role: "system", Content: "system one"},
+			{Role: "checkpoint", Content: "system two"},
+			{Role: "user", Content: "hi"},
+		},
+		Timeout: 5 * time.Second,
+		Stream:  true,
 	}
 
 	var events []WireEvent
@@ -254,6 +258,14 @@ func TestStreamClaudeEndToEnd(t *testing.T) {
 	}
 	if req.Model != "claude-sonnet-4-5" {
 		t.Errorf("model: %s", req.Model)
+	}
+	if req.System != "system one\n\nsystem two" {
+		t.Errorf("top-level system = %q", req.System)
+	}
+	for _, message := range req.Messages {
+		if message.Role != "user" && message.Role != "assistant" {
+			t.Errorf("invalid Anthropic message role %q", message.Role)
+		}
 	}
 
 	// Expect one tool + one text event.

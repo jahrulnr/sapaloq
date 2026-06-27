@@ -2,9 +2,21 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop - bukan repo coding.
-> Last updated: 2026-06-23 (index-first prefetch + typed facts + learning queue landed; see implementation-order status table)
+> Last updated: 2026-06-27 (sub-agent turns persist under `state/tasks/{id}/turns.json`; compaction checkpoints durable per actor id)
 
-Related: [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [VISION.md](./VISION.md) · [config.schema.json](../schema/config.schema.json)
+---
+
+## Sub-agent durable context (2026-06-27)
+
+Background actors (`task-*`) now use the **same turn store** as chat sessions:
+
+- `state/tasks/{taskId}/turns.json` — tool + assistant turns for resume/replay
+- `state/tasks/{taskId}/checkpoints.json` — LLM compaction checkpoints (`runSubAgentCompact` → `createCheckpoint`)
+- `state/tasks/{taskId}/status.json` — lightweight index (role, status, plan_task_id, question)
+
+On core restart, `recoverOrphanedTasks` **resumes** `in_progress` tasks when turns exist; otherwise marks `failed` explicitly.
+
+Legacy `status.json` `transcript` arrays are migrated once at startup (`migrateLegacyTaskTranscripts`).
 
 ---
 
@@ -188,7 +200,7 @@ SQLite = **authoritative index**; markdown = human-readable source + agent appen
 
 ## JSON index (primary store, 2026)
 
-Path: `~/SapaLOQ/state/memory/facts.json` (+ rollout/session JSON under `~/SapaLOQ/state/`). Facts use substring search (FTS removed with SQLite). One-shot migration exports legacy `companion.db` → JSON on first boot.
+Path: `~/SapaLOQ/memory/facts.json` (durable) + transient rollout/session JSON under `~/SapaLOQ/state/`. Facts use substring search (FTS removed with SQLite). One-shot migration exports legacy `companion.db` → JSON on first boot and merges any misplaced `state/memory/` files into `memory/` on startup.
 
 ---
 

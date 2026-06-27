@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -29,12 +30,32 @@ func NewServer(cfg config.Config, orch *orchestrator.Orchestrator) *Server {
 }
 
 func (s *Server) ListenAndServe(ctx context.Context, socketPath string) error {
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
 		return err
 	}
-	_ = os.Remove(socketPath)
+	if err := os.Chmod(filepath.Dir(socketPath), 0o700); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(socketPath); err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("refusing to remove non-socket IPC path %s", socketPath)
+		}
+		if !socketOwnedByCurrentUser(info) {
+			return fmt.Errorf("refusing to remove IPC socket not owned by current user: %s", socketPath)
+		}
+		if err := os.Remove(socketPath); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
+		return err
+	}
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		_ = ln.Close()
+		_ = os.Remove(socketPath)
 		return err
 	}
 	defer ln.Close()
@@ -52,6 +73,10 @@ func (s *Server) ListenAndServe(ctx context.Context, socketPath string) error {
 			default:
 				continue
 			}
+		}
+		if !peerIsCurrentUser(conn) {
+			_ = conn.Close()
+			continue
 		}
 		go s.handle(ctx, conn)
 	}
@@ -107,6 +132,13 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 				continue
 			}
 			write(conn, Response{OK: true, Op: req.Op, TaskInspect: &inspect, ServerMs: time.Since(start).Milliseconds()})
+		case "actor_inspect":
+			inspect, err := s.orch.ActorInspect(req.TaskID, req.AfterLine)
+			if err != nil {
+				write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+				continue
+			}
+			write(conn, Response{OK: true, Op: req.Op, ActorInspect: &inspect, ServerMs: time.Since(start).Milliseconds()})
 		case "chat_delete":
 			s.handleDelete(ctx, conn, req, start)
 		case "chat_retry":

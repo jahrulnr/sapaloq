@@ -458,6 +458,27 @@ func taskInspect(socketPath, taskID string, afterLine int) (*taskInspectResult, 
 	return out, nil
 }
 
+func actorInspect(socketPath, actorID string, afterLine int) (*taskInspectResult, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "actor_inspect", TaskID: actorID, AfterLine: afterLine})
+	if err != nil {
+		return nil, err
+	}
+	if len(responses) == 0 || !responses[0].OK || responses[0].ActorInspect == nil {
+		msg := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			msg = responses[0].Message
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+	src := responses[0].ActorInspect
+	return &taskInspectResult{
+		ID: src.ID, Role: src.Role, Status: src.Status, Task: src.Task,
+		Result: src.Result, Error: src.Error, Question: src.Question,
+		PlanTaskID: src.PlanTaskID, Plan: src.Plan, Transcript: src.Transcript,
+		EventCount: src.EventCount, UpdatedAt: src.UpdatedAt.Format(time.RFC3339Nano),
+	}, nil
+}
+
 func slashSuggest(socketPath, query string) ([]config.CommandEntry, error) {
 	responses, err := roundTrip(socketPath, ipcRequest{Op: "slash_suggest", Query: query})
 	if err != nil {

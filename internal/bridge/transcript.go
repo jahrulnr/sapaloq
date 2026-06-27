@@ -23,7 +23,7 @@ type TranscriptEntry struct {
 	Kind         TranscriptEntryKind `json:"kind"`
 	GenerationID string              `json:"generation_id,omitempty"`
 	TurnID       int64               `json:"turn_id,omitempty"`
-	Seq          int               `json:"seq,omitempty"`
+	Seq          int                 `json:"seq,omitempty"`
 	At           time.Time           `json:"at"`
 	Archived     bool                `json:"archived,omitempty"`
 
@@ -49,11 +49,13 @@ type TranscriptEntry struct {
 
 // TranscriptPatch is a live snapshot for one chat generation.
 type TranscriptPatch struct {
-	SessionID    string            `json:"session_id"`
-	GenerationID string            `json:"generation_id"`
-	Entries      []TranscriptEntry `json:"entries"`
-	Finished     bool              `json:"finished,omitempty"`
-	TurnID       int64             `json:"turn_id,omitempty"`
+	SessionID       string            `json:"session_id"`
+	ActorID         string            `json:"actor_id,omitempty"`
+	ParentSessionID string            `json:"parent_session_id,omitempty"`
+	GenerationID    string            `json:"generation_id"`
+	Entries         []TranscriptEntry `json:"entries"`
+	Finished        bool              `json:"finished,omitempty"`
+	TurnID          int64             `json:"turn_id,omitempty"`
 	// Reset tells the widget to discard the current transcript DOM and replace
 	// it with Entries (usually empty for a fresh session). Only set after the
 	// backend has persisted the new/empty session so the UI never clears on a

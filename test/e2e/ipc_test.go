@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,7 +125,20 @@ func TestE2ESettingsPatchViaIPC(t *testing.T) {
 		}
 	}
 	if seen[bridge.EventResponseDelta] == 0 {
-		t.Fatalf("missing response (seen=%v)", seen)
+		var response string
+		for _, res := range responses {
+			if res.Event == nil || res.Event.Transcript == nil {
+				continue
+			}
+			for _, e := range res.Event.Transcript.Entries {
+				if e.Kind == bridge.TranscriptText && strings.TrimSpace(e.Text) != "" {
+					response = e.Text
+				}
+			}
+		}
+		if response == "" {
+			t.Fatalf("missing response (seen=%v)", seen)
+		}
 	}
 
 	raw, err = config.LoadRaw(h.ConfigPath)

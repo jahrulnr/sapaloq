@@ -4,7 +4,8 @@
 #
 # Downloads a prebuilt release artifact from GitHub, installs the binaries into
 # a user-local bin dir (default ~/.local/bin), seeds a default config under
-# ~/.config/sapaloq (never overwriting an existing one), and - unless
+# ~/.config/sapaloq (never overwriting an existing one), runtime data under
+# ~/SapaLOQ, and - unless
 # --no-service is given - registers and starts the systemd --user service via
 # `sapaloq-core service install`.
 #
@@ -23,7 +24,7 @@
 #   --no-autostart      Skip the widget desktop autostart (no launch on login).
 #   --no-verify         Skip the sha256 checksum verification (not recommended).
 #   --uninstall         Remove the service, autostart entry and binaries.
-#                       Config and data under ~/.config/sapaloq are KEPT.
+#                       Config under ~/.config/sapaloq and data under ~/SapaLOQ are KEPT.
 #   -h, --help          Show this help.
 #
 # Environment:
@@ -35,7 +36,8 @@ set -euo pipefail
 # --- config --------------------------------------------------------------
 REPO="${SAPALOQ_REPO:-jahrulnr/sapaloq}"
 BIN_DIR="${HOME}/.local/bin"
-DATA_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/sapaloq"
+CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/sapaloq"
+DATA_DIR="${SAPALOQ_DATA_DIR:-${HOME}/SapaLOQ}"
 DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 VERSION="${SAPALOQ_VERSION:-}"
 INSTALL_SERVICE=1
@@ -96,9 +98,11 @@ uninstall() {
 	fi
 
 	echo
-	log "Done. Config and data were kept at: ${DATA_DIR}"
-	echo "    To delete them too (this erases facts, chat history and the vault):"
-	echo "        rm -rf \"${DATA_DIR}\""
+	log "Done. Config was kept at: ${CONFIG_DIR}"
+	log "Runtime data was kept at: ${DATA_DIR}"
+	echo "    To erase the default installation completely (facts, chat history and vault):"
+	echo "        rm -rf \"${CONFIG_DIR}\" \"${DATA_DIR}\""
+	echo "    If runtime.dataDir was customized, erase that configured path instead of ${DATA_DIR}."
 	exit 0
 }
 
@@ -204,14 +208,14 @@ else
 fi
 
 # --- seed config + runtime dirs -----------------------------------------
-mkdir -p "${DATA_DIR}" "${DATA_DIR}/memory" "${DATA_DIR}/state" "${DATA_DIR}/run" "${DATA_DIR}/vault"
+install -d -m 0700 "${CONFIG_DIR}" "${DATA_DIR}" "${DATA_DIR}/memory" "${DATA_DIR}/state" "${DATA_DIR}/run" "${DATA_DIR}/vault"
 
-CONFIG_FILE="${DATA_DIR}/config.json"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
 EXAMPLE_CONFIG="${SRC}/config.example.json"
 if [[ -f "${CONFIG_FILE}" ]]; then
 	log "config exists, leaving it untouched: ${CONFIG_FILE}"
 elif [[ -f "${EXAMPLE_CONFIG}" ]]; then
-	cp "${EXAMPLE_CONFIG}" "${CONFIG_FILE}"
+	install -m 0600 "${EXAMPLE_CONFIG}" "${CONFIG_FILE}"
 	log "seeded default config: ${CONFIG_FILE}"
 else
 	warn "no example config in archive; start by running 'sapaloq-core doctor'"

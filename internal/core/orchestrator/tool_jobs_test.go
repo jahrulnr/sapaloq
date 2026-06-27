@@ -66,9 +66,11 @@ func TestToolJobSchedulerParallelizesExecWritesToDifferentPaths(t *testing.T) {
 			},
 		}
 	}
+	done := make(chan struct{})
 	go func() {
 		for range s.submitBatch(context.Background(), "run-1", "session-1", items) {
 		}
+		close(done)
 	}()
 	for i := 0; i < 2; i++ {
 		select {
@@ -78,6 +80,7 @@ func TestToolJobSchedulerParallelizesExecWritesToDifferentPaths(t *testing.T) {
 		}
 	}
 	close(release)
+	<-done
 }
 
 func TestToolJobSchedulerSerializesSameResourceLane(t *testing.T) {

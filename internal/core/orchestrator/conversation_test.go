@@ -812,7 +812,7 @@ func (b *malformedToolBridge) Complete(_ context.Context, req bridge.Request) (<
 	go func() {
 		defer close(out)
 		if call == 1 {
-			// An unknown tool name is not handled by handleAskTool/runSharedTool,
+			// An unknown tool name is not handled by dispatchTool,
 			// so it yields no toolResult - exactly the "tool emitted but nothing
 			// executed" shape a mangled inline batch produces.
 			tool := parse.ToolCall{Name: "definitely_not_a_real_tool", Arguments: []byte(`{}`), Source: "openai_inline"}

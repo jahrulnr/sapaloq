@@ -83,11 +83,12 @@ The unit is written to `~/.config/systemd/user/sapaloq.service` with an absolute
 ### Uninstall / delete config
 
 `./install.sh --uninstall` (or `sapaloq-core service uninstall`) removes the service
-and binaries but **keeps** your config and data. To erase everything - facts, chat
-history and the tool vault - delete the data dir manually:
+and binaries but **keeps** your config and data. To erase everything - config,
+facts, chat history and the tool vault - delete both default roots. If
+`runtime.dataDir` was customized, replace `~/SapaLOQ` with that configured path:
 
 ```bash
-rm -rf ~/.config/sapaloq
+rm -rf ~/.config/sapaloq ~/SapaLOQ
 ```
 
 ## Quick start (dev)
@@ -116,7 +117,7 @@ Details: [docs/RUNTIME.md](./docs/RUNTIME.md) · widget spike: [docs/development
 
 | Command | Purpose |
 |---------|---------|
-| `run` | Start IPC server on `~/.config/sapaloq/run/sapaloq.sock` |
+| `run` | Start IPC server on `~/SapaLOQ/run/sapaloq.sock` |
 | `chat [message]` | Stream one chat turn to stdout (`[thinking]`, `[response]`, `[tool]`) |
 | `--debug`, `-d` | Audit logs on stderr (credentials, bridge, wire summary) |
 | `--verbose`, `-v` | Debug + per-frame wire detail |
@@ -138,7 +139,7 @@ Slash commands in chat: **`/settings` only** (MVP). Example:
 
 When a provider emits a **structured tool call** outside `llmBridge.declaredTools`, SapaLOQ appends to:
 
-`~/.config/sapaloq/vault/tool-calls.jsonl`
+`~/SapaLOQ/vault/tool-calls.jsonl`
 
 Thinking/chat text that **mentions** tool names is not filtered - aliases handle grouping. Vault is for **actionable review** when fixing declared tool surface and schema aliases.
 
@@ -160,7 +161,7 @@ sapaloq/
 └── migrations/           # SQLite migrations
 ```
 
-Runtime data (not in repo): `~/.config/sapaloq/`
+Config: `~/.config/sapaloq/config.json`. Runtime data (not in repo): `~/SapaLOQ/`.
 
 ## Docs
 

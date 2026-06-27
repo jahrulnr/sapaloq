@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/parse"
@@ -21,15 +22,15 @@ import (
 //   - where stream events go (chat: live channel; sub-agent: progress + heartbeat).
 
 // turnOutcome is the normalized result of dispatching one tool call. It is the
-// common shape both handleAskTool (chat) and handleSubAgentTool (sub-agent)
-// are adapted to, so runTurnLoop never needs to know which role it serves.
+// common shape returned by dispatchTool, so runTurnLoop never needs to know
+// which role it serves.
 type turnOutcome struct {
 	// text is the tool result fed back to the model on the next turn. Empty
 	// when the tool produced no model-visible output.
 	text string
 	// handled marks the call as a recognized tool that produced a result turn
 	// (counts as progress). Unhandled calls are ignored. Mirrors the chat
-	// loop's askToolResult.handled so behavior is identical.
+	// loop's dispatch result so behavior is identical across roles.
 	handled bool
 	// stop ends the loop after this turn (chat: sapaloq_stop; sub-agent: a
 	// terminal tool such as sapaloq_complete_task/sapaloq_fail_task).
@@ -58,6 +59,10 @@ type turnSink interface {
 // turnConfig parameterizes one run of the shared engine.
 type turnConfig struct {
 	sessionID string
+	// persistID is the durable actor-turn identity. Foreground actors use the
+	// chat session id; background actors use task-*, whose turns/checkpoints live
+	// beside status.json under state/tasks/<id>.
+	persistID string
 	// runID is the stable actor identity used to correlate tool jobs and
 	// steering/decision events. It may equal sessionID for a foreground run.
 	runID string
@@ -122,8 +127,10 @@ func (s chatSink) beat(string) {}
 // the worker heartbeat (the structural ticker in runBackgroundTask owns that);
 // beat() only updates the phase label for observability.
 type subagentSink struct {
-	o      *Orchestrator
-	taskID string
+	o               *Orchestrator
+	taskID          string
+	parentSessionID string
+	coalescer       *TranscriptCoalescer
 }
 
 func (s *subagentSink) emit(_ context.Context, ev bridge.StreamEvent) {
@@ -136,6 +143,25 @@ func (s *subagentSink) emit(_ context.Context, ev bridge.StreamEvent) {
 	if ev.Kind != bridge.EventDone {
 		_ = s.o.progress.Append(s.taskID, ev)
 	}
+	if s.o.bus == nil {
+		return
+	}
+	if s.coalescer == nil {
+		s.coalescer = NewTranscriptCoalescer(s.taskID)
+	}
+	if !s.coalescer.Apply(ev) {
+		return
+	}
+	patch := bridge.TranscriptPatch{
+		SessionID: s.parentSessionID, ActorID: s.taskID,
+		ParentSessionID: s.parentSessionID, GenerationID: s.taskID,
+		Entries: s.coalescer.EntriesWithPending(),
+	}
+	s.o.bus.Publish(topicFor(bridge.EventTranscript), bridge.StreamEvent{
+		Kind: bridge.EventTranscript, SessionID: s.parentSessionID,
+		ActorID: s.taskID, ParentSessionID: s.parentSessionID,
+		GenerationID: s.taskID, Transcript: &patch, At: time.Now().UTC(),
+	})
 }
 
 // beat updates only the phase label (liveness is owned by the ticker). Passing

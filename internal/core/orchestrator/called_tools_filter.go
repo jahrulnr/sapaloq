@@ -142,6 +142,26 @@ func (f *calledToolsFilter) flush() string {
 	return f.flushPending()
 }
 
+// StripCalledToolsMarkers removes orchestrator-injected and model-echoed tool
+// markers from text shown to the user. The markers remain in persisted turns
+// so the model keeps in-context proof of which tools ran.
+func StripCalledToolsMarkers(text string) string {
+	if text == "" {
+		return ""
+	}
+	var f calledToolsFilter
+	var b strings.Builder
+	b.WriteString(f.feed(text))
+	b.WriteString(f.flush())
+	return b.String()
+}
+
+// stripCalledToolsForDisplay removes tool markers and trims trailing whitespace
+// left after the orchestrator's "\n\n[Called tools: …]" suffix.
+func stripCalledToolsForDisplay(text string) string {
+	return strings.TrimRight(StripCalledToolsMarkers(text), " \t\n\r")
+}
+
 // flushPending releases and clears any buffered partial-prefix bytes.
 func (f *calledToolsFilter) flushPending() string {
 	if f.buf.Len() == 0 {

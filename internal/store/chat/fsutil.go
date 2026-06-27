@@ -23,7 +23,7 @@ func ensureDir(dir string) error {
 	if dir == "" {
 		return errors.New("dir is required")
 	}
-	return os.MkdirAll(dir, 0o755)
+	return os.MkdirAll(dir, 0o700)
 }
 
 func readJSONFile(path string, dst any) error {

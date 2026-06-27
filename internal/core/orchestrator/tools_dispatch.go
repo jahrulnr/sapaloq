@@ -23,14 +23,21 @@ func runSharedTool(ctx context.Context, call parse.ToolCall) (string, bool) {
 func (o *Orchestrator) runSharedTool(ctx context.Context, call parse.ToolCall) (string, bool) {
 	args := parseToolArgs(call.Arguments)
 	args = o.resolveActorArgs(ctx, args)
-	if run, ok := o.sharedToolRunner(ctx, args, call.Name); ok {
+	return o.runSharedToolArgs(ctx, call.Name, args)
+}
+
+// runSharedToolArgs executes a shared tool from already parsed arguments. The
+// actor dispatcher uses this path so malformed-JSON repair and actor argument
+// resolution happen exactly once per call.
+func (o *Orchestrator) runSharedToolArgs(ctx context.Context, name string, args toolArgs) (string, bool) {
+	if run, ok := o.sharedToolRunner(ctx, args, name); ok {
 		if args.WaitForOutput != nil && !*args.WaitForOutput {
-			return o.spawnBgTool(ctx, call.Name, run), true
+			return o.spawnBgTool(ctx, name, run), true
 		}
 		out, _ := run(ctx)
-		out = enrichToolResultWithArtifactFingerprint(call.Name, args.Command, out)
-		if args.Path != "" && (call.Name == "write_file" || call.Name == "create_file" || call.Name == "edit_file") {
-			out = enrichToolResultWithArtifactFingerprint(call.Name, args.Path, out)
+		out = enrichToolResultWithArtifactFingerprint(name, args.Command, out)
+		if args.Path != "" && (name == "write_file" || name == "create_file" || name == "edit_file") {
+			out = enrichToolResultWithArtifactFingerprint(name, args.Path, out)
 		}
 		return out, true
 	}
@@ -60,6 +67,14 @@ func (o *Orchestrator) sharedToolRunner(ctx context.Context, args toolArgs, name
 		return func(ctx context.Context) (string, error) { return toolWebSearch(ctx, args), nil }, true
 	case "exec":
 		return o.execBgRun(args, actorRunID(ctx)), true
+	case "write_file":
+		return func(context.Context) (string, error) { return toolWriteFile(args, false), nil }, true
+	case "create_file":
+		return func(context.Context) (string, error) { return toolWriteFile(args, true), nil }, true
+	case "edit_file":
+		return func(context.Context) (string, error) { return toolEditFile(args), nil }, true
+	case "delete_file":
+		return func(context.Context) (string, error) { return toolDeleteFile(args), nil }, true
 	default:
 		return nil, false
 	}

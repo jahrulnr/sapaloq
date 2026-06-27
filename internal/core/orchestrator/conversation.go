@@ -55,20 +55,11 @@ func (o *Orchestrator) runConversationWithGeneration(ctx context.Context, snap p
 // sharing the same bounded conversation snapshot, preventing mailbox/tool-job
 // identity conflicts with a concurrently active UI orchestrator.
 func (o *Orchestrator) runConversationActor(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, runID, generationID, fallbackTask string, messages []bridge.Message, thinkingOut *strings.Builder) (strings.Builder, error) {
-	cfg := turnConfig{
-		sessionID:       sessionID,
-		runID:           runID,
-		generationID:    generationID,
-		tools:           askTools,
-		sink:            chatSink{o: o, out: out, sessionID: sessionID, widget: true},
-		thinkingOut:     thinkingOut,
-		recordToolTurns: true,
-		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
-			res := o.handleAskTool(ctx, snap, out, sessionID, fallbackTask, call)
-			return turnOutcome{text: res.text, handled: res.handled, stop: res.stop}
-		},
-	}
-	return o.runTurnLoop(ctx, snap, fallbackTask, messages, cfg)
+	return o.runActor(ctx, snap, ActorRun{
+		ID: runID, ParentSessionID: sessionID, Role: "ask",
+		GenerationID: generationID, TaskText: fallbackTask, Tools: askTools,
+		Messages: messages, Foreground: true, Out: out, ThinkingOut: thinkingOut,
+	})
 }
 
 // runTurnLoop is the single multi-turn inference engine behind both chat and
@@ -80,6 +71,10 @@ func (o *Orchestrator) runConversationActor(ctx context.Context, snap providerSn
 // everyone.
 func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, fallbackTask string, messages []bridge.Message, cfg turnConfig) (strings.Builder, error) {
 	sessionID := cfg.sessionID
+	persistID := cfg.persistID
+	if persistID == "" {
+		persistID = sessionID
+	}
 	runID := cfg.runID
 	if runID == "" {
 		runID = sessionID
@@ -257,30 +252,30 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				}
 			}
 		} else if !runtimeCfg.Compaction.UseCheckpointsEnabled() {
-		pct := o.effectiveContextPercent(runCtx, sessionID, cleanMessages, snap.entry.ContextWindow)
-		bgThreshold := int(runtimeCfg.Compaction.BackgroundThreshold * 100)
-		if bgThreshold <= 0 {
-			bgThreshold = 70
-		}
-		blockThreshold := int(runtimeCfg.Compaction.BlockingThreshold * 100)
-		if blockThreshold <= 0 {
-			blockThreshold = 88
-		}
-		if pct >= bgThreshold && len(cleanMessages) > lastCompactedMessageCount+2 {
-			blocking := pct >= blockThreshold
-			if blocking {
-				out.emit(runCtx, statusEvent(sessionID, "compacting"))
+			pct := o.effectiveContextPercent(runCtx, sessionID, cleanMessages, snap.entry.ContextWindow)
+			bgThreshold := int(runtimeCfg.Compaction.BackgroundThreshold * 100)
+			if bgThreshold <= 0 {
+				bgThreshold = 70
 			}
-			cleanMessages = compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
-			lastCompactedMessageCount = len(cleanMessages)
-			if blocking {
-				out.emit(runCtx, statusEvent(sessionID, "working"))
+			blockThreshold := int(runtimeCfg.Compaction.BlockingThreshold * 100)
+			if blockThreshold <= 0 {
+				blockThreshold = 88
 			}
-			if !runtimeCfg.Compaction.ResumeAfterCompaction {
-				return all, fmt.Errorf("continuation paused after compaction by configuration")
+			if pct >= bgThreshold && len(cleanMessages) > lastCompactedMessageCount+2 {
+				blocking := pct >= blockThreshold
+				if blocking {
+					out.emit(runCtx, statusEvent(sessionID, "compacting"))
+				}
+				cleanMessages = compactConversationMessages(cleanMessages, fallbackTask, runtimeCfg.Compaction.PreserveRecentFraction)
+				lastCompactedMessageCount = len(cleanMessages)
+				if blocking {
+					out.emit(runCtx, statusEvent(sessionID, "working"))
+				}
+				if !runtimeCfg.Compaction.ResumeAfterCompaction {
+					return all, fmt.Errorf("continuation paused after compaction by configuration")
+				}
 			}
 		}
-	}
 
 		out.emit(runCtx, statusEvent(sessionID, "working"))
 		// Anthropic/Vercel gateways reject requests whose last non-system turn is
@@ -607,7 +602,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			// Propagate the error to the CALLER. The UI already saw the error
 			// (emitted to the sink) - but sub-agent finalization in
-			// runSubAgentLoop keys "failed vs done" off this returned error.
+			// runTaskActor keys "failed vs done" off this returned error.
 			// Returning nil here used to make a planner whose only LLM call hit
 			// a provider 500 finish as "done" with a fake "Selesai." and no
 			// plan.md, so Ask then narrated a plan that never existed. A
@@ -671,7 +666,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				} else if note != "" {
 					final = note
 				}
-				o.persistAssistantTurn(ctx, sessionID, final, cfg.generationID)
+				o.persistAssistantTurn(ctx, persistID, final, cfg.generationID)
 			}
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return all, nil
@@ -692,14 +687,36 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			// long working session is never cut off mid-flow.
 			toollessBudget++
 		} else if len(toolResults) > 0 {
-			// A turn that acted earns back a tool-less reasoning turn.
-			toollessBudget++
+			attemptedStop := false
+			for _, item := range pendingTools {
+				if item.call.Name == "sapaloq_stop" {
+					attemptedStop = true
+					break
+				}
+			}
+			// A sapaloq_stop that did not end the run is not real progress; it
+			// must not refill the tool-less budget or the foreground can spin
+			// forever on a rejected stop attempt.
+			if !(attemptedStop && !stop) {
+				toollessBudget++
+			}
 		} else {
 			// A tool-less turn burns the budget.
 			toollessBudget--
 		}
 		if len(toolResults) > 0 {
-			toollessStreak = 0
+			attemptedStop := false
+			for _, item := range pendingTools {
+				if item.call.Name == "sapaloq_stop" {
+					attemptedStop = true
+					break
+				}
+			}
+			if attemptedStop && !stop {
+				toollessStreak++
+			} else {
+				toollessStreak = 0
+			}
 		} else {
 			toollessStreak++
 		}
@@ -710,7 +727,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// budget.MaxNoProgressTurns <= 0 disables this bound entirely.
 		if budget.MaxNoProgressTurns > 0 && toollessBudget <= 0 {
 			if cfg.recordToolTurns {
-				o.persistAssistantTurn(ctx, sessionID, response.String(), cfg.generationID)
+				o.persistAssistantTurn(ctx, persistID, response.String(), cfg.generationID)
 			}
 			out.emit(runCtx, statusEvent(sessionID, "tool-less budget exhausted - ending turn"))
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
@@ -758,7 +775,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// the cancelable runCtx) so a wall-time timeout does not drop the
 		// audit/accounting record. Chat-only (recordToolTurns).
 		if cfg.recordToolTurns && o.chat != nil && len(toolResults) > 0 {
-			_ = o.chat.AppendTurn(ctx, sessionID, "tool", toolResultsBody, estimateTextTokens(toolResultsBody))
+			_ = o.chat.AppendTurn(ctx, persistID, "tool", toolResultsBody, estimateTextTokens(toolResultsBody))
 		}
 		// Persist a tool-less autopilot continuation as a dedicated "autopilot"
 		// turn so it counts toward ContextUsage / auto-compaction accounting
@@ -769,14 +786,16 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// does not drop the accounting record. Chat-only (recordToolTurns).
 		if cfg.recordToolTurns && o.chat != nil && len(toolResults) == 0 {
 			skipPersist := false
-			if turns, terr := o.chat.ActiveTurns(ctx, sessionID, false); terr == nil && len(turns) > 0 {
-				last := turns[len(turns)-1]
-				if last.Role == "autopilot" && last.Content == toolResultsBody {
-					skipPersist = true
+			if turns, terr := o.chat.ActiveTurns(ctx, persistID, false); terr == nil {
+				for _, t := range turns {
+					if t.Role == "autopilot" && t.Content == toolResultsBody {
+						skipPersist = true
+						break
+					}
 				}
 			}
 			if !skipPersist {
-				_ = o.chat.AppendAutopilotTurn(ctx, sessionID, toolResultsBody, estimateTextTokens(toolResultsBody))
+				_ = o.chat.AppendAutopilotTurn(ctx, persistID, toolResultsBody, estimateTextTokens(toolResultsBody))
 			}
 		}
 		continuation := toolResultsBody
@@ -798,7 +817,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			assistantContent += note
 		}
 		if cfg.recordToolTurns {
-			o.persistAssistantTurn(ctx, sessionID, assistantContent, cfg.generationID)
+			o.persistAssistantTurn(ctx, persistID, assistantContent, cfg.generationID)
 		}
 		// A turn carrying tool output is fed back under the dedicated "tool"
 		// role so the model can tell an observation apart from a user request

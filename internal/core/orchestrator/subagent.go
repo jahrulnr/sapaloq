@@ -27,31 +27,10 @@ const unlimitedTurnsBudget = -1
 // applies to the unlimited sentinel.
 const minSubAgentMaxTurns = 1
 
-// runSubAgentLoop drives a sub-agent (planner / task-runner / scribe) on the
-// SAME inference engine as chat (runTurnLoop). Planner and Agent are therefore
-// just chat with a different system prompt + tool set + output sink: they reuse
-// the chat loop's budgets, loop-detection, compaction and clean stream/error
-// handling instead of a separate, perennially-buggy copy. This adapter only
-// supplies the role-specific pieces:
-//   - tools:        o.toolsForRole(record.Role)
-//   - dispatch:     handleSubAgentTool (terminal tools mutate record + stop)
-//   - sink:         progress JSONL + worker heartbeat (so a live stream never
-//     looks stalled to the watchdog - the recurring stall bug)
-//   - finish:       every role ends by calling an explicit terminal tool
-//     (sapaloq_stop / sapaloq_complete_task / sapaloq_fail_task). A tool-less
-//     turn is NOT a stop signal; the shared toolless-turn budget bounds a
-//     model that only narrates intent without ever stopping.
-//
-// record is mutated in place (Status/Result/Error/Question); the caller
-// persists the final state.
-func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapshot, sessionID string, record *taskRecord) {
-	messages := o.buildSubAgentMessages(record)
-	subSession := sessionID + ":" + record.ID
-
-	// The persisted transcript + answer have been folded into `messages` by
-	// buildSubAgentMessages. Clear the consumed Answer so it isn't replayed
-	// again on a subsequent pause; KEEP the existing Transcript so this run
-	// appends to it (preserving full context across multiple clarifications).
+// runTaskActor drives a background actor (planner / task-runner / scribe) through
+// the shared runActor engine. record is mutated in place; the caller persists.
+func (o *Orchestrator) runTaskActor(ctx context.Context, snap providerSnapshot, sessionID string, record *taskRecord) {
+	// Clear the consumed answer so it is not replayed on a subsequent pause.
 	record.Answer = ""
 
 	// finalResult accumulates the model's free-form text so a terminal tool
@@ -61,34 +40,17 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 
 	compactCtx := &subAgentCompactCtx{
 		fallbackTask:    record.Task,
-		sink:            &subagentSink{o: o, taskID: record.ID},
+		sink:            &subagentSink{o: o, taskID: record.ID, parentSessionID: sessionID},
 		taskID:          record.ID,
 		parentSessionID: sessionID,
 	}
 
-	cfg := turnConfig{
-		sessionID:         subSession,
-		runID:             record.ID,
-		tools:             o.toolsForRole(record.Role),
-		sink:              compactCtx.sink,
-		compactCtx:        compactCtx,
-		maxInferenceTurns: o.roleMaxTurns(record.Role),
-		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
-			o.publishTaskActivity(sessionID, *record, "Menjalankan `"+call.Name+"`.")
-			res := o.handleSubAgentTool(ctx, record, &finalResult, call, compactCtx)
-			text := ""
-			if res.text != "" {
-				text = fmt.Sprintf("[%s] %s", call.Name, res.text)
-			}
-			// A terminal tool (complete/fail) ends the run. A clarification
-			// request is non-terminal in the dispatcher but must also stop the
-			// loop so the task can pause and be resumed with the user's answer.
-			stop := res.terminal || record.Status == "awaiting_clarification"
-			return turnOutcome{text: text, handled: res.text != "", stop: stop}
-		},
-	}
-
-	all, err := o.runTurnLoop(ctx, snap, record.Task, messages, cfg)
+	all, err := o.runActor(ctx, snap, ActorRun{
+		ID: record.ID, ParentSessionID: sessionID, Role: record.Role,
+		TaskText: record.Task, PlanTaskID: record.PlanTaskID, Answer: record.Answer,
+		Tools: o.toolsForRole(record.Role), Record: record,
+		result: &finalResult, compactCtx: compactCtx,
+	})
 	// Flush + close the per-task progress drain so the JSONL is fully
 	// persisted and the drain goroutine does not outlive the loop. runBackgroundTask
 	// also closes this; Close is idempotent and safe to call twice.
@@ -108,61 +70,18 @@ func (o *Orchestrator) runSubAgentLoop(ctx context.Context, snap providerSnapsho
 		return
 	}
 
-	// A terminal tool (sapaloq_complete_task / sapaloq_fail_task) already set
-	// Status + Result/Error; just backfill an empty result from the text.
-	if record.Status == "done" || record.Status == "failed" {
-		if record.Result == "" && record.Error == "" {
-			record.Result = finalText
-		}
-		return
-	}
-
-	// Clarification pause: persist the transcript so sapaloq_answer_clarification
-	// can resume with full context.
+	// Clarification pause: runTurnLoop already persisted assistant and tool turns
+	// under the task actor id, so only the lightweight status must be updated.
 	if record.Status == "awaiting_clarification" {
-		record.appendTranscript("assistant", finalText)
-		record.Result = finalText
+		o.resolveActorOutcome(record, finalText, err)
 		_ = o.writeTask(*record)
 		return
 	}
 
-	// The shared loop returned without a terminal tool. Resolve the outcome by
-	// role: a planner's plan.md is its authoritative result; otherwise an error
-	// from the loop (budget/loop-guard/stream) fails the task with that reason.
-	record.Result = finalText
-	if record.Role == "planner" {
-		if plan := o.readPlanMarkdown(record.ID); plan != "" {
-			record.Result = plan
-			record.Status = "done"
-			return
-		}
-	}
-	if err != nil {
-		record.Status = "failed"
-		if record.Error == "" {
-			record.Error = err.Error()
-		}
+	o.resolveActorOutcome(record, finalText, err)
+	if record.Status == "failed" && record.Error != "" {
 		o.workerLogError(record.ID, "sub-agent loop ended: "+record.Error)
-		return
 	}
-	// No tools, no terminal signal, no error: the loop ended via the
-	// toolless-turn budget (or the per-role turn cap) without the model ever
-	// calling sapaloq_stop / sapaloq_complete_task / sapaloq_fail_task. An
-	// executor that never signalled completion is a failure; a non-executor
-	// (planner without a plan) is done.
-	// NOTE: we intentionally do NOT fail a planner that finished cleanly with
-	// no plan.md - a planner may legitimately answer a question without
-	// producing a formal plan (see TestPlannerCompletesOnToolLessTurn). The
-	// field "halu sukses" bug was NOT this case: there the planner's LLM call
-	// failed with a provider 500, which now returns a non-nil error and is
-	// handled by the `if err != nil` branch above (→ failed). A clean finish
-	// with no error is a real, non-failing outcome.
-	if record.Role == "task-runner" {
-		record.Status = "failed"
-		record.Error = "executor stopped without calling `sapaloq_complete_task`, `sapaloq_fail_task`, or `sapaloq_stop`"
-		return
-	}
-	record.Status = "done"
 }
 
 // roleMaxTurns resolves the tool-loop budget for a sub-agent role.
@@ -256,42 +175,24 @@ func isMutatingTool(tool string) bool {
 	return false
 }
 
-type subToolResult struct {
-	text     string
-	terminal bool
-}
-
-// handleSubAgentTool executes a tool call inside a sub-agent loop: shared
-// assessment tools plus plan/lifecycle/clarification tools.
-func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecord, result *strings.Builder, call parse.ToolCall, compactCtx *subAgentCompactCtx) subToolResult {
-	o.auditTool(record.SessionID, "subagent:"+record.Role, call)
-	// Enforce role policy before dispatching shared tools. Shared means the
-	// implementation is reusable across roles, not that every role may invoke
-	// every shared tool. This is especially important for undeclared/provider-
-	// poisoned calls that were not present in the role's offered tool surface.
-	if !o.roleAllows(record.Role, call.Name) {
-		return subToolResult{text: fmt.Sprintf("Error: %s is not allowed for role %s.", call.Name, record.Role)}
-	}
-	// Shared read-only assessment + web + exec tools (honors wait_for_output).
-	if text, ok := o.runSharedTool(ctx, call); ok {
-		return subToolResult{text: text}
-	}
-	args := parseToolArgs(call.Arguments)
-	args = o.resolveActorArgs(ctx, args)
+// runBackgroundTool implements background-only lifecycle and work tools. The
+// single dispatchTool entry point owns parsing, auditing, allowlisting and the
+// shared-tool path before control reaches this role-specific handler.
+func (o *Orchestrator) runBackgroundTool(ctx context.Context, record *taskRecord, result *strings.Builder, call parse.ToolCall, args toolArgs, compactCtx *subAgentCompactCtx) turnOutcome {
 	// Sub-agent work tools (write/edit/delete/scribe/notify/write_plan) also
 	// honor wait_for_output:false — dispatched to the background registry and
 	// collected later via `wait`. Lifecycle tools below intentionally ignore
 	// the flag (their result IS the transition and cannot be deferred).
 	if run, ok := o.subAgentWorkRunner(args, call.Name, record, result); ok {
 		if args.WaitForOutput != nil && !*args.WaitForOutput {
-			return subToolResult{text: o.spawnBgTool(ctx, call.Name, run)}
+			return turnOutcome{text: o.spawnBgTool(ctx, call.Name, run)}
 		}
 		out, _ := run(ctx)
-		return subToolResult{text: out}
+		return turnOutcome{text: out}
 	}
 	switch call.Name {
 	case "desktop_dnd_status":
-		return subToolResult{text: o.toolDesktopDNDStatus(ctx)}
+		return turnOutcome{text: o.toolDesktopDNDStatus(ctx)}
 	case "read_plan":
 		// Planner reads its OWN plan (to iterate); agent reads the handed-off
 		// plan it must execute.
@@ -301,17 +202,17 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		}
 		plan := o.readPlanMarkdown(planID)
 		if plan == "" {
-			return subToolResult{text: "No plan available yet."}
+			return turnOutcome{text: "No plan available yet."}
 		}
-		return subToolResult{text: plan}
+		return turnOutcome{text: plan}
 	case "sapaloq_update_task_progress":
 		note := strings.TrimSpace(args.Note)
 		if note == "" {
-			return subToolResult{text: "Error: note is required."}
+			return turnOutcome{text: "Error: note is required."}
 		}
 		record.UpdatedAt = time.Now().UTC()
 		_ = o.writeTask(*record)
-		return subToolResult{text: "Progress noted."}
+		return turnOutcome{text: "Progress noted."}
 	case "sapaloq_complete_task":
 		summary := strings.TrimSpace(args.Summary)
 		if summary == "" {
@@ -319,7 +220,7 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		}
 		record.Result = summary
 		record.Status = "done"
-		return subToolResult{text: "Task marked complete.", terminal: true}
+		return turnOutcome{text: "Task marked complete.", stop: true}
 	case "sapaloq_fail_task":
 		reason := strings.TrimSpace(args.Reason)
 		if reason == "" {
@@ -327,7 +228,7 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		}
 		record.Error = reason
 		record.Status = "failed"
-		return subToolResult{text: "Task marked failed.", terminal: true}
+		return turnOutcome{text: "Task marked failed.", stop: true}
 	case "sapaloq_stop":
 		// Explicit stop: available to EVERY sub-agent role (planner, agent,
 		// scribe) so the model itself ends its run instead of the orchestrator
@@ -348,11 +249,11 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		if reason != "" {
 			msg = "Stopped: " + reason
 		}
-		return subToolResult{text: msg, terminal: true}
+		return turnOutcome{text: msg, stop: true}
 	case "request_clarification", "sapaloq_request_decision":
 		question := strings.TrimSpace(args.Question)
 		if question == "" {
-			return subToolResult{text: "Error: question is required."}
+			return turnOutcome{text: "Error: question is required."}
 		}
 		if len(args.Options) > 0 {
 			question += "\nOptions: " + strings.Join(args.Options, " | ")
@@ -361,12 +262,12 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 		record.Status = "awaiting_clarification"
 		record.UpdatedAt = time.Now().UTC()
 		_ = o.writeTask(*record)
-		return subToolResult{text: "Clarification requested from the user.", terminal: false}
+		return turnOutcome{text: "Clarification requested from the user.", stop: false}
 	case "sapaloq_send_steering":
 		target := strings.TrimSpace(args.TargetTaskID)
 		message := strings.TrimSpace(args.Message)
 		if target == "" || message == "" {
-			return subToolResult{text: "Error: target_task_id and message are required."}
+			return turnOutcome{text: "Error: target_task_id and message are required."}
 		}
 		err := o.enqueueActorEvent(actorControlEvent{
 			Kind:          "steering.proposed",
@@ -378,9 +279,9 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			Priority:      args.Priority,
 		})
 		if err != nil {
-			return subToolResult{text: "Error: " + err.Error()}
+			return turnOutcome{text: "Error: " + err.Error()}
 		}
-		return subToolResult{text: fmt.Sprintf("Steering queued for `%s`.", target)}
+		return turnOutcome{text: fmt.Sprintf("Steering queued for `%s`.", target)}
 	case "wait":
 		mode := strings.TrimSpace(args.Mode)
 		if mode == "" {
@@ -397,14 +298,14 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			}
 			select {
 			case <-ctx.Done():
-				return subToolResult{text: "Wait cancelled."}
+				return turnOutcome{text: "Wait cancelled."}
 			case <-time.After(sleep):
 			}
-			return subToolResult{text: fmt.Sprintf("Waited %ds.", int(sleep.Seconds()))}
+			return turnOutcome{text: fmt.Sprintf("Waited %ds.", int(sleep.Seconds()))}
 		case "tool":
 			jobID := strings.TrimSpace(args.JobID)
 			if jobID == "" {
-				return subToolResult{text: "Error: job_id is required for wait mode=tool."}
+				return turnOutcome{text: "Error: job_id is required for wait mode=tool."}
 			}
 			timeout := time.Duration(args.TimeoutSeconds) * time.Second
 			if args.TimeoutSeconds < 0 {
@@ -415,7 +316,7 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			}
 			reg := o.bgJobs()
 			if reg == nil {
-				return subToolResult{text: "Error: background job registry unavailable."}
+				return turnOutcome{text: "Error: background job registry unavailable."}
 			}
 			start := time.Now()
 			done, snap := reg.wait(jobID, timeout)
@@ -428,9 +329,9 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			}
 			raw, err := json.Marshal(view)
 			if err != nil {
-				return subToolResult{text: fmt.Sprintf("Error: marshal wait result: %v", err)}
+				return turnOutcome{text: fmt.Sprintf("Error: marshal wait result: %v", err)}
 			}
-			return subToolResult{text: string(raw)}
+			return turnOutcome{text: string(raw)}
 		case "task":
 			taskID := strings.TrimSpace(args.TaskID)
 			if taskID == "" {
@@ -439,12 +340,12 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			record2, changed, err := o.waitForTaskChange(ctx, taskID, args.Seconds, 120)
 			if err != nil {
 				if ctx.Err() != nil {
-					return subToolResult{text: "Wait cancelled."}
+					return turnOutcome{text: "Wait cancelled."}
 				}
-				return subToolResult{text: "Wait failed: " + err.Error()}
+				return turnOutcome{text: "Wait failed: " + err.Error()}
 			}
 			if !changed {
-				return subToolResult{text: fmt.Sprintf("Task `%s` masih %s setelah jendela tunggu.", record2.ID, record2.Status)}
+				return turnOutcome{text: fmt.Sprintf("Task `%s` masih %s setelah jendela tunggu.", record2.ID, record2.Status)}
 			}
 			resp := fmt.Sprintf("Task `%s` changed to **%s**.", record2.ID, record2.Status)
 			if record2.Question != "" {
@@ -456,7 +357,7 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			if record2.Error != "" {
 				resp += "\n\nError: " + record2.Error
 			}
-			return subToolResult{text: resp}
+			return turnOutcome{text: resp}
 		case "events":
 			timeout := args.TimeoutSeconds
 			if timeout <= 0 {
@@ -464,33 +365,33 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			}
 			events := o.waitActorEvents(ctx, record.ID, time.Duration(timeout)*time.Second)
 			if len(events) == 0 {
-				return subToolResult{text: "No actor event arrived before the wait ended."}
+				return turnOutcome{text: "No actor event arrived before the wait ended."}
 			}
-			return subToolResult{text: actorEventsPrompt(events)}
+			return turnOutcome{text: actorEventsPrompt(events)}
 		default:
-			return subToolResult{text: "Error: unknown wait mode " + mode + " (use time|tool|task|events)."}
+			return turnOutcome{text: "Error: unknown wait mode " + mode + " (use time|tool|task|events)."}
 		}
 	case "sapaloq_cancel_job":
 		jobID := strings.TrimSpace(args.JobID)
 		if jobID == "" {
-			return subToolResult{text: "Error: job_id is required."}
+			return turnOutcome{text: "Error: job_id is required."}
 		}
 		reg := o.bgJobs()
 		if reg == nil {
-			return subToolResult{text: "Error: background job registry unavailable."}
+			return turnOutcome{text: "Error: background job registry unavailable."}
 		}
 		snap, ok := reg.cancel(jobID)
 		if !ok {
-			return subToolResult{text: fmt.Sprintf("Error: job_id %q not found.", jobID)}
+			return turnOutcome{text: fmt.Sprintf("Error: job_id %q not found.", jobID)}
 		}
 		view := bgJobToView(snap)
 		raw, err := json.Marshal(view)
 		if err != nil {
-			return subToolResult{text: fmt.Sprintf("Error: marshal cancel: %v", err)}
+			return turnOutcome{text: fmt.Sprintf("Error: marshal cancel: %v", err)}
 		}
-		return subToolResult{text: string(raw)}
+		return turnOutcome{text: string(raw)}
 	default:
-		return subToolResult{text: "Error: unknown tool " + call.Name}
+		return turnOutcome{text: "Error: unknown tool " + call.Name}
 	}
 }
 

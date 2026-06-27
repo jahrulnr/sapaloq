@@ -1,15 +1,15 @@
 // task-monitor-overlay.ts is the "Planner & Agent" pop-up. Clicking a runtime
 // strip pill opens this modal, which shows each sub-agent's live activity
 // (thinking / tool calls / assistant text) streamed from the per-task progress
-// JSONL, plus the planner's plan.md in a dedicated sub-tab. It polls
-// TaskInspect incrementally (afterLine = last event_count) while the actor is
-// active and stops when the pop-up closes or the task settles.
+// rollout, plus the planner's plan.md in a dedicated sub-tab. ActorInspect
+// hydrates once and transcript bus patches keep the open actor live.
 //
 // The overlay is a singleton (only one open at a time) and dismissable via the
 // X button, Escape, or a backdrop click - mirroring the image-preview overlay
 // but as a centered dialog panel so the chat stays visible behind it.
 
-import { RuntimeStatus, TaskInspect } from '../../wailsjs/go/main/App';
+import { ActorInspect, RuntimeStatus } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { main } from '../../wailsjs/go/models';
 import { renderMarkdown } from './markdown';
 import {
@@ -17,6 +17,7 @@ import {
   syncTranscriptPane,
   emptyTranscriptState,
   type TranscriptEntry,
+  type TranscriptPatch,
 } from './transcript';
 
 type Tab = 'planner' | 'agent';
@@ -24,7 +25,6 @@ type SubTab = 'activity' | 'plan';
 
 type TaskInspectResult = main.taskInspectResult & { transcript?: TranscriptEntry[] };
 
-const POLL_INTERVAL_MS = 2000;
 const OVERLAY_ID = 'task-monitor-overlay';
 
 interface ActorState {
@@ -39,7 +39,8 @@ interface ActorState {
 }
 
 let overlay: HTMLDivElement | null = null;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let stopTranscriptPush: (() => void) | null = null;
+let stopTaskPush: (() => void) | null = null;
 let activeTab: Tab = 'planner';
 let activeSubTab: SubTab = 'activity';
 let escapeHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -122,11 +123,11 @@ export async function openTaskMonitor(opts?: { tab?: Tab; taskID?: string; role?
   buildOverlay();
   attachDismissHandlers();
   await refreshAndRender();
-  startPoll();
+  startPush();
 }
 
 export function closeTaskMonitor() {
-  stopPoll();
+  stopPush();
   if (escapeHandler) {
     document.removeEventListener('keydown', escapeHandler);
     escapeHandler = null;
@@ -143,16 +144,32 @@ export function closeTaskMonitor() {
   overlay = null;
 }
 
-function stopPoll() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+function stopPush() {
+  stopTranscriptPush?.();
+  stopTaskPush?.();
+  stopTranscriptPush = null;
+  stopTaskPush = null;
 }
 
-function startPoll() {
-  stopPoll();
-  pollTimer = setInterval(() => void refreshAndRender(), POLL_INTERVAL_MS);
+function startPush() {
+  stopPush();
+  try {
+    stopTranscriptPush = EventsOn('sapaloq:transcript', (patch: TranscriptPatch) => {
+      if (!overlay || !patch.actor_id) return;
+      const tab = (['planner', 'agent'] as Tab[]).find((candidate) => actorState[candidate].taskID === patch.actor_id);
+      if (!tab) return;
+      actorState[tab].transcript = patch.entries || [];
+      if (tab === activeTab) void renderCurrent();
+    });
+    stopTaskPush = EventsOn('sapaloq:stream', (event: { kind?: string; task_id?: string }) => {
+      if (event.kind !== 'task_update' || !event.task_id) return;
+      if ((['planner', 'agent'] as Tab[]).some((tab) => actorState[tab].taskID === event.task_id)) {
+        void refreshAndRender();
+      }
+    });
+  } catch {
+    // Tests and non-Wails preview have no runtime event bridge.
+  }
 }
 
 function buildOverlay() {
@@ -312,7 +329,7 @@ async function fetchTab(tab: Tab) {
     return;
   }
   try {
-    const res = (await TaskInspect(state.taskID, 0)) as unknown as TaskInspectResult;
+    const res = (await ActorInspect(state.taskID, 0)) as unknown as TaskInspectResult;
     state.transcript = (res.transcript || []) as TranscriptEntry[];
     state.last = res;
     state.lastEventCount = res.event_count ?? state.lastEventCount;
@@ -454,6 +471,14 @@ function buildHeaderLine(res: TaskInspectResult, active: boolean): HTMLElement {
     q.className = 'task-monitor-question';
     q.textContent = '❓ ' + res.question;
     wrap.append(q);
+  }
+  const usage = (res as { usage?: { percent?: number; used_tokens?: number; context_window?: number } }).usage;
+  if (usage && usage.context_window) {
+    const pill = document.createElement('span');
+    pill.className = 'task-monitor-usage';
+    pill.title = `${usage.used_tokens ?? 0} / ${usage.context_window} tokens`;
+    pill.textContent = `${usage.percent ?? 0}% context`;
+    line.append(pill);
   }
   return wrap;
 }

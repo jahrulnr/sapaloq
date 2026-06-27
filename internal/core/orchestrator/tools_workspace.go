@@ -79,10 +79,14 @@ type toolArgs struct {
 	Message        string   `json:"message"`
 	Priority       string   `json:"priority"`
 	CorrelationID  string   `json:"correlation_id"`
-	JobID          string   `json:"job_id"`       // wait / sapaloq_cancel_job target
-	WaitSeconds    int      `json:"wait_seconds"` // exec_result: optional poll window (0 = immediate)
-	Seconds        int      `json:"seconds"`      // wait(time): sleep duration
-	TaskID         string   `json:"task_id"`      // wait(task): sub-agent task to watch
+	JobID          string   `json:"job_id"`                    // wait / sapaloq_cancel_job target
+	WaitSeconds    int      `json:"wait_seconds"`              // exec_result: optional poll window (0 = immediate)
+	Seconds        int      `json:"seconds"`                   // wait(time): sleep duration
+	TaskID         string   `json:"task_id"`                   // wait(task): sub-agent task to watch
+	Task           string   `json:"task"`                      // actor spawn intent
+	PlanTaskID     string   `json:"plan_task_id"`              // planner hand-off
+	Scope          string   `json:"scope"`                     // stop scope
+	Answer         string   `json:"answer"`                    // clarification answer
 	WaitForOutput  *bool    `json:"wait_for_output,omitempty"` // fire-and-forget when false; nil defaults to true
 }
 
@@ -454,9 +458,26 @@ func toolWriteFile(args toolArgs, mustNotExist bool) string {
 		return "Error: " + err.Error()
 	}
 	if mustNotExist {
-		if _, statErr := os.Stat(abs); statErr == nil {
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return "Error: " + err.Error()
+		}
+		f, openErr := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if os.IsExist(openErr) {
 			return fmt.Sprintf("Error: %q already exists; use write_file to overwrite.", args.Path)
 		}
+		if openErr != nil {
+			return "Error: " + openErr.Error()
+		}
+		if _, writeErr := f.WriteString(args.Content); writeErr != nil {
+			_ = f.Close()
+			_ = os.Remove(abs)
+			return "Error: " + writeErr.Error()
+		}
+		if closeErr := f.Close(); closeErr != nil {
+			_ = os.Remove(abs)
+			return "Error: " + closeErr.Error()
+		}
+		return fmt.Sprintf("Wrote %d bytes to %s.", len(args.Content), args.Path)
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "Error: " + err.Error()

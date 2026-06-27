@@ -219,13 +219,25 @@ function renderMessageAttachments(attachments: PendingAttachment[]) {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'message-attachment-row';
-    const preview = attachment.dataURI && attachment.type.startsWith('image/')
-      ? `<img src="${attachment.dataURI}" alt="">`
-      : `<span class="attachment-file-icon">${attachment.type.startsWith('image/') ? 'IMG' : 'FILE'}</span>`;
-    row.innerHTML = `${preview}<span><strong></strong><small>${formatBytes(attachment.size)} · ${attachment.type || 'file'}</small></span>`;
-    const name = row.querySelector('strong');
-    if (name) name.textContent = attachment.name;
-    const image = row.querySelector('img');
+		let image: HTMLImageElement | null = null;
+		if (attachment.dataURI && attachment.type.startsWith('image/')) {
+			image = document.createElement('img');
+			image.src = attachment.dataURI;
+			image.alt = '';
+			row.append(image);
+		} else {
+			const icon = document.createElement('span');
+			icon.className = 'attachment-file-icon';
+			icon.textContent = attachment.type.startsWith('image/') ? 'IMG' : 'FILE';
+			row.append(icon);
+		}
+		const details = document.createElement('span');
+		const name = document.createElement('strong');
+		name.textContent = attachment.name;
+		const meta = document.createElement('small');
+		meta.textContent = `${formatBytes(attachment.size)} · ${attachment.type || 'file'}`;
+		details.append(name, meta);
+		row.append(details);
     image?.addEventListener('click', (event) => {
       event.stopPropagation();
       if (attachment.dataURI) showImagePreview(attachment.dataURI, attachment.name);

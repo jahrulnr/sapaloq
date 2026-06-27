@@ -3,6 +3,8 @@
 import {main} from '../models';
 import {config} from '../models';
 
+export function ActorInspect(arg1:string,arg2:number):Promise<main.taskInspectResult>;
+
 export function ChatHistory():Promise<main.chatHistoryResult>;
 
 export function ContextUsage():Promise<main.chatUsage>;

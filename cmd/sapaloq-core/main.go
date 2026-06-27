@@ -115,6 +115,7 @@ func main() {
 		if err != nil {
 			exitf("orchestrator: %v", err)
 		}
+		defer orch.Close()
 		entry, _ := cfg.LLMBridge.ActiveProvider()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		orch.StartConfigWatcher(ctx)

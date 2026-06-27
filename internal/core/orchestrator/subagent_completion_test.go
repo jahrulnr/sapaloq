@@ -63,7 +63,7 @@ func TestTaskRunnerDoesNotCompleteOnToolLessTurn(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-1", Role: "task-runner", Status: "in_progress", Task: "build a site"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "done" {
 		t.Fatalf("status = %q, want done (completed via terminal tool, not premature)", rec.Status)
@@ -86,7 +86,7 @@ func TestTaskRunnerFailsWhenItNeverSignalsTerminalState(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-stuck", Role: "task-runner", Status: "in_progress", Task: "build a site"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "failed" {
 		t.Fatalf("status = %q, want failed", rec.Status)
@@ -109,7 +109,7 @@ func TestSubAgentProgressDoesNotPersistBridgeDoneAsTaskCompletion(t *testing.T) 
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-progress", Role: "task-runner", Status: "in_progress", Task: "finish"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	raw, err := os.ReadFile(filepath.Join(progressDir, "orch-task-progress.jsonl"))
 	if err != nil {
@@ -139,7 +139,7 @@ func TestPlannerFinishesCleanlyWithoutTerminalTool(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-2", Role: "planner", Status: "in_progress", Task: "plan it"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "done" {
 		t.Fatalf("planner status = %q, want done", rec.Status)
@@ -256,7 +256,7 @@ func TestPublishTaskUpdateDoneAlwaysSurfaces(t *testing.T) {
 	events, cancel := b.Subscribe(8)
 	defer cancel()
 	dir := t.TempDir()
-	o := &Orchestrator{bus: b, cfg: config.Config{}, progress:  newAsyncProgressWriter(ProgressWriter{Dir: dir})}
+	o := &Orchestrator{bus: b, cfg: config.Config{}, progress: newAsyncProgressWriter(ProgressWriter{Dir: dir})}
 
 	o.publishTaskUpdate("s1", taskRecord{ID: "t1", Role: "task-runner", Status: "done", Result: "ok"})
 
@@ -339,7 +339,7 @@ func TestRecoverOrphanedTasksFailsDetachedWorkers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if record.Status != "failed" || !strings.Contains(record.Error, "orphaned") {
+		if record.Status != "failed" || !strings.Contains(record.Error, "no durable actor turns") {
 			t.Fatalf("%s not recovered as explicit failure: %+v", id, record)
 		}
 	}

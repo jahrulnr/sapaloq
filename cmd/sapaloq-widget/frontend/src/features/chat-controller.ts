@@ -192,6 +192,9 @@ export function initChatController() {
 
   try {
     EventsOn('sapaloq:transcript', (patch: TranscriptPatch) => {
+	  // Background actor patches are consumed by the actor monitor and must
+	  // never be merged into the parent chat transcript.
+	  if (patch.actor_id) return;
       if (patch.generation_id && !activeGeneration) activeGeneration = patch.generation_id;
       if (isSubmitting()) {
         applyTranscriptPatch(patch);

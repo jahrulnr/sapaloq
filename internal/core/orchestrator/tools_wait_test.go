@@ -2,7 +2,7 @@ package orchestrator
 
 // tools_wait_test.go covers the unified `wait` tool (all 4 modes) and the
 // wait_for_output:false fire-and-forget path end-to-end through the real
-// dispatch + handleAskTool surface, plus sapaloq_cancel_job.
+// dispatchAskTool surface, plus sapaloq_cancel_job.
 
 import (
 	"context"
@@ -64,7 +64,7 @@ func TestWaitForOutputFalseReturnsJobID(t *testing.T) {
 		Arguments: []byte(`{"mode":"tool","job_id":"` + jobID + `","timeout_seconds":5}`),
 	}
 	out := make(chan bridge.StreamEvent, 8)
-	res := o.handleAskTool(ctx, testSnap(5), out, "sess", "", waitCall)
+	res := o.dispatchAskTool(ctx, testSnap(5), out, "sess", "", waitCall, parseToolArgs(waitCall.Arguments))
 	if !res.handled {
 		t.Fatalf("wait tool not handled: %+v", res)
 	}
@@ -93,7 +93,7 @@ func TestWaitToolModeToolPeekRunning(t *testing.T) {
 		Arguments: []byte(`{"mode":"tool","job_id":"` + jobID + `","timeout_seconds":0}`),
 	}
 	out := make(chan bridge.StreamEvent, 8)
-	res := o.handleAskTool(ctx, testSnap(5), out, "sess", "", waitCall)
+	res := o.dispatchAskTool(ctx, testSnap(5), out, "sess", "", waitCall, parseToolArgs(waitCall.Arguments))
 	if !strings.Contains(res.text, `"status":"running"`) {
 		t.Fatalf("expected running on instant peek, got %q", res.text)
 	}
@@ -110,7 +110,7 @@ func TestWaitToolModeTime(t *testing.T) {
 	}
 	out := make(chan bridge.StreamEvent, 8)
 	start := time.Now()
-	res := o.handleAskTool(ctx, testSnap(5), out, "sess", "", waitCall)
+	res := o.dispatchAskTool(ctx, testSnap(5), out, "sess", "", waitCall, parseToolArgs(waitCall.Arguments))
 	elapsed := time.Since(start)
 	if !strings.Contains(res.text, "Waited") {
 		t.Fatalf("expected 'Waited' message, got %q", res.text)
@@ -139,7 +139,7 @@ func TestSapaloqCancelJob(t *testing.T) {
 		Arguments: []byte(`{"job_id":"` + jobID + `"}`),
 	}
 	out := make(chan bridge.StreamEvent, 8)
-	res := o.handleAskTool(ctx, testSnap(5), out, "sess", "", cancelCall)
+	res := o.dispatchAskTool(ctx, testSnap(5), out, "sess", "", cancelCall, parseToolArgs(cancelCall.Arguments))
 	if !strings.Contains(res.text, `"status":"cancelled"`) {
 		t.Fatalf("expected cancelled, got %q", res.text)
 	}
@@ -154,7 +154,7 @@ func TestWaitToolModeToolMissingJob(t *testing.T) {
 		Arguments: []byte(`{"mode":"tool","job_id":"bg-nope","timeout_seconds":0}`),
 	}
 	out := make(chan bridge.StreamEvent, 8)
-	res := o.handleAskTool(ctx, testSnap(5), out, "sess", "", waitCall)
+	res := o.dispatchAskTool(ctx, testSnap(5), out, "sess", "", waitCall, parseToolArgs(waitCall.Arguments))
 	if !res.handled {
 		t.Fatalf("wait tool not handled: %+v", res)
 	}
@@ -170,7 +170,7 @@ func TestWaitToolModeEventsNoEvents(t *testing.T) {
 		Arguments: []byte(`{"mode":"events","timeout_seconds":1}`),
 	}
 	out := make(chan bridge.StreamEvent, 8)
-	res := o.handleAskTool(ctx, testSnap(5), out, "sess", "", waitCall)
+	res := o.dispatchAskTool(ctx, testSnap(5), out, "sess", "", waitCall, parseToolArgs(waitCall.Arguments))
 	if !strings.Contains(res.text, "No actor event") {
 		t.Fatalf("expected no-actor-event message, got %q", res.text)
 	}
@@ -185,7 +185,7 @@ func TestWaitToolRequiresJobIDForToolMode(t *testing.T) {
 		Arguments: []byte(`{"mode":"tool"}`),
 	}
 	out := make(chan bridge.StreamEvent, 8)
-	res := o.handleAskTool(ctx, testSnap(5), out, "sess", "", waitCall)
+	res := o.dispatchAskTool(ctx, testSnap(5), out, "sess", "", waitCall, parseToolArgs(waitCall.Arguments))
 	if !strings.Contains(res.text, "job_id is required") {
 		t.Fatalf("expected job_id-required error, got %q", res.text)
 	}
@@ -200,7 +200,7 @@ func TestWaitToolUnknownModeErrors(t *testing.T) {
 		Arguments: []byte(`{"mode":"bogus"}`),
 	}
 	out := make(chan bridge.StreamEvent, 8)
-	res := o.handleAskTool(ctx, testSnap(5), out, "sess", "", waitCall)
+	res := o.dispatchAskTool(ctx, testSnap(5), out, "sess", "", waitCall, parseToolArgs(waitCall.Arguments))
 	if !strings.Contains(res.text, "unknown wait mode") {
 		t.Fatalf("expected unknown-wait-mode error, got %q", res.text)
 	}

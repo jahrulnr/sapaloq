@@ -146,6 +146,21 @@ func (o *Orchestrator) DeleteSession(ctx context.Context, sessionID string) (str
 		return "", false, err
 	}
 	wasActive := active == sessionID
+	// Deletion is a lifecycle barrier. Cancel the foreground generation and all
+	// child actors first, then wait for their finalizers so none can recreate the
+	// session directory after the store removes it.
+	_, _ = o.Stop(sessionID, "all", "")
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for len(o.tasksForSession(sessionID)) > 0 {
+		select {
+		case <-ctx.Done():
+			return "", false, ctx.Err()
+		case <-deadline.C:
+			return "", false, fmt.Errorf("timed out stopping actors for session %s", sessionID)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 	if err := o.chat.DeleteSession(ctx, sessionID); err != nil {
 		return "", false, err
 	}

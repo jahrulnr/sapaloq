@@ -2,8 +2,27 @@ package chat
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestDurableMemoryLivesOutsideTransientState(t *testing.T) {
+	data := t.TempDir()
+	store, err := Open(filepath.Join(data, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddFact(context.Background(), "note", "durable"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(data, "memory", "facts.json")); err != nil {
+		t.Fatalf("durable fact not written under memory/: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(data, "state", "memory", "facts.json")); !os.IsNotExist(err) {
+		t.Fatalf("facts must not be written under transient state/, err=%v", err)
+	}
+}
 
 func TestDeleteFromTurnKeepsEarlierConversation(t *testing.T) {
 	store, err := Open(t.TempDir())

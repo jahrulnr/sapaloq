@@ -166,3 +166,24 @@ func TestFitMessagesToContextPreservesAllLeadingSystemMessages(t *testing.T) {
 		t.Errorf("truncated set exceeds window: %d > 2500", total)
 	}
 }
+
+func TestFitMessagesToContextStrictRejectsOversizedCurrentTurn(t *testing.T) {
+	msgs := []bridge.Message{
+		{Role: "system", Content: "rules"},
+		{Role: "user", Content: strings.Repeat("x", 8000)},
+	}
+	got, err := FitMessagesToContextStrict(msgs, 1000)
+	if err == nil || got != nil {
+		t.Fatalf("oversized current input must fail explicitly, got=%v err=%v", got, err)
+	}
+}
+
+func TestFitMessagesToContextStrictRejectsOversizedSystemPrefix(t *testing.T) {
+	msgs := []bridge.Message{
+		{Role: "system", Content: strings.Repeat("s", 8000)},
+		{Role: "user", Content: "current request"},
+	}
+	if _, err := FitMessagesToContextStrict(msgs, 1000); err == nil {
+		t.Fatal("oversized system prefix must fail explicitly")
+	}
+}

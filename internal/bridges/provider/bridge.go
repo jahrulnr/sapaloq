@@ -77,7 +77,17 @@ func (b *Bridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridg
 		return out, nil
 	}
 
-	opts := b.buildWireOptions(req)
+	opts, err := b.buildWireOptions(req)
+	if err != nil {
+		errEv := bridge.NewEvent(bridge.EventError)
+		errEv.SessionID = req.SessionID
+		errEv.Error = err.Error()
+		go func() {
+			defer close(out)
+			out <- errEv
+		}()
+		return out, nil
+	}
 	debug.Debugf("provider-bridge: complete session=%s parser=%s auth=%s model=%s endpoint=%s",
 		req.SessionID, opts.Parser, opts.Auth, req.Model, opts.Endpoint)
 
@@ -87,7 +97,7 @@ func (b *Bridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridg
 
 // buildWireOptions translates the active entry + request into a WireOptions
 // struct. Pulled out of Complete to keep the hot path readable.
-func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
+func (b *Bridge) buildWireOptions(req bridge.Request) (WireOptions, error) {
 	parser := DetectParser(b.entry)
 	auth := DetectAuthScheme(b.entry, parser)
 	apiVersion := DetectAPIVersion(b.entry)
@@ -95,7 +105,10 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 	maxTokens := DetectMaxTokens(b.entry)
 	contextWindow := DetectContextWindow(b.entry)
 	// Apply the context window to the messages we forward to the model.
-	messages := FitMessagesToContext(req.Messages, contextWindow)
+	messages, err := FitMessagesToContextStrict(req.Messages, contextWindow)
+	if err != nil {
+		return WireOptions{}, err
+	}
 	declaredTools := req.DeclaredTools
 	if len(declaredTools) == 0 {
 		declaredTools = b.entry.DeclaredTools
@@ -118,7 +131,7 @@ func (b *Bridge) buildWireOptions(req bridge.Request) WireOptions {
 		IdleTimeout:     b.entry.StreamIdleTimeout(),
 		MaxRetries:      b.entry.ResolveMaxRetries(),
 		Stream:          b.entry.StreamEnabled(),
-	}
+	}, nil
 }
 
 // runStream wires the per-event handler. Returning errStreamStopped is the

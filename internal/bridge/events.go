@@ -82,12 +82,16 @@ type StreamEvent struct {
 	// ("model"|"force_headroom"|"force_overflow"|"manual"); Summary is the
 	// model-authored markdown summary, which the UI can render as a
 	// collapsible card.
-	CheckpointIndex   int       `json:"checkpoint_index,omitempty"`
-	CheckpointReason  string    `json:"checkpoint_reason,omitempty"`
-	CheckpointSummary string    `json:"checkpoint_summary,omitempty"`
+	CheckpointIndex   int    `json:"checkpoint_index,omitempty"`
+	CheckpointReason  string `json:"checkpoint_reason,omitempty"`
+	CheckpointSummary string `json:"checkpoint_summary,omitempty"`
 	// GenerationID is the process-local chat run token (runSeq) used to drop
 	// stale live patches after stop/retry. Distinct from RunID (actor/tool-job).
 	GenerationID string `json:"generation_id,omitempty"`
+	// ActorID identifies the transcript owner. ParentSessionID lets consumers
+	// route a background actor patch without merging it into the chat pane.
+	ActorID         string `json:"actor_id,omitempty"`
+	ParentSessionID string `json:"parent_session_id,omitempty"`
 	// Transcript is populated on EventTranscript.
 	Transcript *TranscriptPatch `json:"transcript,omitempty"`
 	At         time.Time        `json:"at"`

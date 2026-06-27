@@ -23,7 +23,7 @@ const maxAutoClarifyAnswers = 2
 // the question itself from conversation context:
 //
 //   - If the chat LLM is confident it calls sapaloq_answer_clarification, which
-//     (via handleAskTool) writes the answer and resumes the task in the
+//     (via dispatchTool) writes the answer and resumes the task in the
 //     background. Vendor-to-vendor, with chat as the mediator - exactly the
 //     designed loop, and no new bespoke machinery.
 //   - If it is not confident (or the auto-answer budget is spent), the decision

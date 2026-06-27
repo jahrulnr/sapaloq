@@ -49,6 +49,8 @@ export type TranscriptPaneState = {
 
 export type TranscriptPatch = {
   session_id?: string;
+	actor_id?: string;
+	parent_session_id?: string;
   generation_id?: string;
   entries?: TranscriptEntry[];
   finished?: boolean;

@@ -1,7 +1,24 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-26 (LLM-driven checkpoints: sapaloq_compact_session, forced headroom/overflow compaction, anchored tail, Checkpoint n UI divider)
+> Last updated: 2026-06-27 (Actor model: `runActor` unifies Ask + planner/agent/scribe; durable turns under `state/tasks/{id}/turns.json`; orphan auto-resume)
+
+---
+
+## Actor model (2026-06-27)
+
+Foreground **Ask** and background **planner / task-runner / scribe** share one inference path:
+
+| Piece | Location |
+|-------|----------|
+| Entry | `runActor` (`actor.go`) → `runTurnLoop` |
+| Messages | `buildActorMessages` (`prompt.go`) — ask blocks + durable turns per actor id |
+| Tools | `dispatchTool` → `dispatchAskTool` (orchestrator) or `runBackgroundTool` (lifecycle) |
+| Policy | `policyForRole` / `resolveActorOutcome` (`actor_policy.go`) |
+| Persist | `turns.json` + `checkpoints.json` beside `status.json` for `task-*` actors |
+| Resume | `recoverOrphanedTasks` auto-resumes `in_progress` tasks when turns exist |
+
+Roles differ only by **system prompt**, **tool profile** (`tools.go`), and **terminal policy**.
 
 ---
 

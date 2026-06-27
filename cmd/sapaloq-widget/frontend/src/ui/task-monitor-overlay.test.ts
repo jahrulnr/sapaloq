@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the Wails bindings the overlay polls. RuntimeStatus resolves the actor
-// ids/liveness; TaskInspect returns the projected progress stream + plan.
+// ids/liveness; ActorInspect returns the projected transcript + plan.
 const runtimeStatusMock = vi.fn();
 const taskInspectMock = vi.fn();
 vi.mock('../../wailsjs/go/main/App', () => ({
   RuntimeStatus: (...args: unknown[]) => runtimeStatusMock(...args),
-  TaskInspect: (...args: unknown[]) => taskInspectMock(...args),
+  ActorInspect: (...args: unknown[]) => taskInspectMock(...args),
 }));
 
 import { openTaskMonitor, closeTaskMonitor } from './task-monitor-overlay';

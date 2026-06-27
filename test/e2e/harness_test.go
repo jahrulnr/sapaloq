@@ -90,7 +90,10 @@ func startCore(t *testing.T, opts coreStartOptions) *coreHarness {
 	go func() {
 		_ = ipc.NewServer(cfg, orch).ListenAndServe(ctx, socketPath)
 	}()
-	t.Cleanup(cancel)
+	t.Cleanup(func() {
+		cancel()
+		time.Sleep(150 * time.Millisecond)
+	})
 
 	waitForSocket(t, socketPath)
 	return &coreHarness{SocketPath: socketPath, ConfigPath: cfgPath, cancel: cancel, live: !opts.mock}
@@ -193,9 +196,14 @@ func transcriptText(responses []ipc.Response) string {
 			continue
 		}
 		for _, e := range res.Event.Transcript.Entries {
-			if e.Kind == bridge.TranscriptText {
-				out = e.Text
+			if e.Kind != bridge.TranscriptText {
+				continue
 			}
+			text := strings.TrimSpace(e.Text)
+			if text == "" || strings.Contains(text, "<sapaloq:autopilot>") {
+				continue
+			}
+			out = e.Text
 		}
 	}
 	return out

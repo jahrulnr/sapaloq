@@ -87,7 +87,13 @@ func EnsureRuntimeDirs(dirs RuntimeDirsInfo) error {
 		if dir == "" {
 			continue
 		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		// MkdirAll preserves an existing broader mode. Runtime directories hold
+		// chat history, tool arguments and IPC endpoints, so tighten them even
+		// after upgrading from older releases that created them as 0755.
+		if err := os.Chmod(dir, 0o700); err != nil {
 			return err
 		}
 	}

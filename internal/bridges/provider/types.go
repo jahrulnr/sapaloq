@@ -285,13 +285,32 @@ func openAIDataURI(img bridge.Image) string {
 // buildClaudeMessages converts bridge.Message into Claude request shape. The
 // optional system prompt is separated into claudeRequest.System.
 func buildClaudeMessages(messages []bridge.Message, images []bridge.Image) []claudeMessage {
+	_, out := buildClaudePayload(messages, images)
+	return out
+}
+
+// buildClaudePayload separates internal system/checkpoint messages into the
+// top-level Anthropic `system` field. The Messages API only accepts user and
+// assistant roles in its messages array.
+func buildClaudePayload(messages []bridge.Message, images []bridge.Image) (string, []claudeMessage) {
+	var systems []string
+	filtered := make([]bridge.Message, 0, len(messages))
+	for _, msg := range messages {
+		if wireRole(msg.Role) == "system" {
+			if strings.TrimSpace(msg.Content) != "" {
+				systems = append(systems, msg.Content)
+			}
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
 	out := make([]claudeMessage, 0, len(messages))
-	for i, msg := range messages {
+	for i, msg := range filtered {
 		wired := wireRole(msg.Role)
-		parts := claudePartsForMessage(msg, shouldAttachClaudeImages(i, len(messages), wired, images), images)
+		parts := claudePartsForMessage(msg, shouldAttachClaudeImages(i, len(filtered), wired, images), images)
 		out = append(out, claudeMessage{Role: wired, Content: parts})
 	}
-	return out
+	return strings.Join(systems, "\n\n"), out
 }
 
 // shouldAttachClaudeImages mirrors shouldAttachOpenAIImages for the Claude path

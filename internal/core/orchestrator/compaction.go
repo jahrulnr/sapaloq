@@ -194,12 +194,24 @@ func (o *Orchestrator) runSubAgentCompact(ctx context.Context, snap providerSnap
 	if !strings.HasPrefix(summary, compactionSummaryPrefix) {
 		summary = compactionSummaryPrefix + "\n" + summary
 	}
+	pcfg := snap.cfg.Orchestrator.WithDefaults().Compaction
+	res, persisted, persistErr := o.createCheckpoint(ctx, c.taskID, summary, reason, preserveCfg{
+		keepRecentTurns:       pcfg.KeepRecentTurns,
+		preservePrecedingUser: pcfg.PreservePrecedingUserTurn,
+	})
+	if persistErr != nil {
+		return fmt.Errorf("persist actor checkpoint: %w", persistErr)
+	}
 	compacted := compactMessagesWithSummary(msgs, c.fallbackTask, summary, preserve)
 	if len(compacted) >= len(msgs) {
 		return fmt.Errorf("compaction did not shrink history")
 	}
 	*c.messages = compacted
-	c.checkpointIndex++
+	if persisted {
+		c.checkpointIndex = res.Index
+	} else {
+		c.checkpointIndex++
+	}
 	rr := strings.TrimSpace(reason)
 	if rr == "" {
 		rr = "orchestrator"
@@ -215,6 +227,7 @@ func (o *Orchestrator) runSubAgentCompact(ctx context.Context, snap providerSnap
 	}
 	return nil
 }
+
 // tailPreservePlan is the result of computeTailPreserve: the indices into the
 // active-in-context turn list that form the post-checkpoint tail, plus the
 // ids to archive and the tail-start id for audit.
@@ -601,10 +614,9 @@ func (o *Orchestrator) rebuildAfterCheckpoint(ctx context.Context, sessionID str
 	return rebuildMessagesFromCheckpoint(prefix, ckpt, turns), nil
 }
 
-// subAgentCompactCtx wires in-memory compaction for background sub-agents
-// (planner / task-runner / scribe). Sub-agents do not persist turns to the
-// chat store, so LLM checkpoints are applied directly to the live message
-// slice owned by runTurnLoop.
+// subAgentCompactCtx wires durable compaction for background actors. Turns and
+// checkpoints persist under state/tasks/{id}/ via the shared chat store; the
+// live message slice owned by runTurnLoop is updated after createCheckpoint.
 type subAgentCompactCtx struct {
 	messages        *[]bridge.Message
 	fallbackTask    string

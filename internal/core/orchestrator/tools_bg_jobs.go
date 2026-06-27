@@ -57,16 +57,16 @@ type bgJobRun func(ctx context.Context) (string, error)
 // fields like mu, Cancel, Done, run) so a JSON round-trip never serializes a
 // mutex or a func. Live callers should hold *bgJob.
 type bgJob struct {
-	ID         string      `json:"id"`
-	ToolName   string      `json:"tool_name"`
-	RunID      string      `json:"run_id,omitempty"`
-	SessionID  string      `json:"session_id,omitempty"`
-	Status     bgJobStatus `json:"status"`
-	Output     string      `json:"output,omitempty"`
-	Error      string      `json:"error,omitempty"`
-	CreatedAt  time.Time   `json:"created_at"`
-	StartedAt  *time.Time  `json:"started_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	ID          string      `json:"id"`
+	ToolName    string      `json:"tool_name"`
+	RunID       string      `json:"run_id,omitempty"`
+	SessionID   string      `json:"session_id,omitempty"`
+	Status      bgJobStatus `json:"status"`
+	Output      string      `json:"output,omitempty"`
+	Error       string      `json:"error,omitempty"`
+	CreatedAt   time.Time   `json:"created_at"`
+	StartedAt   *time.Time  `json:"started_at,omitempty"`
+	CompletedAt *time.Time  `json:"completed_at,omitempty"`
 	// run is the work to execute; populated only in-process, dropped from JSON.
 	run context.CancelFunc `json:"-"`
 	// Cancel cancels the job's execution context. Populated only in-process.
@@ -551,13 +551,14 @@ func (o *Orchestrator) spawnBgTool(ctx context.Context, toolName string, run bgJ
 	if job == nil {
 		return "Error: background job registry unavailable."
 	}
+	snap := job.snapshotOf()
 	out := map[string]any{
-		"job_id":     job.ID,
-		"status":     string(job.Status),
+		"job_id":     snap.ID,
+		"status":     string(snap.Status),
 		"tool":       toolName,
 		"queued":     true,
-		"created_at": job.CreatedAt.Format(time.RFC3339Nano),
-		"hint":       "running in the background. Call wait {mode:'tool', job_id:'" + job.ID + "'} to collect the result, or sapaloq_cancel_job {job_id:'" + job.ID + "'} to abort.",
+		"created_at": snap.CreatedAt.Format(time.RFC3339Nano),
+		"hint":       "running in the background. Call wait {mode:'tool', job_id:'" + snap.ID + "'} to collect the result, or sapaloq_cancel_job {job_id:'" + snap.ID + "'} to abort.",
 	}
 	raw, err := json.Marshal(out)
 	if err != nil {

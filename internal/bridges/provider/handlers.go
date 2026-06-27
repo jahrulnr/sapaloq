@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 
 	"github.com/jahrulnr/sapaloq/internal/debug"
 	"github.com/jahrulnr/sapaloq/internal/parse"
@@ -14,8 +15,9 @@ import (
 // errStreamStopped (the bridge hung up), or any other error which is
 // surfaced as EventError upstream.
 type openAILineHandler struct {
-	acc *toolprovider.AccumulatorOpenAI
-	on  WireHandler
+	acc     *toolprovider.AccumulatorOpenAI
+	on      WireHandler
+	flushed bool
 }
 
 func newOpenAILineHandler(acc *toolprovider.AccumulatorOpenAI, on WireHandler) *openAILineHandler {
@@ -33,7 +35,7 @@ func (h *openAILineHandler) Handle(line []byte) error {
 	var chunk openAIChunk
 	if err := json.Unmarshal(payload, &chunk); err != nil {
 		debug.Debugf("provider-bridge(openai): chunk parse err: %v", err)
-		return nil
+		return fmt.Errorf("provider-bridge(openai): malformed SSE payload: %w", err)
 	}
 	for _, choice := range chunk.Choices {
 		if !h.emitDeltas(choice.Delta) {
@@ -60,6 +62,10 @@ func (h *openAILineHandler) emitDeltas(delta openAIDelta) bool {
 
 // flushAndStop emits every accumulated tool call and signals stream stop.
 func (h *openAILineHandler) flushAndStop() error {
+	if h.flushed {
+		return errStreamStopped
+	}
+	h.flushed = true
 	for _, tc := range h.acc.Finish() {
 		if !h.on(WireEvent{Tool: tc}) {
 			return errStreamStopped
@@ -73,8 +79,9 @@ func (h *openAILineHandler) flushAndStop() error {
 // `reasoning_content` delta differ, both of which the generic openAI structs
 // already cover.
 type kimiLineHandler struct {
-	acc *toolprovider.AccumulatorKimi
-	on  WireHandler
+	acc     *toolprovider.AccumulatorKimi
+	on      WireHandler
+	flushed bool
 }
 
 func newKimiLineHandler(acc *toolprovider.AccumulatorKimi, on WireHandler) *kimiLineHandler {
@@ -92,7 +99,7 @@ func (h *kimiLineHandler) Handle(line []byte) error {
 	var chunk openAIChunk
 	if err := json.Unmarshal(payload, &chunk); err != nil {
 		debug.Debugf("provider-bridge(kimi): chunk parse err: %v", err)
-		return nil
+		return fmt.Errorf("provider-bridge(kimi): malformed SSE payload: %w", err)
 	}
 	for _, choice := range chunk.Choices {
 		if !h.emitDeltas(choice.Delta) {
@@ -119,6 +126,10 @@ func (h *kimiLineHandler) emitDeltas(delta openAIDelta) bool {
 
 // flushAndStop emits every accumulated tool call and signals stream stop.
 func (h *kimiLineHandler) flushAndStop() error {
+	if h.flushed {
+		return errStreamStopped
+	}
+	h.flushed = true
 	for _, tc := range h.acc.Finish() {
 		if !h.on(WireEvent{Tool: tc}) {
 			return errStreamStopped
@@ -131,8 +142,9 @@ func (h *kimiLineHandler) flushAndStop() error {
 // Anthropic uses `event: <type>` + `data: <json>` pairs separated by blank
 // lines, so we ignore the `event:` lines and parse only the `data:` payloads.
 type claudeLineHandler struct {
-	acc *toolprovider.AccumulatorClaude
-	on  WireHandler
+	acc     *toolprovider.AccumulatorClaude
+	on      WireHandler
+	flushed bool
 }
 
 func newClaudeLineHandler(acc *toolprovider.AccumulatorClaude, on WireHandler) *claudeLineHandler {
@@ -151,7 +163,7 @@ func (h *claudeLineHandler) Handle(line []byte) error {
 	var ev toolprovider.ClaudeBlockEvent
 	if err := json.Unmarshal(payload, &ev); err != nil {
 		debug.Debugf("provider-bridge(claude): event parse err: %v", err)
-		return nil
+		return fmt.Errorf("provider-bridge(claude): malformed SSE payload: %w", err)
 	}
 	thinking, text, toolPayload := h.acc.Apply(ev)
 	if thinking != "" && !h.on(WireEvent{Thinking: thinking}) {
@@ -171,6 +183,21 @@ func (h *claudeLineHandler) Handle(line []byte) error {
 		return errStreamStopped
 	}
 	return nil
+}
+
+// flushAndStop emits any tool calls left in the accumulator after a clean EOF
+// (streams that end without an explicit terminal event).
+func (h *claudeLineHandler) flushAndStop() error {
+	if h.flushed {
+		return errStreamStopped
+	}
+	h.flushed = true
+	for _, tc := range h.acc.Finish() {
+		if !h.on(WireEvent{Tool: tc}) {
+			return errStreamStopped
+		}
+	}
+	return errStreamStopped
 }
 
 // extractDataPayload strips the "data: " prefix (if present) and returns
