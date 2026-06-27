@@ -103,6 +103,7 @@ export async function setExpanded(next: boolean) {
       document.body.classList.remove('opening');
       popup?.setAttribute('aria-hidden', 'false');
       SyncInputShape(false);
+      window.dispatchEvent(new Event('sapaloq:expanded'));
       return;
     }
 

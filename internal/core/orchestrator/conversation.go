@@ -343,8 +343,14 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				out.emit(runCtx, ev)
 			case bridge.EventToolCall:
 				resetIdle()
-				out.emit(runCtx, ev)
 				if ev.ToolCall != nil {
+					// Some inline/non-native providers do not assign tool-call IDs.
+					// Give every call a stable per-run identity so its later result can
+					// update the correct expandable UI block.
+					if ev.ToolCall.ID == "" {
+						ev.ToolCall.ID = fmt.Sprintf("%s:%d:%d", runID, inferenceTurn, len(pendingTools))
+					}
+					out.emit(runCtx, ev)
 					out.beat("tool: " + ev.ToolCall.Name)
 					toolCalls++
 					toolCallsThisTurn++
@@ -392,6 +398,8 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 						}()
 					}
 					pendingTools = append(pendingTools, item)
+				} else {
+					out.emit(runCtx, ev)
 				}
 			case bridge.EventError:
 				if runCtx.Err() != nil {
@@ -471,7 +479,30 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		if len(pendingTools) > 0 && !retryTextOnly && !retryCompacted && !retryTransport && !hadError {
 			results, batchStop := o.executeToolBatch(runCtx, runID, sessionID, pendingTools)
-			toolResults = append(toolResults, o.redactToolResults(results)...)
+			for _, result := range results {
+				if !result.handled {
+					update := bridge.NewEvent(bridge.EventToolUpdate)
+					update.SessionID = sessionID
+					call := result.call
+					update.ToolCall = &call
+					update.ToolResult = "Tool call was not handled."
+					update.Status = "failed"
+					out.emit(runCtx, update)
+					continue
+				}
+				redacted := o.redactToolResults([]string{result.text})
+				if len(redacted) == 0 {
+					continue
+				}
+				toolResults = append(toolResults, redacted[0])
+				update := bridge.NewEvent(bridge.EventToolUpdate)
+				update.SessionID = sessionID
+				call := result.call
+				update.ToolCall = &call
+				update.ToolResult = truncateToolResultForUI(redacted[0])
+				update.Status = "completed"
+				out.emit(runCtx, update)
+			}
 			stop = stop || batchStop
 		}
 		if retryTextOnly {

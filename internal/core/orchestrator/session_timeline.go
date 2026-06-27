@@ -18,7 +18,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 )
 
-// SessionTimeline returns tool_call and task_update events for a chat session
+// SessionTimeline returns tool activity and task_update events for a chat session
 // so the widget can interleave them with persisted turns on history restore.
 // Terminal tasks are included here (unlike RecentTaskUpdates catch-up) because
 // the task card is part of the transcript the user expects to see again.
@@ -28,8 +28,8 @@ func (o *Orchestrator) SessionTimeline(sessionID string) []bridge.StreamEvent {
 		return nil
 	}
 	var out []bridge.StreamEvent
-	if toolCalls, err := o.readSessionProgressToolCalls(sessionID); err == nil {
-		out = append(out, toolCalls...)
+	if toolEvents, err := o.readSessionProgressToolCalls(sessionID); err == nil {
+		out = append(out, toolEvents...)
 	}
 	for _, record := range o.sessionTaskRecordsFromDisk(sessionID) {
 		ev := taskUpdateEvent(record.SessionID, record)
@@ -53,8 +53,10 @@ func timelineKindOrder(kind bridge.EventKind) int {
 	switch kind {
 	case bridge.EventToolCall:
 		return 0
-	case bridge.EventTaskUpdate:
+	case bridge.EventToolUpdate:
 		return 1
+	case bridge.EventTaskUpdate:
+		return 2
 	default:
 		return 2
 	}
@@ -97,7 +99,7 @@ func (o *Orchestrator) readSessionProgressToolCalls(sessionID string) ([]bridge.
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
 			continue
 		}
-		if ev.Kind == bridge.EventToolCall {
+		if ev.Kind == bridge.EventToolCall || ev.Kind == bridge.EventToolUpdate {
 			out = append(out, ev)
 		}
 	}

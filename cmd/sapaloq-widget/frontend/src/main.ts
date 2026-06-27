@@ -148,7 +148,20 @@ initDragAndDrop();
 
 // --- Bootstrap ------------------------------------------------------------
 
-void restoreChatHistory();
+// WebKitGTK can freeze controls created inside a display:none popup at 0x0.
+// Hydrate the transcript only after the first real expansion, when the window
+// and message-list have measurable dimensions. Retry on a later expansion if
+// the core was not ready yet.
+let visibleHistoryHydrated = false;
+let visibleHistoryHydrating = false;
+window.addEventListener('sapaloq:expanded', () => {
+  if (visibleHistoryHydrated || visibleHistoryHydrating) return;
+  visibleHistoryHydrating = true;
+  void restoreChatHistory().then((ok) => {
+    visibleHistoryHydrated = ok;
+    visibleHistoryHydrating = false;
+  });
+});
 void loadSessionList();
 // Best-effort initial context-usage read. If core isn't ready yet (race on
 // fresh open), this fails silently and refreshUsage() on the first successful

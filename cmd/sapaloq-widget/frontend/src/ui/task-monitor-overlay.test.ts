@@ -112,25 +112,32 @@ describe('task-monitor-overlay', () => {
     expect(turns[0].textContent).toContain('Turn 1');
   });
 
-  it('renders tool args as a collapsed details block with a truncated summary', async () => {
+  it('renders request and response inside one collapsed tool activity block', async () => {
     const longArgs = '{"command":"' + 'cd /tmp/profile && '.repeat(20) + '"}';
     taskInspectMock.mockResolvedValue(makeInspect({
       events: [
-        { kind: 'tool_call', tool_name: 'exec', tool_arguments: longArgs },
+        { kind: 'tool_call', tool_id: 'call-1', tool_name: 'exec', tool_arguments: longArgs },
+        { kind: 'tool_update', tool_id: 'call-1', tool_name: 'exec', tool_result: 'installed successfully', status: 'completed' },
       ],
-      event_count: 1,
+      event_count: 2,
     }));
     await vi.advanceTimersByTimeAsync(0);
     await openTaskMonitor({ tab: 'planner' });
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
     const overlay = document.getElementById('task-monitor-overlay')!;
-    const args = overlay.querySelector('.task-monitor-tool-args') as HTMLDetailsElement | null;
-    expect(args).not.toBeNull();
-    // Collapsed by default; the full argument body is reachable by expanding.
-    expect(args!.open).toBe(false);
-    expect(args!.querySelector('summary')?.textContent).toContain('…');
-    expect(args!.querySelector('code')?.textContent).toBe(longArgs.trim());
+    const tool = overlay.querySelector('.task-monitor-tool') as HTMLElement | null;
+    expect(tool).not.toBeNull();
+    expect(tool!.classList.contains('is-open')).toBe(false);
+    expect(tool!.querySelector<HTMLElement>('.task-monitor-tool-body')?.hidden).toBe(true);
+    expect(tool!.querySelector('.task-monitor-entry-label')?.textContent).toContain('$ exec');
+    const sections = tool!.querySelectorAll('.task-monitor-tool-section');
+    expect(sections).toHaveLength(2);
+    expect(sections[0].textContent).toContain('cd /tmp/profile');
+    expect(sections[1].textContent).toContain('installed successfully');
+    (tool!.querySelector('.task-monitor-entry-label') as HTMLButtonElement).click();
+    expect(tool!.classList.contains('is-open')).toBe(true);
+    expect(tool!.querySelector<HTMLElement>('.task-monitor-tool-body')?.hidden).toBe(false);
   });
 
   it('close button removes the overlay from the DOM', async () => {

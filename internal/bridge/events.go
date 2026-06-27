@@ -49,35 +49,40 @@ type StreamEvent struct {
 	SessionID string          `json:"session_id,omitempty"`
 	Delta     string          `json:"delta,omitempty"`
 	ToolCall  *parse.ToolCall `json:"tool_call,omitempty"`
-	Leak      string          `json:"leak,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	Status    string          `json:"status,omitempty"`
+	// ToolResult is the redacted, UI-safe output paired with ToolCall on an
+	// EventToolUpdate. It is intentionally omitted from EventToolCall so the UI
+	// can render the request immediately and attach the response when execution
+	// finishes.
+	ToolResult string `json:"tool_result,omitempty"`
+	Leak       string `json:"leak,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Status     string `json:"status,omitempty"`
 	// WaitSeconds carries the effective wait window for a "waiting" status so
 	// the UI can render a live countdown (e.g. 10s, 9s, ...). Zero when N/A.
 	WaitSeconds int `json:"wait_seconds,omitempty"`
 	// Task* fields are populated on EventTaskUpdate (background sub-agent
 	// lifecycle pushes). TaskStatus mirrors taskRecord.Status (done/failed/
 	// awaiting_clarification/stopped); Summary is a short human line.
-	TaskID        string    `json:"task_id,omitempty"`
-	TaskRole      string    `json:"task_role,omitempty"`
-	TaskStatus    string    `json:"task_status,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
-	RunID         string    `json:"run_id,omitempty"`
-	JobID         string    `json:"job_id,omitempty"`
-	ParentID      string    `json:"parent_id,omitempty"`
-	TargetID      string    `json:"target_id,omitempty"`
-	EventID       string    `json:"event_id,omitempty"`
-	CorrelationID string    `json:"correlation_id,omitempty"`
-	Version       int64     `json:"version,omitempty"`
+	TaskID        string `json:"task_id,omitempty"`
+	TaskRole      string `json:"task_role,omitempty"`
+	TaskStatus    string `json:"task_status,omitempty"`
+	Summary       string `json:"summary,omitempty"`
+	RunID         string `json:"run_id,omitempty"`
+	JobID         string `json:"job_id,omitempty"`
+	ParentID      string `json:"parent_id,omitempty"`
+	TargetID      string `json:"target_id,omitempty"`
+	EventID       string `json:"event_id,omitempty"`
+	CorrelationID string `json:"correlation_id,omitempty"`
+	Version       int64  `json:"version,omitempty"`
 	// CheckpointIndex carries the new checkpoint index on EventCheckpoint (the
 	// Nth compaction for this session). Reason classifies the trigger
 	// ("model"|"force_headroom"|"force_overflow"|"manual"); Summary is the
 	// model-authored markdown summary, which the UI can render as a
 	// collapsible card.
-	CheckpointIndex int    `json:"checkpoint_index,omitempty"`
-	CheckpointReason string `json:"checkpoint_reason,omitempty"`
-	CheckpointSummary string `json:"checkpoint_summary,omitempty"`
-	At            time.Time `json:"at"`
+	CheckpointIndex   int       `json:"checkpoint_index,omitempty"`
+	CheckpointReason  string    `json:"checkpoint_reason,omitempty"`
+	CheckpointSummary string    `json:"checkpoint_summary,omitempty"`
+	At                time.Time `json:"at"`
 }
 
 func NewEvent(kind EventKind) StreamEvent {

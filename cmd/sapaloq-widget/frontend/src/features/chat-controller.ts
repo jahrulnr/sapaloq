@@ -9,7 +9,7 @@ import { errorText, getComposeInput } from '../ui/dom';
 import { ICON_SEND, ICON_STOP } from '../ui/icons';
 import { autosizeCompose, resetComposeSize, setComposeDisabled } from '../ui/compose-ui';
 import { renderUsage, setConnection, setRingState, runPing } from './connection';
-import { appendMessage, closeMessageMenu } from './messages';
+import { appendMessage, appendSummaryPanel, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
 import {
   appendProgressBubble,
@@ -250,7 +250,19 @@ export function initChatController() {
         if (spokenTaskIDs.has(id)) return;
         spokenTaskIDs.add(id);
         const text = (event.delta || '').trim();
-        if (text) appendMessage('message--assistant', text);
+        if (text) {
+          if (event.task_role === 'planner') {
+            appendSummaryPanel({
+              label: 'Plan ready',
+              meta: `Planner · ${id}`,
+              content: text,
+              variant: 'planner',
+              taskID: id,
+            });
+          } else {
+            appendMessage('message--assistant', text);
+          }
+        }
         return;
       }
       // A response_delta with no task_id while idle is an orphan completion

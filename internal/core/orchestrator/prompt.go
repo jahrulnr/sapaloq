@@ -609,12 +609,28 @@ func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUse
 		// Centralizing the mapping there keeps live and replayed turns
 		// consistent and lets a tool observation stay distinguishable from a
 		// user request for as long as possible.
-		messages = append(messages, bridge.Message{Role: role, Content: turn.Content})
+		content := turn.Content
+		if role == "assistant" {
+			content = stripPlannerSummaryMarker(content)
+		}
+		messages = append(messages, bridge.Message{Role: role, Content: content})
 	}
 	if len(turns) == 0 || turns[len(turns)-1].Content != latestUserMessage {
 		messages = append(messages, bridge.Message{Role: "user", Content: latestUserMessage})
 	}
 	return messages, nil
+}
+
+func stripPlannerSummaryMarker(content string) string {
+	const prefix = "<!--sapaloq-planner-summary:"
+	if !strings.HasPrefix(content, prefix) {
+		return content
+	}
+	end := strings.Index(content, "-->")
+	if end < 0 {
+		return content
+	}
+	return strings.TrimSpace(content[end+3:])
 }
 
 // buildSubAgentMessages assembles the system + user context for a sub-agent,

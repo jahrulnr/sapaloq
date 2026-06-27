@@ -17,13 +17,11 @@ import (
 // nobody re-entered the conversational thread, so the user never learned the
 // task had completed.
 //
-// The message is AUTHORED BY THE ORCHESTRATOR LLM, not copy-pasted from the
-// sub-agent. The sub-agent's raw result/error is handed to the orchestrator as
-// context and it announces the outcome in its own voice (so the wording varies
-// naturally per model and reads like the assistant talking to the user, e.g.
-// "sub-agent udah kelar, hasilnya ..."). The task CARD stays a terse status
-// timeline (see taskUpdateEvent); this bubble is the single place the full
-// summary lives - no more two redundant copies.
+// Agent outcomes are authored by the orchestrator LLM. A completed planner is
+// the exception: its plan is already the user-facing artifact, so asking the
+// orchestrator to paraphrase it spends tokens and can lose detail. Planner
+// results are surfaced verbatim in the same expandable summary panel used by
+// checkpoints.
 //
 // It is idempotent per task id and gated by completion.speakOnTerminal.
 func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) {
@@ -48,10 +46,14 @@ func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) 
 	o.spokenTasks[spokenKey] = struct{}{}
 	o.spokenMu.Unlock()
 
-	// Author the announcement with the orchestrator LLM when a provider is
-	// available; fall back to a plain template otherwise (headless/tests
-	// without a bridge) so a completion is never silently dropped.
-	text := o.composeCompletionAnnouncement(sessionID, record)
+	// A planner already authored the artifact the user needs. Other roles keep
+	// the conversational announcement path.
+	text := ""
+	if record.Role == "planner" && record.Status == "done" {
+		text = strings.TrimSpace(record.Result)
+	} else {
+		text = o.composeCompletionAnnouncement(sessionID, record)
+	}
 	if text == "" {
 		text = spokenCompletionText(record)
 	}
@@ -63,7 +65,11 @@ func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) 
 	// shows up in chat history exactly like a normal reply. Best-effort: a
 	// missing session id or store error must not break the lifecycle push.
 	if o.chat != nil && sessionID != "" {
-		_ = o.chat.AppendTurn(context.Background(), sessionID, "assistant", text, estimateTextTokens(text))
+		persisted := text
+		if record.Role == "planner" && record.Status == "done" {
+			persisted = fmt.Sprintf("<!--sapaloq-planner-summary:%s-->\n%s", record.ID, text)
+		}
+		_ = o.chat.AppendTurn(context.Background(), sessionID, "assistant", persisted, estimateTextTokens(persisted))
 	}
 
 	// Republish as a streamed response so a connected widget hears it live via
@@ -80,6 +86,7 @@ func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) 
 		ev.SessionID = sessionID
 		ev.Delta = text
 		ev.TaskID = record.ID
+		ev.TaskRole = record.Role
 		o.bus.Publish(topicFor(bridge.EventResponseDelta), ev)
 	}
 }

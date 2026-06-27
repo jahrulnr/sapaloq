@@ -5,6 +5,7 @@ export namespace bridge {
 	    session_id?: string;
 	    delta?: string;
 	    tool_call?: parse.ToolCall;
+	    tool_result?: string;
 	    leak?: string;
 	    error?: string;
 	    status?: string;
@@ -36,6 +37,7 @@ export namespace bridge {
 	        this.session_id = source["session_id"];
 	        this.delta = source["delta"];
 	        this.tool_call = this.convertValues(source["tool_call"], parse.ToolCall);
+	        this.tool_result = source["tool_result"];
 	        this.leak = source["leak"];
 	        this.error = source["error"];
 	        this.status = source["status"];
@@ -410,7 +412,9 @@ export namespace main {
 	    kind: string;
 	    delta?: string;
 	    tool_name?: string;
+	    tool_id?: string;
 	    tool_arguments?: string;
+	    tool_result?: string;
 	    status?: string;
 	    task_status?: string;
 	    summary?: string;
@@ -428,7 +432,9 @@ export namespace main {
 	        this.kind = source["kind"];
 	        this.delta = source["delta"];
 	        this.tool_name = source["tool_name"];
+	        this.tool_id = source["tool_id"];
 	        this.tool_arguments = source["tool_arguments"];
+	        this.tool_result = source["tool_result"];
 	        this.status = source["status"];
 	        this.task_status = source["task_status"];
 	        this.summary = source["summary"];

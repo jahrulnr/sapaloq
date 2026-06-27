@@ -872,7 +872,83 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .message--thinking.is-expanded .thinking-body { max-height: 1400px; opacity: 0.95; padding: 10px 12px; }
 .message--thinking.is-collapsed .thinking-body,
 .message--thinking:not(.is-expanded) .thinking-body { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; border-color: transparent; }
-.message--tool { color: oklch(87% 0.08 150); background: oklch(73% 0.14 150 / 0.1); }
+/* Tool activity is one compact terminal row. Request and response share the
+   same disclosure so chronology remains obvious even with many tool calls. */
+.tool-activity {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  overflow: hidden;
+  border-color: oklch(100% 0 0 / 0.14);
+  border-radius: 8px;
+  background: oklch(15% 0.01 255 / 0.88);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.035);
+}
+.tool-activity__header {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 0;
+  color: var(--silver);
+  background: transparent;
+  font: 650 0.7rem/1.35 ui-monospace, "SF Mono", Menlo, monospace;
+  text-align: left;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tool-activity__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 650 0.7rem/1.2 ui-monospace, "SF Mono", Menlo, monospace;
+}
+.tool-activity__name::before { content: "$ "; color: oklch(75% 0.12 150); }
+.tool-activity__status {
+  color: var(--subtle);
+  font: 700 0.56rem/1.2 ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.tool-activity:not([data-complete='true']) .tool-activity__status { color: var(--amber); }
+.tool-activity[data-complete='true'] .tool-activity__status { color: oklch(76% 0.1 150); }
+.tool-activity__body {
+  display: grid;
+  border-top: 1px solid oklch(100% 0 0 / 0.09);
+  background: oklch(10% 0.008 255 / 0.72);
+}
+.tool-activity__body[hidden],
+.summary-panel__body[hidden],
+.task-monitor-tool-body[hidden] { display: none; }
+.tool-activity__section { min-width: 0; }
+.tool-activity__section + .tool-activity__section { border-top: 1px solid oklch(100% 0 0 / 0.08); }
+.tool-activity__section-label {
+  display: block;
+  padding: 7px 10px 0;
+  color: var(--subtle);
+  font: 750 0.54rem/1.2 ui-monospace, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.tool-activity__section[data-state='complete'] .tool-activity__section-label { color: oklch(72% 0.09 150); }
+.tool-activity__section[data-state='error'] .tool-activity__section-label { color: oklch(78% 0.12 28); }
+.tool-activity__section pre {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 7px 10px 10px;
+  color: oklch(78% 0.015 255);
+  font: 0.66rem/1.48 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.tool-activity__section code { padding: 0; color: inherit; background: transparent; }
 .message--error { color: oklch(86% 0.11 28); background: oklch(67% 0.21 28 / 0.13); }
 .message--task { background: linear-gradient(135deg, oklch(68% 0.19 255 / 0.12), oklch(63% 0.22 285 / 0.06)); border-left: 3px solid var(--blue); }
 /* Clickable task card: opens this specific sub-agent in the monitor pop-up.
@@ -887,46 +963,123 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
    divider below marks the seam. */
 .message--archived { opacity: 0.5; filter: saturate(0.7); border-style: dashed; }
 .message--archived:hover { opacity: 0.85; }
-/* Checkpoint divider: a horizontal rule with a small centered "Checkpoint n"
-   label, marking the seam between archived and live history. */
+/* Checkpoints are timeline seams, not chat messages. The offset index badge
+   makes repeated compactions scannable without turning them into loud cards. */
 .checkpoint-divider {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 14px 0 8px;
+  margin: 20px 0 10px;
   width: 100%;
 }
 .checkpoint-divider__rule {
   flex: 1;
   height: 1px;
-  background: oklch(100% 0 0 / 0.18);
+  background: linear-gradient(90deg, transparent, oklch(100% 0 0 / 0.2));
 }
+.checkpoint-divider__rule:last-child { background: linear-gradient(90deg, oklch(100% 0 0 / 0.2), transparent); }
 .checkpoint-divider__label {
-  font-size: 0.6rem;
-  letter-spacing: 0.14em;
+  padding: 3px 7px;
+  border: 1px solid oklch(80% 0.16 78 / 0.25);
+  border-radius: 3px;
+  color: oklch(82% 0.08 78);
+  background: oklch(80% 0.16 78 / 0.06);
+  font: 750 0.54rem/1.2 ui-monospace, monospace;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
-  color: var(--muted);
   white-space: nowrap;
 }
-/* Collapsible checkpoint summary card (collapsed by default). */
-.checkpoint-summary {
+/* Shared checkpoint/planner document. A narrow colored rail and technical
+   metadata distinguish it from ordinary assistant bubbles. */
+.summary-panel {
+  --summary-accent: var(--amber);
+  position: relative;
+  width: 100%;
+  max-width: none;
+  overflow: hidden;
   margin: 0 0 12px;
-  padding: 6px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: oklch(100% 0 0 / 0.03);
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-.checkpoint-summary > summary {
+  min-height: 48px;
+  padding: 14px 12px 12px 15px;
+  border: 1px solid oklch(100% 0 0 / 0.15);
+  border-radius: 9px;
+  color: var(--silver);
+  background: oklch(14% 0.009 255 / 0.94);
+  box-shadow: inset 3px 0 0 color-mix(in oklab, var(--summary-accent) 70%, transparent);
+  font: 760 0.68rem/1.35 ui-monospace, "SF Mono", Menlo, monospace;
   cursor: pointer;
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
   user-select: none;
+  -webkit-user-select: none;
 }
-.checkpoint-summary[open] > summary { margin-bottom: 6px; color: var(--silver-bright); }
+.summary-panel--planner { --summary-accent: var(--cyan); }
+.summary-panel__header {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  padding: 9px 12px 9px 15px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: 760 0.68rem/1.35 ui-monospace, "SF Mono", Menlo, monospace;
+  text-align: left;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.summary-panel__title-wrap { display: grid; flex: 1; min-width: 0; gap: 3px; }
+.summary-panel__label {
+  color: var(--silver-bright);
+  font-size: 0.7rem;
+  font-weight: 780;
+  letter-spacing: 0.01em;
+}
+.summary-panel__meta {
+  overflow: hidden;
+  color: var(--subtle);
+  font: 0.54rem/1.2 ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.summary-panel__state {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: 1px solid oklch(100% 0 0 / 0.13);
+  border-radius: 5px;
+  color: var(--summary-accent);
+  background: oklch(100% 0 0 / 0.035);
+}
+.summary-panel__state::before { content: "+"; display: grid; height: 100%; place-items: center; font: 650 0.9rem/1 ui-monospace, monospace; }
+.summary-panel.is-open .summary-panel__state::before { content: "−"; }
+.summary-panel__header:hover { background: oklch(100% 0 0 / 0.025); }
+.summary-panel__body {
+  max-height: min(58vh, 540px);
+  overflow: auto;
+  margin: 12px -12px -12px -15px;
+  padding: 14px 16px 16px;
+  border-top: 1px solid oklch(100% 0 0 / 0.09);
+  background:
+    linear-gradient(90deg, color-mix(in oklab, var(--summary-accent) 4%, transparent), transparent 36%),
+    oklch(11% 0.008 255 / 0.65);
+  font-size: 0.76rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.summary-panel__body :where(p, ul, ol) { margin: 0.35em 0; }
+.message.summary-panel .summary-panel__body :where(h1, h2, h3, h4, h5, h6).md-heading {
+  margin: 1.05em 0 0.4em;
+  color: var(--silver-bright);
+  font-size: 0.78rem;
+  font-weight: 780;
+  letter-spacing: 0.01em;
+}
+.summary-panel__body .md-heading:first-child { margin-top: 0; }
+.summary-panel__body code { color: oklch(86% 0.08 205); }
 .message--status {
   width: max-content;
   max-width: 180px;
@@ -1677,44 +1830,68 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
 .task-monitor-thinking summary::-webkit-details-marker { display: none; }
 .task-monitor-thinking summary::before { content: '▸ '; }
 .task-monitor-thinking[open] summary::before { content: '▾ '; }
-/* Tool-call bubble: green-tinted like .message--tool. */
+/* Tool activity mirrors the compact Cursor-like rows in the main transcript. */
 .task-monitor-tool {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: oklch(87% 0.08 150);
-  background: oklch(73% 0.14 150 / 0.1);
-  border-color: oklch(73% 0.14 150 / 0.28);
-}
-.task-monitor-tool .task-monitor-entry-label { color: oklch(80% 0.14 150); }
-/* Tool args: a collapsible code block so a long exec command/path stays tidy
-   by default and is expandable in-place. */
-.task-monitor-tool-args {
-  margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.66rem;
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  border-color: oklch(100% 0 0 / 0.14);
   color: var(--silver);
-  background: oklch(0% 0 0 / 0.28);
-  padding: 6px 8px;
-  border-radius: 7px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  border: 1px solid oklch(100% 0 0 / 0.06);
+  background: oklch(15% 0.01 255 / 0.9);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.035);
 }
-.task-monitor-tool-args > summary {
+.task-monitor-tool > .task-monitor-entry-label {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  font: 650 0.7rem/1.35 ui-monospace, monospace;
+  text-align: left;
   cursor: pointer;
   list-style: none;
   color: var(--silver);
+}
+.task-monitor-tool-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 650 0.7rem/1.2 ui-monospace, monospace;
+}
+.task-monitor-tool-name::before { content: "$ "; color: oklch(75% 0.12 150); }
+.task-monitor-tool-status {
+  color: var(--subtle);
+  font: 700 0.54rem/1.2 ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.task-monitor-tool-body { border-top: 1px solid oklch(100% 0 0 / 0.09); background: oklch(10% 0.008 255 / 0.7); }
+.task-monitor-tool-section + .task-monitor-tool-section { border-top: 1px solid oklch(100% 0 0 / 0.08); }
+.task-monitor-tool-section > span {
+  display: block;
+  padding: 7px 10px 0;
+  color: var(--subtle);
+  font: 750 0.54rem/1.2 ui-monospace, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.task-monitor-tool-section[data-status='completed'] > span { color: oklch(72% 0.09 150); }
+.task-monitor-tool-section[data-status='failed'] > span { color: oklch(78% 0.12 28); }
+.task-monitor-tool-section pre {
+  max-height: 280px;
+  margin: 0;
+  overflow: auto;
+  padding: 7px 10px 10px;
+  color: oklch(78% 0.015 255);
+  font: 0.66rem/1.48 ui-monospace, monospace;
   white-space: pre-wrap;
   word-break: break-word;
-}
-.task-monitor-tool-args > summary::-webkit-details-marker { display: none; }
-.task-monitor-tool-args > summary::after { content: ' …'; color: var(--subtle); }
-.task-monitor-tool-args[open] > summary::after { content: ''; }
-.task-monitor-tool-args[open] > summary {
-  margin-bottom: 5px;
-  padding-bottom: 5px;
-  border-bottom: 1px solid oklch(100% 0 0 / 0.08);
 }
 /* Turn boundary: a subtle centered divider (like the checkpoint divider) - it
    is a seam in the transcript, not content. The ::before/::after rules flank
@@ -1797,4 +1974,3 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-

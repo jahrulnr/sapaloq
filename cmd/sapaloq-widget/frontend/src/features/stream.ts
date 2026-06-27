@@ -4,7 +4,13 @@
 import type { StreamEvent, StreamTarget, StreamRenderer } from '../core/types';
 import { getMessageList, hasVisibleText, scrollMessagesToBottom } from '../ui/dom';
 import { renderMarkdown } from '../ui/markdown';
-import { appendCheckpointDivider, appendMessage, wireAssistantFeedback } from './messages';
+import {
+  appendCheckpointDivider,
+  appendMessage,
+  appendToolActivity,
+  completeToolActivity,
+  wireAssistantFeedback,
+} from './messages';
 import { setRingState } from './connection';
 import { refreshRuntimeStatus } from './runtime-status';
 import { openTaskMonitor } from '../ui/task-monitor-overlay';
@@ -148,6 +154,10 @@ function flushStream(target: StreamTarget) {
   // as done so the header shows a finished state (no pulse, "thought") instead
   // of looking identical to a still-streaming reasoning bubble.
   if (target.body && target.el.classList.contains('message--thinking')) {
+    if (!hasVisibleText(target.body)) {
+      target.el.remove();
+      return;
+    }
     target.el.classList.remove('is-expanded');
     target.el.classList.add('is-collapsed', 'is-done');
     const toggle = target.el.querySelector('.thinking-toggle');
@@ -189,7 +199,13 @@ export function feedStreamEvent(r: StreamRenderer, event: StreamEvent) {
     setRingState('delegating');
     if (r.thinking) { flushStream(r.thinking); r.thinking = null; }
     if (r.assistant) { flushStream(r.assistant); r.assistant = null; }
-    appendMessage('message--tool', `tool: ${event.tool_call?.name || 'unknown'}`);
+    appendToolActivity(event.tool_call || { name: 'unknown' });
+  } else if (event.kind === 'tool_update') {
+    completeToolActivity(
+      event.tool_call || { name: 'unknown' },
+      event.tool_result || event.error || '',
+      event.error ? 'failed' : (event.status || 'completed'),
+    );
   } else if (event.kind === 'response_delta') {
     // Ignore empty/whitespace-only deltas so a stray empty chunk never spawns a
     // blank assistant bubble (which previously also got 👍/👎 controls).
@@ -247,7 +263,15 @@ export function renderEvents(events: StreamEvent[]) {
 
 export function renderTimelineEvent(event: StreamEvent, options?: { restore?: boolean }) {
   if (event.kind === 'tool_call') {
-    appendMessage('message--tool', `tool: ${event.tool_call?.name || 'unknown'}`);
+    appendToolActivity(event.tool_call || { name: 'unknown' });
+    return;
+  }
+  if (event.kind === 'tool_update') {
+    completeToolActivity(
+      event.tool_call || { name: 'unknown' },
+      event.tool_result || event.error || '',
+      event.error ? 'failed' : (event.status || 'completed'),
+    );
     return;
   }
   if (event.kind === 'task_update') {

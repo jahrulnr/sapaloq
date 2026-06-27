@@ -121,7 +121,9 @@ type taskInspectEvent struct {
 	Kind             string `json:"kind"`
 	Delta            string `json:"delta,omitempty"`
 	ToolName         string `json:"tool_name,omitempty"`
+	ToolID           string `json:"tool_id,omitempty"`
 	ToolArguments    string `json:"tool_arguments,omitempty"`
+	ToolResult       string `json:"tool_result,omitempty"`
 	Status           string `json:"status,omitempty"`
 	TaskStatus       string `json:"task_status,omitempty"`
 	Summary          string `json:"summary,omitempty"`
@@ -135,18 +137,18 @@ type taskInspectEvent struct {
 // binding. The Events slice is the progress tail (newest last); EventCount is
 // the total line count on disk so the frontend can request the next slice.
 type taskInspectResult struct {
-	ID         string               `json:"id"`
-	Role       string               `json:"role"`
-	Status     string               `json:"status"`
-	Task       string               `json:"task"`
-	Result     string               `json:"result,omitempty"`
-	Error      string               `json:"error,omitempty"`
-	Question   string               `json:"question,omitempty"`
-	PlanTaskID string               `json:"plan_task_id,omitempty"`
-	Plan       string               `json:"plan,omitempty"`
-	Events     []taskInspectEvent   `json:"events"`
-	EventCount int                  `json:"event_count"`
-	UpdatedAt  string               `json:"updated_at"`
+	ID         string             `json:"id"`
+	Role       string             `json:"role"`
+	Status     string             `json:"status"`
+	Task       string             `json:"task"`
+	Result     string             `json:"result,omitempty"`
+	Error      string             `json:"error,omitempty"`
+	Question   string             `json:"question,omitempty"`
+	PlanTaskID string             `json:"plan_task_id,omitempty"`
+	Plan       string             `json:"plan,omitempty"`
+	Events     []taskInspectEvent `json:"events"`
+	EventCount int                `json:"event_count"`
+	UpdatedAt  string             `json:"updated_at"`
 }
 
 func sendChat(socketPath, sessionID, message string) (chatResult, error) {
@@ -435,6 +437,7 @@ func taskInspect(socketPath, taskID string, afterLine int) (*taskInspectResult, 
 		evt := taskInspectEvent{
 			Kind:             string(ev.Kind),
 			Delta:            ev.Delta,
+			ToolResult:       ev.ToolResult,
 			Status:           ev.Status,
 			TaskStatus:       ev.TaskStatus,
 			Summary:          ev.Summary,
@@ -445,6 +448,7 @@ func taskInspect(socketPath, taskID string, afterLine int) (*taskInspectResult, 
 		}
 		if ev.ToolCall != nil {
 			evt.ToolName = ev.ToolCall.Name
+			evt.ToolID = ev.ToolCall.ID
 			if raw, err := json.Marshal(ev.ToolCall.Arguments); err == nil {
 				evt.ToolArguments = string(raw)
 			}

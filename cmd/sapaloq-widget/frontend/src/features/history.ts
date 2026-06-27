@@ -3,7 +3,7 @@
 // (list recent sessions, switch active session, start a new chat).
 import { ChatHistory, ContextUsage, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
 import type { ChatTurn, ChatUsage, SessionSummary, StreamEvent } from '../core/types';
-import { appendCheckpointDivider, appendMessage, appendThinkingBubble, clearMessages, parseTurnContent } from './messages';
+import { appendCheckpointDivider, appendMessage, appendSummaryPanel, appendThinkingBubble, clearMessages, parseTurnContent } from './messages';
 import { renderUsage } from './connection';
 import { renderTimelineEvent } from './stream';
 import {
@@ -33,6 +33,18 @@ function renderTurn(turn: ChatTurn) {
     appendThinkingBubble(turn.content);
     return;
   }
+  const plannerSummary = turn.content.match(/^<!--sapaloq-planner-summary:([^>]+)-->\s*\n?([\s\S]*)$/);
+  if (turn.role === 'assistant' && plannerSummary) {
+    appendSummaryPanel({
+      label: 'Plan ready',
+      meta: `Planner · ${plannerSummary[1]}`,
+      content: plannerSummary[2],
+      variant: 'planner',
+      taskID: plannerSummary[1],
+      archived: turn.archived,
+    });
+    return;
+  }
   const parsed = parseTurnContent(turn.content);
   const archivedClass = turn.archived ? ' message--archived' : '';
   if (turn.role === 'user') {
@@ -54,11 +66,21 @@ type TimelineItem =
 
 export function buildMergedTimeline(turns: ChatTurn[], events: StreamEvent[]): TimelineItem[] {
   const items: TimelineItem[] = [];
+  // Legacy progress logs contain tool_call events but no tool_update/result.
+  // Restoring those creates empty activity shells (just border lines) because
+  // there is no durable response to expand. Live calls still render
+  // immediately; history restore only includes complete request/response
+  // pairs recorded by the current event format.
+  const completedToolIDs = new Set(events
+    .filter((event) => event.kind === 'tool_update' && event.tool_call?.id)
+    .map((event) => event.tool_call!.id as string));
   for (const turn of turns) {
     items.push({ kind: 'turn', at: parseTimelineAt(turn.created_at), seq: turn.seq, turn });
   }
   for (const event of events) {
-    if (event.kind !== 'tool_call' && event.kind !== 'task_update') continue;
+    if (event.kind !== 'tool_call' && event.kind !== 'tool_update' && event.kind !== 'task_update') continue;
+    if ((event.kind === 'tool_call' || event.kind === 'tool_update') &&
+        (!event.tool_call?.id || !completedToolIDs.has(event.tool_call.id))) continue;
     items.push({ kind: 'event', at: parseTimelineAt(event.at), event });
   }
   items.sort((a, b) => {
@@ -89,8 +111,10 @@ export async function restoreChatHistory() {
       turns.forEach((turn: ChatTurn) => renderTurn(turn));
     }
     renderUsage(history.usage as ChatUsage | undefined);
+    return true;
   } catch {
     // Core may not be ready yet; ping loop will update connection state.
+    return false;
   }
 }
 

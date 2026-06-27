@@ -9,7 +9,8 @@ export type StreamEvent = {
   error?: string;
   status?: string;
   wait_seconds?: number;
-  tool_call?: { name: string };
+  tool_call?: { id?: string; name: string; arguments?: unknown; source?: string };
+  tool_result?: string;
   task_id?: string;
   task_role?: string;
   task_status?: string;

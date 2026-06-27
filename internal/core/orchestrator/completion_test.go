@@ -132,7 +132,7 @@ func TestRunBackgroundTaskSpeaksCompletion(t *testing.T) {
 		memoryDir:  dir,
 		workersDir: filepath.Join(dir, "workers"),
 		workers:    newWorkerRegistry(filepath.Join(dir, "workers")),
-		progress:  newAsyncProgressWriter(ProgressWriter{Dir: t.TempDir()}),
+		progress:   newAsyncProgressWriter(ProgressWriter{Dir: t.TempDir()}),
 		chat:       store,
 		bus:        bus.New(),
 		cfg:        speakEnabledCfg(),
@@ -348,5 +348,63 @@ func TestSpeakDisabledForZeroConfig(t *testing.T) {
 		if tn.Role == "assistant" && strings.Contains(tn.Content, "task-quiet-1") {
 			t.Fatalf("speak should be opt-in; zero-value config must stay quiet")
 		}
+	}
+}
+
+func TestPlannerCompletionSurfacesPlanWithoutAnnouncementLLM(t *testing.T) {
+	store, err := chatstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	sessionID, err := store.ActiveSession(ctx, "k", "m")
+	if err != nil {
+		t.Fatalf("active session: %v", err)
+	}
+
+	fake := &scriptedBridge{}
+	b := bus.New()
+	events, cancel := b.Subscribe(16)
+	defer cancel()
+	o := &Orchestrator{chat: store, bus: b, cfg: speakEnabledCfg(), bridge: fake}
+	const plan = "# Plan\n\n1. Inspect\n2. Implement\n3. Verify"
+	o.publishTaskUpdate(sessionID, taskRecord{
+		ID: "task-plan-1", SessionID: sessionID, Role: "planner", Status: "done", Result: plan,
+	})
+
+	if fake.call != 0 {
+		t.Fatalf("planner completion used %d announcement LLM calls, want zero", fake.call)
+	}
+	turns, err := store.ActiveTurns(ctx, sessionID, true)
+	if err != nil {
+		t.Fatalf("active turns: %v", err)
+	}
+	var persisted string
+	for _, turn := range turns {
+		if turn.Role == "assistant" {
+			persisted = turn.Content
+		}
+	}
+	if !strings.Contains(persisted, "<!--sapaloq-planner-summary:task-plan-1-->") || !strings.Contains(persisted, plan) {
+		t.Fatalf("planner artifact was not persisted as a planner summary: %q", persisted)
+	}
+	if got := stripPlannerSummaryMarker(persisted); got != plan {
+		t.Fatalf("planner marker leaked into model context: %q", got)
+	}
+
+	var completion bridge.StreamEvent
+	for drained := false; !drained; {
+		select {
+		case ev := <-events:
+			if ev.Data.Kind == bridge.EventResponseDelta {
+				completion = ev.Data
+			}
+		default:
+			drained = true
+		}
+	}
+	if completion.TaskRole != "planner" || completion.Delta != plan {
+		t.Fatalf("planner completion event = %+v", completion)
 	}
 }

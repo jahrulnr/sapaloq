@@ -45,7 +45,7 @@ const asyncProgressBuffered = 256
 // status events are high-frequency and safe to persist asynchronously.
 func isTerminalProgressEvent(ev bridge.StreamEvent) bool {
 	switch ev.Kind {
-	case bridge.EventDone, bridge.EventError, bridge.EventToolCall,
+	case bridge.EventDone, bridge.EventError, bridge.EventToolCall, bridge.EventToolUpdate,
 		bridge.EventTaskUpdate, bridge.EventCheckpoint, bridge.EventDecisionUpdate,
 		bridge.EventSteeringUpdate:
 		return true
@@ -161,4 +161,3 @@ func (a *asyncProgressWriter) Close(sessionID string) {
 	close(s.ch)
 	<-s.done
 }
-

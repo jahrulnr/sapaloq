@@ -466,7 +466,7 @@ function buildActivityPane(res: TaskInspectResult): HTMLElement {
 type ActivityEntry =
   | { kind: 'thinking'; text: string }
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; args: string }
+  | { kind: 'tool'; id: string; name: string; args: string; response?: string; status?: string }
   | { kind: 'status'; label: string }
   | { kind: 'turn'; label: string }
   | { kind: 'task'; label: string };
@@ -497,8 +497,24 @@ function coalesceEvents(events: TaskInspectEvent[]): ActivityEntry[] {
       case 'tool_call':
         flushText();
         flushThinking();
-        out.push({ kind: 'tool', name: ev.tool_name || 'tool', args: ev.tool_arguments || '' });
+        out.push({ kind: 'tool', id: ev.tool_id || '', name: ev.tool_name || 'tool', args: ev.tool_arguments || '' });
         break;
+      case 'tool_update': {
+        flushText();
+        flushThinking();
+        const match = [...out].reverse().find((entry): entry is Extract<ActivityEntry, { kind: 'tool' }> =>
+          entry.kind === 'tool' && (ev.tool_id ? entry.id === ev.tool_id : entry.name === (ev.tool_name || 'tool')) && entry.response === undefined);
+        if (match) {
+          match.response = ev.tool_result || ev.error || '';
+          match.status = ev.error ? 'failed' : (ev.status || 'completed');
+        } else {
+          out.push({
+            kind: 'tool', id: ev.tool_id || '', name: ev.tool_name || 'tool', args: ev.tool_arguments || '',
+            response: ev.tool_result || ev.error || '', status: ev.error ? 'failed' : (ev.status || 'completed'),
+          });
+        }
+        break;
+      }
       case 'turn_boundary':
         flushText();
         flushThinking();
@@ -560,26 +576,27 @@ function renderActivityEntry(entry: ActivityEntry): HTMLElement {
   if (entry.kind === 'tool') {
     const wrap = document.createElement('div');
     wrap.className = 'task-monitor-entry task-monitor-tool';
-    const label = document.createElement('span');
+    const label = document.createElement('button');
+    label.type = 'button';
     label.className = 'task-monitor-entry-label';
-    label.textContent = '🔧 ' + entry.name;
-    // Args render as a collapsed <details> code block: the summary is a
-    // one-line truncated preview, the body holds the full argument JSON so a
-    // long exec command / path stays tidy and expands in-place on click.
-    const args = document.createElement('details');
-    args.className = 'task-monitor-tool-args';
-    const summary = document.createElement('summary');
-    summary.textContent = truncateArgs(entry.args);
-    args.append(summary);
-    if (entry.args && entry.args.trim()) {
-      const full = document.createElement('code');
-      full.style.display = 'block';
-      full.style.whiteSpace = 'pre-wrap';
-      full.style.wordBreak = 'break-word';
-      full.textContent = entry.args.trim();
-      args.append(full);
-    }
-    wrap.append(label, args);
+    label.setAttribute('aria-expanded', 'false');
+    const paintLabel = () => {
+      const marker = wrap.classList.contains('is-open') ? '⌄' : '›';
+      label.textContent = `${marker}  $ ${entry.name}  ·  ${entry.status || 'running'}`;
+    };
+    paintLabel();
+    const body = document.createElement('div');
+    body.className = 'task-monitor-tool-body';
+    body.hidden = true;
+    body.append(toolMonitorSection('Request', entry.args || 'No arguments'));
+    body.append(toolMonitorSection('Response', entry.response === undefined ? 'Waiting for response…' : entry.response || 'No payload', entry.status));
+    label.addEventListener('click', () => {
+      const open = wrap.classList.toggle('is-open');
+      label.setAttribute('aria-expanded', String(open));
+      paintLabel();
+      body.hidden = !open;
+    });
+    wrap.append(label, body);
     return wrap;
   }
   if (entry.kind === 'turn') {
@@ -601,10 +618,24 @@ function renderActivityEntry(entry: ActivityEntry): HTMLElement {
   return wrap;
 }
 
-function truncateArgs(args: string): string {
-  const trimmed = args.trim();
-  if (trimmed.length <= 160) return trimmed;
-  return trimmed.slice(0, 160) + '…';
+function toolMonitorSection(label: string, payload: string, status = ''): HTMLElement {
+  const section = document.createElement('section');
+  section.className = 'task-monitor-tool-section';
+  if (status) section.dataset.status = status;
+  const heading = document.createElement('span');
+  heading.textContent = label;
+  const pre = document.createElement('pre');
+  const code = document.createElement('code');
+  let formatted = payload.trim();
+  try {
+    formatted = JSON.stringify(JSON.parse(formatted), null, 2);
+  } catch {
+    // Commands and plain-text responses should remain byte-for-byte readable.
+  }
+  code.textContent = formatted;
+  pre.append(code);
+  section.append(heading, pre);
+  return section;
 }
 
 function emptyState(message: string): HTMLElement {

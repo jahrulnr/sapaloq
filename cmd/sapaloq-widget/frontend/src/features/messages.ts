@@ -3,7 +3,7 @@
 // turn-content parser used when restoring history.
 import { OpenAttachment, SubmitFeedback } from '../../wailsjs/go/main/App';
 import type { PendingAttachment } from '../core/types';
-import { formatBytes, getMessageList } from '../ui/dom';
+import { formatBytes, getMessageList, hasVisibleText } from '../ui/dom';
 import { renderMarkdown } from '../ui/markdown';
 import { showImagePreview } from '../ui/image-preview';
 import {
@@ -19,6 +19,164 @@ import {
 import { copyText, deleteTurn, editText, retryTurn } from './message-actions';
 
 let activeMessageMenu: HTMLElement | null = null;
+const toolActivityByID = new Map<string, HTMLElement>();
+
+export type ToolActivityCall = {
+  id?: string;
+  name?: string;
+  arguments?: unknown;
+  source?: string;
+};
+
+function formatToolPayload(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function toolPayloadSection(label: string, value: string, state = ''): HTMLElement {
+  const section = document.createElement('section');
+  section.className = 'tool-activity__section';
+  if (state) section.dataset.state = state;
+  const heading = document.createElement('span');
+  heading.className = 'tool-activity__section-label';
+  heading.textContent = label;
+  const pre = document.createElement('pre');
+  const code = document.createElement('code');
+  code.textContent = value || (state === 'pending' ? 'Waiting for response…' : 'No payload');
+  pre.append(code);
+  section.append(heading, pre);
+  return section;
+}
+
+function findToolActivity(call: ToolActivityCall): HTMLElement | undefined {
+  if (call.id) return toolActivityByID.get(call.id);
+  return [...toolActivityByID.values()].reverse().find((item) =>
+    item.dataset.toolName === (call.name || 'unknown') && item.dataset.complete !== 'true');
+}
+
+function paintToolActivityHeader(item: HTMLElement, header: HTMLButtonElement) {
+  const marker = item.classList.contains('is-open') ? '⌄' : '›';
+  header.textContent = `${marker}  $ ${item.dataset.toolName || 'unknown'}  ·  ${item.dataset.toolStatus || 'running'}`;
+}
+
+// appendToolActivity creates one Cursor-like activity row. Its explicit
+// button disclosure keeps request and response paired in WebKitGTK.
+export function appendToolActivity(call: ToolActivityCall): HTMLElement | undefined {
+  const list = getMessageList();
+  if (!list) return;
+  if (call.id) {
+    const existing = toolActivityByID.get(call.id);
+    if (existing?.isConnected) return existing;
+  }
+  const item = document.createElement('div');
+  item.className = 'message tool-activity';
+  item.dataset.seq = `${nextMessageSeq()}`;
+  item.dataset.group = `${getUserGroup()}`;
+  item.dataset.toolName = call.name || 'unknown';
+  item.dataset.toolStatus = 'running';
+  if (call.id) item.dataset.toolId = call.id;
+
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.className = 'tool-activity__header';
+  header.setAttribute('aria-expanded', 'false');
+  paintToolActivityHeader(item, header);
+
+  const body = document.createElement('div');
+  body.className = 'tool-activity__body';
+  body.hidden = true;
+  const request = formatToolPayload(call.arguments);
+  body.append(toolPayloadSection('Request', request || 'No arguments'));
+  body.append(toolPayloadSection('Response', '', 'pending'));
+  header.addEventListener('click', () => {
+    const open = item.classList.toggle('is-open');
+    header.setAttribute('aria-expanded', String(open));
+    paintToolActivityHeader(item, header);
+    body.hidden = !open;
+  });
+  item.append(header, body);
+  list.append(item);
+  if (call.id) toolActivityByID.set(call.id, item);
+  list.scrollTop = list.scrollHeight;
+  return item;
+}
+
+export function completeToolActivity(call: ToolActivityCall, result: string, statusText = 'completed'): HTMLElement | undefined {
+  const item = findToolActivity(call) || appendToolActivity(call);
+  if (!item) return;
+  item.dataset.complete = 'true';
+  item.dataset.toolStatus = statusText;
+  const header = item.querySelector<HTMLButtonElement>('.tool-activity__header');
+  if (header) paintToolActivityHeader(item, header);
+  const old = item.querySelector<HTMLElement>('.tool-activity__section[data-state="pending"]');
+  old?.replaceWith(toolPayloadSection('Response', formatToolPayload(result), statusText === 'completed' ? 'complete' : 'error'));
+  return item;
+}
+
+type SummaryPanelOptions = {
+  label: string;
+  content: string;
+  meta?: string;
+  variant?: 'checkpoint' | 'planner';
+  open?: boolean;
+  taskID?: string;
+  archived?: boolean;
+};
+
+export function appendSummaryPanel(options: SummaryPanelOptions): HTMLElement | undefined {
+  const list = getMessageList();
+  if (!list || !options.content.trim()) return;
+  const card = document.createElement('div');
+  card.className = `message summary-panel summary-panel--${options.variant || 'checkpoint'}${options.archived ? ' message--archived' : ''}`;
+  card.dataset.seq = `${nextMessageSeq()}`;
+  card.dataset.group = `${getUserGroup()}`;
+  card.classList.toggle('is-open', options.open === true);
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('aria-expanded', String(options.open === true));
+  if (options.taskID) card.dataset.taskId = options.taskID;
+  const headerText = document.createTextNode('');
+  const paintHeader = () => {
+    const marker = card.classList.contains('is-open') ? '−' : '+';
+    headerText.nodeValue = `${marker}  ${options.label}${options.meta ? `  ·  ${options.meta}` : ''}`;
+  };
+  paintHeader();
+  const body = document.createElement('div');
+  body.className = 'summary-panel__body';
+  body.hidden = options.open !== true;
+  body.append(renderMarkdown(options.content));
+  if (!hasVisibleText(body)) return;
+  const toggle = () => {
+    const open = card.classList.toggle('is-open');
+    card.setAttribute('aria-expanded', String(open));
+    paintHeader();
+    body.hidden = !open;
+  };
+  card.addEventListener('click', toggle);
+  card.addEventListener('keydown', (event) => {
+    if (event.target !== card) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggle();
+    }
+  });
+  body.addEventListener('click', (event) => event.stopPropagation());
+  card.append(headerText, body);
+  list.append(card);
+  list.scrollTop = list.scrollHeight;
+  return card;
+}
 
 export function appendMessage(
   className: string,
@@ -37,6 +195,10 @@ export function appendMessage(
   item.dataset.rawText = text;
   item.append(renderMarkdown(text));
   if (attachments.length) item.append(renderMessageAttachments(attachments));
+  // Restored assistant turns bypass the live stream's flush guard. Apply the
+  // same meaningful-content check here so markdown-only separators or content
+  // sanitized to nothing cannot leave an empty feedback bubble behind.
+  if (className.includes('message--assistant') && !hasVisibleText(item)) return;
   if (className.includes('message--user')) wireUserMessage(item, text);
   if (className.includes('message--error')) wireErrorMessage(item);
   if (className.includes('message--assistant')) wireAssistantFeedback(item);
@@ -65,14 +227,12 @@ export function appendCheckpointDivider(index: number, summary: string) {
   ruleAfter.className = 'checkpoint-divider__rule';
   divider.append(ruleBefore, label, ruleAfter);
   list.appendChild(divider);
-  if (summary && summary.trim()) {
-    const card = document.createElement('details');
-    card.className = 'checkpoint-summary';
-    const summaryEl = document.createElement('summary');
-    summaryEl.textContent = 'Summary';
-    card.append(summaryEl, renderMarkdown(summary));
-    list.appendChild(card);
-  }
+  if (summary && summary.trim()) appendSummaryPanel({
+    label: 'Session summary',
+    meta: `Context checkpoint ${index}`,
+    content: summary,
+    variant: 'checkpoint',
+  });
   list.scrollTop = list.scrollHeight;
 }
 
@@ -160,6 +320,7 @@ export function clearMessages() {
   const list = getMessageList();
   if (list) list.innerHTML = '';
   activeMessageMenu = null;
+  toolActivityByID.clear();
   resetMessageSeq();
   setUserGroup(0);
   // The DOM is wiped (e.g. history restore renders completions from persisted
@@ -344,6 +505,7 @@ export function appendThinkingBubble(text: string, groupID = getUserGroup()) {
   const body = document.createElement('div');
   body.className = 'thinking-body';
   body.append(renderMarkdown(text));
+  if (!hasVisibleText(body)) return;
 
   header.addEventListener('click', (event) => {
     event.stopPropagation();
