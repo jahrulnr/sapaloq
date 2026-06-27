@@ -451,6 +451,58 @@ func (s *Store) Reset(ctx context.Context, provider, model string) (string, erro
 	return id, tx.Commit()
 }
 
+// ClearSession wipes all chat data for a session but keeps the same session id
+// and active flag. The room stays in the history list with an empty transcript.
+func (s *Store) ClearSession(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return errors.New("session id is required")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM chat_turns WHERE session_id=?`,
+		`DELETE FROM compaction_runs WHERE session_id=?`,
+		`DELETE FROM context_snapshots WHERE session_id=?`,
+		`DELETE FROM chat_events WHERE session_id=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, sessionID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET updated_at=? WHERE id=?`, now, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteSession removes a session and all persisted chat data for it.
+func (s *Store) DeleteSession(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return errors.New("session id is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM chat_turns WHERE session_id=?`,
+		`DELETE FROM compaction_runs WHERE session_id=?`,
+		`DELETE FROM context_snapshots WHERE session_id=?`,
+		`DELETE FROM chat_events WHERE session_id=?`,
+		`DELETE FROM chat_sessions WHERE id=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, sessionID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // SessionSummary is a compact description of a stored chat session for the
 // widget's history switcher. Title is derived from the first user turn so the
 // switcher can show something more meaningful than the opaque session id.

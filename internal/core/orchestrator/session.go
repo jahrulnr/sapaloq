@@ -31,6 +31,15 @@ func (o *Orchestrator) handleSlash(ctx context.Context, out chan<- bridge.Stream
 			return ""
 		}
 		o.emitSlash(ctx, out, sessionID, responseEvent(sessionID, fmt.Sprintf("Compaction complete. %d older turns summarized.", count)))
+	case "clear":
+		if err := o.chat.ClearSession(ctx, sessionID); err != nil {
+			o.emitSlash(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+			return ""
+		}
+		if o.progress != nil {
+			o.progress.Close(sessionID)
+		}
+		return sessionID
 	case "reset":
 		snap := o.snapshot()
 		newID, err := o.chat.Reset(ctx, snap.entry.Key, snap.entry.Model)
@@ -112,6 +121,49 @@ func (o *Orchestrator) SwitchSession(ctx context.Context, sessionID string) (str
 func (o *Orchestrator) NewSession(ctx context.Context) (string, error) {
 	snap := o.snapshot()
 	return o.chat.Reset(ctx, snap.entry.Key, snap.entry.Model)
+}
+
+// DeleteSession removes a chat room. When the active room is deleted, another
+// recent session is activated or a fresh one is created. The second return
+// value is true when the caller should treat the result as a session reset
+// (new empty active room).
+func (o *Orchestrator) DeleteSession(ctx context.Context, sessionID string) (string, bool, error) {
+	if sessionID == "" {
+		return "", false, fmt.Errorf("session_id is required")
+	}
+	active, err := o.ActiveSession(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	wasActive := active == sessionID
+	if err := o.chat.DeleteSession(ctx, sessionID); err != nil {
+		return "", false, err
+	}
+	if o.progress != nil {
+		o.progress.Close(sessionID)
+	}
+	if !wasActive {
+		return active, false, nil
+	}
+	sessions, err := o.ListSessions(ctx, 20)
+	if err != nil {
+		return "", false, err
+	}
+	for _, summary := range sessions {
+		if summary.ID == sessionID {
+			continue
+		}
+		if err := o.chat.Activate(ctx, summary.ID); err != nil {
+			continue
+		}
+		return summary.ID, false, nil
+	}
+	snap := o.snapshot()
+	newID, err := o.chat.Reset(ctx, snap.entry.Key, snap.entry.Model)
+	if err != nil {
+		return "", false, err
+	}
+	return newID, true, nil
 }
 
 func (o *Orchestrator) ActiveTurns(ctx context.Context, sessionID string) ([]chatstore.Turn, error) {

@@ -1,4 +1,5 @@
 import type { TranscriptEntry, TranscriptPaneState } from './types';
+import { visibleTranscriptEntries } from './filter';
 import { renderTranscriptEntry, patchTranscriptEntry } from './render';
 import type { ToolActivityMode } from './tool-activity';
 
@@ -26,13 +27,14 @@ export function mountTranscriptPane(
   body.querySelector('.transcript-pane')?.remove();
   body.querySelectorAll('.transcript-empty').forEach((node) => node.remove());
 
-  if (entries.length === 0) {
+  const visible = visibleTranscriptEntries(entries);
+  if (visible.length === 0) {
     body.append(emptyTranscriptState(emptyMessage, emptyExtraClass));
     state.renderedEntryCount = 0;
     return;
   }
   const pane = createTranscriptPane();
-  for (const entry of entries) {
+  for (const entry of visible) {
     const el = renderTranscriptEntry(entry, mode);
     if (!el.classList.contains('is-empty')) pane.append(el);
   }
@@ -51,7 +53,7 @@ export function syncTranscriptPane(
   let pane = body.querySelector('.transcript-pane') as HTMLElement | null;
   body.querySelectorAll('.transcript-empty').forEach((node) => node.remove());
 
-  const visible = entries.filter((e) => e.kind !== 'text' || (e.text || '').trim());
+  const visible = visibleTranscriptEntries(entries);
 
   if (visible.length === 0) {
     pane?.remove();

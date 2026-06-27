@@ -192,15 +192,13 @@ func (c *TranscriptCoalescer) completeTool(ev bridge.StreamEvent) {
 }
 
 func (c *TranscriptCoalescer) appendStatus(ev bridge.StreamEvent) {
+	// Loop-steer hint for the model only (conversation.go). Persisted autopilot
+	// turns are already skipped in SessionTranscript; dropping here keeps live
+	// widget patches and task-inspect replay from flashing a fake user bubble.
 	if isAutopilotNudge(ev.Status) {
-		c.entries = append(c.entries, bridge.TranscriptEntry{
-			ID:           c.newID("user"),
-			Kind:         bridge.TranscriptUser,
-			GenerationID: c.generationID,
-			At:           ev.At,
-			Text:         ev.Status,
-		})
-	} else if isProgressStatus(ev.Status) {
+		return
+	}
+	if isProgressStatus(ev.Status) {
 		c.entries = append(c.entries, bridge.TranscriptEntry{
 			ID:           c.newID("progress"),
 			Kind:         bridge.TranscriptProgress,

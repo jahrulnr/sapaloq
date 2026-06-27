@@ -34,7 +34,7 @@ func TestCoalesceAutopilotNudge(t *testing.T) {
 		{Kind: bridge.EventStatus, Status: "continuing - call sapaloq_stop", At: now},
 	}
 	out := CoalesceEvents("1", events)
-	if len(out) != 1 || out[0].Kind != bridge.TranscriptUser {
-		t.Fatalf("expected user nudge, got %+v", out)
+	if len(out) != 0 {
+		t.Fatalf("autopilot nudge must not surface in transcript, got %+v", out)
 	}
 }

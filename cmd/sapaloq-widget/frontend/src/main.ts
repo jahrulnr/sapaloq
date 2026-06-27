@@ -28,6 +28,7 @@ import {
   restoreChatHistory,
   startNewSession,
   switchSession,
+  deleteSessionRoom,
   toggleHistoryMenu,
 } from './features/history';
 import { startRuntimeStatusLoop } from './features/runtime-status';
@@ -69,10 +70,18 @@ document.getElementById('history-new')?.addEventListener('click', (e) => {
   void startNewSession();
 });
 document.getElementById('history-list')?.addEventListener('click', (e) => {
-  const item = (e.target as HTMLElement | null)?.closest<HTMLElement>('.history-item');
+  const target = e.target as HTMLElement | null;
+  const deleteBtn = target?.closest<HTMLElement>('.history-item-delete');
+  if (deleteBtn) {
+    e.stopPropagation();
+    void deleteSessionRoom(deleteBtn.dataset.sessionId || '');
+    return;
+  }
+  const item = target?.closest<HTMLElement>('.history-item-body');
   if (!item) return;
+  const row = item.closest<HTMLElement>('.history-item');
   e.stopPropagation();
-  void switchSession(item.dataset.sessionId || '');
+  void switchSession(row?.dataset.sessionId || '');
 });
 // Close the dropdown on any outside click.
 document.addEventListener('click', (event) => {

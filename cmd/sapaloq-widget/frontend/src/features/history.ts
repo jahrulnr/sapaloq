@@ -1,5 +1,5 @@
 // Chat-history restore via BE-driven transcript API.
-import { ChatHistory, ContextUsage, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
+import { ChatHistory, ContextUsage, DeleteSession, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
 import type { ChatUsage, SessionSummary } from '../core/types';
 import { applyChatResetFromBE } from './apply-session-reset';
 import { clearMessages } from './messages';
@@ -7,8 +7,8 @@ import { renderUsage } from './connection';
 import { mountChatTranscript, resetChatTranscriptState } from './transcript-pane';
 import {
   getUserGroup,
-  setSessionID,
   getSessionID,
+  setSessionID,
 } from '../core/state';
 
 export async function restoreChatHistory() {
@@ -135,27 +135,42 @@ function renderSessionList(sessions: SessionSummary[]) {
     return;
   }
   for (const session of sessions) {
-    const item = document.createElement('button');
-    item.type = 'button';
+    const item = document.createElement('div');
     item.className = 'history-item';
-    item.setAttribute('role', 'menuitem');
     item.dataset.sessionId = session.id;
     item.dataset.active = session.active ? 'true' : 'false';
+
+    const body = document.createElement('button');
+    body.type = 'button';
+    body.className = 'history-item-body';
+    body.setAttribute('role', 'menuitem');
     const title = document.createElement('span');
     title.className = 'history-item-title';
     title.textContent = sessionLabel(session);
-    item.appendChild(title);
+    body.appendChild(title);
     const meta = document.createElement('span');
     meta.className = 'history-item-meta';
     const rel = relativeTime(session.updated_at);
     meta.textContent = `${session.turn_count} pesan${rel ? ` · ${rel}` : ''}`;
-    item.appendChild(meta);
+    body.appendChild(meta);
+    item.appendChild(body);
+
     if (session.active) {
       const dot = document.createElement('span');
       dot.className = 'history-item-dot';
       dot.title = 'Sesi aktif';
       item.appendChild(dot);
     }
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'history-item-delete';
+    del.title = 'Hapus chat';
+    del.setAttribute('aria-label', 'Hapus chat');
+    del.textContent = '×';
+    del.dataset.sessionId = session.id;
+    item.appendChild(del);
+
     list.appendChild(item);
   }
 }
@@ -215,6 +230,31 @@ export async function switchSession(sessionID: string) {
     closeHistoryMenu();
   }
   await refreshAfterSessionChange();
+}
+
+export async function deleteSessionRoom(sessionID: string) {
+  if (!sessionID) return;
+  try {
+    const res = await DeleteSession(sessionID);
+    if (res.reset) {
+      applyChatResetFromBE({
+        session_id: res.session_id,
+        entries: res.transcript,
+        reset: true,
+      });
+      setSwitcherLabel(DEFAULT_LABEL);
+    } else if (res.session_id && res.session_id !== getSessionID()) {
+      setSessionID(res.session_id);
+      await restoreChatHistory();
+    } else if (res.session_id === getSessionID()) {
+      await restoreChatHistory();
+    }
+    await loadSessionList();
+  } catch {
+    // core offline or delete failed — leave UI unchanged
+  } finally {
+    closeHistoryMenu();
+  }
 }
 
 export async function startNewSession() {

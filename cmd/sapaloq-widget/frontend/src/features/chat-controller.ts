@@ -11,7 +11,7 @@ import { appendMessage, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
 import { applyChatResetFromBE } from './apply-session-reset';
 import { mountChatTranscript, resetChatTranscriptState, syncChatTranscript } from './transcript-pane';
-import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory, setSwitcherLabel } from './history';
+import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus } from './runtime-status';
 import { notifyCompletion, primeNotifications } from './notifications';
@@ -57,7 +57,6 @@ function applyTranscriptPatch(patch: TranscriptPatch) {
     applyChatResetFromBE(patch);
     if (patch.finished) releaseInFlightTurn();
     void loadSessionList();
-    setSwitcherLabel('SapaLOQ');
     return;
   }
   if (!patch.entries?.length) return;
@@ -89,7 +88,6 @@ async function sendText(text: string, _visibleText = text, _attachments: Attachm
         reset: true,
       });
       void loadSessionList();
-      setSwitcherLabel('SapaLOQ');
     } else {
       if (res.session_id) setSessionID(res.session_id);
       if (res.transcript?.length) mountChatTranscript(res.transcript);

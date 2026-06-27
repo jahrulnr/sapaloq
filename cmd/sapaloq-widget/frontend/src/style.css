@@ -271,17 +271,15 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .history-list { overflow-y: auto; padding: 6px; display: grid; gap: 3px; }
 .history-item {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 6px 10px;
+  gap: 4px 8px;
   width: 100%;
-  padding: 8px 9px;
+  padding: 4px 6px 4px 4px;
   border: 1px solid transparent;
   border-radius: 8px;
   color: var(--ink);
   background: transparent;
-  text-align: left;
-  cursor: pointer;
   transition: background 130ms ease, border-color 130ms ease;
 }
 .history-item:hover { background: oklch(100% 0 0 / 0.06); }
@@ -289,6 +287,20 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   border-color: oklch(70% 0.13 235 / 0.45);
   background: oklch(70% 0.13 235 / 0.12);
 }
+.history-item-body {
+  grid-column: 1;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.history-item-body:hover { background: oklch(100% 0 0 / 0.04); }
 .history-item-title {
   overflow: hidden;
   font-size: 0.74rem;
@@ -302,9 +314,28 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   grid-column: 2;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
-  background: var(--ok);
-  box-shadow: 0 0 8px oklch(73% 0.18 150 / 0.7);
+  border-radius: 999px;
+  background: oklch(72% 0.16 150);
+  box-shadow: 0 0 8px oklch(72% 0.16 150 / 0.65);
+}
+.history-item-delete {
+  grid-column: 3;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+.history-item-delete:hover {
+  opacity: 1;
+  color: oklch(72% 0.18 25);
+  background: oklch(72% 0.18 25 / 0.12);
 }
 .history-empty { padding: 14px 12px; color: var(--muted); font-size: 0.68rem; text-align: center; }
 
@@ -1834,7 +1865,6 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
 .task-monitor-text .task-monitor-entry-label { color: oklch(76% 0.15 205); }
 .transcript-text .transcript-entry-body :where(p,ul,ol,pre,code),
 .task-monitor-text .task-monitor-entry-body :where(p,ul,ol,pre,code) { margin: 0.2em 0; }
-/* Autopilot continuation nudges (status "continuing - call …") mirror user bubbles. */
 .transcript-user {
   align-self: flex-end;
   border-color: oklch(76% 0.15 205 / 0.38);
@@ -1896,8 +1926,7 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
   height: 1px;
   background: oklch(100% 0 0 / 0.16);
 }
-/* Status hints (provider retry, compaction, etc.) stay as muted centered lines.
-   Autopilot "continuing …" nudges render as .transcript-user instead. */
+/* Status hints (provider retry, compaction, etc.) stay as muted centered lines. */
 .transcript-status-line,
 .task-monitor-status-line,
 .task-monitor-task-line {

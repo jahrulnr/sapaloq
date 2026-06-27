@@ -127,7 +127,7 @@ describe('task-monitor-overlay', () => {
     expect(overlay.querySelectorAll('.tool-activity')).toHaveLength(1);
   });
 
-  it('renders autopilot continuing nudges as a right-aligned user bubble', async () => {
+  it('hides autopilot continuing nudges from the activity pane', async () => {
     taskInspectMock.mockResolvedValue(makeInspect({
       transcript: [
         { kind: 'text', text: 'Working on files.' },
@@ -140,11 +140,8 @@ describe('task-monitor-overlay', () => {
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
     const overlay = document.getElementById('task-monitor-overlay')!;
-    const user = overlay.querySelector('.transcript-user') as HTMLElement | null;
-    expect(user).not.toBeNull();
-    expect(user!.textContent).toContain('continuing');
-    expect(user!.textContent).toContain('sapaloq_stop');
-    expect(overlay.querySelector('.transcript-status-line')).toBeNull();
+    expect(overlay.querySelector('.transcript-user')).toBeNull();
+    expect(overlay.textContent).not.toContain('continuing');
     expect(overlay.querySelectorAll('.transcript-text')).toHaveLength(2);
   });
 

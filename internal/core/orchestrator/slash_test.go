@@ -15,8 +15,8 @@ func TestFindSlashTokensBoundary(t *testing.T) {
 
 func TestMatchRegistryClearAlias(t *testing.T) {
 	entry, ok := MatchRegistry("/clear", config.DefaultCommands())
-	if !ok || entry.ID != "reset" {
-		t.Fatalf("entry=%#v ok=%v want reset", entry, ok)
+	if !ok || entry.ID != "clear" {
+		t.Fatalf("entry=%#v ok=%v want clear", entry, ok)
 	}
 }
 

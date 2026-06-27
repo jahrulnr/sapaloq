@@ -297,7 +297,13 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		activeSessionID := sessionID
 		if entry, ok := MatchRegistry(message, snap.cfg.Commands); ok {
 			debug.Debugf("orchestrator: slash route id=%s session=%s", entry.ID, sessionID)
-			if entry.ID == "reset" {
+			if entry.ID == "clear" {
+				if clearedID := o.handleSlash(ctx, out, activeSessionID, entry.ID, message); clearedID != "" {
+					o.refreshActiveCoalescer(activeSessionID, runID)
+					o.emitSlash(ctx, out, clearedID, responseEvent(clearedID, "Chat cleared in this room."))
+					o.emitSessionReset(ctx, out, clearedID, runID, true)
+				}
+			} else if entry.ID == "reset" {
 				if newID := o.handleSlash(ctx, out, activeSessionID, entry.ID, message); newID != "" {
 					o.migrateActiveRun(activeSessionID, newID, runID)
 					activeSessionID = newID
@@ -465,6 +471,18 @@ func (o *Orchestrator) migrateActiveRun(oldID, newID string, runID uint64) {
 		cancel:    run.cancel,
 		coalescer: NewTranscriptCoalescer(genStr),
 	}
+}
+
+// refreshActiveCoalescer drops the live transcript coalescer for an in-place
+// clear (/clear) while keeping the same session id and generation run.
+func (o *Orchestrator) refreshActiveCoalescer(sessionID string, runID uint64) {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	run := o.active[sessionID]
+	if run == nil || run.id != runID {
+		return
+	}
+	run.coalescer = NewTranscriptCoalescer(fmt.Sprintf("%d", runID))
 }
 
 // emitSlash forwards slash-command output through the widget transcript path.

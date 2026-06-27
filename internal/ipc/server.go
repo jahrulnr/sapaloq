@@ -93,6 +93,8 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			s.handleSessionSwitch(ctx, conn, req, start)
 		case "session_new":
 			s.handleSessionNew(ctx, conn, req, start)
+		case "session_delete":
+			s.handleSessionDelete(ctx, conn, req, start)
 		case "context_usage":
 			s.handleUsage(ctx, conn, req, start)
 		case "runtime_status":
@@ -244,6 +246,24 @@ func (s *Server) handleSessionNew(ctx context.Context, conn net.Conn, req Reques
 	}
 	transcript, _ := s.orch.SessionTranscript(ctx, sessionID)
 	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Transcript: transcript, Reset: true, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleSessionDelete(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	if req.SessionID == "" {
+		write(conn, Response{OK: false, Op: req.Op, Message: "session_id is required", ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	activeID, reset, err := s.orch.DeleteSession(ctx, req.SessionID)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	resp := Response{OK: true, Op: req.Op, SessionID: activeID, Reset: reset, ServerMs: time.Since(start).Milliseconds()}
+	if reset {
+		transcript, _ := s.orch.SessionTranscript(ctx, activeID)
+		resp.Transcript = transcript
+	}
+	write(conn, resp)
 }
 
 func (s *Server) handleUsage(ctx context.Context, conn net.Conn, req Request, start time.Time) {

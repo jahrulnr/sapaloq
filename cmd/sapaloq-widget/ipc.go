@@ -94,12 +94,14 @@ type sessionListResult struct {
 	Sessions []sessionSummary `json:"sessions"`
 }
 
-type sessionNewResult struct {
+type sessionDeleteResult struct {
 	OK         bool                     `json:"ok"`
 	SessionID  string                   `json:"session_id"`
 	Reset      bool                     `json:"reset,omitempty"`
 	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
 }
+
+type sessionNewResult = sessionDeleteResult
 
 type actorRuntimeStatus struct {
 	ID        string `json:"id"`
@@ -262,6 +264,27 @@ func switchSession(socketPath, sessionID string) (string, error) {
 func newSession(socketPath string) (sessionNewResult, error) {
 	var result sessionNewResult
 	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_new"})
+	if err != nil {
+		return result, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return result, fmt.Errorf("%s", message)
+	}
+	res := responses[0]
+	result.OK = true
+	result.SessionID = res.SessionID
+	result.Reset = res.Reset
+	result.Transcript = res.Transcript
+	return result, nil
+}
+
+func deleteSession(socketPath, sessionID string) (sessionDeleteResult, error) {
+	var result sessionDeleteResult
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_delete", SessionID: sessionID})
 	if err != nil {
 		return result, err
 	}

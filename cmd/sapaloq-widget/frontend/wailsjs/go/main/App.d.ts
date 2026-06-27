@@ -9,9 +9,11 @@ export function ContextUsage():Promise<main.chatUsage>;
 
 export function DeleteChatTurn(arg1:string,arg2:number):Promise<void>;
 
+export function DeleteSession(arg1:string):Promise<main.sessionDeleteResult>;
+
 export function ListSessions():Promise<main.sessionListResult>;
 
-export function NewSession():Promise<main.sessionNewResult>;
+export function NewSession():Promise<main.sessionDeleteResult>;
 
 export function NotificationSound():Promise<string>;
 

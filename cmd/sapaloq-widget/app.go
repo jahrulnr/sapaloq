@@ -116,6 +116,12 @@ func (a *App) NewSession() (sessionNewResult, error) {
 	return newSession(a.socketPath)
 }
 
+// DeleteSession removes a chat room from history. When the active room is
+// deleted the backend activates another session or creates a fresh one.
+func (a *App) DeleteSession(sessionID string) (sessionDeleteResult, error) {
+	return deleteSession(a.socketPath, sessionID)
+}
+
 func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 	return deleteChatTurn(a.socketPath, sessionID, turnID)
 }

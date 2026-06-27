@@ -14,6 +14,10 @@ export function DeleteChatTurn(arg1, arg2) {
   return window['go']['main']['App']['DeleteChatTurn'](arg1, arg2);
 }
 
+export function DeleteSession(arg1) {
+  return window['go']['main']['App']['DeleteSession'](arg1);
+}
+
 export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
