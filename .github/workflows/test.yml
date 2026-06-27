@@ -22,3 +22,18 @@ jobs:
           npm install --prefix cmd/sapaloq-widget/frontend
           cd cmd/sapaloq-widget && wails build -tags webkit2_41
       - run: go test ./...
+
+  frontend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cmd/sapaloq-widget/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: cmd/sapaloq-widget/frontend/package-lock.json
+      - run: npm ci
+      - run: npm test

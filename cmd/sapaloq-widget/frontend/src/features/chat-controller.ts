@@ -23,6 +23,7 @@ import {
 import { bindLatestGroupTurnID, removeRepliesAfterTurn, restoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus } from './runtime-status';
+import { notifyCompletion, primeNotifications } from './notifications';
 import {
   getCompose,
   getSessionID,
@@ -234,6 +235,7 @@ export function initChatController() {
       if (event.kind === 'task_update') {
         renderTaskUpdate(event);
         void refreshRuntimeStatus();
+        maybeNotifyTaskCompletion(event);
         return;
       }
       // The orchestrator SPEAKS a sub-agent's terminal outcome as a SINGLE,
@@ -258,9 +260,43 @@ export function initChatController() {
         if (text) appendMessage('message--assistant', text);
         return;
       }
-      if (isSubmitting()) feedLiveEvent(event);
+      if (isSubmitting()) {
+        // Orchestrator run finish: chime + toast. `done` is success; `error`
+        // is a failed run — both are terminal for the foreground run.
+        if (event.kind === 'done') {
+          void notifyCompletion('orchestrator', 'SapaLOQ selesai', 'Run selesai.');
+        } else if (event.kind === 'error') {
+          void notifyCompletion('orchestrator', 'SapaLOQ gagal', (event.error || 'run gagal').slice(0, 200));
+        }
+        feedLiveEvent(event);
+      }
     });
   } catch {
     // EventsOn only exists inside a Wails runtime; ignore in plain browser.
   }
+  // Prime the chime buffer + Wails notification service so the first
+  // completion isn't delayed by a lazy fetch (silent if unavailable).
+  primeNotifications();
+}
+
+// maybeNotifyTaskCompletion fires a chime + toast for a terminal sub-agent
+// (planner/agent) transition. Non-terminal updates are ignored. The role
+// label mirrors stream.ts so the toast reads the same as the chat card, and
+// the role selects the planner/agent chime.
+function maybeNotifyTaskCompletion(event: StreamEvent) {
+  const status = event.task_status || '';
+  if (status !== 'done' && status !== 'failed' && status !== 'stopped') return;
+  const role = event.task_role || 'task';
+  let title = `${roleLabel(role)} selesai`;
+  if (status === 'failed') title = `${roleLabel(role)} gagal`;
+  else if (status === 'stopped') title = `${roleLabel(role)} dihentikan`;
+  const body = (event.summary || '').trim().slice(0, 200);
+  void notifyCompletion('task', title, body, role);
+}
+
+function roleLabel(role: string): string {
+  if (role === 'task-runner') return 'Agent';
+  if (role === 'planner') return 'Planner';
+  if (role === 'scribe') return 'Scribe';
+  return role || 'Task';
 }

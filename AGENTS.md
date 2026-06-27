@@ -72,14 +72,17 @@ its status table and the dated session notes current.
 
 ---
 
-## Workflow expectations
+## Workflow Expectations
 
-- **Explore before editing.** Read the relevant files (and `package.json` /
-  `go.mod` / `Makefile`) first; don't assume commands or libraries.
-- **Plan, then implement.** Present a plan before non-trivial changes.
-- **Verify functionally,** not just by compiling: run the relevant tests; for
-  frontend, build (and browser-test when feasible).
-- **Don't revert** unrelated changes; don't push to a remote unless asked.
+- **Explore before editing.** Read the relevant files (and `package.json`, `go.mod`, `Makefile`, etc.) before making changes. Don't assume project structure, dependencies, or available commands.
+- **Plan, then implement.** Present a brief implementation plan before making any non-trivial changes.
+- **Verify behavior, not just compilation.** Run the relevant tests after changes. For frontend projects, build the application and perform a browser-based verification when feasible.
+- **Don't revert** unrelated changes, and **don't push** to a remote repository unless explicitly requested.
+- Avoid:
+  - **Function sprawl:** Don't split logic into excessive helper functions that hurt readability and make navigation harder.
+  - **Method proliferation:** Don't introduce new methods unless they provide meaningful reuse, clarity, or separation of concerns.
+  - **Over-decomposition:** Keep related logic together. Don't break simple workflows into many tiny functions without a clear benefit.
+  - **Premature abstraction:** Don't create reusable abstractions until there is a demonstrated need for them.
 
 ---
 

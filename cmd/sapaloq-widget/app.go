@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jahrulnr/sapaloq/embed"
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -133,6 +134,36 @@ func (a *App) ContextUsage() (*chatUsage, error) {
 
 func (a *App) RuntimeStatus() (*runtimeStatus, error) {
 	return runtimeInfo(a.socketPath)
+}
+
+// TaskInspect returns the durable state + a tail of a sub-agent's progress
+// stream for the "Planner & Agent" pop-up. afterLine is the number of progress
+// lines the caller has already seen (0 on first open).
+func (a *App) TaskInspect(taskID string, afterLine int) (*taskInspectResult, error) {
+	return taskInspect(a.socketPath, taskID, afterLine)
+}
+
+// NotificationSound returns the embedded completion chime as a data: URI the
+// browser can feed straight to `new Audio()`. Empty when the embed is missing
+// (e.g. a stripped build) so the frontend degrades to a silent notification.
+func (a *App) NotificationSound() string {
+	if len(embed.NotificationWav) == 0 {
+		return ""
+	}
+	return "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(embed.NotificationWav)
+}
+
+// NotificationSoundForRole returns the role-specific chime (planner/agent) as a
+// data: URI, falling back to the generic chime for unknown roles. The frontend
+// uses this so a planner finishing plays notification-planner.wav and an agent
+// plays notification-agent.wav, while the orchestrator run keeps the generic
+// notification.wav (via NotificationSound).
+func (a *App) NotificationSoundForRole(role string) string {
+	wav := embed.NotificationWavForRole(role)
+	if len(wav) == 0 {
+		return ""
+	}
+	return "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wav)
 }
 
 func (a *App) SlashSuggest(query string) ([]config.CommandEntry, error) {

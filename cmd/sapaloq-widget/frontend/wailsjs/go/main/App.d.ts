@@ -13,6 +13,10 @@ export function ListSessions():Promise<main.sessionListResult>;
 
 export function NewSession():Promise<string>;
 
+export function NotificationSound():Promise<string>;
+
+export function NotificationSoundForRole(arg1:string):Promise<string>;
+
 export function OpenAttachment(arg1:string):Promise<void>;
 
 export function OpenExternal(arg1:string):Promise<void>;
@@ -38,3 +42,5 @@ export function SubmitFeedback(arg1:string,arg2:number,arg3:string,arg4:string):
 export function SwitchSession(arg1:string):Promise<string>;
 
 export function SyncInputShape(arg1:boolean):Promise<void>;
+
+export function TaskInspect(arg1:string,arg2:number):Promise<main.taskInspectResult>;

@@ -148,7 +148,7 @@ func TestE2ESettingsPatchViaIPC(t *testing.T) {
 	}
 }
 
-func TestE2EWatchRehydratesDurableTaskStatus(t *testing.T) {
+func TestE2EWatchRehydratesLiveTaskStatus(t *testing.T) {
 	h := startInProcessCore(t)
 	taskID := "task-watch-catchup"
 	taskDir := filepath.Join(filepath.Dir(h.ConfigPath), "state", "tasks", taskID)
@@ -160,9 +160,8 @@ func TestE2EWatchRehydratesDurableTaskStatus(t *testing.T) {
 		"id":         taskID,
 		"session_id": "watch-session",
 		"role":       "task-runner",
-		"status":     "failed",
+		"status":     "in_progress",
 		"task":       "build profile",
-		"error":      "executor stopped without an explicit terminal tool",
 		"created_at": now,
 		"updated_at": now,
 	})
@@ -202,8 +201,8 @@ func TestE2EWatchRehydratesDurableTaskStatus(t *testing.T) {
 		t.Fatalf("watch handshake/snapshot missing: %+v", responses)
 	}
 	event := responses[1].Event
-	if event == nil || event.Kind != bridge.EventTaskUpdate || event.TaskID != taskID || event.TaskStatus != "failed" {
-		t.Fatalf("durable task snapshot not delivered: %+v", responses[1])
+	if event == nil || event.Kind != bridge.EventTaskUpdate || event.TaskID != taskID || event.TaskStatus != "in_progress" {
+		t.Fatalf("live task snapshot not delivered: %+v", responses[1])
 	}
 }
 

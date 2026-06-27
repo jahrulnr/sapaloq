@@ -112,6 +112,41 @@ type runtimeStatus struct {
 	Actors        []actorRuntimeStatus `json:"actors"`
 }
 
+// taskInspectEvent is the JSON-safe mirror of bridge.StreamEvent the frontend
+// renders in the pop-up. We project only the fields the UI needs so the wails
+// binding stays stable across bridge changes.
+type taskInspectEvent struct {
+	Kind             string `json:"kind"`
+	Delta            string `json:"delta,omitempty"`
+	ToolName         string `json:"tool_name,omitempty"`
+	ToolArguments    string `json:"tool_arguments,omitempty"`
+	Status           string `json:"status,omitempty"`
+	TaskStatus       string `json:"task_status,omitempty"`
+	Summary          string `json:"summary,omitempty"`
+	Error            string `json:"error,omitempty"`
+	CheckpointIndex  int    `json:"checkpoint_index,omitempty"`
+	CheckpointReason string `json:"checkpoint_reason,omitempty"`
+	At               string `json:"at"`
+}
+
+// taskInspectResult mirrors orchestrator.TaskInspectResult for the wails
+// binding. The Events slice is the progress tail (newest last); EventCount is
+// the total line count on disk so the frontend can request the next slice.
+type taskInspectResult struct {
+	ID         string               `json:"id"`
+	Role       string               `json:"role"`
+	Status     string               `json:"status"`
+	Task       string               `json:"task"`
+	Result     string               `json:"result,omitempty"`
+	Error      string               `json:"error,omitempty"`
+	Question   string               `json:"question,omitempty"`
+	PlanTaskID string               `json:"plan_task_id,omitempty"`
+	Plan       string               `json:"plan,omitempty"`
+	Events     []taskInspectEvent   `json:"events"`
+	EventCount int                  `json:"event_count"`
+	UpdatedAt  string               `json:"updated_at"`
+}
+
 func sendChat(socketPath, sessionID, message string) (chatResult, error) {
 	return sendChatWithStatus(socketPath, sessionID, message, nil)
 }
@@ -363,6 +398,55 @@ func mapUsage(usage *chatstore.Usage) *chatUsage {
 		CompactedTurns: usage.CompactedTurns,
 		ActiveTurns:    usage.ActiveTurns,
 	}
+}
+
+// taskInspect fetches the durable task record + a tail of its progress stream
+// for the widget's "Planner & Agent" pop-up. afterLine is the number of
+// progress lines the caller has already seen (0 on first open).
+func taskInspect(socketPath, taskID string, afterLine int) (*taskInspectResult, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "task_inspect", TaskID: taskID, AfterLine: afterLine})
+	if err != nil {
+		return nil, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		msg := "core error"
+		if len(responses) > 0 {
+			msg = responses[0].Message
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+	src := responses[0].TaskInspect
+	if src == nil {
+		return nil, fmt.Errorf("core error")
+	}
+	out := &taskInspectResult{
+		ID: src.ID, Role: src.Role, Status: src.Status, Task: src.Task,
+		Result: src.Result, Error: src.Error, Question: src.Question,
+		PlanTaskID: src.PlanTaskID, Plan: src.Plan,
+		EventCount: src.EventCount,
+		UpdatedAt:  src.UpdatedAt.Format(time.RFC3339Nano),
+	}
+	for _, ev := range src.Events {
+		evt := taskInspectEvent{
+			Kind:             string(ev.Kind),
+			Delta:            ev.Delta,
+			Status:           ev.Status,
+			TaskStatus:       ev.TaskStatus,
+			Summary:          ev.Summary,
+			Error:            ev.Error,
+			CheckpointIndex:  ev.CheckpointIndex,
+			CheckpointReason: ev.CheckpointReason,
+			At:               ev.At.Format(time.RFC3339Nano),
+		}
+		if ev.ToolCall != nil {
+			evt.ToolName = ev.ToolCall.Name
+			if raw, err := json.Marshal(ev.ToolCall.Arguments); err == nil {
+				evt.ToolArguments = string(raw)
+			}
+		}
+		out.Events = append(out.Events, evt)
+	}
+	return out, nil
 }
 
 func slashSuggest(socketPath, query string) ([]config.CommandEntry, error) {

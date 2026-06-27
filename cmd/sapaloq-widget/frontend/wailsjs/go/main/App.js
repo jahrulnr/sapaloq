@@ -22,6 +22,14 @@ export function NewSession() {
   return window['go']['main']['App']['NewSession']();
 }
 
+export function NotificationSound() {
+  return window['go']['main']['App']['NotificationSound']();
+}
+
+export function NotificationSoundForRole(arg1) {
+  return window['go']['main']['App']['NotificationSoundForRole'](arg1);
+}
+
 export function OpenAttachment(arg1) {
   return window['go']['main']['App']['OpenAttachment'](arg1);
 }
@@ -72,4 +80,8 @@ export function SwitchSession(arg1) {
 
 export function SyncInputShape(arg1) {
   return window['go']['main']['App']['SyncInputShape'](arg1);
+}
+
+export function TaskInspect(arg1, arg2) {
+  return window['go']['main']['App']['TaskInspect'](arg1, arg2);
 }

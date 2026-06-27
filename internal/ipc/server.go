@@ -98,6 +98,13 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		case "runtime_status":
 			status := s.orch.RuntimeStatus()
 			write(conn, Response{OK: true, Op: req.Op, Runtime: &status, ServerMs: time.Since(start).Milliseconds()})
+		case "task_inspect":
+			inspect, err := s.orch.TaskInspect(req.TaskID, req.AfterLine)
+			if err != nil {
+				write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+				continue
+			}
+			write(conn, Response{OK: true, Op: req.Op, TaskInspect: &inspect, ServerMs: time.Since(start).Milliseconds()})
 		case "chat_delete":
 			s.handleDelete(ctx, conn, req, start)
 		case "chat_retry":
