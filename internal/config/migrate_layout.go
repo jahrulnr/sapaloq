@@ -89,7 +89,7 @@ func MigrateLegacyLayout(dirs RuntimeDirsInfo) error {
 	// files before handling the older state split. Existing destination files are
 	// never overwritten: identical duplicates are removed, divergent conflicts
 	// remain at the source and are reported to the operator.
-	if err := mergeDirContents(filepath.Join(dirs.StateDir, "memory"), dirs.MemoryDir); err != nil {
+	if err := mergeDirContentsPreferNewer(filepath.Join(dirs.StateDir, "memory"), dirs.MemoryDir); err != nil {
 		errs = append(errs, fmt.Errorf("migrate misplaced durable memory: %w", err))
 	}
 	for _, m := range moves {
@@ -118,6 +118,54 @@ func MigrateLegacyLayout(dirs RuntimeDirsInfo) error {
 }
 
 func mergeDirContents(srcDir, dstDir string) error {
+	entries, err := os.ReadDir(srcDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dstDir, 0o700); err != nil {
+		return err
+	}
+	var conflicts []string
+	for _, entry := range entries {
+		src := filepath.Join(srcDir, entry.Name())
+		dst := filepath.Join(dstDir, entry.Name())
+		if _, statErr := os.Stat(dst); os.IsNotExist(statErr) {
+			if err := movePath(src, dst); err != nil {
+				return err
+			}
+			continue
+		} else if statErr != nil {
+			return statErr
+		}
+		equal, cmpErr := pathsEqual(src, dst)
+		if cmpErr != nil {
+			return cmpErr
+		}
+		if !equal {
+			conflicts = append(conflicts, entry.Name())
+			continue
+		}
+		if err := os.RemoveAll(src); err != nil {
+			return err
+		}
+	}
+	remaining, _ := os.ReadDir(srcDir)
+	if len(remaining) == 0 {
+		_ = os.Remove(srcDir)
+	}
+	if len(conflicts) > 0 {
+		return fmt.Errorf("destination already contains different files; preserved source conflicts: %v", conflicts)
+	}
+	return nil
+}
+
+// mergeDirContentsPreferNewer merges src into dst and, when both sides have the
+// same filename with different bytes, keeps the newer mtime at dst and drops the
+// stale copy. Used only for one-shot recovery of misplaced durable memory.
+func mergeDirContentsPreferNewer(srcDir, dstDir string) error {
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
 		return nil
