@@ -54,13 +54,22 @@ func TestChatStreamMockBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := map[bridge.EventKind]bool{}
+	var hasText bool
 	for ev := range stream {
 		seen[ev.Kind] = true
-	}
-	for _, kind := range []bridge.EventKind{bridge.EventThinkingDelta, bridge.EventResponseDelta, bridge.EventDone} {
-		if !seen[kind] {
-			t.Fatalf("missing %s", kind)
+		if ev.Kind == bridge.EventTranscript && ev.Transcript != nil {
+			for _, e := range ev.Transcript.Entries {
+				if e.Kind == bridge.TranscriptText {
+					hasText = true
+				}
+			}
 		}
+	}
+	if !seen[bridge.EventTranscript] && !seen[bridge.EventDone] {
+		t.Fatalf("missing transcript stream, seen=%v", seen)
+	}
+	if !hasText {
+		t.Fatal("missing text in transcript")
 	}
 }
 
@@ -106,6 +115,13 @@ func TestSettingsPatchWritesConfig(t *testing.T) {
 	for ev := range stream {
 		if ev.Kind == bridge.EventResponseDelta {
 			response = ev.Delta
+		}
+		if ev.Kind == bridge.EventTranscript && ev.Transcript != nil {
+			for _, e := range ev.Transcript.Entries {
+				if e.Kind == bridge.TranscriptText {
+					response = e.Text
+				}
+			}
 		}
 		if ev.Kind == bridge.EventError {
 			t.Fatalf("error: %s", ev.Error)

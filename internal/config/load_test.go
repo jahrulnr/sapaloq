@@ -183,4 +183,14 @@ func TestOrchestratorConfigDefaultsAndOverrides(t *testing.T) {
 	if custom.Compaction.BackgroundThreshold != 0.60 || custom.Compaction.PreserveRecentFraction != 0.40 {
 		t.Fatalf("custom compaction config lost: %+v", custom.Compaction)
 	}
+	if !custom.Compaction.UseCheckpointsEnabled() {
+		t.Fatal("useCheckpoints should default true when omitted from JSON")
+	}
+	explicitOff := false
+	legacy := OrchestratorConfig{
+		Compaction: CompactionConfig{UseCheckpoints: &explicitOff},
+	}.WithDefaults()
+	if legacy.Compaction.UseCheckpointsEnabled() {
+		t.Fatal("explicit useCheckpoints:false should disable checkpoint compaction")
+	}
 }

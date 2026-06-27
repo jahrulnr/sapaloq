@@ -90,7 +90,10 @@ func startCore(t *testing.T, opts coreStartOptions) *coreHarness {
 	go func() {
 		_ = ipc.NewServer(cfg, orch).ListenAndServe(ctx, socketPath)
 	}()
-	t.Cleanup(cancel)
+	t.Cleanup(func() {
+		cancel()
+		time.Sleep(150 * time.Millisecond)
+	})
 
 	waitForSocket(t, socketPath)
 	return &coreHarness{SocketPath: socketPath, ConfigPath: cfgPath, cancel: cancel, live: !opts.mock}
@@ -159,6 +162,9 @@ func ipcRoundTripTimeout(t *testing.T, socketPath string, req ipc.Request, until
 		if !untilDone {
 			break
 		}
+		if res.Op == "event" && res.Event != nil && res.Event.Kind == bridge.EventTranscript && res.Event.Transcript != nil && res.Event.Transcript.Finished {
+			break
+		}
 		if res.Op == "event" && res.Event != nil && res.Event.Kind == bridge.EventDone {
 			break
 		}
@@ -181,6 +187,38 @@ func eventKinds(responses []ipc.Response) map[bridge.EventKind]int {
 		seen[res.Event.Kind]++
 	}
 	return seen
+}
+
+func transcriptText(responses []ipc.Response) string {
+	var out string
+	for _, res := range responses {
+		if res.Event == nil || res.Event.Transcript == nil {
+			continue
+		}
+		for _, e := range res.Event.Transcript.Entries {
+			if e.Kind != bridge.TranscriptText {
+				continue
+			}
+			text := strings.TrimSpace(e.Text)
+			if text == "" || strings.Contains(text, "<sapaloq:autopilot>") {
+				continue
+			}
+			out = e.Text
+		}
+	}
+	return out
+}
+
+func transcriptFinished(responses []ipc.Response) bool {
+	for _, res := range responses {
+		if res.Event != nil && res.Event.Kind == bridge.EventTranscript && res.Event.Transcript != nil && res.Event.Transcript.Finished {
+			return true
+		}
+		if res.Event != nil && res.Event.Kind == bridge.EventDone {
+			return true
+		}
+	}
+	return false
 }
 
 func repoRoot(t *testing.T) string {
@@ -235,11 +273,18 @@ func redact(s string) string {
 
 func isMockStream(responses []ipc.Response) bool {
 	for _, res := range responses {
-		if res.Event == nil || res.Event.Kind != bridge.EventThinkingDelta {
+		if res.Event == nil {
 			continue
 		}
-		if strings.Contains(res.Event.Delta, "offline mock stream") {
+		if res.Event.Kind == bridge.EventThinkingDelta && strings.Contains(res.Event.Delta, "offline mock stream") {
 			return true
+		}
+		if res.Event.Kind == bridge.EventTranscript && res.Event.Transcript != nil {
+			for _, e := range res.Event.Transcript.Entries {
+				if e.Kind == bridge.TranscriptThinking && strings.Contains(e.Text, "offline mock stream") {
+					return true
+				}
+			}
 		}
 	}
 	return false
@@ -265,8 +310,8 @@ func assertLiveChatResult(t *testing.T, responses []ipc.Response) {
 	seen := eventKinds(responses)
 	if seen[bridge.EventError] > 0 {
 		errText := firstStreamError(responses)
-		if seen[bridge.EventDone] > 0 {
-			t.Fatalf("live stream returned done after error: %s", errText)
+		if transcriptFinished(responses) {
+			t.Fatalf("live stream returned finished transcript after error: %s", errText)
 		}
 		if liveE2EStrict() {
 			t.Fatalf("live api error (strict mode): %s", errText)
@@ -274,9 +319,7 @@ func assertLiveChatResult(t *testing.T, responses []ipc.Response) {
 		t.Logf("live api returned error (surfaced correctly, not silent done): %s", errText)
 		return
 	}
-	for _, kind := range []bridge.EventKind{bridge.EventResponseDelta, bridge.EventDone} {
-		if seen[kind] == 0 {
-			t.Fatalf("live chat missing %s (seen=%v)", kind, seen)
-		}
+	if seen[bridge.EventTranscript] == 0 || !transcriptFinished(responses) {
+		t.Fatalf("live chat missing finished transcript (seen=%v)", seen)
 	}
 }

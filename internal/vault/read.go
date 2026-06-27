@@ -88,10 +88,10 @@ func ReadRecent(path string, limit int) ([]Entry, error) {
 }
 
 type Stats struct {
-	Total   int            `json:"total"`
-	ByReason map[string]int `json:"by_reason"`
+	Total      int            `json:"total"`
+	ByReason   map[string]int `json:"by_reason"`
 	ByProvider map[string]int `json:"by_provider"`
-	TopTools []ToolCount    `json:"top_tools"`
+	TopTools   []ToolCount    `json:"top_tools"`
 }
 
 type ToolCount struct {

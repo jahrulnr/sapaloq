@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/bridges/codex"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor"
 	"github.com/jahrulnr/sapaloq/internal/bridges/provider"
 	"github.com/jahrulnr/sapaloq/internal/bus"
@@ -114,6 +115,7 @@ func main() {
 		if err != nil {
 			exitf("orchestrator: %v", err)
 		}
+		defer orch.Close()
 		entry, _ := cfg.LLMBridge.ActiveProvider()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		orch.StartConfigWatcher(ctx)
@@ -211,6 +213,11 @@ func newBridge(cfg config.Config) (bridge.Bridge, error) {
 	}
 	if entry.Driver == "provider-bridge" {
 		if err := provider.Register(reg, entry); err != nil {
+			return nil, err
+		}
+	}
+	if entry.Driver == "codex-bridge" {
+		if err := codex.Register(reg, entry, cfg.Runtime); err != nil {
 			return nil, err
 		}
 	}

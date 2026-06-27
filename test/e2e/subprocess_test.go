@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/ipc"
 )
@@ -84,16 +83,11 @@ func TestE2ESubprocessCoreRun(t *testing.T) {
 		SessionID: "e2e-subprocess",
 	}, true)
 	seen := eventKinds(chat)
-	if seen[bridge.EventDone] == 0 {
-		t.Fatalf("subprocess chat missing done (seen=%v)", seen)
+	if !transcriptFinished(chat) {
+		t.Fatalf("subprocess chat missing finished transcript (seen=%v)", seen)
 	}
 
-	var response string
-	for _, res := range chat {
-		if res.Event != nil && res.Event.Kind == bridge.EventResponseDelta {
-			response += res.Event.Delta
-		}
-	}
+	response := transcriptText(chat)
 	if !strings.Contains(response, "subprocess hello") {
 		t.Fatalf("response = %q", response)
 	}

@@ -63,3 +63,26 @@ func TestDefaultMaxRetriesMatchesCLIResilience(t *testing.T) {
 		t.Fatalf("DefaultMaxRetries=%d must not exceed MaxRetriesCap=%d", DefaultMaxRetries, MaxRetriesCap)
 	}
 }
+
+// TestStreamEnabled covers the tri-state stream toggle: an absent field keeps
+// the historical streaming default (backward-compatible with every existing
+// config), while an explicit true/false is honoured verbatim.
+func TestStreamEnabled(t *testing.T) {
+	tr, fa := true, false
+	cases := []struct {
+		name string
+		in   *bool
+		want bool
+	}{
+		{"nil defaults to streaming", nil, true},
+		{"explicit true", &tr, true},
+		{"explicit false", &fa, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (LLMBridge{Stream: tc.in}).StreamEnabled(); got != tc.want {
+				t.Fatalf("StreamEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

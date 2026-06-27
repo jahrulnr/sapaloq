@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,7 +83,12 @@ func (b *sequenceBridge) Complete(_ context.Context, req bridge.Request) (<-chan
 			tool := parse.ToolCall{Name: "sapaloq_get_task_status", Arguments: args}
 			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
 		} else {
+			// Final turn: answer, then signal completion the only way a run
+			// can now end - an explicit terminal tool (no more "tool-less =
+			// stop"). The stop call rides on the same turn as the answer.
 			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "continued"}
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
@@ -101,6 +107,8 @@ func (b *thinkingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan b
 		out <- bridge.StreamEvent{Kind: bridge.EventThinkingDelta, Delta: "let me reason "}
 		out <- bridge.StreamEvent{Kind: bridge.EventThinkingDelta, Delta: "about this"}
 		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "final answer"}
+		stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+		out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
 	return out, nil
@@ -161,12 +169,14 @@ func (b *retryWithoutCloseBridge) ID() string              { return "retry-witho
 func (b *retryWithoutCloseBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
 func (b *retryWithoutCloseBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
 	b.calls++
-	out := make(chan bridge.StreamEvent, 2)
+	out := make(chan bridge.StreamEvent, 4)
 	if b.calls == 1 {
 		out <- bridge.StreamEvent{Kind: bridge.EventError, Error: "provider-bridge: upstream status 500: unavailable"}
 		return out, nil
 	}
 	out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "recovered"}
+	stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+	out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 	out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	return out, nil
 }
@@ -258,10 +268,12 @@ func TestRunConversationContinuesAfterToolResult(t *testing.T) {
 	}
 }
 
-// TestRunConversationInjectsUsageReadout verifies the continuation message sent
-// back to the model carries a lightweight, informational usage readout (turn +
-// tool-calls so far) so the model has self-awareness to pace its own work.
-func TestRunConversationInjectsUsageReadout(t *testing.T) {
+// TestRunConversationFeedsToolResultsAsPureData verifies the continuation
+// message sent back to the model is PURE DATA: the tool result wrapped in
+// <untrusted_data> tags, with none of the old steering (observe/summarize/
+// continue) or usage-readout text. All that steering now lives in the persona
+// system prompt; the tool turn stays clean so the model reasons over it best.
+func TestRunConversationFeedsToolResultsAsPureData(t *testing.T) {
 	fake := &sequenceBridge{}
 	orch := &Orchestrator{
 		memoryDir: t.TempDir(),
@@ -289,11 +301,15 @@ func TestRunConversationInjectsUsageReadout(t *testing.T) {
 	// The 2nd request's last message is the continuation we built after turn 1
 	// (which made exactly one tool call).
 	got := fake.requests[1].Messages[len(fake.requests[1].Messages)-1].Content
-	if !strings.Contains(got, "--\n\nUsage") {
-		t.Fatalf("continuation missing usage readout: %q", got)
+	// Pure data: wrapped in <untrusted_data>, carrying the tool result.
+	if !strings.Contains(got, "<untrusted_data>") || !strings.Contains(got, "</untrusted_data>") {
+		t.Fatalf("continuation should wrap tool results in <untrusted_data>: %q", got)
 	}
-	if !strings.Contains(got, "tool-calls so far 1") {
-		t.Fatalf("usage readout should report 1 tool call so far: %q", got)
+	// No steering / usage-readout text should ride along anymore.
+	for _, banned := range []string{"Usage", "tool-calls so far", "Tool output observed", "Continue the original request"} {
+		if strings.Contains(got, banned) {
+			t.Fatalf("continuation should not contain steering text %q: %q", banned, got)
+		}
 	}
 }
 
@@ -307,7 +323,7 @@ func (b *longSequenceBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps
 func (b *longSequenceBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
 	b.requests++
 	call := b.requests
-	out := make(chan bridge.StreamEvent, 3)
+	out := make(chan bridge.StreamEvent, 4)
 	go func() {
 		defer close(out)
 		if call <= b.tools {
@@ -316,6 +332,8 @@ func (b *longSequenceBridge) Complete(_ context.Context, _ bridge.Request) (<-ch
 			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
 		} else {
 			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "finished"}
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
@@ -448,7 +466,6 @@ func TestRunTurnLoopUnlimitedTurnsStillBoundedByGuards(t *testing.T) {
 		runID:             "actor-unlimited",
 		tools:             []string{"sapaloq_get_task_status"},
 		sink:              chatSink{o: o, out: out},
-		finishOnNoTool:    false,                // executor: only a terminal tool finishes it
 		maxInferenceTurns: unlimitedTurnsBudget, // < 0 → no turn ceiling
 		dispatch: func(context.Context, parse.ToolCall) turnOutcome {
 			return turnOutcome{text: "status", handled: true}
@@ -580,10 +597,10 @@ func TestCalledToolsNote(t *testing.T) {
 		want  string
 	}{
 		{"none", nil, ""},
-		{"single", mk("sapaloq_spawn_agent"), "Called tools: sapaloq_spawn_agent"},
-		{"multiple distinct", mk("read_file", "exec"), "Called tools: read_file, exec"},
-		{"duplicates collapse", mk("sapaloq_spawn_agent", "sapaloq_spawn_agent"), "Called tools: sapaloq_spawn_agent ×2"},
-		{"mixed", mk("exec", "read_file", "exec"), "Called tools: exec ×2, read_file"},
+		{"single", mk("sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent]"},
+		{"multiple distinct", mk("read_file", "exec"), "[Called tools: read_file, exec]"},
+		{"duplicates collapse", mk("sapaloq_spawn_agent", "sapaloq_spawn_agent"), "[Called tools: sapaloq_spawn_agent ×2]"},
+		{"mixed", mk("exec", "read_file", "exec"), "[Called tools: exec ×2, read_file]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -714,11 +731,10 @@ func TestWallTimeIsIdleNotTotal(t *testing.T) {
 		}
 	}()
 	cfg := turnConfig{
-		sessionID:      "s1",
-		runID:          "actor-busy",
-		tools:          []string{},
-		sink:           chatSink{o: o, out: out},
-		finishOnNoTool: true,
+		sessionID: "s1",
+		runID:     "actor-busy",
+		tools:     []string{},
+		sink:      chatSink{o: o, out: out},
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -751,11 +767,10 @@ func TestWallTimeCancelsStalledRun(t *testing.T) {
 		}
 	}()
 	cfg := turnConfig{
-		sessionID:      "s1",
-		runID:          "actor-stuck",
-		tools:          []string{},
-		sink:           chatSink{o: o, out: out},
-		finishOnNoTool: true,
+		sessionID: "s1",
+		runID:     "actor-stuck",
+		tools:     []string{},
+		sink:      chatSink{o: o, out: out},
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -797,13 +812,15 @@ func (b *malformedToolBridge) Complete(_ context.Context, req bridge.Request) (<
 	go func() {
 		defer close(out)
 		if call == 1 {
-			// An unknown tool name is not handled by handleAskTool/runSharedTool,
+			// An unknown tool name is not handled by dispatchTool,
 			// so it yields no toolResult - exactly the "tool emitted but nothing
 			// executed" shape a mangled inline batch produces.
 			tool := parse.ToolCall{Name: "definitely_not_a_real_tool", Arguments: []byte(`{}`), Source: "openai_inline"}
 			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
 		} else {
 			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "here is the answer"}
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
@@ -836,8 +853,8 @@ func TestRunConversationRecoversFromMalformedToolCall(t *testing.T) {
 	}
 	// The nudge must have been appended as a user message before the retry.
 	last := fake.requests[1].Messages[len(fake.requests[1].Messages)-1].Content
-	if !strings.Contains(last, "ONE tool call at a time") {
-		t.Fatalf("retry prompt missing the one-call-at-a-time nudge: %q", last)
+	if !strings.Contains(last, "well-formed call") {
+		t.Fatalf("retry prompt missing malformed-tool nudge: %q", last)
 	}
 }
 
@@ -889,5 +906,302 @@ func TestRunConversationMalformedToolCallIsBounded(t *testing.T) {
 	// finishes (a clean tool-less done once the guard is exhausted).
 	if fake.calls < 2 || fake.calls > 6 {
 		t.Fatalf("calls = %d, want bounded retries", fake.calls)
+	}
+}
+
+// repeatingTextBridge always replies with the SAME tool-less text and never
+// calls a terminal tool. Under the new "stop only via terminal tool" model the
+// run must NOT loop forever: the no-progress finish ends it CLEANLY (no error),
+// which is the common case of a model that answers and never says stop.
+type repeatingTextBridge struct {
+	calls    int
+	requests []bridge.Request
+}
+
+func (b *repeatingTextBridge) ID() string              { return "repeating-text" }
+func (b *repeatingTextBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *repeatingTextBridge) Complete(_ context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.requests = append(b.requests, req)
+	b.calls++
+	out := make(chan bridge.StreamEvent, 4)
+	go func() {
+		defer close(out)
+		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "Hai! Ada yang bisa kubantu?"}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+// TestToolLessTurnNeverFinishesOnAbsenceOfTool proves the polarity flip: a
+// tool-less turn does NOT end the run by itself (no "no-tool = stop", no NO_OP
+// sentinel). The run instead continues until the toolless-turn budget closes
+// it cleanly once the model just repeats itself. It also proves the
+// continuation fed back is the single content-blind nudge (mentions
+// sapaloq_stop, never NO_OP) and is never derived from the model's text.
+func TestToolLessTurnNeverFinishesOnAbsenceOfTool(t *testing.T) {
+	fake := &repeatingTextBridge{}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 128)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID: "s1",
+		runID:     "actor-toolless",
+		tools:     []string{},
+		sink:      chatSink{o: o, out: out},
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    fake,
+		}, "task", []bridge.Message{{Role: "user", Content: "hai hai"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("repeating tool-less run should finish cleanly via the toolless-turn budget: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tool-less run did not finish - it must be bounded by the toolless-turn budget")
+	}
+	close(out)
+	// It must have continued past the first turn (a tool-less turn is NOT a
+	// stop) and then been bounded - not run away.
+	if fake.calls < 2 {
+		t.Fatalf("calls = %d, want the run to continue past the first tool-less turn", fake.calls)
+	}
+	if fake.calls > config.DefaultOrchestratorConfig().Continuation.MaxNoProgressTurns+2 {
+		t.Fatalf("calls = %d, want the toolless-turn budget to bound it tightly", fake.calls)
+	}
+	// The continuation fed back must be the single content-blind nudge: it
+	// points at sapaloq_stop and must NOT resurrect the deleted NO_OP sentinel.
+	last := fake.requests[len(fake.requests)-1].Messages
+	cont := last[len(last)-1].Content
+	if !strings.Contains(cont, "sapaloq_stop") {
+		t.Fatalf("continuation should point at the terminal tool, got %q", cont)
+	}
+	// The continuation must also frame stopping as a silent action (no status
+	// narration / sign-off) so the model stops calling the tool AND narrating.
+	// Use a stable keyword ("silent"), not the full sentence, to stay robust to
+	// minor wording tweaks.
+	if !strings.Contains(cont, "silent") {
+		t.Fatalf("continuation should frame stopping as a silent action, got %q", cont)
+	}
+	if strings.Contains(cont, "NO_OP") {
+		t.Fatalf("continuation must not use the removed NO_OP sentinel, got %q", cont)
+	}
+	// The autopilot continuation is authored by SapaLOQ, not the human, so it
+	// MUST be wrapped in the <sapaloq:autopilot> markers - that is the only
+	// thing letting the model tell it apart from a real user turn (both ride
+	// the wire "user" role).
+	if !strings.Contains(cont, sapaloqControlOpen) || !strings.Contains(cont, sapaloqControlClose) {
+		t.Fatalf("autopilot continuation must be wrapped in <sapaloq:autopilot>…</sapaloq:autopilot>, got %q", cont)
+	}
+	// The genuine human turn (the first message) must NOT carry the marker -
+	// an unmarked user turn is precisely what identifies the real human.
+	if got := last[0].Content; strings.Contains(got, sapaloqControlOpen) {
+		t.Fatalf("the real user turn must stay unmarked, got %q", got)
+	}
+}
+
+// stopToolBridge narrates for a couple of tool-less turns, then calls the
+// terminal tool. Under the new model ONLY that terminal tool ends the run.
+type stopToolBridge struct {
+	calls   int
+	stopAt  int
+	stopped bool
+}
+
+func (b *stopToolBridge) ID() string              { return "stop-tool" }
+func (b *stopToolBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *stopToolBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	call := b.calls
+	out := make(chan bridge.StreamEvent, 4)
+	go func() {
+		defer close(out)
+		if call >= b.stopAt {
+			tool := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`), Source: "openai"}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
+		} else {
+			// Vary the text so the no-progress finish does not close the run
+			// first - we want the terminal tool to be what ends it.
+			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: fmt.Sprintf("working on step %d", call)}
+		}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+// TestRunFinishesOnTerminalTool proves the run keeps going through tool-less
+// narration turns and ends exactly when the model calls the terminal tool.
+func TestRunFinishesOnTerminalTool(t *testing.T) {
+	fake := &stopToolBridge{stopAt: 3}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 64)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID: "s1",
+		runID:     "actor-stop",
+		tools:     []string{"sapaloq_stop"},
+		sink:      chatSink{o: o, out: out},
+		dispatch: func(_ context.Context, call parse.ToolCall) turnOutcome {
+			if call.Name == "sapaloq_stop" {
+				fake.stopped = true
+				return turnOutcome{text: "Stopped: done", handled: true, stop: true}
+			}
+			return turnOutcome{}
+		},
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    fake,
+		}, "task", []bridge.Message{{Role: "user", Content: "go"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run should finish cleanly when the model calls the terminal tool: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not finish on the terminal tool")
+	}
+	close(out)
+	if !fake.stopped {
+		t.Fatal("terminal tool was never dispatched")
+	}
+	if fake.calls != 3 {
+		t.Fatalf("calls = %d, want narrate(1) -> narrate(2) -> stop(3)", fake.calls)
+	}
+}
+
+// TestRunEmitsTurnBoundaryBetweenTurns proves the orchestrator marks the seam
+// between inference turns with EventTurnBoundary - the UI hint that lets the
+// widget flush one bubble and start the next - and that it does NOT emit one
+// after the terminal tool ends the run (the final turn needs no boundary). For
+// stopAt:3 the sequence is narrate -> [boundary] -> narrate -> [boundary] ->
+// stop, so exactly 2 boundaries are expected, each appearing before the next
+// response_delta and never after EventDone.
+func TestRunEmitsTurnBoundaryBetweenTurns(t *testing.T) {
+	fake := &stopToolBridge{stopAt: 3}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 64)
+	var (
+		mu     sync.Mutex
+		kinds  []bridge.EventKind
+		drainW sync.WaitGroup
+	)
+	drainW.Add(1)
+	go func() {
+		defer drainW.Done()
+		for ev := range out {
+			mu.Lock()
+			kinds = append(kinds, ev.Kind)
+			mu.Unlock()
+		}
+	}()
+	cfg := turnConfig{
+		sessionID: "s1",
+		runID:     "actor-boundary",
+		tools:     []string{"sapaloq_stop"},
+		sink:      chatSink{o: o, out: out},
+		dispatch: func(_ context.Context, call parse.ToolCall) turnOutcome {
+			if call.Name == "sapaloq_stop" {
+				return turnOutcome{text: "Stopped: done", handled: true, stop: true}
+			}
+			return turnOutcome{}
+		},
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    fake,
+		}, "task", []bridge.Message{{Role: "user", Content: "go"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run should finish cleanly on the terminal tool: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not finish on the terminal tool")
+	}
+	close(out)
+	drainW.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	boundaries := 0
+	lastDoneIdx := -1
+	for i, k := range kinds {
+		if k == bridge.EventTurnBoundary {
+			boundaries++
+		}
+		if k == bridge.EventDone {
+			lastDoneIdx = i
+		}
+	}
+	if boundaries != 2 {
+		t.Fatalf("turn_boundary count = %d, want 2 (after each of the two narration turns), kinds=%v", boundaries, kinds)
+	}
+	// No boundary may appear after the orchestrator's final EventDone - the
+	// terminal turn must not be followed by a "start a new bubble" hint.
+	for i := lastDoneIdx + 1; i >= 0 && i < len(kinds); i++ {
+		if kinds[i] == bridge.EventTurnBoundary {
+			t.Fatalf("turn_boundary emitted after final done at index %d, kinds=%v", i, kinds)
+		}
+	}
+}
+
+func TestEnsureConversationEndsWithUser(t *testing.T) {
+	msgs := []bridge.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "hello"},
+	}
+	out := ensureConversationEndsWithUser(msgs)
+	if len(out) != len(msgs)+1 {
+		t.Fatalf("expected user continuation, got %d messages", len(out))
+	}
+	if out[len(out)-1].Role != "user" {
+		t.Fatalf("last role = %q, want user", out[len(out)-1].Role)
+	}
+	unchanged := ensureConversationEndsWithUser([]bridge.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "assistant", Content: "mid"},
+		{Role: "user", Content: "latest"},
+	})
+	if len(unchanged) != 3 {
+		t.Fatalf("expected unchanged slice, got %d", len(unchanged))
 	}
 }

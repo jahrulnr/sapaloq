@@ -18,7 +18,12 @@ export function scrollMessagesToBottom() {
 // response delta) so we never show a blank bubble or attach feedback to it.
 export function hasVisibleText(el: HTMLElement | null | undefined): boolean {
   if (!el) return false;
-  return (el.textContent || '').replace(/\s+/g, '').length > 0;
+  const text = (el.textContent || '').replace(/[\s\u200B-\u200D\u2060\uFEFF]+/g, '');
+  if (text.length > 0) return true;
+  // Media is meaningful even without textContent. Structural markdown such as
+  // <hr>/<br> is deliberately excluded: a model response made only of `---`
+  // separators should not occupy the transcript as an apparently blank block.
+  return !!el.querySelector('img, video, audio, canvas, svg');
 }
 
 // Normalize text just before markdown rendering. We deliberately do NOT strip

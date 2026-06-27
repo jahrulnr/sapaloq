@@ -18,6 +18,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/parse"
 	"github.com/jahrulnr/sapaloq/internal/platform"
 	"github.com/jahrulnr/sapaloq/internal/platform/headless"
+	"github.com/jahrulnr/sapaloq/internal/privacyfilter"
 	"github.com/jahrulnr/sapaloq/internal/prompts"
 	"github.com/jahrulnr/sapaloq/internal/skills"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
@@ -30,7 +31,7 @@ type Orchestrator struct {
 	entry          config.LLMBridge
 	bridge         bridge.Bridge
 	bus            *bus.Bus
-	progress       ProgressWriter
+	progress       *asyncProgressWriter
 	chat           *chatstore.Store
 	vault          *vault.Writer
 	memoryDir      string
@@ -64,15 +65,23 @@ type Orchestrator struct {
 	skills           []skills.Skill
 	desktop          platform.Desktop
 	prompts          *prompts.Manager
-	// asyncExecReg is the in-process registry for non-blocking shell exec.
-	// See tools_async_exec.go. asyncOnce guards its lazy init.
-	asyncExecReg *asyncExecRegistry
-	asyncOnce    sync.Once
+	// bgJobsReg is the in-process registry for non-blocking (fire-and-forget)
+	// tool jobs. See tools_bg_jobs.go. bgJobsOnce guards its lazy init.
+	bgJobsReg  *bgJobRegistry
+	bgJobsOnce sync.Once
+	// redactor masks secrets in every tool result before it reaches the model,
+	// logs, or egress. The AI keeps full tool access; only secret values in
+	// results are scrubbed, so a model tricked into reading ~/.ssh/id_rsa or
+	// .env never actually receives the secret. See internal/privacyfilter.
+	// Read-only after New; concurrency-safe.
+	redactor *privacyfilter.Filter
 }
 
 type activeRun struct {
-	id     uint64
-	cancel context.CancelFunc
+	id             uint64
+	cancel         context.CancelFunc
+	coalescer      *TranscriptCoalescer
+	transcriptBase []bridge.TranscriptEntry
 }
 
 func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) (*Orchestrator, error) {
@@ -131,7 +140,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		entry:        entry,
 		bridge:       b,
 		bus:          eventBus,
-		progress:     ProgressWriter{Dir: dirs.ProgressDir},
+		progress:     newAsyncProgressWriter(ProgressWriter{Dir: dirs.ProgressDir}),
 		chat:         chatStore,
 		vault:        vaultWriter,
 		memoryDir:    dirs.MemoryDir,
@@ -149,6 +158,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		skills:       loadedSkills,
 		desktop:      desktop,
 		prompts:      promptMgr,
+		redactor:     privacyfilter.New(),
 	}
 	// Seed the in-memory vision cache from config so a model previously proven
 	// text-only (supportsImages:false) is skipped before we ever send an image
@@ -164,6 +174,10 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	// Ensure the local-default execution node exists so spawns always have a
 	// routable in-proc target. Best-effort.
 	o.bootstrapLocalDefaultNode(context.Background())
+	// One-shot bridge from the legacy status.json-embedded transcript to the
+	// actor-scoped durable turns store used by every role.
+	o.migrateLegacyTaskTranscripts()
+	o.pruneRuntimeArtifacts(time.Now().UTC())
 	// A process restart loses in-memory worker goroutines. Persisted tasks that
 	// still claim pending/in_progress/stopping would otherwise leave the user
 	// staring at a task that can never advance.
@@ -172,6 +186,43 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 }
 
 func (o *Orchestrator) Bus() *bus.Bus { return o.bus }
+
+// Close cancels actor work, drains progress writers, and flushes the event WAL.
+// It is safe to call during signal-driven shutdown while publishers are exiting.
+func (o *Orchestrator) Close() {
+	if o == nil {
+		return
+	}
+	o.activeMu.Lock()
+	for _, run := range o.active {
+		run.cancel()
+	}
+	o.activeMu.Unlock()
+	o.taskMu.Lock()
+	for _, cancel := range o.taskCancels {
+		cancel()
+	}
+	o.taskMu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		o.taskMu.Lock()
+		remaining := len(o.taskCancels)
+		o.taskMu.Unlock()
+		if remaining == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if o.progress != nil {
+		o.progress.CloseAll()
+	}
+	if o.chat != nil {
+		_ = o.chat.Close()
+	}
+	if o.bus != nil {
+		o.bus.Close()
+	}
+}
 
 func (o *Orchestrator) toolJobs() *toolJobScheduler {
 	o.schedulerMu.Lock()
@@ -256,6 +307,18 @@ func (o *Orchestrator) auditTool(sessionID, source string, call parse.ToolCall) 
 	})
 }
 
+// emitChatTerminalError surfaces a failed chat run to the widget. Every
+// terminal failure must be followed by EventDone so the chat_send IPC consumer
+// and the widget's SendMessage promise unblock. When runTurnLoop already
+// emitted EventError+EventDone (errStreamErrorSurfaced), this is a no-op.
+func (o *Orchestrator) emitChatTerminalError(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, err error) {
+	if err == nil || errors.Is(err, errStreamErrorSurfaced) {
+		return
+	}
+	o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+	o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+}
+
 func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) (<-chan bridge.StreamEvent, error) {
 	o.reloadConfigIfChanged(ctx)
 	snap := o.snapshot()
@@ -273,38 +336,78 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		defer close(out)
 		defer o.clearActiveGeneration(sessionID, runID)
 		defer cancel()
+		activeSessionID := sessionID
 		if entry, ok := MatchRegistry(message, snap.cfg.Commands); ok {
 			debug.Debugf("orchestrator: slash route id=%s session=%s", entry.ID, sessionID)
-			o.handleSlash(ctx, out, sessionID, entry.ID, message)
-			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+			if entry.ID == "clear" {
+				if clearedID := o.handleSlash(ctx, out, activeSessionID, entry.ID, message); clearedID != "" {
+					o.refreshActiveCoalescer(activeSessionID, runID)
+					o.emitSlash(ctx, out, clearedID, responseEvent(clearedID, "Chat cleared in this room."))
+					o.emitSessionReset(ctx, out, clearedID, runID, true)
+				}
+			} else if entry.ID == "reset" {
+				if newID := o.handleSlash(ctx, out, activeSessionID, entry.ID, message); newID != "" {
+					o.migrateActiveRun(activeSessionID, newID, runID)
+					activeSessionID = newID
+					o.emitSlash(ctx, out, newID, responseEvent(newID, "Session reset. Starting a fresh active chat."))
+					o.emitSessionReset(ctx, out, newID, runID, true)
+				}
+			} else {
+				o.handleSlash(ctx, out, activeSessionID, entry.ID, message)
+			}
+			o.emitWidget(ctx, out, activeSessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: activeSessionID, At: time.Now().UTC()})
 			return
 		}
-		_ = o.chat.AppendTurn(ctx, sessionID, "user", message, estimateTextTokens(message))
+		genStr := fmt.Sprintf("%d", runID)
+		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "user", message, estimateTextTokens(message), genStr)
+		o.refreshActiveTranscriptBase(ctx, sessionID)
+		o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{
+			Kind:         bridge.EventTurnBoundary,
+			SessionID:    sessionID,
+			GenerationID: genStr,
+			At:           time.Now().UTC(),
+		})
 		messages, err := o.contextMessages(ctx, sessionID, message)
 		if err != nil {
-			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+			o.emitChatTerminalError(ctx, out, sessionID, err)
 			return
 		}
 		var thinking strings.Builder
-		assistant, err := o.runConversation(runCtx, snap, out, sessionID, message, messages, &thinking)
+		assistant, err := o.runConversationWithGeneration(runCtx, snap, out, sessionID, genStr, message, messages, &thinking)
 		if err != nil {
 			debug.Debugf("orchestrator: conversation error session=%s err=%v", sessionID, err)
-			// errStreamErrorSurfaced means runTurnLoop already emitted the
-			// EventError (and an EventDone) to this same channel; re-emitting
-			// would duplicate the error bubble in the widget.
-			if !errors.Is(err, errStreamErrorSurfaced) {
-				o.emit(runCtx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
-			}
+			o.emitChatTerminalError(runCtx, out, sessionID, err)
 			return
 		}
 		// Persist reasoning as a show-only "thinking" turn before the answer so
 		// it survives a restart (excluded from the LLM context window).
 		if strings.TrimSpace(thinking.String()) != "" {
-			_ = o.chat.AppendTurn(ctx, sessionID, "thinking", thinking.String(), 0)
+			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
 		}
-		_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
+		// Assistant turns are persisted per inference round inside runTurnLoop.
+		// Only append a final blob when the run produced visible text that was not
+		// already recorded (e.g. a single tool-less answer).
+		if strings.TrimSpace(assistant.String()) != "" {
+			turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)
+			needsFinal := true
+			for i := len(turns) - 1; i >= 0; i-- {
+				if turns[i].Role == "assistant" && turns[i].GenerationID == genStr {
+					needsFinal = false
+					break
+				}
+			}
+			if needsFinal {
+				_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+			}
+		}
 		usage, _ := o.ContextUsage(ctx, sessionID)
 		_ = o.chat.SnapshotUsage(ctx, usage)
+		// Flush + close the async progress drain for this session so the JSONL
+		// is fully persisted and the per-session goroutine does not leak.
+		if o.progress != nil {
+			o.progress.Close(sessionID)
+		}
+		o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 	}()
 	return out, nil
 }
@@ -348,25 +451,38 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 	defer cancel()
 	messages, err := o.contextMessages(ctx, sessionID, message)
 	if err != nil {
-		o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
 	}
 	var thinking strings.Builder
-	assistant, err := o.runConversation(ctx, snap, out, sessionID, message, messages, &thinking)
+	genStr := fmt.Sprintf("%d", runID)
+	assistant, err := o.runConversationWithGeneration(ctx, snap, out, sessionID, genStr, message, messages, &thinking)
 	if err != nil {
-		// See the streaming path above: skip the duplicate emit when the
-		// stream error was already surfaced to this channel by runTurnLoop.
-		if !errors.Is(err, errStreamErrorSurfaced) {
-			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
-		}
+		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
 	}
 	if strings.TrimSpace(thinking.String()) != "" {
-		_ = o.chat.AppendTurn(ctx, sessionID, "thinking", thinking.String(), 0)
+		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
 	}
-	_ = o.chat.AppendTurn(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()))
+	if strings.TrimSpace(assistant.String()) != "" {
+		turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)
+		needsFinal := true
+		for i := len(turns) - 1; i >= 0; i-- {
+			if turns[i].Role == "assistant" && turns[i].GenerationID == genStr {
+				needsFinal = false
+				break
+			}
+		}
+		if needsFinal {
+			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+		}
+	}
 	usage, _ := o.ContextUsage(ctx, sessionID)
 	_ = o.chat.SnapshotUsage(ctx, usage)
+	if o.progress != nil {
+		o.progress.Close(sessionID)
+	}
+	o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 }
 
 func (o *Orchestrator) setActiveGeneration(sessionID string, cancel context.CancelFunc) uint64 {
@@ -376,9 +492,56 @@ func (o *Orchestrator) setActiveGeneration(sessionID string, cancel context.Canc
 	if previous := o.active[sessionID]; previous != nil {
 		previous.cancel()
 	}
-	o.active[sessionID] = &activeRun{id: runID, cancel: cancel}
+	genStr := fmt.Sprintf("%d", runID)
+	o.active[sessionID] = &activeRun{
+		id:        runID,
+		cancel:    cancel,
+		coalescer: NewTranscriptCoalescer(genStr),
+	}
 	o.activeMu.Unlock()
 	return runID
+}
+
+func (o *Orchestrator) activeGenerationString(sessionID string) string {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	if run := o.active[sessionID]; run != nil {
+		return fmt.Sprintf("%d", run.id)
+	}
+	return ""
+}
+
+func (o *Orchestrator) activeCoalescer(sessionID string) *TranscriptCoalescer {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	if run := o.active[sessionID]; run != nil {
+		return run.coalescer
+	}
+	return nil
+}
+
+func (o *Orchestrator) refreshActiveTranscriptBase(ctx context.Context, sessionID string) {
+	base, err := o.SessionTranscript(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	o.activeMu.Lock()
+	if run := o.active[sessionID]; run != nil {
+		run.transcriptBase = base
+	}
+	o.activeMu.Unlock()
+}
+
+func (o *Orchestrator) activeTranscriptBase(sessionID string) []bridge.TranscriptEntry {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	run := o.active[sessionID]
+	if run == nil || len(run.transcriptBase) == 0 {
+		return nil
+	}
+	out := make([]bridge.TranscriptEntry, len(run.transcriptBase))
+	copy(out, run.transcriptBase)
+	return out
 }
 
 func (o *Orchestrator) clearActiveGeneration(sessionID string, runID uint64) {
@@ -387,6 +550,74 @@ func (o *Orchestrator) clearActiveGeneration(sessionID string, runID uint64) {
 		delete(o.active, sessionID)
 	}
 	o.activeMu.Unlock()
+}
+
+// migrateActiveRun moves the in-flight generation/coalescer from one session id
+// to another (e.g. after /reset creates a fresh chat session mid-request).
+func (o *Orchestrator) migrateActiveRun(oldID, newID string, runID uint64) {
+	if oldID == "" || newID == "" || oldID == newID {
+		return
+	}
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	run := o.active[oldID]
+	if run == nil || run.id != runID {
+		return
+	}
+	delete(o.active, oldID)
+	genStr := fmt.Sprintf("%d", runID)
+	o.active[newID] = &activeRun{
+		id:        runID,
+		cancel:    run.cancel,
+		coalescer: NewTranscriptCoalescer(genStr),
+	}
+}
+
+// refreshActiveCoalescer drops the live transcript coalescer for an in-place
+// clear (/clear) while keeping the same session id and generation run.
+func (o *Orchestrator) refreshActiveCoalescer(sessionID string, runID uint64) {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	run := o.active[sessionID]
+	if run == nil || run.id != runID {
+		return
+	}
+	run.coalescer = NewTranscriptCoalescer(fmt.Sprintf("%d", runID))
+}
+
+// emitSlash forwards slash-command output through the widget transcript path.
+func (o *Orchestrator) emitSlash(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, ev bridge.StreamEvent) bool {
+	return o.emitWidget(ctx, out, sessionID, ev)
+}
+
+// emitSessionReset tells the widget to discard the current transcript and render
+// the supplied snapshot. Only call after the backend has persisted the reset.
+func (o *Orchestrator) emitSessionReset(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, runID uint64, finished bool) bool {
+	genStr := fmt.Sprintf("%d", runID)
+	var entries []bridge.TranscriptEntry
+	if coalescer := o.activeCoalescer(sessionID); coalescer != nil {
+		entries = coalescer.Entries()
+	}
+	if o.chat != nil {
+		if live, err := o.LiveSessionTranscript(ctx, sessionID, o.activeCoalescer(sessionID)); err == nil && len(live) > 0 {
+			entries = live
+		}
+	}
+	patch := bridge.TranscriptPatch{
+		SessionID:    sessionID,
+		GenerationID: genStr,
+		Entries:      entries,
+		Reset:        true,
+		Finished:     finished,
+	}
+	patchEv := bridge.StreamEvent{
+		Kind:         bridge.EventTranscript,
+		SessionID:    sessionID,
+		GenerationID: genStr,
+		Transcript:   &patch,
+		At:           time.Now().UTC(),
+	}
+	return o.sendOut(ctx, out, patchEv)
 }
 
 func (o *Orchestrator) StopChat(sessionID string) bool {
@@ -464,11 +695,115 @@ func (o *Orchestrator) emit(ctx context.Context, out chan<- bridge.StreamEvent, 
 	if o.bus != nil {
 		o.bus.Publish(topicFor(ev.Kind), ev)
 	}
+	return o.sendOut(ctx, out, ev)
+}
+
+// emitWidget logs the raw event, updates the live coalescer, and forwards only
+// transcript patches to the widget channel (full replace migration).
+func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, ev bridge.StreamEvent) bool {
+	if sessionID != "" {
+		ev.SessionID = sessionID
+	}
+	genID := o.activeGenerationString(sessionID)
+	if genID != "" {
+		ev.GenerationID = genID
+	}
+	_ = o.progress.Append(ev.SessionID, ev)
+	if o.bus != nil {
+		o.bus.Publish(topicFor(ev.Kind), ev)
+	}
+	coalescer := o.activeCoalescer(sessionID)
+	scratch := coalescer
+	if scratch == nil && widgetCoalesceKind(ev.Kind) {
+		scratch = NewTranscriptCoalescer(genID)
+	}
+	if scratch != nil && widgetCoalesceKind(ev.Kind) {
+		scratch.Apply(ev)
+	}
+	if !widgetPatchKind(ev.Kind) {
+		return true
+	}
+	var entries []bridge.TranscriptEntry
+	if coalescer != nil {
+		switch ev.Kind {
+		case bridge.EventResponseDelta, bridge.EventThinkingDelta:
+			base := o.activeTranscriptBase(sessionID)
+			if base == nil {
+				base, _ = o.SessionTranscript(ctx, sessionID)
+			}
+			entries = mergeLiveTranscript(base, coalescer.EntriesWithPending())
+		default:
+			if ev.Kind == bridge.EventTurnBoundary || ev.Kind == bridge.EventCheckpoint ||
+				ev.Kind == bridge.EventToolUpdate || ev.Kind == bridge.EventToolCall {
+				o.refreshActiveTranscriptBase(ctx, sessionID)
+			}
+			base := o.activeTranscriptBase(sessionID)
+			if base == nil {
+				entries, _ = o.LiveSessionTranscript(ctx, sessionID, coalescer)
+			} else {
+				entries = mergeLiveTranscript(base, coalescer.EntriesWithPending())
+			}
+		}
+	} else if scratch != nil {
+		entries = scratch.Entries()
+	}
+	finished := ev.Kind == bridge.EventError || ev.Kind == bridge.EventDone
+	patch := bridge.TranscriptPatch{
+		SessionID:    sessionID,
+		GenerationID: genID,
+		Entries:      entries,
+		Finished:     finished,
+	}
+	if ev.Kind != bridge.EventResponseDelta && ev.Kind != bridge.EventThinkingDelta && o.chat != nil {
+		if u, err := o.ContextUsage(ctx, sessionID); err == nil {
+			patch.Usage = &bridge.TranscriptUsage{
+				UsedTokens:    u.UsedTokens,
+				ContextWindow: u.ContextWindow,
+				Percent:       u.Percent,
+				Provider:      u.Provider,
+				Model:         u.Model,
+			}
+		}
+	}
+	patchEv := bridge.StreamEvent{
+		Kind:         bridge.EventTranscript,
+		SessionID:    sessionID,
+		GenerationID: genID,
+		Transcript:   &patch,
+		At:           time.Now().UTC(),
+	}
+	return o.sendOut(ctx, out, patchEv)
+}
+
+func (o *Orchestrator) sendOut(ctx context.Context, out chan<- bridge.StreamEvent, ev bridge.StreamEvent) bool {
 	select {
 	case <-ctx.Done():
 		return false
 	case out <- ev:
 		return true
+	}
+}
+
+func widgetCoalesceKind(kind bridge.EventKind) bool {
+	switch kind {
+	case bridge.EventThinkingDelta, bridge.EventResponseDelta, bridge.EventToolCall,
+		bridge.EventToolUpdate, bridge.EventStatus, bridge.EventTurnBoundary,
+		bridge.EventTaskUpdate, bridge.EventError, bridge.EventCheckpoint, bridge.EventDone:
+		return true
+	default:
+		return false
+	}
+}
+
+func widgetPatchKind(kind bridge.EventKind) bool {
+	switch kind {
+	case bridge.EventThinkingDelta, bridge.EventResponseDelta, bridge.EventToolCall,
+		bridge.EventToolUpdate, bridge.EventStatus, bridge.EventTurnBoundary,
+		bridge.EventTaskUpdate, bridge.EventError, bridge.EventCheckpoint,
+		bridge.EventDone, bridge.EventTranscript:
+		return true
+	default:
+		return false
 	}
 }
 

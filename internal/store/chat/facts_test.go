@@ -66,8 +66,7 @@ func TestFactsSearchFallback(t *testing.T) {
 		t.Fatalf("add: %v", err)
 	}
 
-	// Force the LIKE path regardless of FTS availability.
-	s.ftsEnabled = false
+	// Search always uses substring scan on JSON store.
 	got, err := s.SearchFacts(ctx, "brown", nil, 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)

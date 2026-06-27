@@ -13,6 +13,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/parse"
+	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
 type taskRecord struct {
@@ -29,19 +30,19 @@ type taskRecord struct {
 	// Question holds the pending clarification text when Status is
 	// awaiting_clarification.
 	Question string `json:"question,omitempty"`
-	// Transcript is a minimal message log (role+content) of the sub-agent's
-	// conversation so far. It lets a task paused on awaiting_clarification be
-	// resumed by reconstruction (the in-memory messages slice is lost when the
-	// goroutine returns). Bounded by maxTurns; each entry is content-capped.
+	// Transcript is read only by the one-shot legacy migration. New actor turns
+	// are stored in turns.json beside this status file.
 	Transcript []taskTurn `json:"transcript,omitempty"`
 	// Answer is the user's clarification answer, set transiently on resume and
 	// consumed by buildSubAgentMessages as the resume nudge.
 	Answer string `json:"answer,omitempty"`
 	// Node is the execution node this task was routed to (observability).
 	// "local-default" (or empty) means in-proc execution.
-	Node      string    `json:"node,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Node        string     `json:"node,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // taskTurn is one persisted sub-agent turn used to resume a paused task. Only
@@ -55,46 +56,7 @@ type taskTurn struct {
 // paused task's status.json stays bounded.
 const maxTranscriptTurnBytes = 8 * 1024
 
-// appendTranscript records a role/content turn on the record, truncating the
-// content to maxTranscriptTurnBytes. Empty content is skipped.
-func (r *taskRecord) appendTranscript(role, content string) {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return
-	}
-	if len(content) > maxTranscriptTurnBytes {
-		content = content[:maxTranscriptTurnBytes] + "…[truncated]"
-	}
-	r.Transcript = append(r.Transcript, taskTurn{Role: role, Content: content})
-}
-
-type askToolResult struct {
-	text    string
-	handled bool
-	stop    bool
-}
-
-func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, call parse.ToolCall) askToolResult {
-	var args struct {
-		Task           string `json:"task"`
-		TaskID         string `json:"task_id"`
-		PlanTaskID     string `json:"plan_task_id"`
-		Seconds        int    `json:"seconds"`
-		Reason         string `json:"reason"`
-		Scope          string `json:"scope"`
-		Answer         string `json:"answer"`
-		TargetTaskID   string `json:"target_task_id"`
-		Message        string `json:"message"`
-		Priority       string `json:"priority"`
-		CorrelationID  string `json:"correlation_id"`
-		TimeoutSeconds int    `json:"timeout_seconds"`
-	}
-	if err := json.Unmarshal(call.Arguments, &args); err != nil {
-		// Tolerate raw control bytes in multi-line string values (see
-		// parseToolArgs); repair and retry so arguments aren't silently lost.
-		_ = json.Unmarshal(parse.RepairControlCharsInJSON(call.Arguments), &args)
-	}
-	o.auditTool(sessionID, "ask", call)
+func (o *Orchestrator) dispatchAskTool(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, fallbackTask string, call parse.ToolCall, args toolArgs) turnOutcome {
 	switch call.Name {
 	case "sapaloq_spawn_plan":
 		task := strings.TrimSpace(args.Task)
@@ -104,9 +66,9 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		task = carryImageAttachments(task, fallbackTask)
 		id, err := o.spawnBackground(snap, sessionID, "planner", task, "")
 		if err != nil {
-			return askToolResult{text: "Failed to start planner: " + err.Error(), handled: true}
+			return turnOutcome{text: "Failed to start planner: " + err.Error(), handled: true}
 		}
-		return askToolResult{text: fmt.Sprintf("Planner started in background (`%s`).", id), handled: true}
+		return turnOutcome{text: fmt.Sprintf("Planner started in background (`%s`).", id), handled: true}
 	case "sapaloq_spawn_agent":
 		task := strings.TrimSpace(args.Task)
 		if task == "" {
@@ -116,18 +78,18 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		planTaskID := strings.TrimSpace(args.PlanTaskID)
 		if planTaskID != "" {
 			if err := o.validatePlanForAgent(sessionID, planTaskID); err != nil {
-				return askToolResult{text: "Cannot use plan: " + err.Error(), handled: true}
+				return turnOutcome{text: "Cannot use plan: " + err.Error(), handled: true}
 			}
 		}
 		id, err := o.spawnBackground(snap, sessionID, "task-runner", task, planTaskID)
 		if err != nil {
-			return askToolResult{text: "Failed to start agent: " + err.Error(), handled: true}
+			return turnOutcome{text: "Failed to start agent: " + err.Error(), handled: true}
 		}
 		msg := fmt.Sprintf("Agent started in background (`%s`).", id)
 		if planTaskID != "" {
 			msg += fmt.Sprintf(" Using plan from `%s`.", planTaskID)
 		}
-		return askToolResult{text: msg, handled: true}
+		return turnOutcome{text: msg, handled: true}
 	case "sapaloq_spawn_scribe":
 		task := strings.TrimSpace(args.Task)
 		if task == "" {
@@ -135,9 +97,9 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		}
 		id, err := o.spawnBackground(snap, sessionID, "scribe", task, "")
 		if err != nil {
-			return askToolResult{text: "Failed to start scribe: " + err.Error(), handled: true}
+			return turnOutcome{text: "Failed to start scribe: " + err.Error(), handled: true}
 		}
-		return askToolResult{text: fmt.Sprintf("Scribe started in background (`%s`).", id), handled: true}
+		return turnOutcome{text: fmt.Sprintf("Scribe started in background (`%s`).", id), handled: true}
 	case "sapaloq_get_task_status":
 		taskID := strings.TrimSpace(args.TaskID)
 		if taskID == "" {
@@ -145,7 +107,7 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		}
 		record, err := o.readTask(taskID)
 		if err != nil {
-			return askToolResult{text: "Task status unavailable: " + err.Error(), handled: true}
+			return turnOutcome{text: "Task status unavailable: " + err.Error(), handled: true}
 		}
 		response := fmt.Sprintf("Task `%s` is **%s**.", record.ID, record.Status)
 		if record.Question != "" {
@@ -157,71 +119,155 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		if record.Error != "" {
 			response += "\n\nError: " + record.Error
 		}
-		return askToolResult{text: response, handled: true}
-	case "sapaloq_wait":
-		taskID := strings.TrimSpace(args.TaskID)
-		if taskID == "" {
-			taskID = o.latestTaskID()
+		return turnOutcome{text: response, handled: true}
+	case "wait":
+		mode := strings.TrimSpace(args.Mode)
+		if mode == "" {
+			mode = "time"
 		}
-		waitSecs := effectiveWaitSeconds(args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
-		o.emit(ctx, out, waitingEvent(sessionID, waitSecs))
-		record, changed, err := o.waitForTaskChange(ctx, taskID, args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
-		if err != nil {
-			if ctx.Err() != nil {
-				return askToolResult{text: "Wait cancelled.", handled: true, stop: true}
+		switch mode {
+		case "time":
+			waitSecs := effectiveWaitSeconds(args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
+			o.emit(ctx, out, waitingEvent(sessionID, waitSecs))
+			sleep := time.Duration(args.Seconds) * time.Second
+			if args.Seconds <= 0 {
+				sleep = time.Duration(waitSecs) * time.Second
 			}
-			return askToolResult{text: "Wait failed: " + err.Error(), handled: true}
+			if maxWait := snap.cfg.Orchestrator.Continuation.MaxWaitSeconds; maxWait > 0 && sleep > time.Duration(maxWait)*time.Second {
+				sleep = time.Duration(maxWait) * time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return turnOutcome{text: "Wait cancelled.", handled: true, stop: true}
+			case <-time.After(sleep):
+			}
+			o.emit(ctx, out, statusEvent(sessionID, "working"))
+			return turnOutcome{text: fmt.Sprintf("Waited %ds.", int(sleep.Seconds())), handled: true}
+		case "tool":
+			jobID := strings.TrimSpace(args.JobID)
+			if jobID == "" {
+				return turnOutcome{text: "Error: job_id is required for wait mode=tool.", handled: true}
+			}
+			timeout := time.Duration(args.TimeoutSeconds) * time.Second
+			if args.TimeoutSeconds < 0 {
+				timeout = 30 * time.Second
+			}
+			if args.TimeoutSeconds == 0 {
+				timeout = 0
+			}
+			if timeout > 300*time.Second {
+				timeout = 300 * time.Second
+			}
+			reg := o.bgJobs()
+			if reg == nil {
+				return turnOutcome{text: "Error: background job registry unavailable.", handled: true}
+			}
+			start := time.Now()
+			done, snap := reg.wait(jobID, timeout)
+			elapsed := time.Since(start)
+			view := bgJobToView(snap)
+			view["waited_ms"] = elapsed.Milliseconds()
+			if !done {
+				view["hint"] = "job is still running. Either call wait again with a larger timeout_seconds, sapaloq_cancel_job(job_id) to abort, or sapaloq_fail_task if it has been too long."
+			} else {
+				delete(view, "hint")
+			}
+			raw, err := json.Marshal(view)
+			if err != nil {
+				return turnOutcome{text: fmt.Sprintf("Error: marshal wait result: %v", err), handled: true}
+			}
+			return turnOutcome{text: string(raw), handled: true}
+		case "task":
+			taskID := strings.TrimSpace(args.TaskID)
+			if taskID == "" {
+				taskID = o.latestTaskID()
+			}
+			waitSecs := effectiveWaitSeconds(args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
+			o.emit(ctx, out, waitingEvent(sessionID, waitSecs))
+			record, changed, err := o.waitForTaskChange(ctx, taskID, args.Seconds, snap.cfg.Orchestrator.Continuation.MaxWaitSeconds)
+			if err != nil {
+				if ctx.Err() != nil {
+					return turnOutcome{text: "Wait cancelled.", handled: true, stop: true}
+				}
+				return turnOutcome{text: "Wait failed: " + err.Error(), handled: true}
+			}
+			o.emit(ctx, out, statusEvent(sessionID, "working"))
+			if !changed {
+				return turnOutcome{text: fmt.Sprintf(
+					"Task `%s` masih %s setelah jendela tunggu. Tidak perlu menunggu - aku akan otomatis mengabari di chat begitu task selesai/gagal/butuh keputusan (kamu juga bisa cek `sapaloq_get_task_status`).",
+					record.ID, record.Status), handled: true}
+			}
+			response := fmt.Sprintf("Task `%s` changed to **%s**.", record.ID, record.Status)
+			if record.Question != "" {
+				response += "\n\nNeeds clarification: " + record.Question
+			}
+			if record.Result != "" {
+				response += "\n\n" + record.Result
+			}
+			if record.Error != "" {
+				response += "\n\nError: " + record.Error
+			}
+			return turnOutcome{text: response, handled: true}
+		case "events":
+			timeout := args.TimeoutSeconds
+			if timeout <= 0 {
+				timeout = 120
+			}
+			events := o.waitActorEvents(ctx, sessionID, time.Duration(timeout)*time.Second)
+			if len(events) == 0 {
+				return turnOutcome{text: "No actor event arrived before the wait ended.", handled: true}
+			}
+			return turnOutcome{text: actorEventsPrompt(events), handled: true}
+		default:
+			return turnOutcome{text: "Error: unknown wait mode " + mode + " (use time|tool|task|events).", handled: true}
 		}
-		o.emit(ctx, out, statusEvent(sessionID, "working"))
-		if !changed {
-			// IMPORTANT: do NOT imply you will keep watching. This generation is
-			// about to end; the task keeps running in the background and its
-			// completion is delivered asynchronously (the orchestrator speaks it
-			// into chat on the terminal transition). Tell the user it will be
-			// surfaced automatically instead of promising to "wait a bit more".
-			return askToolResult{text: fmt.Sprintf(
-				"Task `%s` masih %s setelah jendela tunggu. Tidak perlu menunggu - aku akan otomatis mengabari di chat begitu task selesai/gagal/butuh keputusan (kamu juga bisa cek `sapaloq_get_task_status`).",
-				record.ID, record.Status), handled: true}
+	case "sapaloq_cancel_job":
+		jobID := strings.TrimSpace(args.JobID)
+		if jobID == "" {
+			return turnOutcome{text: "Error: job_id is required.", handled: true}
 		}
-		response := fmt.Sprintf("Task `%s` changed to **%s**.", record.ID, record.Status)
-		if record.Question != "" {
-			response += "\n\nNeeds clarification: " + record.Question
+		reg := o.bgJobs()
+		if reg == nil {
+			return turnOutcome{text: "Error: background job registry unavailable.", handled: true}
 		}
-		if record.Result != "" {
-			response += "\n\n" + record.Result
+		snap, ok := reg.cancel(jobID)
+		if !ok {
+			return turnOutcome{text: fmt.Sprintf("Error: job_id %q not found.", jobID), handled: true}
 		}
-		if record.Error != "" {
-			response += "\n\nError: " + record.Error
+		view := bgJobToView(snap)
+		raw, err := json.Marshal(view)
+		if err != nil {
+			return turnOutcome{text: fmt.Sprintf("Error: marshal cancel: %v", err), handled: true}
 		}
-		return askToolResult{text: response, handled: true}
+		return turnOutcome{text: string(raw), handled: true}
 	case "sapaloq_answer_clarification":
 		answer := strings.TrimSpace(args.Answer)
 		if answer == "" {
-			return askToolResult{text: "Error: answer is required.", handled: true}
+			return turnOutcome{text: "Error: answer is required.", handled: true}
 		}
 		taskID := strings.TrimSpace(args.TaskID)
 		if taskID == "" {
 			taskID = o.latestAwaitingTaskID(sessionID)
 		}
 		if taskID == "" {
-			return askToolResult{text: "No task is awaiting clarification.", handled: true}
+			return turnOutcome{text: "No task is awaiting clarification.", handled: true}
 		}
 		record, err := o.readTask(taskID)
 		if err != nil {
-			return askToolResult{text: "Task unavailable: " + err.Error(), handled: true}
+			return turnOutcome{text: "Task unavailable: " + err.Error(), handled: true}
 		}
 		if record.Status != "awaiting_clarification" {
-			return askToolResult{text: fmt.Sprintf("Task `%s` is %s, not awaiting clarification; cannot answer.", record.ID, record.Status), handled: true}
+			return turnOutcome{text: fmt.Sprintf("Task `%s` is %s, not awaiting clarification; cannot answer.", record.ID, record.Status), handled: true}
 		}
 		record.Answer = answer
 		record.Question = ""
 		record.Status = "in_progress"
 		record.UpdatedAt = time.Now().UTC()
 		if err := o.writeTask(record); err != nil {
-			return askToolResult{text: "Failed to persist answer: " + err.Error(), handled: true}
+			return turnOutcome{text: "Failed to persist answer: " + err.Error(), handled: true}
 		}
 		o.resumeBackground(snap, sessionID, record)
-		return askToolResult{text: fmt.Sprintf("Answer delivered; task `%s` resumed in the background.", record.ID), handled: true}
+		return turnOutcome{text: fmt.Sprintf("Answer delivered; task `%s` resumed in the background.", record.ID), handled: true}
 	case "sapaloq_stop":
 		reason := strings.TrimSpace(args.Reason)
 		if reason == "" {
@@ -229,15 +275,22 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 		}
 		scope := strings.TrimSpace(args.Scope)
 		if scope == "" || scope == "generation" {
-			return askToolResult{text: "Stopped: " + reason, handled: true, stop: true}
+			return turnOutcome{text: "Stopped: " + reason, handled: true, stop: true}
 		}
 		if scope == "task" {
-			stopped := o.stopTask(args.TaskID)
+			stopped := false
+			if taskID := strings.TrimSpace(args.TaskID); taskID != "" {
+				stopped = o.stopTask(taskID)
+			}
 			message := "no active task"
 			if stopped {
 				message = "task stopped"
 			}
-			return askToolResult{text: message + ": " + reason, handled: true}
+			// Foreground chat must end even when the named background actor is not
+			// directly cancellable (already finished, wrong id, or scope=task was
+			// used instead of generation). Without stop:true the autopilot nudge to
+			// call sapaloq_stop loops forever while tool results reset the budget.
+			return turnOutcome{text: message + ": " + reason, handled: true, stop: true}
 		}
 		if scope == "all" {
 			stopped := 0
@@ -246,14 +299,14 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 					stopped++
 				}
 			}
-			return askToolResult{text: fmt.Sprintf("generation and %d task(s) stopped: %s", stopped, reason), handled: true, stop: true}
+			return turnOutcome{text: fmt.Sprintf("generation and %d task(s) stopped: %s", stopped, reason), handled: true, stop: true}
 		}
-		return askToolResult{text: "Invalid stop scope: " + scope, handled: true}
+		return turnOutcome{text: "Invalid stop scope: " + scope, handled: true}
 	case "sapaloq_send_steering":
 		target := strings.TrimSpace(args.TargetTaskID)
 		message := strings.TrimSpace(args.Message)
 		if target == "" || message == "" {
-			return askToolResult{text: "Error: target_task_id and message are required.", handled: true}
+			return turnOutcome{text: "Error: target_task_id and message are required.", handled: true}
 		}
 		err := o.enqueueActorEvent(actorControlEvent{
 			Kind:          "steering.proposed",
@@ -265,30 +318,15 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			Priority:      args.Priority,
 		})
 		if err != nil {
-			return askToolResult{text: "Failed to queue steering: " + err.Error(), handled: true}
+			return turnOutcome{text: "Failed to queue steering: " + err.Error(), handled: true}
 		}
-		return askToolResult{text: fmt.Sprintf("Steering queued for `%s`.", target), handled: true}
-	case "sapaloq_wait_events":
-		timeout := args.TimeoutSeconds
-		if timeout <= 0 {
-			timeout = 120
-		}
-		events := o.waitActorEvents(ctx, sessionID, time.Duration(timeout)*time.Second)
-		if len(events) == 0 {
-			return askToolResult{text: "No actor event arrived before the wait ended.", handled: true}
-		}
-		return askToolResult{text: actorEventsPrompt(events), handled: true}
+		return turnOutcome{text: fmt.Sprintf("Steering queued for `%s`.", target), handled: true}
 	case "desktop_notify":
-		return askToolResult{text: o.toolDesktopNotify(ctx, parseToolArgs(call.Arguments)), handled: true}
+		return turnOutcome{text: o.toolDesktopNotify(ctx, args), handled: true}
 	case "desktop_dnd_status":
-		return askToolResult{text: o.toolDesktopDNDStatus(ctx), handled: true}
+		return turnOutcome{text: o.toolDesktopDNDStatus(ctx), handled: true}
 	default:
-		// Read-only assessment + web tools shared across all modes so Ask is
-		// no longer blind: it can read, search, and research before delegating.
-		if text, ok := o.runSharedTool(ctx, call); ok {
-			return askToolResult{text: text, handled: true}
-		}
-		return askToolResult{}
+		return turnOutcome{}
 	}
 }
 
@@ -333,6 +371,9 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 	if strings.TrimSpace(task) == "" {
 		return "", fmt.Errorf("task is required")
 	}
+	if snap.br == nil {
+		snap = o.snapshot()
+	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("task-%d", now.UnixNano())
 	// Route the spawn to an execution node. With only local-default configured
@@ -340,6 +381,11 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 	// name is recorded for observability.
 	node := o.pickNode(context.Background(), role, "")
 	record := taskRecord{ID: id, SessionID: sessionID, Role: role, Status: "pending", Task: task, PlanTaskID: planTaskID, Node: node.Name, CreatedAt: now, UpdatedAt: now}
+	if o.chat != nil {
+		if err := o.chat.AppendTurn(context.Background(), id, "user", task, estimateTextTokens(task)); err != nil {
+			return "", fmt.Errorf("persist actor intent: %w", err)
+		}
+	}
 	if err := o.writeTask(record); err != nil {
 		return "", err
 	}
@@ -372,6 +418,9 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 // goroutine plumbing of spawnBackground but reuses the existing record (with
 // its transcript + answer) rather than creating a new one.
 func (o *Orchestrator) resumeBackground(snap providerSnapshot, sessionID string, record taskRecord) {
+	if snap.br == nil {
+		snap = o.snapshot()
+	}
 	// Same rationale as spawnBackground: no total-runtime cap; the idle
 	// deadline + worker watchdog + loop-anomaly budgets are the real guards.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -381,6 +430,11 @@ func (o *Orchestrator) resumeBackground(snap providerSnapshot, sessionID string,
 	}
 	if o.sessionTasks == nil {
 		o.sessionTasks = make(map[string]map[string]struct{})
+	}
+	if _, running := o.taskCancels[record.ID]; running {
+		o.taskMu.Unlock()
+		cancel()
+		return
 	}
 	o.taskCancels[record.ID] = cancel
 	if o.sessionTasks[sessionID] == nil {
@@ -437,6 +491,11 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 			}
 		}
 		o.taskMu.Unlock()
+		// Flush + close the async progress drain for this task's JSONL so the
+		// per-task goroutine does not leak and the audit log is fully persisted.
+		if o.progress != nil {
+			o.progress.Close(record.ID)
+		}
 	}()
 
 	// Structural liveness: heartbeat for as long as THIS goroutine is alive,
@@ -466,11 +525,13 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 		}()
 	}
 	record.Status = "in_progress"
-	record.UpdatedAt = time.Now().UTC()
+	startedAt := time.Now().UTC()
+	record.StartedAt = &startedAt
+	record.UpdatedAt = startedAt
 	_ = o.writeTask(record)
 	o.publishTaskUpdate(sessionID, record)
 
-	o.runSubAgentLoop(ctx, snap, sessionID, &record)
+	o.runTaskActor(ctx, snap, sessionID, &record)
 
 	record.UpdatedAt = time.Now().UTC()
 	if ctx.Err() != nil && record.Status != "failed" {
@@ -487,6 +548,10 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 			record.Status = "done"
 		}
 	}
+	if record.Status == "done" || record.Status == "failed" || record.Status == "stopped" {
+		completedAt := record.UpdatedAt
+		record.CompletedAt = &completedAt
+	}
 	o.workers.heartbeat(record.ID, "finalizing")
 	if record.Status == "failed" && record.Error != "" {
 		o.workerLogError(record.ID, "task failed: "+record.Error)
@@ -498,7 +563,7 @@ func (o *Orchestrator) runBackgroundTask(ctx context.Context, cancel context.Can
 	// "speak"-style trigger the realtime flow expects.
 	o.publishTaskUpdate(sessionID, record)
 	// NOTE: plan.md is written ONLY when the planner explicitly calls
-	// write_plan (see handleSubAgentTool). We deliberately do
+	// write_plan (see dispatchTool). We deliberately do
 	// NOT synthesize a plan.md from free-form planner text here: a planner that
 	// merely answered a question (without producing a real plan) must not leave
 	// a fake artifact that can pass explicit plan_task_id validation.
@@ -539,7 +604,10 @@ func (o *Orchestrator) publishTaskActivity(sessionID string, record taskRecord, 
 	record.UpdatedAt = time.Now().UTC()
 	ev := taskUpdateEvent(sessionID, record)
 	ev.Summary = summary
-	_ = o.progress.Append(record.ID, ev)
+	// Orchestrator-only live hint: push to the chat bus so the main transcript
+	// can refresh its task card. Do NOT append to the per-task progress JSONL —
+	// that stream feeds the sub-agent monitor, which should show
+	// thinking/tools/text only (status lives in the pop-up header).
 	if o.bus != nil {
 		o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
 	}
@@ -556,25 +624,39 @@ func (o *Orchestrator) RecentTaskUpdates(limit int) []bridge.StreamEvent {
 	if err != nil {
 		return nil
 	}
-	records := make([]taskRecord, 0, len(entries))
+	// Catch-up exists so a widget that connects late still sees work that is
+	// IN FLIGHT (pending / in_progress / stopping) or paused waiting on the
+	// user (awaiting_clarification). Terminal tasks (done/failed/stopped) do
+	// NOT need rehydration: their result is already persisted as an assistant
+	// chat bubble (speakTaskCompletion) and shown by the chat-history restore.
+	// Re-emitting every historical terminal task made the chat room fill with a
+	// verbose status timeline ("planner gagal", "task-runner selesai", ...) on
+	// every widget open - the user only wants the live chat + tools.
+	live := make([]taskRecord, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		record, readErr := o.readTask(entry.Name())
-		if readErr == nil {
-			records = append(records, record)
+		if readErr != nil {
+			continue
+		}
+		switch record.Status {
+		case "pending", "in_progress", "stopping", "awaiting_clarification":
+			live = append(live, record)
+		default:
+			// terminal: skip - the outcome lives in chat history already
 		}
 	}
-	sort.Slice(records, func(i, j int) bool {
-		return records[i].UpdatedAt.After(records[j].UpdatedAt)
+	sort.Slice(live, func(i, j int) bool {
+		return live[i].UpdatedAt.After(live[j].UpdatedAt)
 	})
-	if len(records) > limit {
-		records = records[:limit]
+	if len(live) > limit {
+		live = live[:limit]
 	}
-	out := make([]bridge.StreamEvent, 0, len(records))
-	for i := len(records) - 1; i >= 0; i-- {
-		record := records[i]
+	out := make([]bridge.StreamEvent, 0, len(live))
+	for i := len(live) - 1; i >= 0; i-- {
+		record := live[i]
 		ev := taskUpdateEvent(record.SessionID, record)
 		if ev.Kind != "" {
 			out = append(out, ev)
@@ -597,13 +679,72 @@ func (o *Orchestrator) recoverOrphanedTasks() {
 			continue
 		}
 		switch record.Status {
-		case "pending", "in_progress", "stopping":
+		case "pending", "in_progress":
+			var turns []chatstore.Turn
+			if o.chat != nil {
+				turns, _ = o.chat.ActiveTurns(context.Background(), record.ID, true)
+			}
+			if len(turns) > 0 {
+				record.Status = "pending"
+				record.Error = ""
+				record.UpdatedAt = time.Now().UTC()
+				_ = o.writeTask(record)
+				o.resumeBackground(o.snapshot(), record.SessionID, record)
+				continue
+			}
 			record.Status = "failed"
-			record.Error = "task orphaned by core restart; no worker is attached"
+			record.Error = "task orphaned by core restart and has no durable actor turns to resume"
 			record.UpdatedAt = time.Now().UTC()
+			completedAt := record.UpdatedAt
+			record.CompletedAt = &completedAt
+			_ = o.writeTask(record)
+			o.publishTaskUpdate(record.SessionID, record)
+		case "stopping":
+			record.Status = "stopped"
+			record.UpdatedAt = time.Now().UTC()
+			completedAt := record.UpdatedAt
+			record.CompletedAt = &completedAt
 			_ = o.writeTask(record)
 			o.publishTaskUpdate(record.SessionID, record)
 		}
+	}
+}
+
+func (o *Orchestrator) migrateLegacyTaskTranscripts() {
+	if o == nil || o.chat == nil {
+		return
+	}
+	entries, err := os.ReadDir(o.tasksRoot())
+	if err != nil {
+		return
+	}
+	ctx := context.Background()
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		record, readErr := o.readTask(entry.Name())
+		if readErr != nil || len(record.Transcript) == 0 {
+			continue
+		}
+		turns, _ := o.chat.ActiveTurns(ctx, record.ID, true)
+		if len(turns) > 0 {
+			record.Transcript = nil
+			_ = o.writeTask(record)
+			continue
+		}
+		if strings.TrimSpace(record.Task) != "" {
+			_ = o.chat.AppendTurn(ctx, record.ID, "user", record.Task, estimateTextTokens(record.Task))
+		}
+		for _, turn := range record.Transcript {
+			role := turn.Role
+			if role != "user" && role != "assistant" && role != "system" && role != "tool" {
+				role = "user"
+			}
+			_ = o.chat.AppendTurn(ctx, record.ID, role, turn.Content, estimateTextTokens(turn.Content))
+		}
+		record.Transcript = nil
+		_ = o.writeTask(record)
 	}
 }
 

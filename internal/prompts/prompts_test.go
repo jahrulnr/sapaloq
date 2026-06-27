@@ -9,7 +9,7 @@ import (
 
 func TestGetFallsBackToEmbeddedDefaults(t *testing.T) {
 	m := New("", false) // disabled, no dir → embedded defaults only
-	for _, role := range []string{RoleAsk, RolePlanner, RoleAgent, RoleScribe, RolePersona} {
+	for _, role := range []string{RoleAsk, RolePlanner, RoleAgent, RoleScribe, RolePersona, RoleRules} {
 		if got := m.Get(role); strings.TrimSpace(got) == "" {
 			t.Fatalf("Get(%q) returned empty; expected embedded default", role)
 		}
@@ -49,7 +49,7 @@ func TestPersonaServedFromEmbeddedAndDisk(t *testing.T) {
 func TestSyncSeedsDefaultsWithManifest(t *testing.T) {
 	dir := t.TempDir()
 	m := New(dir, true)
-	for _, file := range []string{"ask.md", "planner.md", "agent.md", "scribe.md", "persona.md"} {
+	for _, file := range []string{"ask.md", "planner.md", "agent.md", "scribe.md", "persona.md", "rules.md"} {
 		if _, err := os.Stat(filepath.Join(dir, file)); err != nil {
 			t.Fatalf("expected %s seeded: %v", file, err)
 		}

@@ -2,9 +2,21 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop - bukan repo coding.
-> Last updated: 2026-06-23 (index-first prefetch + typed facts + learning queue landed; see implementation-order status table)
+> Last updated: 2026-06-27 (sub-agent turns persist under `state/tasks/{id}/turns.json`; compaction checkpoints durable per actor id)
 
-Related: [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [VISION.md](./VISION.md) · [config.schema.json](../schema/config.schema.json)
+---
+
+## Sub-agent durable context (2026-06-27)
+
+Background actors (`task-*`) now use the **same turn store** as chat sessions:
+
+- `state/tasks/{taskId}/turns.json` — tool + assistant turns for resume/replay
+- `state/tasks/{taskId}/checkpoints.json` — LLM compaction checkpoints (`runSubAgentCompact` → `createCheckpoint`)
+- `state/tasks/{taskId}/status.json` — lightweight index (role, status, plan_task_id, question)
+
+On core restart, `recoverOrphanedTasks` **resumes** `in_progress` tasks when turns exist; otherwise marks `failed` explicitly.
+
+Legacy `status.json` `transcript` arrays are migrated once at startup (`migrateLegacyTaskTranscripts`).
 
 ---
 
@@ -186,7 +198,13 @@ SQLite = **authoritative index**; markdown = human-readable source + agent appen
 
 ---
 
-## SQLite index (primary store)
+## JSON index (primary store, 2026)
+
+Path: `~/SapaLOQ/memory/facts.json` (durable) + transient rollout/session JSON under `~/SapaLOQ/state/`. Facts use substring search (FTS removed with SQLite). One-shot migration exports legacy `companion.db` → JSON on first boot and merges any misplaced `state/memory/` files into `memory/` on startup.
+
+---
+
+## SQLite index (legacy — migrated on first boot)
 
 Path: `~/SapaLOQ/memory/companion.db` - **only** persistence engine. Hot cache = in-memory in same binary; optional `hot_cache` SQLite table for restart warm-up.
 
@@ -433,6 +451,17 @@ On **compaction signal** (context >80% or explicit):
 1. Drop ephemeral + old task slices
 2. Re-query index for active task only
 3. Re-assemble - **do not** re-read all skills
+
+> **Deprecated — heuristic compaction is replaced by LLM-authored checkpoints
+> (see [ORCHESTRATOR.md § Checkpoints](./ORCHESTRATOR.md#checkpoints-llm-driven-compaction)).**
+> The 80% heuristic `compactActiveSession` and mid-run `compactConversationMessages`
+> paths are gated off by default (`compaction.useCheckpoints = true`). The new
+> model: the LLM writes the summary (via `sapaloq_compact_session` or a forced
+> compaction turn), the orchestrator persists a durable checkpoint, and the
+> model's context is rebuilt from **latest checkpoint summary + anchored tail**
+> (always including the last assistant turn) + system blocks. The UI keeps the
+> full transcript with a `--- Checkpoint n ---` seam; only the model context is
+> reduced. Index-first prefetch above remains the source of durable facts.
 
 ---
 

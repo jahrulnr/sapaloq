@@ -40,17 +40,26 @@ func defaultSocketPath() string {
 }
 
 type chatResult struct {
-	OK        bool                 `json:"ok"`
-	SessionID string               `json:"session_id,omitempty"`
-	Events    []bridge.StreamEvent `json:"events"`
-	Usage     *chatUsage           `json:"usage,omitempty"`
+	OK           bool                     `json:"ok"`
+	SessionID    string                   `json:"session_id,omitempty"`
+	GenerationID string                   `json:"generation_id,omitempty"`
+	Transcript   []bridge.TranscriptEntry `json:"transcript,omitempty"`
+	Usage        *chatUsage               `json:"usage,omitempty"`
+	Reset        bool                     `json:"reset,omitempty"`
 }
 
 type chatTurn struct {
-	ID      int64  `json:"id"`
-	Seq     int    `json:"seq"`
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	ID              int64  `json:"id"`
+	Seq             int    `json:"seq"`
+	Role            string `json:"role"`
+	Content         string `json:"content"`
+	CheckpointIndex int    `json:"checkpoint_index,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
+	// Archived is derived from included_in_context=0 + the presence of a later
+	// checkpoint: the turn is still shown (full transcript) but rendered muted
+	// as pre-checkpoint history. The widget computes it from the checkpoint
+	// boundary rather than stored, so we keep it lightweight here.
+	Archived bool `json:"archived,omitempty"`
 }
 
 type chatUsage struct {
@@ -65,11 +74,34 @@ type chatUsage struct {
 }
 
 type chatHistoryResult struct {
-	OK        bool       `json:"ok"`
-	SessionID string     `json:"session_id"`
-	Turns     []chatTurn `json:"turns"`
-	Usage     *chatUsage `json:"usage,omitempty"`
+	OK         bool                     `json:"ok"`
+	SessionID  string                   `json:"session_id"`
+	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
+	Usage      *chatUsage               `json:"usage,omitempty"`
 }
+
+type sessionSummary struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Active    bool   `json:"active"`
+	TurnCount int    `json:"turn_count"`
+	UpdatedAt string `json:"updated_at"`
+	CreatedAt string `json:"created_at"`
+}
+
+type sessionListResult struct {
+	OK       bool             `json:"ok"`
+	Sessions []sessionSummary `json:"sessions"`
+}
+
+type sessionDeleteResult struct {
+	OK         bool                     `json:"ok"`
+	SessionID  string                   `json:"session_id"`
+	Reset      bool                     `json:"reset,omitempty"`
+	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
+}
+
+type sessionNewResult = sessionDeleteResult
 
 type actorRuntimeStatus struct {
 	ID        string `json:"id"`
@@ -90,6 +122,43 @@ type runtimeStatus struct {
 	StatePath     string               `json:"state_path"`
 	WorkspacePath string               `json:"workspace_path"`
 	Actors        []actorRuntimeStatus `json:"actors"`
+}
+
+// taskInspectEvent is the JSON-safe mirror of bridge.StreamEvent the frontend
+// renders in the pop-up. We project only the fields the UI needs so the wails
+// binding stays stable across bridge changes.
+type taskInspectEvent struct {
+	Kind             string `json:"kind"`
+	Delta            string `json:"delta,omitempty"`
+	ToolName         string `json:"tool_name,omitempty"`
+	ToolID           string `json:"tool_id,omitempty"`
+	ToolArguments    string `json:"tool_arguments,omitempty"`
+	ToolResult       string `json:"tool_result,omitempty"`
+	Status           string `json:"status,omitempty"`
+	TaskStatus       string `json:"task_status,omitempty"`
+	Summary          string `json:"summary,omitempty"`
+	Error            string `json:"error,omitempty"`
+	CheckpointIndex  int    `json:"checkpoint_index,omitempty"`
+	CheckpointReason string `json:"checkpoint_reason,omitempty"`
+	At               string `json:"at"`
+}
+
+// taskInspectResult mirrors orchestrator.TaskInspectResult for the wails
+// binding. The Events slice is the progress tail (newest last); EventCount is
+// the total line count on disk so the frontend can request the next slice.
+type taskInspectResult struct {
+	ID         string                   `json:"id"`
+	Role       string                   `json:"role"`
+	Status     string                   `json:"status"`
+	Task       string                   `json:"task"`
+	Result     string                   `json:"result,omitempty"`
+	Error      string                   `json:"error,omitempty"`
+	Question   string                   `json:"question,omitempty"`
+	PlanTaskID string                   `json:"plan_task_id,omitempty"`
+	Plan       string                   `json:"plan,omitempty"`
+	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
+	EventCount int                      `json:"event_count"`
+	UpdatedAt  string                   `json:"updated_at"`
 }
 
 func sendChat(socketPath, sessionID, message string) (chatResult, error) {
@@ -117,7 +186,19 @@ func sendChatWithStatus(socketPath, sessionID, message string, onEvent func(brid
 			result.Usage = mapUsage(res.Usage)
 		}
 		if res.Event != nil {
-			result.Events = append(result.Events, *res.Event)
+			ev := *res.Event
+			if ev.Kind == bridge.EventTranscript && ev.Transcript != nil {
+				if ev.GenerationID != "" {
+					result.GenerationID = ev.GenerationID
+				}
+				if ev.Transcript.Reset {
+					result.Reset = true
+				}
+				if ev.Transcript.SessionID != "" {
+					result.SessionID = ev.Transcript.SessionID
+				}
+				result.Transcript = ev.Transcript.Entries
+			}
 		}
 	}
 	result.OK = true
@@ -137,12 +218,88 @@ func chatHistory(socketPath string) (chatHistoryResult, error) {
 	result.OK = true
 	result.SessionID = res.SessionID
 	result.Usage = mapUsage(res.Usage)
-	for _, turn := range res.Turns {
-		if turn.Role == "system" {
-			continue
-		}
-		result.Turns = append(result.Turns, chatTurn{ID: turn.ID, Seq: turn.Seq, Role: turn.Role, Content: turn.Content})
+	result.Transcript = res.Transcript
+	return result, nil
+}
+
+func listSessions(socketPath string) (sessionListResult, error) {
+	var result sessionListResult
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_list"})
+	if err != nil {
+		return result, err
 	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return result, fmt.Errorf("%s", message)
+	}
+	res := responses[0]
+	result.OK = true
+	for _, item := range res.Sessions {
+		result.Sessions = append(result.Sessions, sessionSummary{
+			ID: item.ID, Title: item.Title, Active: item.Active,
+			TurnCount: item.TurnCount, UpdatedAt: item.UpdatedAt, CreatedAt: item.CreatedAt,
+		})
+	}
+	return result, nil
+}
+
+func switchSession(socketPath, sessionID string) (string, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_switch", SessionID: sessionID})
+	if err != nil {
+		return "", err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return "", fmt.Errorf("%s", message)
+	}
+	return responses[0].SessionID, nil
+}
+
+func newSession(socketPath string) (sessionNewResult, error) {
+	var result sessionNewResult
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_new"})
+	if err != nil {
+		return result, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return result, fmt.Errorf("%s", message)
+	}
+	res := responses[0]
+	result.OK = true
+	result.SessionID = res.SessionID
+	result.Reset = res.Reset
+	result.Transcript = res.Transcript
+	return result, nil
+}
+
+func deleteSession(socketPath, sessionID string) (sessionDeleteResult, error) {
+	var result sessionDeleteResult
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "session_delete", SessionID: sessionID})
+	if err != nil {
+		return result, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return result, fmt.Errorf("%s", message)
+	}
+	res := responses[0]
+	result.OK = true
+	result.SessionID = res.SessionID
+	result.Reset = res.Reset
+	result.Transcript = res.Transcript
 	return result, nil
 }
 
@@ -182,7 +339,13 @@ func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, onEvent
 			result.Usage = mapUsage(res.Usage)
 		}
 		if res.Event != nil {
-			result.Events = append(result.Events, *res.Event)
+			ev := *res.Event
+			if ev.Kind == bridge.EventTranscript && ev.Transcript != nil {
+				if ev.GenerationID != "" {
+					result.GenerationID = ev.GenerationID
+				}
+				result.Transcript = ev.Transcript.Entries
+			}
 		}
 	}
 	result.OK = true
@@ -263,6 +426,57 @@ func mapUsage(usage *chatstore.Usage) *chatUsage {
 		CompactedTurns: usage.CompactedTurns,
 		ActiveTurns:    usage.ActiveTurns,
 	}
+}
+
+// taskInspect fetches the durable task record + a tail of its progress stream
+// for the widget's "Planner & Agent" pop-up. afterLine is the number of
+// progress lines the caller has already seen (0 on first open).
+func taskInspect(socketPath, taskID string, afterLine int) (*taskInspectResult, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "task_inspect", TaskID: taskID, AfterLine: afterLine})
+	if err != nil {
+		return nil, err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		msg := "core error"
+		if len(responses) > 0 {
+			msg = responses[0].Message
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+	src := responses[0].TaskInspect
+	if src == nil {
+		return nil, fmt.Errorf("core error")
+	}
+	out := &taskInspectResult{
+		ID: src.ID, Role: src.Role, Status: src.Status, Task: src.Task,
+		Result: src.Result, Error: src.Error, Question: src.Question,
+		PlanTaskID: src.PlanTaskID, Plan: src.Plan,
+		Transcript: src.Transcript,
+		EventCount: src.EventCount,
+		UpdatedAt:  src.UpdatedAt.Format(time.RFC3339Nano),
+	}
+	return out, nil
+}
+
+func actorInspect(socketPath, actorID string, afterLine int) (*taskInspectResult, error) {
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "actor_inspect", TaskID: actorID, AfterLine: afterLine})
+	if err != nil {
+		return nil, err
+	}
+	if len(responses) == 0 || !responses[0].OK || responses[0].ActorInspect == nil {
+		msg := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			msg = responses[0].Message
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+	src := responses[0].ActorInspect
+	return &taskInspectResult{
+		ID: src.ID, Role: src.Role, Status: src.Status, Task: src.Task,
+		Result: src.Result, Error: src.Error, Question: src.Question,
+		PlanTaskID: src.PlanTaskID, Plan: src.Plan, Transcript: src.Transcript,
+		EventCount: src.EventCount, UpdatedAt: src.UpdatedAt.Format(time.RFC3339Nano),
+	}, nil
 }
 
 func slashSuggest(socketPath, query string) ([]config.CommandEntry, error) {
@@ -392,6 +606,7 @@ func roundTripWithEvent(socketPath string, req ipcRequest, onResponse func(ipcRe
 	// inlined images/files), which exceed bufio.Scanner's default 64KB line cap.
 	sc.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
 	var responses []ipcResponse
+scanLoop:
 	for sc.Scan() {
 		var res ipcResponse
 		if err := json.Unmarshal(sc.Bytes(), &res); err != nil {
@@ -401,8 +616,14 @@ func roundTripWithEvent(socketPath string, req ipcRequest, onResponse func(ipcRe
 		if onResponse != nil {
 			onResponse(res)
 		}
-		if req.Op != "chat_send" && req.Op != "chat_retry" || res.Op == "event" && res.Event != nil && res.Event.Kind == bridge.EventDone {
-			break
+		if req.Op != "chat_send" && req.Op != "chat_retry" {
+			break scanLoop
+		}
+		if res.Op == "event" && res.Event != nil {
+			switch res.Event.Kind {
+			case bridge.EventDone, bridge.EventError:
+				break scanLoop
+			}
 		}
 	}
 	if err := sc.Err(); err != nil {

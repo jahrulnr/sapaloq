@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,6 +47,25 @@ type scheduledTool struct {
 	index   int
 	call    parse.ToolCall
 	execute func(context.Context) turnOutcome
+	// future, when non-nil, carries the outcome of a tool that was already
+	// dispatched mid-stream (early read-only execution). collectToolJobs reads
+	// it instead of re-dispatching, so the result that was computed in parallel
+	// with the rest of the stream is not recomputed.
+	future chan turnOutcome
+}
+
+// isReadOnlyAssessmentTool reports whether a tool is safe to execute
+// mid-stream (before the turn's EventDone): the read-only assessment + web
+// set shared across roles. These have no side effects, so running them early
+// only saves latency. Write/exec/lifecycle tools are NOT early-executed.
+func isReadOnlyAssessmentTool(name string) bool {
+	switch name {
+	case "read_file", "search", "list_dir", "glob", "read_image",
+		"web_search", "web_fetch":
+		return true
+	default:
+		return false
+	}
 }
 
 type toolJobResult struct {
@@ -121,7 +141,21 @@ func (s *toolJobScheduler) submitBatch(ctx context.Context, runID, sessionID str
 				delete(s.cancels, id)
 				s.mu.Unlock()
 			}()
-			result := s.run(jobCtx, job, item.execute)
+			var result toolJobResult
+			if item.future != nil {
+				// Early-executed tool: outcome already computed mid-stream.
+				// Wait for it (it may still be running) and publish the job
+				// lifecycle around the already-known outcome, so observability
+				// stays consistent without re-dispatching the tool.
+				select {
+				case outcome := <-item.future:
+					result = s.finishWithOutcome(jobCtx, job, outcome)
+				case <-ctx.Done():
+					result = s.finishCancelled(job, ctx.Err())
+				}
+			} else {
+				result = s.run(jobCtx, job, item.execute)
+			}
 			select {
 			case results <- result:
 			case <-ctx.Done():
@@ -186,6 +220,35 @@ func (s *toolJobScheduler) finishCancelled(job toolJob, err error) toolJobResult
 	s.persist(job)
 	s.publish(job)
 	return toolJobResult{job: job, outcome: turnOutcome{text: "Tool cancelled.", handled: true}}
+}
+
+// finishWithOutcome publishes the running/completed lifecycle for a tool whose
+// outcome was already computed (early read-only execution), without
+// re-invoking execute. Used so observability stays consistent when a tool ran
+// ahead of the batch.
+func (s *toolJobScheduler) finishWithOutcome(ctx context.Context, job toolJob, outcome turnOutcome) toolJobResult {
+	started := time.Now().UTC()
+	job.Status = toolJobRunning
+	job.StartedAt = &started
+	s.persist(job)
+	s.publish(job)
+
+	completed := time.Now().UTC()
+	job.CompletedAt = &completed
+	job.Result = outcome.text
+	if ctx.Err() != nil {
+		job.Status = toolJobCancelled
+		job.Error = ctx.Err().Error()
+	} else if strings.HasPrefix(strings.TrimSpace(outcome.text), "Error:") ||
+		strings.HasPrefix(strings.TrimSpace(outcome.text), "Command exited with error:") {
+		job.Status = toolJobFailed
+		job.Error = outcome.text
+	} else {
+		job.Status = toolJobCompleted
+	}
+	s.persist(job)
+	s.publish(job)
+	return toolJobResult{job: job, outcome: outcome}
 }
 
 func (s *toolJobScheduler) acquireLane(ctx context.Context, key string) (func(), bool) {
@@ -308,7 +371,10 @@ func (s *toolJobScheduler) recoverOrphaned() {
 
 func toolConsumesWorkerSlot(name string) bool {
 	switch name {
-	case "sapaloq_wait", "sapaloq_wait_events", "sapaloq_wait_jobs":
+	// wait + sapaloq_cancel_job are quick control ops (a peek/cancel), not
+	// work: they must not consume a worker slot or a burst of polls would
+	// starve the actual tool workers.
+	case "wait", "sapaloq_cancel_job":
 		return false
 	default:
 		return true
@@ -326,11 +392,44 @@ func toolResourceKey(runID string, call parse.ToolCall) string {
 		"sapaloq_update_task_progress", "sapaloq_stop", "sapaloq_answer_clarification":
 		return "actor:" + runID + ":lifecycle"
 	case "exec":
-		// Commands sharing a cwd are conservatively serialized because their
-		// filesystem side effects are opaque. Explicit file tools remain
-		// parallel across distinct paths.
-		return "cwd:" + filepath.Clean(expandHome(args.Cwd))
+		// Recognized single-file writes (cat > /path, tee /path) use the same
+		// path lane as write_file so independent scaffolds run in parallel.
+		if target := execWriteTargetPath(args.Command); target != "" {
+			return "path:" + target
+		}
+		// Opaque exec in the same cwd is serialized; distinct cwds may overlap.
+		if cwd := strings.TrimSpace(args.Cwd); cwd != "" {
+			return "cwd:" + filepath.Clean(expandHome(cwd))
+		}
+		// Default-cwd shell glue (mkdir, probes) stays per-run serialized.
+		return "exec:" + runID
 	default:
 		return ""
 	}
+}
+
+var (
+	execCatWriteRE = regexp.MustCompile(`(?i)\bcat\s+(?:>>?)\s*([^\s<&|;"']+)`)
+	execTeeWriteRE = regexp.MustCompile(`(?i)\btee\s+(?:-a\s+)?([^\s<&|;"']+)`)
+)
+
+// execWriteTargetPath returns the destination path when command is a recognized
+// single-file write (cat/tee redirect). Empty when side effects are opaque.
+func execWriteTargetPath(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	for _, re := range []*regexp.Regexp{execCatWriteRE, execTeeWriteRE} {
+		m := re.FindStringSubmatch(command)
+		if len(m) < 2 {
+			continue
+		}
+		p := strings.Trim(m[1], `"'`)
+		if p == "" || p == "&" {
+			continue
+		}
+		return filepath.Clean(expandHome(p))
+	}
+	return ""
 }

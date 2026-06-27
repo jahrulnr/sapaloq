@@ -23,7 +23,7 @@ const maxAutoClarifyAnswers = 2
 // the question itself from conversation context:
 //
 //   - If the chat LLM is confident it calls sapaloq_answer_clarification, which
-//     (via handleAskTool) writes the answer and resumes the task in the
+//     (via dispatchTool) writes the answer and resumes the task in the
 //     background. Vendor-to-vendor, with chat as the mediator - exactly the
 //     designed loop, and no new bespoke machinery.
 //   - If it is not confident (or the auto-answer budget is spent), the decision
@@ -105,7 +105,7 @@ func (o *Orchestrator) runClarificationResolver(sessionID string, record taskRec
 	}()
 
 	ctx := context.Background()
-	_, _ = o.runConversationActor(ctx, snap, out, sessionID, "decision:"+record.ID, record.Task, messages, nil)
+	_, _ = o.runConversationActor(ctx, snap, out, sessionID, "decision:"+record.ID, "", record.Task, messages, nil)
 	close(out)
 	<-done
 

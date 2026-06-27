@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jahrulnr/sapaloq/embed"
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -49,6 +50,10 @@ func (a *App) startup(ctx context.Context) {
 		switch event.Kind {
 		case bridge.EventTaskUpdate:
 			runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+		case bridge.EventTranscript:
+			if event.ActorID != "" {
+				runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
+			}
 		case bridge.EventResponseDelta:
 			// CRITICAL: only forward SPOKEN-COMPLETION deltas (those stamped
 			// with a TaskID) from the watch stream. A live chat turn's
@@ -66,6 +71,16 @@ func (a *App) startup(ctx context.Context) {
 	})
 }
 
+func transcriptPatchFromEvent(ev bridge.StreamEvent) bridge.TranscriptPatch {
+	if ev.Transcript != nil {
+		return *ev.Transcript
+	}
+	return bridge.TranscriptPatch{
+		SessionID:    ev.SessionID,
+		GenerationID: ev.GenerationID,
+	}
+}
+
 func (a *App) shutdown(ctx context.Context) {
 	if a.stopWatch != nil {
 		close(a.stopWatch)
@@ -80,14 +95,35 @@ func (a *App) PingCore() (pingResult, error) {
 
 func (a *App) SendMessage(sessionID string, text string) (chatResult, error) {
 	return sendChatWithStatus(a.socketPath, sessionID, text, func(event bridge.StreamEvent) {
-		// Forward every stream event to the webview as it arrives so deltas
-		// render live instead of bursting when the call resolves.
-		runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+		runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
 	})
 }
 
 func (a *App) ChatHistory() (chatHistoryResult, error) {
 	return chatHistory(a.socketPath)
+}
+
+// ListSessions returns recent chat sessions for the topbar history switcher.
+func (a *App) ListSessions() (sessionListResult, error) {
+	return listSessions(a.socketPath)
+}
+
+// SwitchSession activates an existing session and returns its id so the
+// frontend can restore that session's history.
+func (a *App) SwitchSession(sessionID string) (string, error) {
+	return switchSession(a.socketPath, sessionID)
+}
+
+// NewSession starts a fresh active chat session. Reset is true when the backend
+// has persisted the new empty session; the frontend must clear only on that signal.
+func (a *App) NewSession() (sessionNewResult, error) {
+	return newSession(a.socketPath)
+}
+
+// DeleteSession removes a chat room from history. When the active room is
+// deleted the backend activates another session or creates a fresh one.
+func (a *App) DeleteSession(sessionID string) (sessionDeleteResult, error) {
+	return deleteSession(a.socketPath, sessionID)
 }
 
 func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
@@ -96,7 +132,7 @@ func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 
 func (a *App) RetryChatTurn(sessionID string, turnID int64) (chatResult, error) {
 	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, func(event bridge.StreamEvent) {
-		runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
+		runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
 	})
 }
 
@@ -117,6 +153,41 @@ func (a *App) ContextUsage() (*chatUsage, error) {
 
 func (a *App) RuntimeStatus() (*runtimeStatus, error) {
 	return runtimeInfo(a.socketPath)
+}
+
+// TaskInspect returns the durable state + a tail of a sub-agent's progress
+// stream for the "Planner & Agent" pop-up. afterLine is the number of progress
+// lines the caller has already seen (0 on first open).
+func (a *App) TaskInspect(taskID string, afterLine int) (*taskInspectResult, error) {
+	return taskInspect(a.socketPath, taskID, afterLine)
+}
+
+// ActorInspect is the actor-generic replacement for TaskInspect.
+func (a *App) ActorInspect(actorID string, afterLine int) (*taskInspectResult, error) {
+	return actorInspect(a.socketPath, actorID, afterLine)
+}
+
+// NotificationSound returns the embedded completion chime as a data: URI the
+// browser can feed straight to `new Audio()`. Empty when the embed is missing
+// (e.g. a stripped build) so the frontend degrades to a silent notification.
+func (a *App) NotificationSound() string {
+	if len(embed.NotificationWav) == 0 {
+		return ""
+	}
+	return "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(embed.NotificationWav)
+}
+
+// NotificationSoundForRole returns the role-specific chime (planner/agent) as a
+// data: URI, falling back to the generic chime for unknown roles. The frontend
+// uses this so a planner finishing plays notification-planner.wav and an agent
+// plays notification-agent.wav, while the orchestrator run keeps the generic
+// notification.wav (via NotificationSound).
+func (a *App) NotificationSoundForRole(role string) string {
+	wav := embed.NotificationWavForRole(role)
+	if len(wav) == 0 {
+		return ""
+	}
+	return "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wav)
 }
 
 func (a *App) SlashSuggest(query string) ([]config.CommandEntry, error) {
@@ -144,6 +215,7 @@ type droppedFile struct {
 	DataURI string `json:"data_uri,omitempty"`
 	Text    string `json:"text,omitempty"`
 	IsImage bool   `json:"is_image"`
+	IsDir   bool   `json:"is_dir"`
 }
 
 // maxDroppedBytes caps how much of a dropped file we read into memory before
@@ -164,7 +236,17 @@ func (a *App) ReadDroppedFile(path string) (*droppedFile, error) {
 		return nil, err
 	}
 	if info.IsDir() {
-		return nil, errors.New("directory drop not supported")
+		// Folder drop: the model only ever needs the *path* (it can list/read
+		// it with its own tools), so we deliberately read no contents and emit
+		// a path-only attachment. This mirrors the path-backed-binary rule and
+		// avoids flooding the prompt with a whole tree.
+		return &droppedFile{
+			Path:  cleaned,
+			Name:  filepath.Base(cleaned),
+			MIME:  "inode/directory",
+			Size:  0,
+			IsDir: true,
+		}, nil
 	}
 	if info.Size() > maxDroppedBytes {
 		return nil, errors.New("file too large (max 8 MB)")
@@ -207,13 +289,19 @@ func (a *App) OpenAttachment(path string) error {
 	if cleaned == "" || !filepath.IsAbs(cleaned) {
 		return errors.New("attachment path must be absolute")
 	}
-	if _, err := os.Stat(cleaned); err != nil {
+	info, err := os.Stat(cleaned)
+	if err != nil {
 		return err
 	}
+	// For a folder, open the folder itself; for a file, reveal it inside its
+	// parent directory (selected where the file manager supports it).
 	target := filepath.Dir(cleaned)
+	if info.IsDir() {
+		target = cleaned
+	}
 	var command *exec.Cmd
 	switch {
-	case commandExists("nautilus"):
+	case !info.IsDir() && commandExists("nautilus"):
 		command = exec.Command("nautilus", "--select", cleaned)
 	case commandExists("gio"):
 		command = exec.Command("gio", "open", target)

@@ -61,7 +61,7 @@ func (o *Orchestrator) applyConfig(next config.Config) error {
 	o.cfg = next
 	o.entry = entry
 	o.bridge = br
-	o.progress = ProgressWriter{Dir: dirs.ProgressDir}
+	o.progress = newAsyncProgressWriter(ProgressWriter{Dir: dirs.ProgressDir})
 	// Repoint runtime-state dirs unconditionally: they track DataDir and must
 	// stay consistent even when the memory DB itself did not change. Previously
 	// workersDir/workers were left dangling on reload - a latent bug.
@@ -152,12 +152,12 @@ func (o *Orchestrator) handleModel(ctx context.Context, out chan<- bridge.Stream
 		for _, provider := range snap.cfg.LLMBridge.Providers {
 			keys = append(keys, provider.Key)
 		}
-		return o.emit(ctx, out, responseEvent(sessionID, "Usage: /model <key>. Available: "+strings.Join(keys, ", ")))
+		return o.emitSlash(ctx, out, sessionID, responseEvent(sessionID, "Usage: /model <key>. Available: "+strings.Join(keys, ", ")))
 	}
 	key := parts[1]
 	raw, err := config.LoadRaw(o.cfgPath)
 	if err != nil {
-		return o.emit(ctx, out, errorEvent(sessionID, err))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, err))
 	}
 	llm, _ := raw["llmBridge"].(map[string]any)
 	if llm == nil {
@@ -168,20 +168,20 @@ func (o *Orchestrator) handleModel(ctx context.Context, out chan<- bridge.Stream
 	b, _ := json.Marshal(raw)
 	var next config.Config
 	if err := json.Unmarshal(b, &next); err != nil {
-		return o.emit(ctx, out, errorEvent(sessionID, err))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, err))
 	}
 	if next.Runtime.DataDir == "" {
 		next.Runtime = o.snapshot().cfg.Runtime
 	}
 	if err := config.SaveRaw(o.cfgPath, raw, "slash:model"); err != nil {
-		return o.emit(ctx, out, errorEvent(sessionID, err))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, err))
 	}
 	next, err = config.Load(o.cfgPath)
 	if err != nil {
-		return o.emit(ctx, out, errorEvent(sessionID, err))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, err))
 	}
 	if err := o.applyConfig(next); err != nil {
-		return o.emit(ctx, out, errorEvent(sessionID, err))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, err))
 	}
 	info, _ := os.Stat(o.cfgPath)
 	if info != nil {
@@ -190,7 +190,7 @@ func (o *Orchestrator) handleModel(ctx context.Context, out chan<- bridge.Stream
 		o.mu.Unlock()
 	}
 	entry := o.snapshot().entry
-	return o.emit(ctx, out, responseEvent(sessionID, fmt.Sprintf("Model switched to %s (%s · %s).", entry.Key, entry.Driver, entry.Model)))
+	return o.emitSlash(ctx, out, sessionID, responseEvent(sessionID, fmt.Sprintf("Model switched to %s (%s · %s).", entry.Key, entry.Driver, entry.Model)))
 }
 
 // handleThinking sets the reasoning-effort level on the active provider entry
@@ -204,7 +204,7 @@ func (o *Orchestrator) handleThinking(ctx context.Context, out chan<- bridge.Str
 		if current == "" {
 			current = "default (provider decides)"
 		}
-		return o.emit(ctx, out, responseEvent(sessionID, fmt.Sprintf("Thinking level: %s. Usage: /thinking <%s>.", current, strings.Join(config.ThinkingLevels, "|"))))
+		return o.emitSlash(ctx, out, sessionID, responseEvent(sessionID, fmt.Sprintf("Thinking level: %s. Usage: /thinking <%s>.", current, strings.Join(config.ThinkingLevels, "|"))))
 	}
 
 	level := strings.ToLower(parts[1])
@@ -214,21 +214,21 @@ func (o *Orchestrator) handleThinking(ctx context.Context, out chan<- bridge.Str
 	case "low", "medium", "high":
 		// valid
 	default:
-		return o.emit(ctx, out, responseEvent(sessionID, fmt.Sprintf("Unknown thinking level %q. Use one of: %s.", parts[1], strings.Join(config.ThinkingLevels, ", "))))
+		return o.emitSlash(ctx, out, sessionID, responseEvent(sessionID, fmt.Sprintf("Unknown thinking level %q. Use one of: %s.", parts[1], strings.Join(config.ThinkingLevels, ", "))))
 	}
 
 	raw, err := config.LoadRaw(o.cfgPath)
 	if err != nil {
-		return o.emit(ctx, out, errorEvent(sessionID, err))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, err))
 	}
 	llm, _ := raw["llmBridge"].(map[string]any)
 	if llm == nil {
-		return o.emit(ctx, out, errorEvent(sessionID, fmt.Errorf("llmBridge config missing")))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, fmt.Errorf("llmBridge config missing")))
 	}
 	providerKey, _ := llm["providerKey"].(string)
 	providers, _ := llm["providers"].([]any)
 	if len(providers) == 0 {
-		return o.emit(ctx, out, errorEvent(sessionID, fmt.Errorf("no providers configured")))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, fmt.Errorf("no providers configured")))
 	}
 	applied := false
 	for _, p := range providers {
@@ -252,18 +252,18 @@ func (o *Orchestrator) handleThinking(ctx context.Context, out chan<- bridge.Str
 		}
 	}
 	if !applied {
-		return o.emit(ctx, out, errorEvent(sessionID, fmt.Errorf("active provider %q not found", providerKey)))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, fmt.Errorf("active provider %q not found", providerKey)))
 	}
 
 	if err := config.SaveRaw(o.cfgPath, raw, "slash:thinking"); err != nil {
-		return o.emit(ctx, out, errorEvent(sessionID, err))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, err))
 	}
 	next, err := config.Load(o.cfgPath)
 	if err != nil {
-		return o.emit(ctx, out, errorEvent(sessionID, err))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, err))
 	}
 	if err := o.applyConfig(next); err != nil {
-		return o.emit(ctx, out, errorEvent(sessionID, err))
+		return o.emitSlash(ctx, out, sessionID, errorEvent(sessionID, err))
 	}
 	if info, _ := os.Stat(o.cfgPath); info != nil {
 		o.mu.Lock()
@@ -280,7 +280,7 @@ func (o *Orchestrator) handleThinking(ctx context.Context, out chan<- bridge.Str
 	if entry.Driver != "provider-bridge" && level != "" {
 		msg += " Note: reasoning effort currently applies only to provider-bridge models; the active driver is " + entry.Driver + "."
 	}
-	return o.emit(ctx, out, responseEvent(sessionID, msg))
+	return o.emitSlash(ctx, out, sessionID, responseEvent(sessionID, msg))
 }
 
 func errorEvent(sessionID string, err error) bridge.StreamEvent {

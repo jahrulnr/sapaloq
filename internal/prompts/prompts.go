@@ -25,14 +25,19 @@ import (
 var defaultFS embed.FS
 
 // Role keys. These map 1:1 to sub-agent roles plus the Ask orchestrator.
-// RolePersona is special: it is the shared core character prepended to every
-// other role's prompt (see Orchestrator.systemPrompt), not a mode of its own.
+// RolePersona and RoleRules are special: they are shared layers prepended to
+// every other role's prompt (see Orchestrator.systemPrompt), not modes of
+// their own. RolePersona carries the core character ("how to carry yourself");
+// RoleRules carries project-grounding instructions ("read the repo's rule
+// files first").
 const (
 	RoleAsk        = "ask"
 	RolePlanner    = "planner"
 	RoleAgent      = "agent" // task-runner
 	RoleScribe     = "scribe"
+	RoleCompaction = "compaction" // isolated summarizer; not a chat/sub-agent role
 	RolePersona    = "persona"
+	RoleRules      = "rules"
 	manifestName   = "prompts.manifest.json"
 	roleTaskRunner = "task-runner"
 )
@@ -48,8 +53,12 @@ func fileFor(role string) (string, bool) {
 		return "agent.md", true
 	case RoleScribe:
 		return "scribe.md", true
+	case RoleCompaction:
+		return "compaction.md", true
 	case RolePersona:
 		return "persona.md", true
+	case RoleRules:
+		return "rules.md", true
 	default:
 		return "", false
 	}
@@ -85,7 +94,9 @@ func roles() []struct{ role, file string } {
 		{RolePlanner, "planner.md"},
 		{RoleAgent, "agent.md"},
 		{RoleScribe, "scribe.md"},
+		{RoleCompaction, "compaction.md"},
 		{RolePersona, "persona.md"},
+		{RoleRules, "rules.md"},
 	}
 }
 

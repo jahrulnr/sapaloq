@@ -1,5 +1,6 @@
 import { RuntimeStatus } from '../../wailsjs/go/main/App';
 import type { ActorRuntimeStatus, RuntimeStatus as RuntimeStatusData } from '../core/types';
+import { openTaskMonitor } from '../ui/task-monitor-overlay';
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -35,8 +36,23 @@ export function actorState(actor?: ActorRuntimeStatus) {
 function actorTile(role: string, actor?: ActorRuntimeStatus) {
   const article = document.createElement('article');
   article.className = 'actor-tile';
+  article.dataset.role = role;
+  if (actor?.id) article.dataset.taskId = actor.id;
   article.dataset.state = actorState(actor);
   article.title = actor ? `${actor.id}\n${actor.workspace}` : `${roleLabel(role)} tidak aktif`;
+
+  // Only Planner and Agent pills open the pop-up; scribe stays a static tile.
+  if (role === 'planner' || role === 'task-runner') {
+    article.classList.add('actor-tile--clickable');
+    article.setAttribute('role', 'button');
+    article.setAttribute('tabindex', '0');
+    const tab = role === 'task-runner' ? 'agent' : 'planner';
+    const open = () => void openTaskMonitor({ tab: tab as 'planner' | 'agent' });
+    article.addEventListener('click', open);
+    article.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    });
+  }
 
   const signal = document.createElement('span');
   signal.className = 'actor-signal';

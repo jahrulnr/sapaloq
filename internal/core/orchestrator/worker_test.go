@@ -26,7 +26,7 @@ func TestWatchdogFailsStalledWorker(t *testing.T) {
 		workersDir: filepath.Join(dir, "workers"),
 		workers:    newWorkerRegistry(filepath.Join(dir, "workers")),
 		bus:        b,
-		progress:   ProgressWriter{Dir: t.TempDir()},
+		progress:   newAsyncProgressWriter(ProgressWriter{Dir: t.TempDir()}),
 		cfg: config.Config{Orchestrator: config.OrchestratorConfig{
 			Completion: config.CompletionConfig{WorkerErrorLog: true},
 		}},
@@ -92,7 +92,7 @@ func TestWatchdogLeavesHealthyWorkerAlone(t *testing.T) {
 		memoryDir:  dir,
 		workersDir: filepath.Join(dir, "workers"),
 		workers:    newWorkerRegistry(filepath.Join(dir, "workers")),
-		progress:   ProgressWriter{Dir: t.TempDir()},
+		progress:   newAsyncProgressWriter(ProgressWriter{Dir: t.TempDir()}),
 		cfg:        config.Config{},
 	}
 	rec := taskRecord{ID: "task-live-1", SessionID: "s1", Role: "task-runner", Status: "in_progress", UpdatedAt: time.Now().UTC()}

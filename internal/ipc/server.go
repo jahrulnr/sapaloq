@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -29,12 +30,32 @@ func NewServer(cfg config.Config, orch *orchestrator.Orchestrator) *Server {
 }
 
 func (s *Server) ListenAndServe(ctx context.Context, socketPath string) error {
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
 		return err
 	}
-	_ = os.Remove(socketPath)
+	if err := os.Chmod(filepath.Dir(socketPath), 0o700); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(socketPath); err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("refusing to remove non-socket IPC path %s", socketPath)
+		}
+		if !socketOwnedByCurrentUser(info) {
+			return fmt.Errorf("refusing to remove IPC socket not owned by current user: %s", socketPath)
+		}
+		if err := os.Remove(socketPath); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
+		return err
+	}
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		_ = ln.Close()
+		_ = os.Remove(socketPath)
 		return err
 	}
 	defer ln.Close()
@@ -52,6 +73,10 @@ func (s *Server) ListenAndServe(ctx context.Context, socketPath string) error {
 			default:
 				continue
 			}
+		}
+		if !peerIsCurrentUser(conn) {
+			_ = conn.Close()
+			continue
 		}
 		go s.handle(ctx, conn)
 	}
@@ -87,11 +112,33 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			write(conn, Response{OK: true, Op: req.Op, Suggestions: s.orch.SlashSuggest(req.Query), ServerMs: time.Since(start).Milliseconds()})
 		case "session_active", "chat_history":
 			s.handleHistory(ctx, conn, req, start)
+		case "session_list":
+			s.handleSessionList(ctx, conn, req, start)
+		case "session_switch":
+			s.handleSessionSwitch(ctx, conn, req, start)
+		case "session_new":
+			s.handleSessionNew(ctx, conn, req, start)
+		case "session_delete":
+			s.handleSessionDelete(ctx, conn, req, start)
 		case "context_usage":
 			s.handleUsage(ctx, conn, req, start)
 		case "runtime_status":
 			status := s.orch.RuntimeStatus()
 			write(conn, Response{OK: true, Op: req.Op, Runtime: &status, ServerMs: time.Since(start).Milliseconds()})
+		case "task_inspect":
+			inspect, err := s.orch.TaskInspect(req.TaskID, req.AfterLine)
+			if err != nil {
+				write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+				continue
+			}
+			write(conn, Response{OK: true, Op: req.Op, TaskInspect: &inspect, ServerMs: time.Since(start).Milliseconds()})
+		case "actor_inspect":
+			inspect, err := s.orch.ActorInspect(req.TaskID, req.AfterLine)
+			if err != nil {
+				write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+				continue
+			}
+			write(conn, Response{OK: true, Op: req.Op, ActorInspect: &inspect, ServerMs: time.Since(start).Milliseconds()})
 		case "chat_delete":
 			s.handleDelete(ctx, conn, req, start)
 		case "chat_retry":
@@ -158,11 +205,15 @@ func (s *Server) writeStream(ctx context.Context, conn net.Conn, requestedSessio
 			sessionID = ev.SessionID
 		}
 		ring := orchestrator.RingStateFor(ev.Kind)
+		if ev.Kind == bridge.EventTranscript && ev.Transcript != nil && ev.Transcript.Finished {
+			ring = orchestrator.RingIdle
+		}
 		resp := Response{OK: true, Op: "event", SessionID: sessionID, Event: &ev, RingState: string(ring)}
 		// Usage requires a SQLite query; only attach it on terminal events so
 		// per-delta streaming stays fast (querying every token stalls the
 		// stream and makes it arrive in bursts).
-		if ev.Kind == bridge.EventDone || ev.Kind == bridge.EventError {
+		if ev.Kind == bridge.EventDone || ev.Kind == bridge.EventError ||
+			(ev.Kind == bridge.EventTranscript && ev.Transcript != nil && ev.Transcript.Finished) {
 			usage, _ := s.orch.ContextUsage(ctx, sessionID)
 			resp.Usage = &usage
 		}
@@ -187,13 +238,64 @@ func (s *Server) handleHistory(ctx context.Context, conn net.Conn, req Request, 
 			return
 		}
 	}
-	turns, err := s.orch.ActiveTurns(ctx, sessionID)
+	_, err := s.orch.ActiveTurns(ctx, sessionID)
 	if err != nil {
 		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
 		return
 	}
 	usage, _ := s.orch.ContextUsage(ctx, sessionID)
-	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Turns: turns, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
+	transcript, _ := s.orch.SessionTranscript(ctx, sessionID)
+	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Transcript: transcript, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleSessionList(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	sessions, err := s.orch.ListSessions(ctx, 50)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	write(conn, Response{OK: true, Op: req.Op, Sessions: sessions, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleSessionSwitch(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	if req.SessionID == "" {
+		write(conn, Response{OK: false, Op: req.Op, Message: "session_id is required", ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	sessionID, err := s.orch.SwitchSession(ctx, req.SessionID)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleSessionNew(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	sessionID, err := s.orch.NewSession(ctx)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	transcript, _ := s.orch.SessionTranscript(ctx, sessionID)
+	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Transcript: transcript, Reset: true, ServerMs: time.Since(start).Milliseconds()})
+}
+
+func (s *Server) handleSessionDelete(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	if req.SessionID == "" {
+		write(conn, Response{OK: false, Op: req.Op, Message: "session_id is required", ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	activeID, reset, err := s.orch.DeleteSession(ctx, req.SessionID)
+	if err != nil {
+		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+		return
+	}
+	resp := Response{OK: true, Op: req.Op, SessionID: activeID, Reset: reset, ServerMs: time.Since(start).Milliseconds()}
+	if reset {
+		transcript, _ := s.orch.SessionTranscript(ctx, activeID)
+		resp.Transcript = transcript
+	}
+	write(conn, resp)
 }
 
 func (s *Server) handleUsage(ctx context.Context, conn net.Conn, req Request, start time.Time) {

@@ -56,7 +56,15 @@
         "credentialsEnv": "BLACKBOX_API_KEY",
         "parser": "openai",
         "contextWindow": 131072,
-        "maxRetries": 5
+        "maxRetries": 5,
+        "stream": true
+      },
+      {
+        "key": "codex",
+        "driver": "codex-bridge",
+        "model": "gpt-5.5",
+        "reasoningEffort": "high",
+        "requestTimeoutSec": 600
       }
     ]
   },
@@ -118,7 +126,7 @@
       "maxToolCalls": 512,
       "maxParallelTools": 40,
       "maxWallTimeMinutes": 30,
-      "maxNoProgressTurns": 5,
+      "maxNoProgressTurns": 10,
       "maxIdenticalToolCalls": 5,
       "maxWaitSeconds": 120
     },
@@ -136,7 +144,8 @@
       "notifyUserOnDone": false,
       "speakOnTerminal": true,
       "workerErrorLog": true
-    }
+    },
+    "defaultContextWindowTokens": 131072
   },
   "subAgents": {
     "roles": {
@@ -156,7 +165,8 @@
           "request_clarification",
           "sapaloq_request_decision",
           "sapaloq_send_steering",
-          "sapaloq_wait_events"
+          "wait",
+          "sapaloq_cancel_job"
         ],
         "maxTurns": 12,
         "canEditConfig": false,
@@ -184,7 +194,8 @@
           "request_clarification",
           "sapaloq_request_decision",
           "sapaloq_send_steering",
-          "sapaloq_wait_events",
+          "wait",
+          "sapaloq_cancel_job",
           "desktop_notify"
         ],
         "canEditConfig": false,
@@ -207,7 +218,8 @@
           "request_clarification",
           "sapaloq_request_decision",
           "sapaloq_send_steering",
-          "sapaloq_wait_events"
+          "wait",
+          "sapaloq_cancel_job"
         ],
         "maxTurns": 8,
         "canEditConfig": false

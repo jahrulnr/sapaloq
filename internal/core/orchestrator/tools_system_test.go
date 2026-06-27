@@ -92,6 +92,33 @@ func TestExecInAllModeProfiles(t *testing.T) {
 	}
 }
 
+func TestAskProfileIncludesWriteTools(t *testing.T) {
+	for _, name := range []string{"write_file", "create_file", "edit_file", "delete_file"} {
+		if !containsTool(askTools, name) {
+			t.Fatalf("ask profile missing %s", name)
+		}
+	}
+}
+
+func TestAskForegroundCanCreateFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hello.txt")
+	o := &Orchestrator{stateDir: t.TempDir()}
+	call := parse.ToolCall{
+		Name:      "create_file",
+		Arguments: []byte(`{"path":"` + path + `","content":"hi"}`),
+	}
+	got := o.dispatchTool(context.Background(), providerSnapshot{}, ActorRun{
+		Foreground: true, ParentSessionID: "chat-1", Role: "ask", Tools: askTools,
+	}, call)
+	if !got.handled || strings.Contains(got.text, "not allowed") {
+		t.Fatalf("ask create_file should be allowed, got %q", got.text)
+	}
+	if !strings.Contains(got.text, "Wrote") {
+		t.Fatalf("expected write confirmation, got %q", got.text)
+	}
+}
+
 func TestSubAgentSharedToolStillHonorsRolePolicy(t *testing.T) {
 	o := &Orchestrator{cfg: config.Config{SubAgents: config.SubAgentsConfig{Roles: map[string]config.SubAgentRole{
 		"planner": {AllowedTools: []string{"exec"}},
@@ -100,13 +127,19 @@ func TestSubAgentSharedToolStillHonorsRolePolicy(t *testing.T) {
 	call := parse.ToolCall{Name: "exec", Arguments: []byte(`{"command":"printf allowed"}`)}
 
 	planner := &taskRecord{ID: "plan", Role: "planner"}
-	got := o.handleSubAgentTool(context.Background(), planner, &strings.Builder{}, call)
+	got := o.dispatchTool(context.Background(), testSnap(5), ActorRun{
+		ID: "plan", ParentSessionID: "s1", Role: "planner",
+		Tools: o.toolsForRole("planner"), Record: planner,
+	}, call)
 	if !strings.Contains(got.text, "allowed") {
 		t.Fatalf("planner exec should run for exploration, got %q", got.text)
 	}
 
 	scribe := &taskRecord{ID: "scribe", Role: "scribe"}
-	got = o.handleSubAgentTool(context.Background(), scribe, &strings.Builder{}, call)
+	got = o.dispatchTool(context.Background(), testSnap(5), ActorRun{
+		ID: "scribe", ParentSessionID: "s1", Role: "scribe",
+		Tools: o.toolsForRole("scribe"), Record: scribe,
+	}, call)
 	if !strings.Contains(got.text, "not allowed for role scribe") {
 		t.Fatalf("scribe poisoned exec should be denied, got %q", got.text)
 	}

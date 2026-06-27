@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func dirsForData(dataDir string) RuntimeDirsInfo {
@@ -130,7 +131,43 @@ func TestMigrateDefaultDataRootDoesNotClobberDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFile(t, filepath.Join(newRoot, "memory", "companion.db"), "new")
-	assertFile(t, filepath.Join(oldRoot, "memory", "companion.db"), "old")
+	assertFile(t, filepath.Join(newRoot, "migration-archive", "memory", "companion.db"), "old")
+	if _, err := os.Stat(filepath.Join(oldRoot, "memory")); !os.IsNotExist(err) {
+		t.Fatalf("conflicting legacy memory should be archived, err=%v", err)
+	}
+}
+
+func TestMigrateLegacyLayoutRestoresMisplacedDurableMemory(t *testing.T) {
+	data := t.TempDir()
+	dirs := dirsForData(data)
+	mustWrite(t, filepath.Join(dirs.StateDir, "memory", "facts.json"), `[{"id":1}]`)
+
+	if err := MigrateLegacyLayout(dirs); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(dirs.MemoryDir, "facts.json"), `[{"id":1}]`)
+	if _, err := os.Stat(filepath.Join(dirs.StateDir, "memory")); !os.IsNotExist(err) {
+		t.Fatalf("misplaced memory directory should be removed, err=%v", err)
+	}
+}
+
+func TestMigrateLegacyLayoutPrefersNewerMisplacedMemoryFile(t *testing.T) {
+	data := t.TempDir()
+	dirs := dirsForData(data)
+	dst := filepath.Join(dirs.MemoryDir, "facts.json")
+	src := filepath.Join(dirs.StateDir, "memory", "facts.json")
+	mustWrite(t, dst, `[{"id":"old"}]`)
+	mustWrite(t, src, `[{"id":"new"}]`)
+	_ = os.Chtimes(dst, time.Now().Add(-time.Hour), time.Now().Add(-time.Hour))
+	_ = os.Chtimes(src, time.Now(), time.Now())
+
+	if err := MigrateLegacyLayout(dirs); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, dst, `[{"id":"new"}]`)
+	if _, err := os.Stat(filepath.Join(dirs.StateDir, "memory")); !os.IsNotExist(err) {
+		t.Fatalf("misplaced memory directory should be removed, err=%v", err)
+	}
 }
 
 func mustWrite(t *testing.T, path, content string) {

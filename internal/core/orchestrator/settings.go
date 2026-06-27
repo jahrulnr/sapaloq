@@ -25,13 +25,13 @@ var defaultAllowedPaths = []string{
 func (o *Orchestrator) handleSettings(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, message string) bool {
 	args := strings.TrimSpace(strings.TrimPrefix(message, "/settings"))
 	if args == "" {
-		return o.emit(ctx, out, settingsHelpEvent(sessionID))
+		return o.emitSlash(ctx, out, sessionID, settingsHelpEvent(sessionID))
 	}
 	if strings.HasPrefix(args, "patch ") {
 		return o.handleSettingsPatch(ctx, out, sessionID, strings.TrimSpace(args[6:]))
 	}
 	if strings.HasPrefix(args, "show") {
-		return o.emit(ctx, out, settingsShowEvent(sessionID, o.cfg))
+		return o.emitSlash(ctx, out, sessionID, settingsShowEvent(sessionID, o.cfg))
 	}
 	return o.emit(ctx, out, settingsHelpEvent(sessionID))
 }
@@ -42,40 +42,40 @@ func (o *Orchestrator) handleSettingsPatch(ctx context.Context, out chan<- bridg
 		ev := bridge.NewEvent(bridge.EventError)
 		ev.SessionID = sessionID
 		ev.Error = fmt.Sprintf("invalid patch JSON: %v", err)
-		return o.emit(ctx, out, ev)
+		return o.emitSlash(ctx, out, sessionID, ev)
 	}
 	raw, err := config.LoadRaw(o.cfgPath)
 	if err != nil {
 		ev := bridge.NewEvent(bridge.EventError)
 		ev.SessionID = sessionID
 		ev.Error = err.Error()
-		return o.emit(ctx, out, ev)
+		return o.emitSlash(ctx, out, sessionID, ev)
 	}
 	allowed := defaultAllowedPaths
 	if err := config.ApplyPatch(raw, patch, allowed); err != nil {
 		ev := bridge.NewEvent(bridge.EventError)
 		ev.SessionID = sessionID
 		ev.Error = err.Error()
-		return o.emit(ctx, out, ev)
+		return o.emitSlash(ctx, out, sessionID, ev)
 	}
 	reloaded, err := config.ValidateRaw(raw)
 	if err != nil {
 		ev := bridge.NewEvent(bridge.EventError)
 		ev.SessionID = sessionID
 		ev.Error = "invalid config patch: " + err.Error()
-		return o.emit(ctx, out, ev)
+		return o.emitSlash(ctx, out, sessionID, ev)
 	}
 	if err := config.SaveRaw(o.cfgPath, raw, "sub-agent:settings"); err != nil {
 		ev := bridge.NewEvent(bridge.EventError)
 		ev.SessionID = sessionID
 		ev.Error = err.Error()
-		return o.emit(ctx, out, ev)
+		return o.emitSlash(ctx, out, sessionID, ev)
 	}
 	if err := o.applyConfig(reloaded); err != nil {
 		ev := bridge.NewEvent(bridge.EventError)
 		ev.SessionID = sessionID
 		ev.Error = err.Error()
-		return o.emit(ctx, out, ev)
+		return o.emitSlash(ctx, out, sessionID, ev)
 	}
 	if info, _ := os.Stat(o.cfgPath); info != nil {
 		o.mu.Lock()
@@ -85,7 +85,7 @@ func (o *Orchestrator) handleSettingsPatch(ctx context.Context, out chan<- bridg
 	ev := bridge.NewEvent(bridge.EventResponseDelta)
 	ev.SessionID = sessionID
 	ev.Delta = fmt.Sprintf("config.json updated (%d top-level keys patched).", len(patch))
-	return o.emit(ctx, out, ev)
+	return o.emitSlash(ctx, out, sessionID, ev)
 }
 
 func settingsHelpEvent(sessionID string) bridge.StreamEvent {

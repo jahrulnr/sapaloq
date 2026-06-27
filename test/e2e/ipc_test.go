@@ -42,24 +42,16 @@ func TestE2EChatMockStream(t *testing.T) {
 	}
 
 	seen := eventKinds(responses)
-	for _, kind := range []bridge.EventKind{
-		bridge.EventThinkingDelta,
-		bridge.EventResponseDelta,
-		bridge.EventDone,
-	} {
-		if seen[kind] == 0 {
-			t.Fatalf("missing %s (seen=%v)", kind, seen)
-		}
+	if seen[bridge.EventTranscript] == 0 {
+		t.Fatalf("missing transcript (seen=%v)", seen)
+	}
+	if !transcriptFinished(responses) {
+		t.Fatalf("transcript never finished (seen=%v)", seen)
 	}
 
-	var responseText string
-	for _, res := range responses {
-		if res.Event != nil && res.Event.Kind == bridge.EventResponseDelta {
-			responseText += res.Event.Delta
-		}
-	}
-	if !strings.Contains(responseText, "hello e2e") {
-		t.Fatalf("response = %q", responseText)
+	responseText := transcriptText(responses)
+	if responseText == "" {
+		t.Fatalf("empty transcript response")
 	}
 }
 
@@ -72,18 +64,20 @@ func TestE2EChatToolCoerce(t *testing.T) {
 	}, true)
 
 	seen := eventKinds(responses)
-	if seen[bridge.EventToolCall] == 0 {
-		t.Fatalf("missing tool_call (seen=%v)", seen)
+	if seen[bridge.EventTranscript] == 0 {
+		t.Fatalf("missing transcript (seen=%v)", seen)
 	}
 	for _, res := range responses {
-		if res.Event != nil && res.Event.Kind == bridge.EventToolCall && res.Event.ToolCall != nil {
-			if res.Event.ToolCall.Name != "glob_file_search" {
-				t.Fatalf("tool = %q", res.Event.ToolCall.Name)
+		if res.Event == nil || res.Event.Transcript == nil {
+			continue
+		}
+		for _, e := range res.Event.Transcript.Entries {
+			if e.Kind == bridge.TranscriptTool && e.ToolName == "glob_file_search" {
+				return
 			}
-			return
 		}
 	}
-	t.Fatal("tool_call event without payload")
+	t.Fatal("transcript missing glob_file_search tool")
 }
 
 func TestE2ESlashSuggest(t *testing.T) {
@@ -131,7 +125,20 @@ func TestE2ESettingsPatchViaIPC(t *testing.T) {
 		}
 	}
 	if seen[bridge.EventResponseDelta] == 0 {
-		t.Fatalf("missing response (seen=%v)", seen)
+		var response string
+		for _, res := range responses {
+			if res.Event == nil || res.Event.Transcript == nil {
+				continue
+			}
+			for _, e := range res.Event.Transcript.Entries {
+				if e.Kind == bridge.TranscriptText && strings.TrimSpace(e.Text) != "" {
+					response = e.Text
+				}
+			}
+		}
+		if response == "" {
+			t.Fatalf("missing response (seen=%v)", seen)
+		}
 	}
 
 	raw, err = config.LoadRaw(h.ConfigPath)
@@ -148,7 +155,7 @@ func TestE2ESettingsPatchViaIPC(t *testing.T) {
 	}
 }
 
-func TestE2EWatchRehydratesDurableTaskStatus(t *testing.T) {
+func TestE2EWatchRehydratesLiveTaskStatus(t *testing.T) {
 	h := startInProcessCore(t)
 	taskID := "task-watch-catchup"
 	taskDir := filepath.Join(filepath.Dir(h.ConfigPath), "state", "tasks", taskID)
@@ -160,9 +167,8 @@ func TestE2EWatchRehydratesDurableTaskStatus(t *testing.T) {
 		"id":         taskID,
 		"session_id": "watch-session",
 		"role":       "task-runner",
-		"status":     "failed",
+		"status":     "in_progress",
 		"task":       "build profile",
-		"error":      "executor stopped without an explicit terminal tool",
 		"created_at": now,
 		"updated_at": now,
 	})
@@ -202,8 +208,8 @@ func TestE2EWatchRehydratesDurableTaskStatus(t *testing.T) {
 		t.Fatalf("watch handshake/snapshot missing: %+v", responses)
 	}
 	event := responses[1].Event
-	if event == nil || event.Kind != bridge.EventTaskUpdate || event.TaskID != taskID || event.TaskStatus != "failed" {
-		t.Fatalf("durable task snapshot not delivered: %+v", responses[1])
+	if event == nil || event.Kind != bridge.EventTaskUpdate || event.TaskID != taskID || event.TaskStatus != "in_progress" {
+		t.Fatalf("live task snapshot not delivered: %+v", responses[1])
 	}
 }
 

@@ -121,12 +121,19 @@ export async function refreshSlashSuggest() {
     entries = suggestions;
     activeIndex = 0;
     activeRange = { slashIndex: active.slashIndex, caret };
-    popover.innerHTML = suggestions
-      .map(
-        (entry) =>
-          `<button type="button" class="slash-item" data-prefix="${entry.prefix}"><strong>${entry.label}</strong><span>${entry.description}</span></button>`,
-      )
-      .join('');
+		popover.replaceChildren();
+		for (const entry of suggestions) {
+			const button = document.createElement('button');
+			button.type = 'button';
+			button.className = 'slash-item';
+			button.dataset.prefix = entry.prefix;
+			const label = document.createElement('strong');
+			label.textContent = entry.label;
+			const description = document.createElement('span');
+			description.textContent = entry.description;
+			button.append(label, description);
+			popover.append(button);
+		}
     popover.querySelectorAll<HTMLButtonElement>('.slash-item').forEach((button, index) => {
       button.addEventListener('mouseenter', () => {
         activeIndex = index;

@@ -152,6 +152,25 @@ func runChat(cfg config.Config, cfgPath string, message string) {
 			debug.Debugf("chat: event kind=%s session=%s", ev.Kind, ev.SessionID)
 		}
 		switch ev.Kind {
+		case bridge.EventTranscript:
+			if ev.Transcript == nil {
+				continue
+			}
+			for _, e := range ev.Transcript.Entries {
+				switch e.Kind {
+				case bridge.TranscriptThinking:
+					fmt.Printf("[thinking] %s\n", e.Text)
+				case bridge.TranscriptText:
+					fmt.Printf("[response] %s\n", e.Text)
+				case bridge.TranscriptTool:
+					fmt.Printf("[tool] %s\n", e.ToolName)
+				case bridge.TranscriptError:
+					fmt.Printf("[error] %s\n", e.Text)
+				}
+			}
+			if ev.Transcript.Finished {
+				fmt.Println("[done]")
+			}
 		case bridge.EventThinkingDelta:
 			fmt.Printf("[thinking] %s\n", ev.Delta)
 		case bridge.EventResponseDelta:

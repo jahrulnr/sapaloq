@@ -2,15 +2,15 @@ package chat
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 const defaultSessionID = "default"
@@ -25,6 +25,8 @@ type Turn struct {
 	TokenEstimate     int        `json:"token_estimate"`
 	IncludedInContext bool       `json:"included_in_context"`
 	CompactedAt       *time.Time `json:"compacted_at,omitempty"`
+	CheckpointIndex   int        `json:"checkpoint_index,omitempty"`
+	GenerationID      string     `json:"generation_id,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 }
 
@@ -41,370 +43,393 @@ type Usage struct {
 	LastCompactedAt string `json:"last_compacted_at,omitempty"`
 }
 
-// Store owns companion.db chat/session persistence. JSONL progress remains audit-only.
+// Store owns JSON/JSONL persistence under state/. Rollout JSONL is the canonical
+// audit stream for tool events; turns live in state/sessions/<id>/turns.json.
 type Store struct {
-	db *sql.DB
-	// ftsEnabled reports whether the SQLite build supports FTS5. When false,
-	// facts search degrades to a LIKE scan instead of a facts_fts MATCH.
-	ftsEnabled bool
+	paths storePaths
+	mu    sync.Mutex
+
+	nextFactID     int64
+	nextFeedbackID int64
+	nextLearningID int64
+	nextPrefetchID int64
+
+	facts         []Fact
+	learningQueue []LearningEvent
+	hotCache      map[string]hotCacheRecord
+	nodes         []Node
+	prefetchRules []PrefetchRule
+	skillsIndex   []SkillIndexEntry
+	promptSlices  []PromptSlice
 }
 
+// Open initializes the JSON-backed store. memoryDir is the legacy memory root
+// ({dataDir}/memory); state files live under {dataDir}/state.
 func Open(memoryDir string) (*Store, error) {
 	if memoryDir == "" {
 		return nil, errors.New("memory dir is required")
 	}
-	if err := os.MkdirAll(memoryDir, 0o755); err != nil {
+	paths := resolveStorePaths(memoryDir)
+	if err := paths.ensureAll(); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", filepath.Join(memoryDir, "companion.db"))
-	if err != nil {
-		return nil, err
+	s := &Store{
+		paths: paths, hotCache: make(map[string]hotCacheRecord),
+		nextFactID: 1, nextFeedbackID: 1, nextLearningID: 1, nextPrefetchID: 1,
 	}
-	s := &Store{db: db}
-	if err := s.migrate(context.Background()); err != nil {
-		_ = db.Close()
+	if err := s.loadAuxiliary(); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-func (s *Store) Close() error {
-	if s == nil || s.db == nil {
-		return nil
-	}
-	return s.db.Close()
-}
+func (s *Store) Close() error { return nil }
 
-func (s *Store) migrate(ctx context.Context) error {
-	stmts := []string{
-		`PRAGMA journal_mode=WAL`,
-		`CREATE TABLE IF NOT EXISTS chat_sessions (
-			id TEXT PRIMARY KEY,
-			namespace TEXT NOT NULL DEFAULT 'default',
-			provider TEXT,
-			model TEXT,
-			active INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			reset_at TEXT
-		)`,
-		`CREATE TABLE IF NOT EXISTS chat_turns (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			seq INTEGER NOT NULL,
-			role TEXT NOT NULL,
-			content TEXT NOT NULL,
-			token_estimate INTEGER NOT NULL DEFAULT 0,
-			included_in_context INTEGER NOT NULL DEFAULT 1,
-			compacted_at TEXT,
-			created_at TEXT NOT NULL,
-			FOREIGN KEY(session_id) REFERENCES chat_sessions(id)
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_chat_turns_session_seq ON chat_turns(session_id, seq)`,
-		`CREATE TABLE IF NOT EXISTS chat_events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			kind TEXT NOT NULL,
-			payload TEXT NOT NULL,
-			created_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS context_snapshots (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			used_tokens INTEGER NOT NULL,
-			context_window INTEGER NOT NULL,
-			percent INTEGER NOT NULL,
-			provider TEXT,
-			model TEXT,
-			created_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS compaction_runs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			summary_turn_id INTEGER,
-			compacted_turns INTEGER NOT NULL,
-			created_at TEXT NOT NULL
-		)`,
-		// facts is the durable "memory facts" store (canonical schema:
-		// migrations/001_initial.sql). It backs do_not_repeat feedback,
-		// preferences, skill triggers, and notes. Always created.
-		`CREATE TABLE IF NOT EXISTS facts (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			kind TEXT NOT NULL,
-			content TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
-		// feedback_events records explicit 👍/👎 reward signals from the user;
-		// a 👎 with a correction also writes a do_not_repeat fact (see
-		// feedback.go). turn_id is nullable for session-level feedback.
-		`CREATE TABLE IF NOT EXISTS feedback_events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			turn_id INTEGER,
-			signal TEXT NOT NULL,
-			reward REAL NOT NULL,
-			correction TEXT,
-			created_at TEXT NOT NULL
-		)`,
-		// nodes registers local + remote execution targets for sub-agents
-		// (see docs/NODES.md). A bootstrapped "local-default" row preserves the
-		// existing in-proc spawn behavior. Tokens are NEVER stored here - comm
-		// specs reference auth via ENV vars. share_memory is only honored for
-		// local nodes (remote always gets a bounded context packet).
-		`CREATE TABLE IF NOT EXISTS nodes (
-			name TEXT PRIMARY KEY,
-			role TEXT NOT NULL DEFAULT '*',
-			wrapper TEXT NOT NULL DEFAULT 'local',
-			address TEXT NOT NULL DEFAULT '',
-			communicate TEXT NOT NULL DEFAULT 'unix',
-			comm_spec_path TEXT NOT NULL DEFAULT '',
-			enabled INTEGER NOT NULL DEFAULT 1,
-			priority INTEGER NOT NULL DEFAULT 0,
-			capabilities TEXT NOT NULL DEFAULT '[]',
-			share_memory INTEGER NOT NULL DEFAULT 0,
-			last_seen_at TEXT NOT NULL DEFAULT '',
-			last_error TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role, enabled, priority DESC)`,
-		// skills_index is the SapaLOQ-local skills registry (id → triggers/path/
-		// max_tokens). Populated at boot from skills/*.md so the assembler reads
-		// paths from the index rather than walking the filesystem per turn.
-		`CREATE TABLE IF NOT EXISTS skills_index (
-			id TEXT PRIMARY KEY,
-			triggers TEXT NOT NULL DEFAULT '[]',
-			path TEXT NOT NULL DEFAULT '',
-			max_tokens INTEGER NOT NULL DEFAULT 0,
-			priority INTEGER NOT NULL DEFAULT 0,
-			updated_at TEXT NOT NULL
-		)`,
-		// prefetch_rules maps an intent to the fact kinds / skills / config keys
-		// the ingress pipeline should prefetch, plus bandit-style telemetry
-		// (hit_count/success_rate) that drives rule tuning.
-		`CREATE TABLE IF NOT EXISTS prefetch_rules (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			intent_pattern TEXT NOT NULL,
-			namespace TEXT NOT NULL DEFAULT 'default',
-			fact_kinds TEXT NOT NULL DEFAULT '[]',
-			skill_ids TEXT NOT NULL DEFAULT '[]',
-			config_keys TEXT NOT NULL DEFAULT '[]',
-			hit_count INTEGER NOT NULL DEFAULT 0,
-			success_count INTEGER NOT NULL DEFAULT 0,
-			success_rate REAL NOT NULL DEFAULT 0,
-			updated_at TEXT NOT NULL
-		)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_prefetch_rules_intent ON prefetch_rules(intent_pattern, namespace)`,
-		// prompt_slices indexes dynamic system-prompt templates (role +
-		// conditions + template_path), populated from prompt/slices/*.md at boot.
-		`CREATE TABLE IF NOT EXISTS prompt_slices (
-			id TEXT PRIMARY KEY,
-			role TEXT NOT NULL DEFAULT '',
-			conditions TEXT NOT NULL DEFAULT '{}',
-			template_path TEXT NOT NULL,
-			token_budget INTEGER NOT NULL DEFAULT 0,
-			updated_at TEXT NOT NULL
-		)`,
-		// learning_queue holds async learning events drained by the
-		// memory-janitor; rows with processed_at IS NULL are pending.
-		`CREATE TABLE IF NOT EXISTS learning_queue (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			event_kind TEXT NOT NULL,
-			payload TEXT NOT NULL DEFAULT '{}',
-			created_at TEXT NOT NULL,
-			processed_at TEXT
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_learning_queue_unprocessed ON learning_queue(processed_at, id)`,
-		// hot_cache is an optional restart warm-up / repeat-within-5-min serve,
-		// bounded by expires_at (expired rows pruned lazily on read).
-		`CREATE TABLE IF NOT EXISTS hot_cache (
-			cache_key TEXT PRIMARY KEY,
-			payload TEXT NOT NULL,
-			expires_at TEXT NOT NULL,
-			created_at TEXT NOT NULL
-		)`,
-		// prefetch_log is telemetry for prefetch rule tuning - one row per ingress.
-		`CREATE TABLE IF NOT EXISTS prefetch_log (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL DEFAULT '',
-			intent TEXT NOT NULL DEFAULT '',
-			confidence REAL NOT NULL DEFAULT 0,
-			deep_check_used INTEGER NOT NULL DEFAULT 0,
-			task_success INTEGER,
-			latency_ms INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT NOT NULL
-		)`,
+func (s *Store) loadAuxiliary() error {
+	if err := readJSONFile(s.paths.factsFile(), &s.facts); err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	for _, stmt := range stmts {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-			return err
+	for _, f := range s.facts {
+		if f.ID >= s.nextFactID {
+			s.nextFactID = f.ID + 1
 		}
 	}
-
-	// Context-SOP memory columns on facts (additive). The original schema was
-	// (kind, content, created_at); these let a fact be addressed as a typed,
-	// namespaced key/value with confidence + soft-delete (obsolete_at). An
-	// existing DB created before this change is upgraded here idempotently;
-	// a fresh DB also lands here (the CREATE TABLE above is the bare schema).
-	factCols := []struct{ name, ddl string }{
-		{"namespace", "namespace TEXT NOT NULL DEFAULT 'default'"},
-		{"key", "key TEXT"},
-		{"value", "value TEXT"},
-		{"confidence", "confidence REAL NOT NULL DEFAULT 1.0"},
-		{"obsolete_at", "obsolete_at TEXT"},
-		{"updated_at", "updated_at TEXT"},
+	if err := readJSONFile(s.paths.learningFile(), &s.learningQueue); err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	for _, c := range factCols {
-		if err := s.addColumnIfMissing(ctx, "facts", c.name, c.ddl); err != nil {
-			return err
+	for _, e := range s.learningQueue {
+		if e.ID >= s.nextLearningID {
+			s.nextLearningID = e.ID + 1
 		}
 	}
-	for _, stmt := range []string{
-		`CREATE INDEX IF NOT EXISTS idx_facts_namespace_kind ON facts(namespace, kind, obsolete_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_facts_key ON facts(namespace, kind, key)`,
-	} {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-			return err
+	var cache []hotCacheRecord
+	if err := readJSONFile(s.paths.hotCacheFile(), &cache); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, c := range cache {
+		s.hotCache[c.Key] = c
+	}
+	if err := readJSONFile(s.paths.nodesFile(), &s.nodes); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := readJSONFile(s.paths.prefetchRulesFile(), &s.prefetchRules); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, r := range s.prefetchRules {
+		if r.ID >= s.nextPrefetchID {
+			s.nextPrefetchID = r.ID + 1
 		}
 	}
-
-	// FTS5 is optional with the modernc.org/sqlite build. Probe for it; if
-	// available, create facts_fts + sync triggers (mirroring
-	// migrations/001_initial.sql) so SearchFacts can MATCH. Otherwise leave
-	// ftsEnabled false and degrade to a LIKE scan - never hard-fail Open.
-	s.ftsEnabled = s.probeFTS5(ctx)
-	if s.ftsEnabled {
-		// Whether facts_fts already existed before this Open. When it didn't but
-		// the facts table already holds rows (legacy DB, or facts written on a
-		// build without FTS5), the inverted index would be empty/stale and the
-		// sync triggers only fire on future writes - so we must rebuild it from
-		// the content table. A COUNT(*) on an external-content FTS table reflects
-		// the content table, not the index, so it can't be used to detect this.
-		ftsExisted := s.tableExists(ctx, "facts_fts")
-		ftsStmts := []string{
-			`CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(content, content='facts', content_rowid='id')`,
-			`CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
-				INSERT INTO facts_fts(rowid, content) VALUES (new.id, new.content);
-			END`,
-			`CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-				INSERT INTO facts_fts(facts_fts, rowid, content) VALUES('delete', old.id, old.content);
-			END`,
-			`CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-				INSERT INTO facts_fts(facts_fts, rowid, content) VALUES('delete', old.id, old.content);
-				INSERT INTO facts_fts(rowid, content) VALUES (new.id, new.content);
-			END`,
-		}
-		for _, stmt := range ftsStmts {
-			if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-				// FTS5 probe passed but creation failed: degrade gracefully
-				// rather than failing Open.
-				s.ftsEnabled = false
-				break
-			}
-		}
-		// Backfill: if facts_fts was created fresh this Open but the facts table
-		// already had rows, the inverted index is empty (triggers only fire on
-		// future writes). Rebuild it from the content table so legacy rows are
-		// searchable. On a DB where facts_fts already existed this is skipped.
-		if s.ftsEnabled && !ftsExisted {
-			var factCount int
-			_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM facts`).Scan(&factCount)
-			if factCount > 0 {
-				if _, err := s.db.ExecContext(ctx, `INSERT INTO facts_fts(facts_fts) VALUES('rebuild')`); err != nil {
-					// A failed rebuild shouldn't break Open; SearchFacts still
-					// has the LIKE fallback for misses.
-					s.ftsEnabled = false
-				}
-			}
+	if err := readJSONFile(s.paths.skillsIndexFile(), &s.skillsIndex); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := readJSONFile(s.paths.promptSlicesFile(), &s.promptSlices); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	feedback, err := loadJSONLines[feedbackRecord](s.paths.feedbackFile())
+	if err != nil {
+		return err
+	}
+	for _, fb := range feedback {
+		if fb.ID >= s.nextFeedbackID {
+			s.nextFeedbackID = fb.ID + 1
 		}
 	}
 	return nil
 }
 
-// addColumnIfMissing runs `ALTER TABLE <table> ADD COLUMN <ddl>` only when the
-// column is not already present, so the additive migration is idempotent across
-// boots and safe on a DB created before the column existed. SQLite has no
-// `ADD COLUMN IF NOT EXISTS`, so presence is checked via PRAGMA table_info.
-func (s *Store) addColumnIfMissing(ctx context.Context, table, column, ddl string) error {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			cid        int
-			name       string
-			ctype      string
-			notnull    int
-			dfltValue  sql.NullString
-			primaryKey int
-		)
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &primaryKey); err != nil {
-			return err
-		}
-		if name == column {
-			return rows.Close()
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	_ = rows.Close()
-	_, err = s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, ddl))
-	return err
+func (s *Store) saveFacts() error {
+	return writeJSONFileAtomic(s.paths.factsFile(), s.facts)
 }
 
-// tableExists reports whether a table (or virtual table) with the given name is
-// registered in sqlite_master.
-func (s *Store) tableExists(ctx context.Context, name string) bool {
-	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n)
-	return err == nil && n > 0
+func (s *Store) saveLearning() error {
+	return writeJSONFileAtomic(s.paths.learningFile(), s.learningQueue)
 }
 
-// probeFTS5 reports whether the underlying SQLite build supports FTS5. It
-// creates a throwaway virtual table inside a transaction and rolls back so no
-// schema side effects leak.
-func (s *Store) probeFTS5(ctx context.Context) bool {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false
+func (s *Store) saveHotCache() error {
+	cache := make([]hotCacheRecord, 0, len(s.hotCache))
+	for _, c := range s.hotCache {
+		cache = append(cache, c)
 	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `CREATE VIRTUAL TABLE _fts_probe USING fts5(x)`); err != nil {
-		return false
+	return writeJSONFileAtomic(s.paths.hotCacheFile(), cache)
+}
+
+func (s *Store) saveNodes() error {
+	return writeJSONFileAtomic(s.paths.nodesFile(), s.nodes)
+}
+
+func (s *Store) savePrefetchRules() error {
+	return writeJSONFileAtomic(s.paths.prefetchRulesFile(), s.prefetchRules)
+}
+
+func (s *Store) saveSkillsIndex() error {
+	return writeJSONFileAtomic(s.paths.skillsIndexFile(), s.skillsIndex)
+}
+
+func (s *Store) savePromptSlices() error {
+	return writeJSONFileAtomic(s.paths.promptSlicesFile(), s.promptSlices)
+}
+
+func (s *Store) loadSessionsIndex() (sessionsIndex, error) {
+	var idx sessionsIndex
+	err := readJSONFile(s.paths.sessionsIndex(), &idx)
+	if os.IsNotExist(err) {
+		return sessionsIndex{}, nil
 	}
-	return true
+	return idx, err
+}
+
+func (s *Store) saveSessionsIndex(idx sessionsIndex) error {
+	return writeJSONFileAtomic(s.paths.sessionsIndex(), idx)
+}
+
+func (s *Store) loadSessionTurns(sessionID string) ([]Turn, error) {
+	var turns []Turn
+	err := readJSONFile(s.paths.sessionTurns(sessionID), &turns)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return turns, err
+}
+
+func (s *Store) saveSessionTurns(sessionID string, turns []Turn) error {
+	if err := ensureDir(s.paths.sessionDir(sessionID)); err != nil {
+		return err
+	}
+	return writeJSONFileAtomic(s.paths.sessionTurns(sessionID), turns)
+}
+
+func (s *Store) loadSessionCheckpoints(sessionID string) ([]compactionRecord, error) {
+	var ckpts []compactionRecord
+	err := readJSONFile(s.paths.sessionCheckpoints(sessionID), &ckpts)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return ckpts, err
+}
+
+func (s *Store) saveSessionCheckpoints(sessionID string, ckpts []compactionRecord) error {
+	if err := ensureDir(s.paths.sessionDir(sessionID)); err != nil {
+		return err
+	}
+	return writeJSONFileAtomic(s.paths.sessionCheckpoints(sessionID), ckpts)
 }
 
 func (s *Store) ActiveSession(ctx context.Context, provider, model string) (string, error) {
-	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM chat_sessions WHERE active=1 ORDER BY updated_at DESC LIMIT 1`).Scan(&id)
-	if err == nil {
-		return id, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
-	}
-	return s.Reset(ctx, provider, model)
-}
-
-func (s *Store) Reset(ctx context.Context, provider, model string) (string, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	id := fmt.Sprintf("chat-%d", time.Now().UTC().UnixNano())
-	tx, err := s.db.BeginTx(ctx, nil)
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx, err := s.loadSessionsIndex()
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET active=0, reset_at=?, updated_at=? WHERE active=1`, now, now); err != nil {
+	for i := range idx.Sessions {
+		if idx.Sessions[i].Active {
+			return idx.Sessions[i].ID, nil
+		}
+	}
+	return s.resetLocked(provider, model)
+}
+
+func (s *Store) Reset(ctx context.Context, provider, model string) (string, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resetLocked(provider, model)
+}
+
+func (s *Store) resetLocked(provider, model string) (string, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	id := fmt.Sprintf("chat-%d", time.Now().UTC().UnixNano())
+	idx, err := s.loadSessionsIndex()
+	if err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(id, namespace, provider, model, active, created_at, updated_at, reset_at) VALUES (?, 'default', ?, ?, 1, ?, ?, ?)`, id, provider, model, now, now, now); err != nil {
+	for i := range idx.Sessions {
+		if idx.Sessions[i].Active {
+			idx.Sessions[i].Active = false
+			idx.Sessions[i].ResetAt = now
+			idx.Sessions[i].UpdatedAt = now
+		}
+	}
+	idx.Sessions = append(idx.Sessions, sessionRecord{
+		ID: id, Namespace: "default", Provider: provider, Model: model,
+		Active: true, CreatedAt: now, UpdatedAt: now, ResetAt: now,
+	})
+	if err := s.saveSessionsIndex(idx); err != nil {
 		return "", err
 	}
-	return id, tx.Commit()
+	if err := s.saveSessionTurns(id, nil); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (s *Store) ClearSession(ctx context.Context, sessionID string) error {
+	_ = ctx
+	if sessionID == "" {
+		return errors.New("session id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	idx, err := s.loadSessionsIndex()
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range idx.Sessions {
+		if idx.Sessions[i].ID == sessionID {
+			idx.Sessions[i].UpdatedAt = now
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("session %q not found", sessionID)
+	}
+	if err := s.saveSessionsIndex(idx); err != nil {
+		return err
+	}
+	if err := s.saveSessionTurns(sessionID, nil); err != nil {
+		return err
+	}
+	return s.saveSessionCheckpoints(sessionID, nil)
+}
+
+func (s *Store) DeleteSession(ctx context.Context, sessionID string) error {
+	_ = ctx
+	if sessionID == "" {
+		return errors.New("session id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx, err := s.loadSessionsIndex()
+	if err != nil {
+		return err
+	}
+	var kept []sessionRecord
+	for _, rec := range idx.Sessions {
+		if rec.ID != sessionID {
+			kept = append(kept, rec)
+		}
+	}
+	idx.Sessions = kept
+	if err := s.saveSessionsIndex(idx); err != nil {
+		return err
+	}
+	_ = os.RemoveAll(s.paths.sessionDir(sessionID))
+	_ = os.Remove(s.paths.rolloutFile(sessionID))
+	return nil
+}
+
+type SessionSummary struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Active    bool   `json:"active"`
+	TurnCount int    `json:"turn_count"`
+	UpdatedAt string `json:"updated_at"`
+	CreatedAt string `json:"created_at"`
+}
+
+func (s *Store) ListSessions(ctx context.Context, limit int) ([]SessionSummary, error) {
+	_ = ctx
+	if limit <= 0 {
+		limit = 50
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx, err := s.loadSessionsIndex()
+	if err != nil {
+		return nil, err
+	}
+	recs := append([]sessionRecord(nil), idx.Sessions...)
+	sort.Slice(recs, func(i, j int) bool {
+		if recs[i].Active != recs[j].Active {
+			return recs[i].Active
+		}
+		return recs[i].UpdatedAt > recs[j].UpdatedAt
+	})
+	if len(recs) > limit {
+		recs = recs[:limit]
+	}
+	out := make([]SessionSummary, 0, len(recs))
+	for _, rec := range recs {
+		title, count, derr := s.sessionTitleAndCountLocked(rec.ID)
+		if derr != nil {
+			return nil, derr
+		}
+		out = append(out, SessionSummary{
+			ID: rec.ID, Title: title, Active: rec.Active,
+			TurnCount: count, UpdatedAt: rec.UpdatedAt, CreatedAt: rec.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+func (s *Store) sessionTitleAndCountLocked(sessionID string) (string, int, error) {
+	turns, err := s.loadSessionTurns(sessionID)
+	if err != nil {
+		return "", 0, err
+	}
+	count := 0
+	var firstUser string
+	for _, t := range turns {
+		switch t.Role {
+		case "user", "assistant", "error":
+			count++
+		}
+		if firstUser == "" && t.Role == "user" {
+			firstUser = t.Content
+		}
+	}
+	return summarizeTitle(firstUser), count, nil
+}
+
+func summarizeTitle(content string) string {
+	line := strings.TrimSpace(content)
+	if line == "" {
+		return ""
+	}
+	if idx := strings.IndexAny(line, "\r\n"); idx >= 0 {
+		line = strings.TrimSpace(line[:idx])
+	}
+	const maxLen = 48
+	if len([]rune(line)) > maxLen {
+		runes := []rune(line)
+		line = strings.TrimSpace(string(runes[:maxLen])) + "…"
+	}
+	return line
+}
+
+func (s *Store) Activate(ctx context.Context, sessionID string) error {
+	_ = ctx
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return errors.New("session id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx, err := s.loadSessionsIndex()
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range idx.Sessions {
+		if idx.Sessions[i].ID == sessionID {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("session %q not found", sessionID)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for i := range idx.Sessions {
+		idx.Sessions[i].Active = idx.Sessions[i].ID == sessionID
+		if idx.Sessions[i].Active {
+			idx.Sessions[i].UpdatedAt = now
+		}
+	}
+	return s.saveSessionsIndex(idx)
 }
 
 func (s *Store) AppendTurn(ctx context.Context, sessionID, role, content string, tokenEstimate int) error {
@@ -412,189 +437,436 @@ func (s *Store) AppendTurn(ctx context.Context, sessionID, role, content string,
 	return err
 }
 
+// AppendAutopilotTurn records a tool-less autopilot nudge for usage/UI accounting
+// without counting it toward compaction headroom (IncludedInContext: false).
+func (s *Store) AppendAutopilotTurn(ctx context.Context, sessionID, content string, tokenEstimate int) error {
+	_, err := s.AppendTurnIDWithFlags(ctx, sessionID, "autopilot", content, tokenEstimate, "", false)
+	return err
+}
+
 func (s *Store) AppendTurnID(ctx context.Context, sessionID, role, content string, tokenEstimate int) (int64, error) {
+	return s.AppendTurnIDWithGeneration(ctx, sessionID, role, content, tokenEstimate, "")
+}
+
+func (s *Store) AppendTurnIDWithGeneration(ctx context.Context, sessionID, role, content string, tokenEstimate int, generationID string) (int64, error) {
+	return s.AppendTurnIDWithFlags(ctx, sessionID, role, content, tokenEstimate, generationID, true)
+}
+
+func (s *Store) AppendTurnIDWithFlags(ctx context.Context, sessionID, role, content string, tokenEstimate int, generationID string, includedInContext bool) (int64, error) {
+	_ = ctx
 	if strings.TrimSpace(content) == "" {
 		return 0, nil
 	}
 	if sessionID == "" {
 		sessionID = defaultSessionID
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns, err := s.loadSessionTurns(sessionID)
+	if err != nil {
+		return 0, err
+	}
+	seq := 0
+	var maxID int64
+	for _, t := range turns {
+		if t.Seq > seq {
+			seq = t.Seq
+		}
+		if t.ID > maxID {
+			maxID = t.ID
+		}
+	}
+	seq++
+	id := maxID + 1
+	now := time.Now().UTC()
+	turns = append(turns, Turn{
+		ID: id, SessionID: sessionID, Seq: seq, Role: role, Content: content,
+		TokenEstimate: tokenEstimate, IncludedInContext: includedInContext, GenerationID: generationID,
+		CreatedAt: now,
+	})
+	if err := s.saveSessionTurns(sessionID, turns); err != nil {
+		return 0, err
+	}
+	if err := s.touchSessionLocked(sessionID); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func (s *Store) touchSessionLocked(sessionID string) error {
+	idx, err := s.loadSessionsIndex()
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
+	for i := range idx.Sessions {
+		if idx.Sessions[i].ID == sessionID {
+			idx.Sessions[i].UpdatedAt = now
+			return s.saveSessionsIndex(idx)
+		}
 	}
-	defer tx.Rollback()
-	var seq int
-	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_turns WHERE session_id=?`, sessionID).Scan(&seq)
-	res, err := tx.ExecContext(ctx, `INSERT INTO chat_turns(session_id, seq, role, content, token_estimate, included_in_context, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`, sessionID, seq, role, content, tokenEstimate, now)
-	if err != nil {
-		return 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET updated_at=? WHERE id=?`, now, sessionID); err != nil {
-		return 0, err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
-	return id, tx.Commit()
+	return nil
 }
 
 func (s *Store) Turn(ctx context.Context, sessionID string, turnID int64) (Turn, error) {
-	var t Turn
-	var included int
-	var compacted sql.NullString
-	var created string
-	err := s.db.QueryRowContext(ctx, `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, created_at
-		FROM chat_turns WHERE session_id=? AND id=?`, sessionID, turnID).
-		Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &created)
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns, err := s.loadSessionTurns(sessionID)
 	if err != nil {
 		return Turn{}, err
 	}
-	t.IncludedInContext = included == 1
-	if compacted.Valid && compacted.String != "" {
-		if parsed, parseErr := time.Parse(time.RFC3339Nano, compacted.String); parseErr == nil {
-			t.CompactedAt = &parsed
+	for _, t := range turns {
+		if t.ID == turnID {
+			return t, nil
 		}
 	}
-	if parsed, parseErr := time.Parse(time.RFC3339Nano, created); parseErr == nil {
-		t.CreatedAt = parsed
-	}
-	return t, nil
+	return Turn{}, fmt.Errorf("turn %d not found", turnID)
 }
 
-// DeleteFromTurn deletes the selected turn and every later turn in its linear
-// branch. Earlier conversation remains intact.
 func (s *Store) DeleteFromTurn(ctx context.Context, sessionID string, turnID int64) error {
 	return s.deleteRelativeToTurn(ctx, sessionID, turnID, true)
 }
 
-// DeleteAfterTurn keeps the selected turn and removes only its descendants.
-// Retry uses this so the original user message is regenerated in place.
 func (s *Store) DeleteAfterTurn(ctx context.Context, sessionID string, turnID int64) error {
 	return s.deleteRelativeToTurn(ctx, sessionID, turnID, false)
 }
 
 func (s *Store) deleteRelativeToTurn(ctx context.Context, sessionID string, turnID int64, inclusive bool) error {
-	turn, err := s.Turn(ctx, sessionID, turnID)
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns, err := s.loadSessionTurns(sessionID)
 	if err != nil {
 		return err
 	}
-	op := ">"
-	if inclusive {
-		op = ">="
+	var target *Turn
+	for i := range turns {
+		if turns[i].ID == turnID {
+			target = &turns[i]
+			break
+		}
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
+	if target == nil {
+		return fmt.Errorf("turn %d not found", turnID)
+	}
+	var kept []Turn
+	for _, t := range turns {
+		if inclusive {
+			if t.Seq < target.Seq {
+				kept = append(kept, t)
+			}
+		} else if t.Seq <= target.Seq {
+			kept = append(kept, t)
+		}
+	}
+	if err := s.saveSessionTurns(sessionID, kept); err != nil {
 		return err
 	}
-	defer tx.Rollback()
-	query := `DELETE FROM chat_turns WHERE session_id=? AND seq ` + op + ` ?`
-	if _, err := tx.ExecContext(ctx, query, sessionID, turn.Seq); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET updated_at=? WHERE id=?`, now, sessionID); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.touchSessionLocked(sessionID)
 }
 
 func (s *Store) ActiveTurns(ctx context.Context, sessionID string, includeCompacted bool) ([]Turn, error) {
-	query := `SELECT id, session_id, seq, role, content, token_estimate, included_in_context, compacted_at, created_at FROM chat_turns WHERE session_id=?`
-	if !includeCompacted {
-		query += ` AND included_in_context=1`
-	}
-	query += ` ORDER BY seq ASC`
-	rows, err := s.db.QueryContext(ctx, query, sessionID)
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns, err := s.loadSessionTurns(sessionID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Turn
-	for rows.Next() {
-		var t Turn
-		var included int
-		var compacted sql.NullString
-		var created string
-		if err := rows.Scan(&t.ID, &t.SessionID, &t.Seq, &t.Role, &t.Content, &t.TokenEstimate, &included, &compacted, &created); err != nil {
-			return nil, err
-		}
-		t.IncludedInContext = included == 1
-		if compacted.Valid && compacted.String != "" {
-			if parsed, err := time.Parse(time.RFC3339Nano, compacted.String); err == nil {
-				t.CompactedAt = &parsed
-			}
-		}
-		if parsed, err := time.Parse(time.RFC3339Nano, created); err == nil {
-			t.CreatedAt = parsed
-		}
-		out = append(out, t)
+	if includeCompacted {
+		return append([]Turn(nil), turns...), nil
 	}
-	return out, rows.Err()
+	var out []Turn
+	for _, t := range turns {
+		if t.IncludedInContext {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) Compact(ctx context.Context, sessionID string, keepRecent int, summary string, estimate func(string) int) (int, error) {
 	if keepRecent < 2 {
 		keepRecent = 2
 	}
-	turns, err := s.ActiveTurns(ctx, sessionID, false)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns, err := s.loadSessionTurns(sessionID)
 	if err != nil {
 		return 0, err
 	}
-	if len(turns) <= keepRecent+1 {
-		return 0, nil
-	}
-	cutoff := len(turns) - keepRecent
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	for _, t := range turns[:cutoff] {
-		if _, err := tx.ExecContext(ctx, `UPDATE chat_turns SET included_in_context=0, compacted_at=? WHERE id=?`, now, t.ID); err != nil {
-			return 0, err
+	var active []Turn
+	for _, t := range turns {
+		if t.IncludedInContext {
+			active = append(active, t)
 		}
 	}
-	var seq int
-	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_turns WHERE session_id=?`, sessionID).Scan(&seq)
-	res, err := tx.ExecContext(ctx, `INSERT INTO chat_turns(session_id, seq, role, content, token_estimate, included_in_context, created_at) VALUES (?, ?, 'system', ?, ?, 1, ?)`, sessionID, seq, summary, estimate(summary), now)
+	if len(active) <= keepRecent+1 {
+		return 0, nil
+	}
+	cutoff := len(active) - keepRecent
+	now := time.Now().UTC()
+	archiveIDs := make(map[int64]bool)
+	for _, t := range active[:cutoff] {
+		archiveIDs[t.ID] = true
+	}
+	for i := range turns {
+		if archiveIDs[turns[i].ID] {
+			turns[i].IncludedInContext = false
+			turns[i].CompactedAt = &now
+		}
+	}
+	seq := 0
+	var maxID int64
+	for _, t := range turns {
+		if t.Seq > seq {
+			seq = t.Seq
+		}
+		if t.ID > maxID {
+			maxID = t.ID
+		}
+	}
+	seq++
+	summaryID := maxID + 1
+	turns = append(turns, Turn{
+		ID: summaryID, SessionID: sessionID, Seq: seq, Role: "system", Content: summary,
+		TokenEstimate: estimate(summary), IncludedInContext: true, CreatedAt: now,
+	})
+	ckpts, _ := s.loadSessionCheckpoints(sessionID)
+	ckpts = append(ckpts, compactionRecord{
+		SummaryTurnID: summaryID, CompactedTurns: cutoff, CreatedAt: now.Format(time.RFC3339Nano),
+	})
+	if err := s.saveSessionTurns(sessionID, turns); err != nil {
+		return 0, err
+	}
+	if err := s.saveSessionCheckpoints(sessionID, ckpts); err != nil {
+		return 0, err
+	}
+	return cutoff, s.touchSessionLocked(sessionID)
+}
+
+type Checkpoint struct {
+	Index           int       `json:"index"`
+	SummaryTurnID   int64     `json:"summary_turn_id"`
+	Summary         string    `json:"summary"`
+	Reason          string    `json:"reason"`
+	CompactedTurns  int       `json:"compacted_turns"`
+	TailStartTurnID int64     `json:"tail_start_turn_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+type CheckpointResult struct {
+	Index           int    `json:"index"`
+	SummaryTurnID   int64  `json:"summary_turn_id"`
+	Reason          string `json:"reason"`
+	CompactedTurns  int    `json:"compacted_turns"`
+	TailStartTurnID int64  `json:"tail_start_turn_id,omitempty"`
+}
+
+type TailPolicy struct {
+	ArchiveTurnIDs  []int64
+	TailStartTurnID int64
+}
+
+func (s *Store) CreateCheckpoint(ctx context.Context, sessionID, summary, reason string, tail TailPolicy, estimate func(string) int) (CheckpointResult, error) {
+	_ = ctx
+	if sessionID == "" {
+		sessionID = defaultSessionID
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns, err := s.loadSessionTurns(sessionID)
 	if err != nil {
-		return 0, err
+		return CheckpointResult{}, err
 	}
-	summaryID, _ := res.LastInsertId()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO compaction_runs(session_id, summary_turn_id, compacted_turns, created_at) VALUES (?, ?, ?, ?)`, sessionID, summaryID, cutoff, now); err != nil {
-		return 0, err
+	ckpts, err := s.loadSessionCheckpoints(sessionID)
+	if err != nil {
+		return CheckpointResult{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE chat_sessions SET updated_at=? WHERE id=?`, now, sessionID); err != nil {
-		return 0, err
+	nextIndex := 1
+	for _, c := range ckpts {
+		if c.CheckpointIndex >= nextIndex {
+			nextIndex = c.CheckpointIndex + 1
+		}
 	}
-	return cutoff, tx.Commit()
+	now := time.Now().UTC()
+	archive := make(map[int64]bool)
+	for _, id := range tail.ArchiveTurnIDs {
+		archive[id] = true
+	}
+	archived := 0
+	for i := range turns {
+		if archive[turns[i].ID] {
+			turns[i].IncludedInContext = false
+			turns[i].CompactedAt = &now
+			archived++
+		}
+	}
+	seq, maxID := maxSeqID(turns)
+	seq++
+	summaryID := maxID + 1
+	turns = append(turns, Turn{
+		ID: summaryID, SessionID: sessionID, Seq: seq, Role: "checkpoint", Content: summary,
+		TokenEstimate: estimate(summary), IncludedInContext: true, CheckpointIndex: nextIndex,
+		CreatedAt: now,
+	})
+	ckpts = append(ckpts, compactionRecord{
+		CheckpointIndex: nextIndex, SummaryTurnID: summaryID, CompactedTurns: archived,
+		Reason: reason, TailStartTurnID: tail.TailStartTurnID, CreatedAt: now.Format(time.RFC3339Nano),
+	})
+	if err := s.saveSessionTurns(sessionID, turns); err != nil {
+		return CheckpointResult{}, err
+	}
+	if err := s.saveSessionCheckpoints(sessionID, ckpts); err != nil {
+		return CheckpointResult{}, err
+	}
+	_ = s.touchSessionLocked(sessionID)
+	return CheckpointResult{
+		Index: nextIndex, SummaryTurnID: summaryID, Reason: reason,
+		CompactedTurns: archived, TailStartTurnID: tail.TailStartTurnID,
+	}, nil
+}
+
+func maxSeqID(turns []Turn) (seq int, maxID int64) {
+	for _, t := range turns {
+		if t.Seq > seq {
+			seq = t.Seq
+		}
+		if t.ID > maxID {
+			maxID = t.ID
+		}
+	}
+	return seq, maxID
+}
+
+func (s *Store) LatestCheckpoint(ctx context.Context, sessionID string) (Checkpoint, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ckpts, err := s.loadSessionCheckpoints(sessionID)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	if len(ckpts) == 0 {
+		return Checkpoint{}, errors.New("no checkpoint")
+	}
+	last := ckpts[len(ckpts)-1]
+	for i := range ckpts {
+		if ckpts[i].CheckpointIndex > last.CheckpointIndex {
+			last = ckpts[i]
+		}
+	}
+	turns, _ := s.loadSessionTurns(sessionID)
+	var summary string
+	for _, t := range turns {
+		if t.ID == last.SummaryTurnID {
+			summary = t.Content
+			break
+		}
+	}
+	created, _ := time.Parse(time.RFC3339Nano, last.CreatedAt)
+	return Checkpoint{
+		Index: last.CheckpointIndex, SummaryTurnID: last.SummaryTurnID, Summary: summary,
+		Reason: last.Reason, CompactedTurns: last.CompactedTurns, TailStartTurnID: last.TailStartTurnID,
+		CreatedAt: created,
+	}, nil
+}
+
+func (s *Store) Checkpoints(ctx context.Context, sessionID string) ([]Checkpoint, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ckpts, err := s.loadSessionCheckpoints(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(ckpts, func(i, j int) bool {
+		return ckpts[i].CheckpointIndex < ckpts[j].CheckpointIndex
+	})
+	var out []Checkpoint
+	for _, c := range ckpts {
+		created, _ := time.Parse(time.RFC3339Nano, c.CreatedAt)
+		out = append(out, Checkpoint{
+			Index: c.CheckpointIndex, SummaryTurnID: c.SummaryTurnID,
+			Reason: c.Reason, CompactedTurns: c.CompactedTurns, TailStartTurnID: c.TailStartTurnID,
+			CreatedAt: created,
+		})
+	}
+	return out, nil
 }
 
 func (s *Store) Usage(ctx context.Context, sessionID, provider, model string, contextWindow int) (Usage, error) {
-	turns, err := s.ActiveTurns(ctx, sessionID, false)
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns, err := s.loadSessionTurns(sessionID)
 	if err != nil {
-		return Usage{}, err
+		return Usage{SessionID: sessionID, ContextWindow: contextWindow, Provider: provider, Model: model}, err
 	}
 	used := 0
+	active := 0
 	for _, t := range turns {
-		used += t.TokenEstimate
+		if t.IncludedInContext {
+			used += t.TokenEstimate
+			active++
+		}
 	}
-	var compacted int
+	ckpts, _ := s.loadSessionCheckpoints(sessionID)
+	compacted := 0
 	var last string
-	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(compacted_turns), 0), COALESCE(MAX(created_at), '') FROM compaction_runs WHERE session_id=?`, sessionID).Scan(&compacted, &last)
+	for _, c := range ckpts {
+		compacted += c.CompactedTurns
+		if c.CreatedAt > last {
+			last = c.CreatedAt
+		}
+	}
 	percent := 0
 	if contextWindow > 0 {
 		percent = (used * 100) / contextWindow
 	}
-	return Usage{SessionID: sessionID, UsedTokens: used, ContextWindow: contextWindow, Percent: percent, Provider: provider, Model: model, CompactedTurns: compacted, ActiveTurns: len(turns), LastCompactedAt: last}, nil
+	return Usage{
+		SessionID: sessionID, UsedTokens: used, ContextWindow: contextWindow, Percent: percent,
+		Provider: provider, Model: model, CompactedTurns: compacted, ActiveTurns: active, LastCompactedAt: last,
+	}, nil
 }
 
 func (s *Store) SnapshotUsage(ctx context.Context, usage Usage) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO context_snapshots(session_id, used_tokens, context_window, percent, provider, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, usage.SessionID, usage.UsedTokens, usage.ContextWindow, usage.Percent, usage.Provider, usage.Model, now)
-	return err
+	_ = ctx
+	rec := struct {
+		Usage
+		CreatedAt string `json:"created_at"`
+	}{Usage: usage, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	return appendJSONL(s.paths.sessionUsage(usage.SessionID), rec)
+}
+
+// RewriteRollout atomically rewrites a session rollout file (used by compaction).
+func (s *Store) RewriteRollout(sessionID string, lines []json.RawMessage) error {
+	path := s.paths.rolloutFile(sessionID)
+	mu := lockPath(path)
+	defer mu()
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	for _, line := range lines {
+		if _, err := f.Write(append(line, '\n')); err != nil {
+			f.Close()
+			_ = os.Remove(tmp)
+			return err
+		}
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

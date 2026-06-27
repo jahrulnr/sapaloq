@@ -3,8 +3,6 @@
 // off the bootstrap sequence (history restore, context usage, ping loop). All
 // behaviour lives in the focused modules imported below.
 import './style.css';
-import { ContextUsage } from '../wailsjs/go/main/App';
-import type { ChatUsage } from './core/types';
 import { ComposeBox } from './ui/compose';
 import { APP_TEMPLATE } from './ui/template';
 import { getComposeInput } from './ui/dom';
@@ -16,14 +14,23 @@ import {
   setExpanded,
   toggleExpanded,
 } from './ui/window-layout';
-import { cycleRingState, renderUsage, runPing, startPingLoop } from './features/connection';
+import { cycleRingState, refreshUsage, runPing, startPingLoop } from './features/connection';
 import { autosizeCompose, toggleComposeExpand } from './ui/compose-ui';
 import { closeMessageMenu } from './features/messages';
 import { refreshSlashSuggest, slashKeydown } from './features/slash';
 import { addClipboardItems, addFiles } from './features/attachments';
 import { initDragAndDrop } from './features/drag-overlay';
 import { initChatController, stopActiveResponse, submitMessage } from './features/chat-controller';
-import { restoreChatHistory } from './features/history';
+import {
+  closeHistoryMenu,
+  isHistoryMenuOpen,
+  loadSessionList,
+  restoreChatHistory,
+  startNewSession,
+  switchSession,
+  deleteSessionRoom,
+  toggleHistoryMenu,
+} from './features/history';
 import { startRuntimeStatusLoop } from './features/runtime-status';
 
 document.querySelector('#app')!.innerHTML = APP_TEMPLATE;
@@ -47,6 +54,42 @@ document.getElementById('orb')?.addEventListener('click', (e) => {
 });
 document.getElementById('btn-close')?.addEventListener('click', () => void setExpanded(false));
 document.getElementById('btn-resize')?.addEventListener('click', () => void cyclePanelSize());
+
+// --- Chat history switcher ------------------------------------------------
+
+document.getElementById('btn-history')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  void toggleHistoryMenu();
+});
+document.getElementById('btn-new-chat')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  void startNewSession();
+});
+document.getElementById('history-new')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  void startNewSession();
+});
+document.getElementById('history-list')?.addEventListener('click', (e) => {
+  const target = e.target as HTMLElement | null;
+  const deleteBtn = target?.closest<HTMLElement>('.history-item-delete');
+  if (deleteBtn) {
+    e.stopPropagation();
+    void deleteSessionRoom(deleteBtn.dataset.sessionId || '');
+    return;
+  }
+  const item = target?.closest<HTMLElement>('.history-item-body');
+  if (!item) return;
+  const row = item.closest<HTMLElement>('.history-item');
+  e.stopPropagation();
+  void switchSession(row?.dataset.sessionId || '');
+});
+// Close the dropdown on any outside click.
+document.addEventListener('click', (event) => {
+  if (!isHistoryMenuOpen()) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('#history-menu') || target?.closest('#btn-history')) return;
+  closeHistoryMenu();
+});
 document.getElementById('orb')?.addEventListener('dblclick', (e) => {
   e.preventDefault();
   if (clickTimer) {
@@ -114,7 +157,24 @@ initDragAndDrop();
 
 // --- Bootstrap ------------------------------------------------------------
 
-void restoreChatHistory();
-void ContextUsage().then((usage) => renderUsage(usage as ChatUsage)).catch(() => undefined);
+// WebKitGTK can freeze controls created inside a display:none popup at 0x0.
+// Hydrate the transcript only after the first real expansion, when the window
+// and message-list have measurable dimensions. Retry on a later expansion if
+// the core was not ready yet.
+let visibleHistoryHydrated = false;
+let visibleHistoryHydrating = false;
+window.addEventListener('sapaloq:expanded', () => {
+  if (visibleHistoryHydrated || visibleHistoryHydrating) return;
+  visibleHistoryHydrating = true;
+  void restoreChatHistory().then((ok) => {
+    visibleHistoryHydrated = ok;
+    visibleHistoryHydrating = false;
+  });
+});
+void loadSessionList();
+// Best-effort initial context-usage read. If core isn't ready yet (race on
+// fresh open), this fails silently and refreshUsage() on the first successful
+// ping + the periodic usage timer fill the pill instead of leaving "0/0".
+void refreshUsage();
 startPingLoop();
 startRuntimeStatusLoop();

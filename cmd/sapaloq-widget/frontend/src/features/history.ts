@@ -1,75 +1,281 @@
-// Chat-history restore + turn rendering, plus the helpers that bind/clear turn
-// ids when retrying or deleting a branch.
-import { ChatHistory } from '../../wailsjs/go/main/App';
-import type { ChatTurn, ChatUsage } from '../core/types';
-import { appendMessage, appendThinkingBubble, clearMessages, parseTurnContent } from './messages';
+// Chat-history restore via BE-driven transcript API.
+import { ChatHistory, ContextUsage, DeleteSession, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
+import type { ChatUsage, SessionSummary } from '../core/types';
+import { applyChatResetFromBE } from './apply-session-reset';
+import { clearMessages } from './messages';
 import { renderUsage } from './connection';
+import { mountChatTranscript, resetChatTranscriptState } from './transcript-pane';
 import {
   getUserGroup,
-  nextUserGroup,
-  setSessionID,
   getSessionID,
+  setSessionID,
 } from '../core/state';
-
-function renderTurn(turn: ChatTurn) {
-  if (!turn.content) return;
-  // "tool" turns ([Tool results]…) are persisted only so they count toward
-  // context usage - they are internal and must never surface as a chat bubble.
-  if (turn.role === 'tool') return;
-  if (turn.role === 'thinking') {
-    appendThinkingBubble(turn.content);
-    return;
-  }
-  const parsed = parseTurnContent(turn.content);
-  if (turn.role === 'user') {
-    nextUserGroup();
-    appendMessage('message--user', parsed.text || parsed.attachments.map((item) => item.name).join(', '), getUserGroup(), turn.id, parsed.attachments);
-  } else if (turn.role === 'error') appendMessage('message--error', turn.content, getUserGroup(), turn.id);
-  else if (turn.role === 'assistant') appendMessage('message--assistant', turn.content, getUserGroup(), turn.id);
-}
 
 export async function restoreChatHistory() {
   try {
     const history = await ChatHistory();
     setSessionID(history.session_id || getSessionID());
     clearMessages();
-    (history.turns || []).forEach((turn: ChatTurn) => renderTurn(turn));
+    resetChatTranscriptState();
+    mountChatTranscript(history.transcript || []);
     renderUsage(history.usage as ChatUsage | undefined);
+    return true;
   } catch {
-    // Core may not be ready yet; ping loop will update connection state.
+    return false;
   }
 }
 
-export async function bindLatestGroupTurnID() {
-  try {
-    const history = await ChatHistory();
-    const turns = (history.turns || []) as ChatTurn[];
-    const user = [...turns].reverse().find((turn) => turn.role === 'user');
-    if (!user) return 0;
-    document.querySelectorAll<HTMLElement>(`.message[data-group="${getUserGroup()}"]`).forEach((item) => {
-      item.dataset.turnId = `${user.id}`;
-    });
-    return user.id;
-  } catch {
-    return 0;
-  }
-}
-
-// removeRepliesAfterTurn clears stale assistant/thinking/tool/error bubbles that
-// belong to the retried user turn (and everything after it) so the regenerated
-// response can stream into the same group instead of stacking on top of the old
-// reply. Returns the group id of the retried user message so streamed events
-// render in the correct place.
-export function removeRepliesAfterTurn(turnID: number): number {
-  const user = document.querySelector<HTMLElement>(`.message--user[data-turn-id="${turnID}"]`);
-  if (!user) return getUserGroup();
-  const group = Number(user.dataset.group || getUserGroup());
-  document.querySelectorAll<HTMLElement>('#message-list > .message').forEach((item) => {
-    const itemGroup = Number(item.dataset.group || 0);
-    if (itemGroup < group) return;
-    if (item === user) return;
-    if (itemGroup === group && item.classList.contains('message--user')) return;
-    item.remove();
+export function bindLatestGroupTurnID() {
+  const list = document.getElementById('message-list');
+  if (!list) return;
+  const users = Array.from(list.querySelectorAll<HTMLElement>('.message--user, .transcript-user'));
+  const last = users.at(-1);
+  if (last?.dataset.turnId) return;
+  const assistants = Array.from(list.querySelectorAll<HTMLElement>('.message--assistant, .transcript-text'));
+  const lastAssistant = assistants.at(-1);
+  if (last?.dataset.turnId) return;
+  void ChatHistory().then((history) => {
+    const turns = (history.transcript || []).filter((e) => e.kind === 'user');
+    const lastUser = turns.at(-1);
+    if (lastUser?.turn_id && last) last.dataset.turnId = `${lastUser.turn_id}`;
+    const lastText = (history.transcript || []).filter((e) => e.kind === 'text').at(-1);
+    if (lastText?.turn_id && lastAssistant) lastAssistant.dataset.turnId = `${lastText.turn_id}`;
   });
+}
+
+export function removeRepliesAfterTurn(turnID: number): number {
+  const list = document.getElementById('message-list');
+  if (!list) return getUserGroup();
+  const target = list.querySelector<HTMLElement>(`[data-turn-id="${turnID}"]`);
+  if (!target) return getUserGroup();
+  const group = Number(target.dataset.group || getUserGroup());
+  let seen = false;
+  Array.from(list.querySelectorAll<HTMLElement>('.transcript-entry, .message')).forEach((node) => {
+    if (node === target || node.contains(target)) seen = true;
+    if (seen && node !== target && !target.contains(node)) node.remove();
+    else if (!seen && node.contains(target)) {
+      let n: HTMLElement | null = target;
+      while (n?.nextElementSibling) {
+        const next = n.nextElementSibling as HTMLElement;
+        next.remove();
+      }
+    }
+  });
+  const pane = list.querySelector('.transcript-pane');
+  if (pane && target.parentElement === pane) {
+    let found = false;
+    Array.from(pane.children).forEach((child) => {
+      if (child === target) found = true;
+      else if (found) child.remove();
+    });
+  }
   return group;
+}
+
+export async function refreshContextUsage() {
+  try {
+    const usage = await ContextUsage();
+    renderUsage(usage as ChatUsage | undefined);
+  } catch {
+    // core offline
+  }
+}
+
+// ---- Topbar history switcher --------------------------------------------
+
+const DEFAULT_LABEL = 'SapaLOQ';
+
+function relativeTime(iso: string): string {
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return '';
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'baru saja';
+  if (min < 60) return `${min}m lalu`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `${hrs}j lalu`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}h lalu`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function sessionLabel(session: SessionSummary): string {
+  return session.title?.trim() || DEFAULT_LABEL;
+}
+
+export function setSwitcherLabel(text: string) {
+  const el = document.getElementById('history-current');
+  if (el) el.textContent = text || DEFAULT_LABEL;
+}
+
+export function isHistoryMenuOpen(): boolean {
+  const menu = document.getElementById('history-menu');
+  return !!menu && !menu.hidden;
+}
+
+export function closeHistoryMenu() {
+  const menu = document.getElementById('history-menu');
+  const btn = document.getElementById('btn-history');
+  if (menu) {
+    menu.hidden = true;
+    menu.setAttribute('aria-hidden', 'true');
+  }
+  btn?.setAttribute('aria-expanded', 'false');
+}
+
+function renderSessionList(sessions: SessionSummary[]) {
+  const list = document.getElementById('history-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!sessions.length) {
+    const empty = document.createElement('div');
+    empty.className = 'history-empty';
+    empty.textContent = 'Belum ada riwayat chat.';
+    list.appendChild(empty);
+    return;
+  }
+  for (const session of sessions) {
+    const item = document.createElement('div');
+    item.className = 'history-item';
+    item.dataset.sessionId = session.id;
+    item.dataset.active = session.active ? 'true' : 'false';
+
+    const body = document.createElement('button');
+    body.type = 'button';
+    body.className = 'history-item-body';
+    body.setAttribute('role', 'menuitem');
+    const title = document.createElement('span');
+    title.className = 'history-item-title';
+    title.textContent = sessionLabel(session);
+    body.appendChild(title);
+    const meta = document.createElement('span');
+    meta.className = 'history-item-meta';
+    const rel = relativeTime(session.updated_at);
+    meta.textContent = `${session.turn_count} pesan${rel ? ` · ${rel}` : ''}`;
+    body.appendChild(meta);
+    item.appendChild(body);
+
+    if (session.active) {
+      const dot = document.createElement('span');
+      dot.className = 'history-item-dot';
+      dot.title = 'Sesi aktif';
+      item.appendChild(dot);
+    }
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'history-item-delete';
+    del.title = 'Hapus chat';
+    del.setAttribute('aria-label', 'Hapus chat');
+    del.textContent = '×';
+    del.dataset.sessionId = session.id;
+    item.appendChild(del);
+
+    list.appendChild(item);
+  }
+}
+
+export async function loadSessionList() {
+  try {
+    const sessions = await loadSessionListInner();
+    renderSessionList(sessions);
+    const active = sessions.find((session) => session.active);
+    if (active) setSwitcherLabel(sessionLabel(active));
+  } catch {
+    renderSessionList([]);
+  }
+}
+
+async function loadSessionListInner(): Promise<SessionSummary[]> {
+  const res = await ListSessions();
+  return (res.sessions || []) as SessionSummary[];
+}
+
+export async function openHistoryMenu() {
+  const menu = document.getElementById('history-menu');
+  const btn = document.getElementById('btn-history');
+  if (!menu) return;
+  menu.hidden = false;
+  menu.setAttribute('aria-hidden', 'false');
+  btn?.setAttribute('aria-expanded', 'true');
+  await loadSessionList();
+}
+
+export async function toggleHistoryMenu() {
+  if (isHistoryMenuOpen()) closeHistoryMenu();
+  else await openHistoryMenu();
+}
+
+async function refreshAfterSessionChange() {
+  await restoreChatHistory();
+  await loadSessionList();
+  try {
+    renderUsage((await ContextUsage()) as ChatUsage);
+  } catch {
+    // best-effort
+  }
+}
+
+export async function switchSession(sessionID: string) {
+  if (!sessionID || sessionID === getSessionID()) {
+    closeHistoryMenu();
+    return;
+  }
+  try {
+    const activeID = await SwitchSession(sessionID);
+    setSessionID(activeID || sessionID);
+  } catch {
+    return;
+  } finally {
+    closeHistoryMenu();
+  }
+  await refreshAfterSessionChange();
+}
+
+export async function deleteSessionRoom(sessionID: string) {
+  if (!sessionID) return;
+  try {
+    const res = await DeleteSession(sessionID);
+    if (res.reset) {
+      applyChatResetFromBE({
+        session_id: res.session_id,
+        entries: res.transcript,
+        reset: true,
+      });
+      setSwitcherLabel(DEFAULT_LABEL);
+    } else if (res.session_id && res.session_id !== getSessionID()) {
+      setSessionID(res.session_id);
+      await restoreChatHistory();
+    } else if (res.session_id === getSessionID()) {
+      await restoreChatHistory();
+    }
+    await loadSessionList();
+  } catch {
+    // core offline or delete failed — leave UI unchanged
+  } finally {
+    closeHistoryMenu();
+  }
+}
+
+export async function startNewSession() {
+  try {
+    const res = await NewSession();
+    if (!res.reset) return;
+    applyChatResetFromBE({
+      session_id: res.session_id,
+      entries: res.transcript,
+      reset: true,
+    });
+    setSwitcherLabel(DEFAULT_LABEL);
+    void loadSessionList();
+    try {
+      renderUsage((await ContextUsage()) as ChatUsage);
+    } catch {
+      // best-effort
+    }
+  } catch {
+    return;
+  } finally {
+    closeHistoryMenu();
+  }
 }

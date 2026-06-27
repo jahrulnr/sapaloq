@@ -8,6 +8,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 func TestLooksLikeContextOverflow(t *testing.T) {
@@ -59,6 +60,8 @@ func (b *overflowBridge) Complete(_ context.Context, req bridge.Request) (<-chan
 			out <- bridge.StreamEvent{Kind: bridge.EventError, Error: "provider-bridge: upstream status 400: maximum context length exceeded"}
 		} else {
 			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "compacted answer"}
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
@@ -148,6 +151,13 @@ func TestRunConversationOverflowBoundedRetries(t *testing.T) {
 		for ev := range out {
 			if ev.Kind == bridge.EventError {
 				sawError = true
+			}
+			if ev.Kind == bridge.EventTranscript && ev.Transcript != nil {
+				for _, e := range ev.Transcript.Entries {
+					if e.Kind == bridge.TranscriptError {
+						sawError = true
+					}
+				}
 			}
 		}
 		close(done)

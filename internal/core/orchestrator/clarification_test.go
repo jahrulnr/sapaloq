@@ -9,6 +9,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 // countingBridge records how many Complete() calls it received, so a test can
@@ -27,10 +28,17 @@ func (b *countingBridge) ID() string              { return "counting" }
 func (b *countingBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
 func (b *countingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
 	atomic.AddInt64(&b.calls, 1)
-	out := make(chan bridge.StreamEvent, 2)
+	out := make(chan bridge.StreamEvent, 4)
 	go func() {
 		defer close(out)
+		// "Not confident": say so, then end the run the only way a run can now
+		// end - an explicit terminal tool. Without it the mediator would (per
+		// the new "stop only via terminal tool" model) keep looping internally
+		// until the no-progress finish, inflating the call count the budget
+		// tests assert on. Deferring to the user IS a deliberate stop.
 		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "I am not sure; the user should decide."}
+		stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"defer to user"}`)}
+		out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
 		out <- bridge.StreamEvent{Kind: bridge.EventDone}
 	}()
 	return out, nil
@@ -45,7 +53,7 @@ func newClarifyOrchestrator(t *testing.T, br bridge.Bridge) *Orchestrator {
 		bridge:    br,
 		entry:     config.LLMBridge{Key: "k", Model: "m"},
 		workers:   newWorkerRegistry(filepath.Join(dir, "workers")),
-		progress:  ProgressWriter{Dir: filepath.Join(dir, "progress")},
+		progress:  newAsyncProgressWriter(ProgressWriter{Dir: filepath.Join(dir, "progress")}),
 	}
 }
 

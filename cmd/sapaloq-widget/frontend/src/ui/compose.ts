@@ -13,6 +13,7 @@ export type AttachmentData = {
   path?: string;
   dataURI?: string;
   text?: string;
+  isDir?: boolean;
 };
 
 const PILL_CLASS = 'att-pill';
@@ -20,7 +21,7 @@ const PILL_CLASS = 'att-pill';
 // Base64-encode attachment metadata for the message body so restore-history can
 // reconstruct the chip (kept identical to the previous textarea encoding).
 function encodeAttachmentMeta(a: AttachmentData): string {
-  const json = JSON.stringify({ name: a.name, type: a.type, size: a.size, path: a.path || '' });
+  const json = JSON.stringify({ name: a.name, type: a.type, size: a.size, path: a.path || '', isDir: a.isDir || false });
   return btoa(unescape(encodeURIComponent(json)));
 }
 
@@ -33,6 +34,7 @@ function humanBytes(bytes: number): string {
 
 // Short tag shown inside a pill, derived from type/extension.
 function pillTag(a: AttachmentData): string {
+  if (a.isDir) return 'DIR';
   if (a.type.startsWith('image/')) return 'IMG';
   const ext = (a.name.split('.').pop() || '').toUpperCase();
   if (ext && ext.length <= 4 && ext !== a.name.toUpperCase()) return ext;
@@ -45,6 +47,11 @@ function pillTag(a: AttachmentData): string {
 // flooding); pathless binary → base64 fallback.
 function attachmentModelBlock(a: AttachmentData): string {
   const metadata = `<!--sapaloq-attachment:${encodeAttachmentMeta(a)}-->`;
+  // Folders are path-only: the model gets a pointer it can list/read with its
+  // own tools - never any contents.
+  if (a.isDir) {
+    return `${metadata}\n[Local folder: ${a.path || a.name}]`;
+  }
   const pathLine = a.path ? `[Local file: ${a.path}]\n` : '';
   if (a.type.startsWith('image/') && a.dataURI) {
     return `${metadata}\n${pathLine}![${a.name}](${a.dataURI})`;
@@ -70,6 +77,7 @@ function pillData(el: HTMLElement): AttachmentData {
     path: el.dataset.path || undefined,
     dataURI: el.dataset.datauri || undefined,
     text: el.dataset.text || undefined,
+    isDir: el.dataset.isdir === '1' || undefined,
   };
 }
 
@@ -84,6 +92,7 @@ function makePill(a: AttachmentData): HTMLElement {
   if (a.path) pill.dataset.path = a.path;
   if (a.dataURI) pill.dataset.datauri = a.dataURI;
   if (typeof a.text === 'string') pill.dataset.text = a.text;
+  if (a.isDir) pill.dataset.isdir = '1';
   pill.title = a.path || a.name;
 
   const tag = document.createElement('span');
@@ -406,7 +415,12 @@ export class ComposeBox {
           if (el.classList.contains(PILL_CLASS)) {
             const a = pillData(el);
             attachments.push(a);
-            visible += a.name;
+            // Render path-backed attachments (native file/folder drops) as a
+            // markdown link in the visible bubble so they are clickable - the
+            // renderer routes the click through OpenExternal -> file manager.
+            // Pathless attachments (browser/pasted) have no target, so keep the
+            // bare name (the "N attachments" badge still surfaces them).
+            visible += a.path ? `[${a.name}](${a.path})` : a.name;
             model += attachmentModelBlock(a);
           } else if (el.tagName === 'BR') {
             visible += '\n';

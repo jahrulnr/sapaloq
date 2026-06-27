@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"strings"
 	"testing"
+
+	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 // feedAll streams the deltas through a fresh filter and returns the
@@ -20,10 +22,45 @@ func feedAll(deltas ...string) string {
 
 // TestCalledToolsFilterDropsCompleteMarker: a marker fully contained in one
 // delta is removed, surrounding text preserved.
+func TestStripCalledToolsMarkersTrailingNote(t *testing.T) {
+	got := stripCalledToolsForDisplay("Folder aman.\n\n[Called tools: sapaloq_spawn_agent]")
+	if got != "Folder aman." {
+		t.Fatalf("trailing note not stripped: %q", got)
+	}
+	if strings.TrimSpace(StripCalledToolsMarkers("[Called tools: sapaloq_stop]")) != "" {
+		t.Fatal("note-only assistant turn should strip to empty")
+	}
+}
+
 func TestCalledToolsFilterDropsCompleteMarker(t *testing.T) {
 	got := feedAll("oke.[Called tools: write_file]")
 	if got != "oke." {
 		t.Fatalf("complete marker not dropped: %q", got)
+	}
+}
+
+// TestCalledToolsFilterStripsRealNote is the regression for the format-mismatch
+// leak (orch-task-…173, the "Called tools: exec" bleed into the user-facing
+// answer): the filter must strip the EXACT string calledToolsNote produces.
+// Before the fix the note was emitted unbracketed ("Called tools: …") while the
+// filter only matched the bracketed "[Called tools: " prefix, so every echoed
+// note leaked. Driving the real note through the filter keeps the producer and
+// the stripper in lockstep.
+func TestCalledToolsFilterStripsRealNote(t *testing.T) {
+	mk := func(names ...string) []scheduledTool {
+		tools := make([]scheduledTool, 0, len(names))
+		for _, n := range names {
+			tools = append(tools, scheduledTool{call: parse.ToolCall{Name: n}})
+		}
+		return tools
+	}
+	note := calledToolsNote(mk("exec", "read_file", "exec"))
+	if note == "" {
+		t.Fatal("precondition: note should be non-empty")
+	}
+	got := feedAll("Selesai memeriksa form.\n\n" + note)
+	if want := "Selesai memeriksa form.\n\n"; got != want {
+		t.Fatalf("real calledToolsNote echo not stripped:\n note=%q\n  got=%q\n want=%q", note, got, want)
 	}
 }
 
@@ -126,6 +163,38 @@ func TestCalledToolsFilterDropsToolMarker(t *testing.T) {
 		if got := feedAll(tc.in); got != tc.want {
 			t.Fatalf("[Tool: …] not dropped:\n  in=%q\n got=%q\nwant=%q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestCalledToolsFilterDropsSingularEcho is the regression for the
+// "[Called tool: sapaloq_stop]" chat-bubble noise: a model that learned the
+// orchestrator's "[Called tools: …]" convention (plural, injected by
+// calledToolsNote) then imitates it with the WRONG grammatical number when
+// narrating its own stop. The singular "[Called tool: …]" echo is not a real
+// tool call, so it must be stripped here - otherwise it leaks into the visible
+// assistant bubble (and the persisted turn) as noise.
+func TestCalledToolsFilterDropsSingularEcho(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Bilang aja. 👍[Called tool: sapaloq_stop]", "Bilang aja. 👍"},
+		// Two echoes in one turn (the observed double-stop narration).
+		{"Bilang aja. 👍[Called tool: sapaloq_stop] [Called tool: sapaloq_stop]", "Bilang aja. 👍 "},
+		{"plan ready.[Called tool: write_file] next", "plan ready. next"},
+	}
+	for _, tc := range cases {
+		if got := feedAll(tc.in); got != tc.want {
+			t.Fatalf("singular [Called tool: …] not dropped:\n  in=%q\n got=%q\nwant=%q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestCalledToolsFilterSingularEchoByteAtATime: the singular marker fragmented
+// across one-byte deltas (as it streams) is still dropped as a whole, and the
+// shared "[Called tool" prefix with the plural marker does not let either leak.
+func TestCalledToolsFilterSingularEchoByteAtATime(t *testing.T) {
+	full := "hi.[Called tool: sapaloq_stop] bye"
+	got := feedAll(strings.Split(full, "")...)
+	if got != "hi. bye" {
+		t.Fatalf("byte-at-a-time singular marker not dropped: %q", got)
 	}
 }
 

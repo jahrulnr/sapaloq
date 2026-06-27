@@ -21,7 +21,7 @@ func newTestOrchestrator(t *testing.T) *Orchestrator {
 		memoryDir: dir,
 		cfg:       config.Config{},
 		workers:   newWorkerRegistry(filepath.Join(dir, "workers")),
-		progress:  ProgressWriter{Dir: filepath.Join(dir, "progress")},
+		progress:  newAsyncProgressWriter(ProgressWriter{Dir: filepath.Join(dir, "progress")}),
 	}
 }
 
@@ -41,7 +41,7 @@ func TestTaskRunnerRecoversFromEmptyStream(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-empty", Role: "task-runner", Status: "in_progress", Task: "do it"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "done" {
 		t.Fatalf("status = %q, want done (recovered via nudge after empty stream)", rec.Status)
@@ -88,7 +88,7 @@ func TestTaskRunnerRetriesTransientThenSurfaces(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-err", Role: "task-runner", Status: "in_progress", Task: "build a site"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "failed" {
 		t.Fatalf("status = %q, want failed (provider stayed down after retries)", rec.Status)
@@ -120,7 +120,7 @@ func TestPlannerSurfacesProviderError(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-planner-500", Role: "planner", Status: "in_progress", Task: "bikin web profile di /tmp/profile"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "failed" {
 		t.Fatalf("status = %q, want failed (planner hit a non-recoverable provider 500)", rec.Status)
@@ -155,7 +155,7 @@ func TestTaskRunnerRecoversFromTransientError(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-recover", Role: "task-runner", Status: "in_progress", Task: "build a site"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "done" {
 		t.Fatalf("status = %q, want done (recovered after transient error)", rec.Status)
@@ -178,7 +178,8 @@ func TestTaskRunnerNarrationIsBoundedByTurnBudget(t *testing.T) {
 		return []bridge.StreamEvent{{Kind: bridge.EventResponseDelta, Delta: s}}
 	}
 	// Far more narration turns than the budget below, each re-phrased so the
-	// no-progress hash guard never trips - only the turn budget can stop it.
+	// run keeps looping - only the per-role turn budget can stop it here (the
+	// toolless-turn budget starts at 10 and these 4 turns never exhaust it).
 	turns := make([][]bridge.StreamEvent, 0, 12)
 	phrases := []string{
 		"Saya akan membuat js/script.js sekarang.",
@@ -202,7 +203,7 @@ func TestTaskRunnerNarrationIsBoundedByTurnBudget(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-narrate", Role: "task-runner", Status: "in_progress", Task: "build a site"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "failed" {
 		t.Fatalf("status = %q, want failed (no terminal tool within the turn budget)", rec.Status)

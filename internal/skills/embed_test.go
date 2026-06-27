@@ -8,26 +8,36 @@ import (
 
 // wantDefaultSkillCount is the number of skill folders shipped under
 // defaults/. Bump it whenever a default skill is added or removed.
-const wantDefaultSkillCount = 3
+const wantDefaultSkillCount = 4
 
 // TestSeedMaterializesDefaults proves the embedded defaults are written to disk
 // with their folder structure preserved, and that a freshly seeded dir loads as
-// the two default skills.
+// the default skills.
 func TestSeedMaterializesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	if err := Seed(dir); err != nil {
 		t.Fatalf("Seed: %v", err)
 	}
 
-	// SKILL.md for every default must exist.
+	// SKILL.md (and key bundled files) for every default must exist.
 	for _, rel := range []string{
 		"frontend-design/SKILL.md",
 		"skill-creator/SKILL.md",
 		"code-styleguides/SKILL.md",
+		"peek-agents/SKILL.md",
+		"peek-agents/scripts/peek.sh",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected seeded file %s: %v", rel, err)
 		}
+	}
+
+	// Bundled shell scripts must be seeded executable (the seeder marks
+	// scripts/*.sh|*.py with mode 0755 so exec can run them directly).
+	if info, err := os.Stat(filepath.Join(dir, "peek-agents", "scripts", "peek.sh")); err != nil {
+		t.Fatalf("peek.sh not seeded: %v", err)
+	} else if info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("peek.sh should be executable, got mode %v", info.Mode().Perm())
 	}
 
 	// At least one bundled resource (nested folder) must be materialized too,
@@ -53,7 +63,7 @@ func TestSeedMaterializesDefaults(t *testing.T) {
 	for _, s := range got {
 		byID[s.ID] = true
 	}
-	for _, want := range []string{"frontend-design", "skill-creator", "code-styleguides"} {
+	for _, want := range []string{"frontend-design", "skill-creator", "code-styleguides", "peek-agents"} {
 		if !byID[want] {
 			t.Fatalf("missing expected default id %q: %v", want, ids(got))
 		}
@@ -99,6 +109,49 @@ func TestSeedNeverClobbersUserEdits(t *testing.T) {
 	if string(after) != edited {
 		t.Fatalf("Seed clobbered a user edit; got:\n%s", string(after))
 	}
+}
+
+// TestPeekAgentsSkillTriggers proves the shipped peek-agents skill fires on
+// representative ID + EN messages a user would use to inspect sub-agents. The
+// skill declares no explicit triggers, so this also exercises trigger-mining
+// from its name/description.
+func TestPeekAgentsSkillTriggers(t *testing.T) {
+	dir := t.TempDir()
+	if err := Seed(dir); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	for _, msg := range []string{
+		"coba intip agent yang lagi jalan",
+		"kenapa task itu gagal?",
+		"monitor planner dong",
+		"check the worker health",
+		"which task is awaiting clarification",
+	} {
+		matched := Match(loaded, msg)
+		if !containsID(matched, "peek-agents") {
+			t.Fatalf("peek-agents should match %q, got %v", msg, ids(matched))
+		}
+	}
+
+	// A clearly unrelated message must NOT select it (guards over-broad
+	// trigger mining).
+	if containsID(Match(loaded, "what's the weather today"), "peek-agents") {
+		t.Fatalf("peek-agents should not match an unrelated message")
+	}
+}
+
+func containsID(s []Skill, id string) bool {
+	for _, sk := range s {
+		if sk.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func ids(s []Skill) []string {

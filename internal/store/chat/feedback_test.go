@@ -27,9 +27,15 @@ func TestAddFeedbackUp(t *testing.T) {
 		t.Fatalf("expected no do_not_repeat facts after up, got %+v", dnr)
 	}
 
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM feedback_events WHERE signal='up'`).Scan(&count); err != nil {
-		t.Fatalf("count: %v", err)
+	feedback, err := loadJSONLines[feedbackRecord](s.paths.feedbackFile())
+	if err != nil {
+		t.Fatalf("load feedback: %v", err)
+	}
+	count := 0
+	for _, fb := range feedback {
+		if fb.Signal == "up" {
+			count++
+		}
 	}
 	if count != 1 {
 		t.Fatalf("expected 1 up event, got %d", count)

@@ -3,6 +3,7 @@ package bus
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +41,14 @@ type Bus struct {
 	walCh   chan Event
 	walDone chan struct{}
 	walPath string
+	walMu   sync.RWMutex
+	closed  bool
 }
+
+const (
+	defaultWALMaxBytes  int64 = 16 << 20
+	defaultWALKeepFiles       = 3
+)
 
 // New returns a bus with no WAL (in-memory only).
 func New() *Bus {
@@ -58,44 +66,99 @@ func NewWithWAL(walPath string) (*Bus, error) {
 	if err := os.MkdirAll(filepath.Dir(walPath), 0o755); err != nil {
 		return nil, err
 	}
-	// Touch/seed seq from the existing WAL tail so seq is monotonic across boots.
-	if last, err := lastSeq(walPath); err == nil {
+	// Seed across the primary and rotated siblings so rotation never resets seq.
+	if last, err := lastSeqAll(walPath); err == nil {
 		b.seq = last
 	}
 	b.walPath = walPath
 	b.walCh = make(chan Event, 1024)
 	b.walDone = make(chan struct{})
-	go b.runWAL()
+	go b.runWAL(b.walCh)
 	return b, nil
 }
 
-func (b *Bus) runWAL() {
+func (b *Bus) runWAL(events <-chan Event) {
 	defer close(b.walDone)
-	f, err := os.OpenFile(b.walPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := openWAL(b.walPath)
 	if err != nil {
 		// Drain to avoid blocking publishers if the file can't be opened.
-		for range b.walCh {
+		for range events {
 		}
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	w := bufio.NewWriter(f)
-	for ev := range b.walCh {
+	var size int64
+	if info, statErr := f.Stat(); statErr == nil {
+		size = info.Size()
+	}
+	for ev := range events {
 		if line, err := json.Marshal(ev); err == nil {
+			line = append(line, '\n')
+			if size > 0 && size+int64(len(line)) > defaultWALMaxBytes {
+				_ = w.Flush()
+				_ = f.Close()
+				if rotateErr := rotateWAL(b.walPath, defaultWALKeepFiles); rotateErr == nil {
+					f, err = openWAL(b.walPath)
+					if err != nil {
+						for range events {
+						}
+						return
+					}
+					w = bufio.NewWriter(f)
+					size = 0
+				} else {
+					f, err = openWAL(b.walPath)
+					if err != nil {
+						for range events {
+						}
+						return
+					}
+					w = bufio.NewWriter(f)
+				}
+			}
 			_, _ = w.Write(line)
-			_ = w.WriteByte('\n')
 			_ = w.Flush()
+			size += int64(len(line))
 		}
 	}
+}
+
+func openWAL(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+}
+
+func rotateWAL(path string, keep int) error {
+	_ = os.Remove(path + "." + fmt.Sprint(keep))
+	for n := keep - 1; n >= 1; n-- {
+		src := path + "." + fmt.Sprint(n)
+		dst := path + "." + fmt.Sprint(n+1)
+		if _, err := os.Stat(src); err == nil {
+			if err := os.Rename(src, dst); err != nil {
+				return err
+			}
+		}
+	}
+	return os.Rename(path, path+".1")
 }
 
 // Close stops the WAL goroutine (if any). Safe to call once; the bus must not
 // be published to afterwards.
 func (b *Bus) Close() {
-	if b.walCh != nil {
-		close(b.walCh)
-		<-b.walDone
-		b.walCh = nil
+	b.walMu.Lock()
+	if b.closed {
+		b.walMu.Unlock()
+		return
+	}
+	b.closed = true
+	ch, done := b.walCh, b.walDone
+	b.walCh = nil
+	if ch != nil {
+		close(ch)
+	}
+	b.walMu.Unlock()
+	if done != nil {
+		<-done
 	}
 }
 
@@ -121,12 +184,13 @@ func (b *Bus) Publish(topic string, data bridge.StreamEvent) {
 	}
 	b.mu.RUnlock()
 
-	if b.walCh != nil {
-		select {
-		case b.walCh <- ev:
-		default: // WAL backpressure: drop rather than block publishers.
-		}
+	b.walMu.RLock()
+	if b.walCh != nil && !b.closed {
+		// A configured WAL is a durability contract: apply backpressure instead
+		// of silently dropping the only replay copy.
+		b.walCh <- ev
 	}
+	b.walMu.RUnlock()
 }
 
 // Subscribe registers a receive-all subscriber (backward-compatible default).
@@ -162,11 +226,17 @@ func (b *Bus) Replay(since int64, fn func(Event)) error {
 	if b.walPath == "" || fn == nil {
 		return nil
 	}
-	f, err := os.Open(b.walPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+	for _, path := range walPathsOldestFirst(b.walPath) {
+		if err := replayFile(path, since, fn); err != nil && !os.IsNotExist(err) {
+			return err
 		}
+	}
+	return nil
+}
+
+func replayFile(path string, since int64, fn func(Event)) error {
+	f, err := os.Open(path)
+	if err != nil {
 		return err
 	}
 	defer f.Close()
@@ -174,14 +244,33 @@ func (b *Bus) Replay(since int64, fn func(Event)) error {
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for sc.Scan() {
 		var ev Event
-		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
-			continue // skip corrupt lines rather than aborting replay
-		}
-		if ev.Seq > since {
+		if json.Unmarshal(sc.Bytes(), &ev) == nil && ev.Seq > since {
 			fn(ev)
 		}
 	}
 	return sc.Err()
+}
+
+func walPathsOldestFirst(path string) []string {
+	paths := make([]string, 0, defaultWALKeepFiles+1)
+	for n := defaultWALKeepFiles; n >= 1; n-- {
+		paths = append(paths, path+"."+fmt.Sprint(n))
+	}
+	return append(paths, path)
+}
+
+func lastSeqAll(path string) (int64, error) {
+	var max int64
+	for _, candidate := range walPathsOldestFirst(path) {
+		seq, err := lastSeq(candidate)
+		if err != nil && !os.IsNotExist(err) {
+			return max, err
+		}
+		if seq > max {
+			max = seq
+		}
+	}
+	return max, nil
 }
 
 // lastSeq scans the WAL and returns the highest seq seen (0 when empty/absent).

@@ -11,11 +11,11 @@ import (
 
 func TestClassifyIntent(t *testing.T) {
 	cases := []struct {
-		msg        string
-		wantName   string
-		wantMode   string
-		minConf    float64
-		maxConf    float64
+		msg      string
+		wantName string
+		wantMode string
+		minConf  float64
+		maxConf  float64
 	}{
 		{"catat: beli susu besok", "catat", "personal", 0.75, 0.95},
 		{"tolong catat note ini buat kerja klien", "catat", "work", 0.85, 0.95},

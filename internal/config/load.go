@@ -392,6 +392,17 @@ type LLMBridge struct {
 	// Retries only ever fire pre-stream, so emitted deltas are never
 	// duplicated. 0 → DefaultMaxRetries; negative disables retries.
 	MaxRetries int `json:"maxRetries,omitempty"`
+	// Stream toggles SSE streaming for the provider-bridge driver. It is a
+	// tri-state: nil (field absent) and true both mean "stream token deltas as
+	// Server-Sent Events" (the default, what every config has used so far);
+	// false means "send a single non-stream request and parse one complete
+	// response". Non-stream is useful for gateways/endpoints that buffer or
+	// don't support SSE, and for callers that prefer one atomic response over
+	// incremental deltas. It changes only the wire framing - the bridge still
+	// emits the same StreamEvent sequence to the orchestrator (a non-stream
+	// turn surfaces as one batch of events followed by done). Ignored by the
+	// cursor-bridge driver, which has its own transport. nil → true.
+	Stream *bool `json:"stream,omitempty"`
 }
 
 // DefaultRequestTimeoutSec is the per-inference-request timeout when a provider
@@ -457,6 +468,17 @@ func (b LLMBridge) ResolveMaxRetries() int {
 	default:
 		return n
 	}
+}
+
+// StreamEnabled reports whether the provider-bridge should use SSE streaming
+// for this entry. The field is tri-state via a *bool so an absent value keeps
+// the historical default (streaming) and is backward-compatible with every
+// existing config: nil → true, otherwise the explicit value.
+func (b LLMBridge) StreamEnabled() bool {
+	if b.Stream == nil {
+		return true
+	}
+	return *b.Stream
 }
 
 // LLMBridgeRoot is the top-level llmBridge config block - registry of
@@ -552,6 +574,12 @@ type OrchestratorConfig struct {
 	Continuation ContinuationConfig `json:"continuation"`
 	Compaction   CompactionConfig   `json:"compaction"`
 	Completion   CompletionConfig   `json:"completion"`
+	// DefaultContextWindowTokens is the fallback context window (tokens) used
+	// when a provider entry does not declare its own contextWindow. Surfaced as
+	// config so the "max context" floor is tunable per install instead of a
+	// hidden code constant; the context pill and compaction thresholds read it.
+	// Defaults to 131072 (see DefaultOrchestratorConfig).
+	DefaultContextWindowTokens int `json:"defaultContextWindowTokens,omitempty"`
 }
 
 // CompletionConfig controls how a finished background sub-agent is surfaced
@@ -599,16 +627,71 @@ type ContinuationConfig struct {
 	MaxToolCalls          int `json:"maxToolCalls"`
 	MaxParallelTools      int `json:"maxParallelTools"`
 	MaxWallTimeMinutes    int `json:"maxWallTimeMinutes"`
+	// MaxNoProgressTurns is the initial "toolless-turn budget" under the
+	// explicit-stop model: a turn that calls no tool is NOT a completion
+	// signal, so the run keeps looping while a model only narrates. Each
+	// tool-less turn burns 1 from this budget; each turn that calls a tool
+	// refills 1; once the model has made >10 tool calls total every turn is
+	// accepted and the budget is topped up (a productive agent is trusted).
+	// When the budget hits 0 the run ends cleanly. Default 10; a value <= 0
+	// disables the bound entirely (observe raw model behavior).
 	MaxNoProgressTurns    int `json:"maxNoProgressTurns"`
 	MaxIdenticalToolCalls int `json:"maxIdenticalToolCalls"`
 	MaxWaitSeconds        int `json:"maxWaitSeconds"`
+	// EarlyToolExecution (experimental, default false): when true, read-only
+	// assessment tools (read_file/search/list_dir/glob/web_search/web_fetch/
+	// read_image) detected in the live stream are submitted for execution
+	// BEFORE the turn's EventDone arrives, so their results are ready by the
+	// time the model would otherwise wait for them on the next turn. Off by
+	// default until it is validated against native + inline tool bridges.
+	EarlyToolExecution bool `json:"earlyToolExecution"`
 }
 
 type CompactionConfig struct {
+	// Legacy heuristic compaction thresholds (backgroundThreshold /
+	// blockingThreshold / preserveRecentFraction / resumeAfterCompaction) are
+	// retained for backward compatibility but are superseded by the LLM-driven
+	// checkpoint model when UseCheckpoints is enabled (the new default).
 	BackgroundThreshold    float64 `json:"backgroundThreshold"`
 	BlockingThreshold      float64 `json:"blockingThreshold"`
 	PreserveRecentFraction float64 `json:"preserveRecentFraction"`
 	ResumeAfterCompaction  bool    `json:"resumeAfterCompaction"`
+
+	// UseCheckpoints enables orchestrator-driven checkpoint compaction: an
+	// isolated tool-free summarization call, checkpoint persistence, and
+	// context rebuilt from the latest checkpoint summary + an anchored tail.
+	// When false, the legacy heuristic compaction path is used. Omitted from
+	// JSON means true (schema default); use a pointer so Go's zero-value false
+	// does not disable checkpoints for configs that predate this key.
+	UseCheckpoints *bool `json:"useCheckpoints,omitempty"`
+
+	// HeadroomPercent is the fraction of the context window that must remain
+	// free before forced compaction runs (default 0.05 = 5%).
+	// When usedTokens >= contextWindow * (1 - headroomPercent) the loop pauses
+	// and runs isolated summarization before any other work.
+	HeadroomPercent float64 `json:"headroomPercent"`
+
+	// SteerPercent is retained for config compatibility (default 0.85). Pre-turn
+	// soft compaction uses steerPercent+5 as a threshold below headroom.
+	SteerPercent float64 `json:"steerPercent"`
+
+	// KeepRecentTurns bounds how many recent turns are preserved verbatim in
+	// the post-checkpoint tail (default 4). The anchored last assistant turn is
+	// always preserved regardless of this cap.
+	KeepRecentTurns int `json:"keepRecentTurns"`
+
+	// PreserveLastAgentTurn keeps the most recent assistant turn in the
+	// post-checkpoint tail so the model remembers "what I just did". Hard
+	// default true; not disableable in v1 (a false value is ignored).
+	PreserveLastAgentTurn bool `json:"preserveLastAgentTurn"`
+
+	// PreservePrecedingUserTurn keeps the user turn immediately before the
+	// anchored last assistant turn so the last exchange stays paired.
+	PreservePrecedingUserTurn bool `json:"preservePrecedingUserTurn"`
+
+	// MaxForceRetries bounds how many isolated compaction attempts run before
+	// falling back to an orchestrator-authored summary (default 3).
+	MaxForceRetries int `json:"maxForceRetries"`
 }
 
 func DefaultOrchestratorConfig() OrchestratorConfig {
@@ -618,7 +701,7 @@ func DefaultOrchestratorConfig() OrchestratorConfig {
 			MaxToolCalls:          512,
 			MaxParallelTools:      8,
 			MaxWallTimeMinutes:    30,
-			MaxNoProgressTurns:    5,
+			MaxNoProgressTurns:    10,
 			MaxIdenticalToolCalls: 5,
 			MaxWaitSeconds:        120,
 		},
@@ -628,11 +711,19 @@ func DefaultOrchestratorConfig() OrchestratorConfig {
 			SpeakOnTerminal:      true,
 			WorkerErrorLog:       true,
 		},
+		DefaultContextWindowTokens: 131072,
 		Compaction: CompactionConfig{
-			BackgroundThreshold:    0.70,
-			BlockingThreshold:      0.88,
-			PreserveRecentFraction: 0.30,
-			ResumeAfterCompaction:  true,
+			BackgroundThreshold:        0.70,
+			BlockingThreshold:          0.88,
+			PreserveRecentFraction:     0.30,
+			ResumeAfterCompaction:      true,
+			UseCheckpoints:             boolPtr(true),
+			HeadroomPercent:            0.05,
+			SteerPercent:               0.85,
+			KeepRecentTurns:            4,
+			PreserveLastAgentTurn:      true,
+			PreservePrecedingUserTurn:  true,
+			MaxForceRetries:            3,
 		},
 	}
 }
@@ -675,8 +766,51 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 	if c.Compaction.PreserveRecentFraction <= 0 || c.Compaction.PreserveRecentFraction >= 1 {
 		c.Compaction.PreserveRecentFraction = defaults.Compaction.PreserveRecentFraction
 	}
+	// LLM-checkpoint compaction defaults. A fully-unset Compaction block (no
+	// UseCheckpoints and no new fields) inherits the checkpoint defaults so an
+	// older config without the new keys still gets the new model. An explicit
+	// {"useCheckpoints": false} opts back into the legacy heuristic path.
+	if c.Compaction.HeadroomPercent <= 0 || c.Compaction.HeadroomPercent >= 1 {
+		c.Compaction.HeadroomPercent = defaults.Compaction.HeadroomPercent
+	}
+	if c.Compaction.SteerPercent <= 0 || c.Compaction.SteerPercent >= 1 {
+		c.Compaction.SteerPercent = defaults.Compaction.SteerPercent
+	}
+	if c.Compaction.SteerPercent <= c.Compaction.HeadroomPercent {
+		c.Compaction.SteerPercent = defaults.Compaction.SteerPercent
+	}
+	if c.Compaction.KeepRecentTurns <= 0 {
+		c.Compaction.KeepRecentTurns = defaults.Compaction.KeepRecentTurns
+	}
+	// PreserveLastAgentTurn is a hard default; a false value is only honored
+	// when the user also explicitly set UseCheckpoints (i.e. they consciously
+	// configured the checkpoint path). This guards the anti-forget goal.
+	if !c.Compaction.PreserveLastAgentTurn && !c.Compaction.UseCheckpointsEnabled() {
+		c.Compaction.PreserveLastAgentTurn = defaults.Compaction.PreserveLastAgentTurn
+	}
+	if !c.Compaction.PreservePrecedingUserTurn && !c.Compaction.UseCheckpointsEnabled() {
+		c.Compaction.PreservePrecedingUserTurn = defaults.Compaction.PreservePrecedingUserTurn
+	}
+	if c.Compaction.MaxForceRetries <= 0 {
+		c.Compaction.MaxForceRetries = defaults.Compaction.MaxForceRetries
+	}
+	if c.DefaultContextWindowTokens <= 0 {
+		c.DefaultContextWindowTokens = defaults.DefaultContextWindowTokens
+	}
 	c.Completion = c.Completion.WithDefaults()
 	return c
+}
+
+func boolPtr(v bool) *bool { return &v }
+
+// UseCheckpointsEnabled reports whether the LLM checkpoint compaction model is
+// active. Omitted JSON defaults to true per schema; only an explicit false
+// opts back into the legacy heuristic path.
+func (c CompactionConfig) UseCheckpointsEnabled() bool {
+	if c.UseCheckpoints != nil {
+		return *c.UseCheckpoints
+	}
+	return true
 }
 
 func DefaultConfig() Config {

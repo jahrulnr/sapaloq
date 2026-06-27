@@ -3,11 +3,23 @@
 import {main} from '../models';
 import {config} from '../models';
 
+export function ActorInspect(arg1:string,arg2:number):Promise<main.taskInspectResult>;
+
 export function ChatHistory():Promise<main.chatHistoryResult>;
 
 export function ContextUsage():Promise<main.chatUsage>;
 
 export function DeleteChatTurn(arg1:string,arg2:number):Promise<void>;
+
+export function DeleteSession(arg1:string):Promise<main.sessionDeleteResult>;
+
+export function ListSessions():Promise<main.sessionListResult>;
+
+export function NewSession():Promise<main.sessionDeleteResult>;
+
+export function NotificationSound():Promise<string>;
+
+export function NotificationSoundForRole(arg1:string):Promise<string>;
 
 export function OpenAttachment(arg1:string):Promise<void>;
 
@@ -31,4 +43,8 @@ export function StopChat(arg1:string):Promise<void>;
 
 export function SubmitFeedback(arg1:string,arg2:number,arg3:string,arg4:string):Promise<void>;
 
+export function SwitchSession(arg1:string):Promise<string>;
+
 export function SyncInputShape(arg1:boolean):Promise<void>;
+
+export function TaskInspect(arg1:string,arg2:number):Promise<main.taskInspectResult>;

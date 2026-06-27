@@ -63,7 +63,7 @@ func TestTaskRunnerDoesNotCompleteOnToolLessTurn(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-1", Role: "task-runner", Status: "in_progress", Task: "build a site"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "done" {
 		t.Fatalf("status = %q, want done (completed via terminal tool, not premature)", rec.Status)
@@ -86,7 +86,7 @@ func TestTaskRunnerFailsWhenItNeverSignalsTerminalState(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-stuck", Role: "task-runner", Status: "in_progress", Task: "build a site"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "failed" {
 		t.Fatalf("status = %q, want failed", rec.Status)
@@ -103,13 +103,13 @@ func TestSubAgentProgressDoesNotPersistBridgeDoneAsTaskCompletion(t *testing.T) 
 	}}
 	o := &Orchestrator{
 		memoryDir: t.TempDir(),
-		progress:  ProgressWriter{Dir: progressDir},
+		progress:  newAsyncProgressWriter(ProgressWriter{Dir: progressDir}),
 		cfg:       config.Config{},
 	}
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-progress", Role: "task-runner", Status: "in_progress", Task: "finish"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	raw, err := os.ReadFile(filepath.Join(progressDir, "orch-task-progress.jsonl"))
 	if err != nil {
@@ -118,15 +118,20 @@ func TestSubAgentProgressDoesNotPersistBridgeDoneAsTaskCompletion(t *testing.T) 
 	if bytes.Contains(raw, []byte(`"kind":"done"`)) {
 		t.Fatalf("bridge turn completion leaked into task progress: %s", raw)
 	}
-	if !bytes.Contains(raw, []byte(`"kind":"task_update"`)) {
-		t.Fatalf("tool activity task_update missing from progress: %s", raw)
+	if !bytes.Contains(raw, []byte(`"kind":"tool_call"`)) {
+		t.Fatalf("tool activity must be persisted to progress: %s", raw)
 	}
 }
 
-// TestPlannerCompletesOnToolLessTurn confirms the nudge logic is scoped to
-// executors: a planner that stops calling tools still finishes immediately
-// (backward-compatible behavior).
-func TestPlannerCompletesOnToolLessTurn(t *testing.T) {
+// TestPlannerFinishesCleanlyWithoutTerminalTool confirms that, under the
+// unified "stop only via terminal tool" model, a non-executor role (planner)
+// that answers and then goes quiet WITHOUT calling a terminal tool still ends
+// as `done` (not `failed`). Unlike the old behavior it no longer finishes in a
+// single tool-less turn - the run continues until the toolless-turn budget
+// closes it cleanly - but the OUTCOME for a planner is still a clean
+// completion. Only an executor (task-runner) that never signals a terminal
+// tool is treated as a failure (see TestTaskRunnerFailsWhenItNeverSignalsTerminalState).
+func TestPlannerFinishesCleanlyWithoutTerminalTool(t *testing.T) {
 	fake := &scriptedBridge{turns: [][]bridge.StreamEvent{
 		{{Kind: bridge.EventResponseDelta, Delta: "Here is the plan."}},
 	}}
@@ -134,13 +139,15 @@ func TestPlannerCompletesOnToolLessTurn(t *testing.T) {
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "k", Model: "m"}, br: fake}
 	rec := &taskRecord{ID: "task-2", Role: "planner", Status: "in_progress", Task: "plan it"}
 
-	o.runSubAgentLoop(context.Background(), snap, "s1", rec)
+	o.runTaskActor(context.Background(), snap, "s1", rec)
 
 	if rec.Status != "done" {
 		t.Fatalf("planner status = %q, want done", rec.Status)
 	}
-	if fake.call != 1 {
-		t.Fatalf("planner should finish in 1 turn, got %d", fake.call)
+	// The run is bounded by the toolless-turn budget, so it takes more than
+	// one turn now; it must still be bounded (not run away).
+	if fake.call < 2 {
+		t.Fatalf("planner run should continue past the first tool-less turn, got %d", fake.call)
 	}
 }
 
@@ -181,6 +188,41 @@ func TestRoleAllowsHonorsValidAllowlist(t *testing.T) {
 	}
 }
 
+// TestPublishTaskActivityBusOnlyNotProgress verifies ephemeral "Menjalankan …"
+// hints refresh the orchestrator task card via the bus but do not pollute the
+// per-task progress JSONL that feeds the sub-agent monitor.
+func TestPublishTaskActivityBusOnlyNotProgress(t *testing.T) {
+	b := bus.New()
+	events, cancel := b.Subscribe(8)
+	defer cancel()
+	dir := t.TempDir()
+	o := &Orchestrator{
+		bus:      b,
+		progress: newAsyncProgressWriter(ProgressWriter{Dir: dir}),
+		cfg:      config.Config{},
+	}
+
+	o.publishTaskActivity("s1", taskRecord{ID: "t1", Role: "task-runner", Status: "in_progress", Task: "build"}, "Menjalankan `exec`.")
+
+	select {
+	case ev := <-events:
+		if ev.Data.Kind != bridge.EventTaskUpdate {
+			t.Fatalf("kind = %q, want task_update", ev.Data.Kind)
+		}
+		if ev.Data.Summary != "Menjalankan `exec`." {
+			t.Fatalf("summary = %q", ev.Data.Summary)
+		}
+	default:
+		t.Fatalf("expected orchestrator bus event")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "orch-t1.jsonl")); err == nil {
+		raw, _ := os.ReadFile(filepath.Join(dir, "orch-t1.jsonl"))
+		if bytes.Contains(raw, []byte("Menjalankan")) {
+			t.Fatalf("ephemeral activity must not be persisted to progress: %s", raw)
+		}
+	}
+}
+
 // TestPublishTaskUpdateFailureAlwaysSurfaces verifies the completion trigger:
 // a failed task publishes an EventTaskUpdate even when notifyUserOnDone is off.
 func TestPublishTaskUpdateFailureAlwaysSurfaces(t *testing.T) {
@@ -214,7 +256,7 @@ func TestPublishTaskUpdateDoneAlwaysSurfaces(t *testing.T) {
 	events, cancel := b.Subscribe(8)
 	defer cancel()
 	dir := t.TempDir()
-	o := &Orchestrator{bus: b, cfg: config.Config{}, progress: ProgressWriter{Dir: dir}}
+	o := &Orchestrator{bus: b, cfg: config.Config{}, progress: newAsyncProgressWriter(ProgressWriter{Dir: dir})}
 
 	o.publishTaskUpdate("s1", taskRecord{ID: "t1", Role: "task-runner", Status: "done", Result: "ok"})
 
@@ -235,26 +277,38 @@ func TestPublishTaskUpdateDoneAlwaysSurfaces(t *testing.T) {
 	}
 }
 
-func TestRecentTaskUpdatesRehydratesDurableState(t *testing.T) {
+func TestRecentTaskUpdatesRehydratesLiveStateOnly(t *testing.T) {
 	now := time.Now().UTC()
 	o := &Orchestrator{memoryDir: t.TempDir()}
+	// t1 is live (in_progress); t2 is terminal (failed) and must NOT be
+	// rehydrated - its outcome is already persisted as an assistant chat bubble
+	// via speakTaskCompletion, and re-emitting it made the chat room fill with a
+	// verbose status timeline on every widget open.
 	for _, record := range []taskRecord{
 		{ID: "t1", SessionID: "s1", Role: "task-runner", Status: "in_progress", CreatedAt: now, UpdatedAt: now},
 		{ID: "t2", SessionID: "s1", Role: "task-runner", Status: "failed", Error: "boom", CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+		{ID: "t3", SessionID: "s1", Role: "planner", Status: "done", Result: "ok", CreatedAt: now, UpdatedAt: now.Add(2 * time.Second)},
+		{ID: "t4", SessionID: "s1", Role: "task-runner", Status: "awaiting_clarification", Question: "which?", CreatedAt: now, UpdatedAt: now.Add(3 * time.Second)},
 	} {
 		if err := o.writeTask(record); err != nil {
 			t.Fatal(err)
 		}
 	}
 	events := o.RecentTaskUpdates(20)
+	// Only the live (in_progress) and paused (awaiting_clarification) tasks
+	// rehydrate; terminal done/failed are dropped.
 	if len(events) != 2 {
-		t.Fatalf("got %d updates, want 2", len(events))
+		t.Fatalf("got %d updates, want 2 (live + paused only): %+v", len(events), events)
 	}
-	if events[0].TaskID != "t1" || events[1].TaskID != "t2" {
-		t.Fatalf("updates not in chronological order: %+v", events)
+	ids := []string{events[0].TaskID, events[1].TaskID}
+	if ids[0] != "t1" || ids[1] != "t4" {
+		t.Fatalf("unexpected rehydrated tasks: %+v", ids)
 	}
-	if events[1].TaskStatus != "failed" || events[1].Summary == "" {
-		t.Fatalf("failed snapshot incomplete: %+v", events[1])
+	if events[0].TaskStatus != "in_progress" {
+		t.Fatalf("t1 status = %q, want in_progress", events[0].TaskStatus)
+	}
+	if events[1].TaskStatus != "awaiting_clarification" || events[1].Summary == "" {
+		t.Fatalf("paused snapshot incomplete: %+v", events[1])
 	}
 }
 
@@ -265,7 +319,7 @@ func TestRecoverOrphanedTasksFailsDetachedWorkers(t *testing.T) {
 	defer cancel()
 	o := &Orchestrator{
 		memoryDir: t.TempDir(),
-		progress:  ProgressWriter{Dir: t.TempDir()},
+		progress:  newAsyncProgressWriter(ProgressWriter{Dir: t.TempDir()}),
 		bus:       b,
 	}
 	for _, record := range []taskRecord{
@@ -285,7 +339,7 @@ func TestRecoverOrphanedTasksFailsDetachedWorkers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if record.Status != "failed" || !strings.Contains(record.Error, "orphaned") {
+		if record.Status != "failed" || !strings.Contains(record.Error, "no durable actor turns") {
 			t.Fatalf("%s not recovered as explicit failure: %+v", id, record)
 		}
 	}

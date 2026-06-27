@@ -3,7 +3,7 @@
 // turn-content parser used when restoring history.
 import { OpenAttachment, SubmitFeedback } from '../../wailsjs/go/main/App';
 import type { PendingAttachment } from '../core/types';
-import { formatBytes, getMessageList } from '../ui/dom';
+import { formatBytes, getMessageList, hasVisibleText } from '../ui/dom';
 import { renderMarkdown } from '../ui/markdown';
 import { showImagePreview } from '../ui/image-preview';
 import {
@@ -13,10 +13,135 @@ import {
   resetMessageSeq,
   setUserGroup,
   spokenTaskIDs,
+  taskBubbles,
+  taskStatuses,
 } from '../core/state';
 import { copyText, deleteTurn, editText, retryTurn } from './message-actions';
 
+import {
+  type ToolActivityCall,
+  createToolActivityElement,
+  formatToolPayload,
+  getToolActivityHeader,
+  paintToolActivityHeader,
+  patchToolActivityElement,
+  setToolActivityOpen,
+  toolActivityHint,
+  toolEntryFromCall,
+} from '../ui/transcript';
+
+export type { ToolActivityCall };
+
 let activeMessageMenu: HTMLElement | null = null;
+const toolActivityByID = new Map<string, HTMLElement>();
+
+function findToolActivity(call: ToolActivityCall): HTMLElement | undefined {
+  if (call.id) {
+    const byID = toolActivityByID.get(call.id);
+    if (byID?.isConnected) return byID;
+  }
+  return [...toolActivityByID.values()].reverse().find((item) =>
+    item.dataset.toolName === (call.name || 'unknown') && item.dataset.complete !== 'true');
+}
+
+// appendToolActivity creates one Cursor-like activity row. The disclosure is
+// the root element itself and its label is a direct text node. WebKitGTK can
+// collapse a nested button to zero height when this row lands between two
+// streamed thinking bubbles, leaving only the parent's borders visible.
+export function appendToolActivity(call: ToolActivityCall): HTMLElement | undefined {
+  const list = getMessageList();
+  if (!list) return;
+  if (call.id) {
+    const existing = toolActivityByID.get(call.id);
+    if (existing?.isConnected) return existing;
+  }
+  const item = createToolActivityElement(toolEntryFromCall(call), {
+    mode: 'chat',
+    extraClass: 'message',
+  });
+  item.dataset.seq = `${nextMessageSeq()}`;
+  item.dataset.group = `${getUserGroup()}`;
+  item.dataset.toolHint = toolActivityHint(call);
+  const header = getToolActivityHeader(item);
+  if (header) paintToolActivityHeader(item, header);
+  list.append(item);
+  if (call.id) toolActivityByID.set(call.id, item);
+  list.scrollTop = list.scrollHeight;
+  return item;
+}
+
+export function completeToolActivity(call: ToolActivityCall, result: string, statusText = 'completed'): HTMLElement | undefined {
+  const item = findToolActivity(call) || appendToolActivity(call);
+  if (!item) return;
+  patchToolActivityElement(item, {
+    kind: 'tool',
+    id: call.id || item.dataset.toolId || '',
+    name: call.name || item.dataset.toolName || 'unknown',
+    args: formatToolPayload(call.arguments) || item.querySelector('.tool-activity__section code')?.textContent || '',
+    response: result,
+    status: statusText,
+  });
+  // Collapse when done — same default as the sub-agent monitor. Header line
+  // stays visible; click to expand request/response.
+  setToolActivityOpen(item, false);
+  const header = getToolActivityHeader(item);
+  if (header) paintToolActivityHeader(item, header);
+  return item;
+}
+
+type SummaryPanelOptions = {
+  label: string;
+  content: string;
+  meta?: string;
+  variant?: 'checkpoint' | 'planner';
+  open?: boolean;
+  taskID?: string;
+  archived?: boolean;
+};
+
+export function appendSummaryPanel(options: SummaryPanelOptions): HTMLElement | undefined {
+  const list = getMessageList();
+  if (!list || !options.content.trim()) return;
+  const card = document.createElement('div');
+  card.className = `message summary-panel summary-panel--${options.variant || 'checkpoint'}${options.archived ? ' message--archived' : ''}`;
+  card.dataset.seq = `${nextMessageSeq()}`;
+  card.dataset.group = `${getUserGroup()}`;
+  card.classList.toggle('is-open', options.open === true);
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('aria-expanded', String(options.open === true));
+  if (options.taskID) card.dataset.taskId = options.taskID;
+  const headerText = document.createTextNode('');
+  const paintHeader = () => {
+    const marker = card.classList.contains('is-open') ? '−' : '+';
+    headerText.nodeValue = `${marker}  ${options.label}${options.meta ? `  ·  ${options.meta}` : ''}`;
+  };
+  paintHeader();
+  const body = document.createElement('div');
+  body.className = 'summary-panel__body';
+  body.hidden = options.open !== true;
+  body.append(renderMarkdown(options.content));
+  if (!hasVisibleText(body)) return;
+  const toggle = () => {
+    const open = card.classList.toggle('is-open');
+    card.setAttribute('aria-expanded', String(open));
+    paintHeader();
+    body.hidden = !open;
+  };
+  card.addEventListener('click', toggle);
+  card.addEventListener('keydown', (event) => {
+    if (event.target !== card) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggle();
+    }
+  });
+  body.addEventListener('click', (event) => event.stopPropagation());
+  card.append(headerText, body);
+  list.append(card);
+  list.scrollTop = list.scrollHeight;
+  return card;
+}
 
 export function appendMessage(
   className: string,
@@ -35,12 +160,45 @@ export function appendMessage(
   item.dataset.rawText = text;
   item.append(renderMarkdown(text));
   if (attachments.length) item.append(renderMessageAttachments(attachments));
+  // Restored assistant turns bypass the live stream's flush guard. Apply the
+  // same meaningful-content check here so markdown-only separators or content
+  // sanitized to nothing cannot leave an empty feedback bubble behind.
+  if (className.includes('message--assistant') && !hasVisibleText(item)) return;
   if (className.includes('message--user')) wireUserMessage(item, text);
   if (className.includes('message--error')) wireErrorMessage(item);
   if (className.includes('message--assistant')) wireAssistantFeedback(item);
   list.appendChild(item);
   list.scrollTop = list.scrollHeight;
   return item;
+}
+
+// appendCheckpointDivider inserts the visual seam between pre-checkpoint
+// (archived, muted) and post-checkpoint (live) history: a horizontal rule with
+// a small centered "Checkpoint n" label, followed by a collapsible summary
+// card (collapsed by default so it does not dominate the chat). The summary is
+// the model-authored markdown captured at compaction time; expanding it lets
+// the user recall what was compacted without leaving the transcript.
+export function appendCheckpointDivider(index: number, summary: string) {
+  const list = getMessageList();
+  if (!list) return;
+  const divider = document.createElement('div');
+  divider.className = 'checkpoint-divider';
+  const ruleBefore = document.createElement('span');
+  ruleBefore.className = 'checkpoint-divider__rule';
+  const label = document.createElement('span');
+  label.className = 'checkpoint-divider__label';
+  label.textContent = `Checkpoint ${index}`;
+  const ruleAfter = document.createElement('span');
+  ruleAfter.className = 'checkpoint-divider__rule';
+  divider.append(ruleBefore, label, ruleAfter);
+  list.appendChild(divider);
+  if (summary && summary.trim()) appendSummaryPanel({
+    label: 'Session summary',
+    meta: `Context checkpoint ${index}`,
+    content: summary,
+    variant: 'checkpoint',
+  });
+  list.scrollTop = list.scrollHeight;
 }
 
 function renderMessageAttachments(attachments: PendingAttachment[]) {
@@ -61,13 +219,25 @@ function renderMessageAttachments(attachments: PendingAttachment[]) {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'message-attachment-row';
-    const preview = attachment.dataURI && attachment.type.startsWith('image/')
-      ? `<img src="${attachment.dataURI}" alt="">`
-      : `<span class="attachment-file-icon">${attachment.type.startsWith('image/') ? 'IMG' : 'FILE'}</span>`;
-    row.innerHTML = `${preview}<span><strong></strong><small>${formatBytes(attachment.size)} · ${attachment.type || 'file'}</small></span>`;
-    const name = row.querySelector('strong');
-    if (name) name.textContent = attachment.name;
-    const image = row.querySelector('img');
+		let image: HTMLImageElement | null = null;
+		if (attachment.dataURI && attachment.type.startsWith('image/')) {
+			image = document.createElement('img');
+			image.src = attachment.dataURI;
+			image.alt = '';
+			row.append(image);
+		} else {
+			const icon = document.createElement('span');
+			icon.className = 'attachment-file-icon';
+			icon.textContent = attachment.type.startsWith('image/') ? 'IMG' : 'FILE';
+			row.append(icon);
+		}
+		const details = document.createElement('span');
+		const name = document.createElement('strong');
+		name.textContent = attachment.name;
+		const meta = document.createElement('small');
+		meta.textContent = `${formatBytes(attachment.size)} · ${attachment.type || 'file'}`;
+		details.append(name, meta);
+		row.append(details);
     image?.addEventListener('click', (event) => {
       event.stopPropagation();
       if (attachment.dataURI) showImagePreview(attachment.dataURI, attachment.name);
@@ -101,7 +271,14 @@ export function parseTurnContent(content: string): { text: string; attachments: 
     const attachment = decodeAttachmentMeta(match[1]);
     if (attachment) attachments.push(attachment);
   }
-  let text = content.replace(metadata, '');
+  // Replace each attachment metadata marker with a clickable markdown link when
+  // the attachment is path-backed (native file/folder drop), so a restored
+  // bubble renders the same link as the live one. Pathless attachments (browser
+  // /pasted) collapse to nothing here and surface via the "N attachments" badge.
+  let text = content.replace(metadata, (_match, encoded) => {
+    const a = decodeAttachmentMeta(encoded);
+    return a && a.path ? `[${a.name}](${a.path})` : '';
+  });
   text = text.replace(/\n*!\[([^\]]*)\]\((data:image\/[^)]+)\)/g, (_match, name, dataURI) => {
     const existing = attachments.find((item) => item.name === name);
     if (existing) existing.dataURI = dataURI;
@@ -109,9 +286,10 @@ export function parseTurnContent(content: string): { text: string; attachments: 
     return '';
   });
   text = text.replace(/\n*--- file: ([^\n]+) \(([^)]+)\) ---[\s\S]*?--- end file: \1 ---/g, '');
-  // The chip already shows the name/path, so drop the model-facing
-  // "[Local file: …]" lines from the displayed bubble to avoid duplication.
+  // The chip/link already shows the name/path, so drop the model-facing
+  // "[Local file: …]" / "[Local folder: …]" pointers to avoid duplication.
   text = text.replace(/\n*\[Local file:[^\]]*\]/g, '');
+  text = text.replace(/\n*\[Local folder:[^\]]*\]/g, '');
   return { text: text.trim(), attachments };
 }
 
@@ -119,6 +297,7 @@ export function clearMessages() {
   const list = getMessageList();
   if (list) list.innerHTML = '';
   activeMessageMenu = null;
+  toolActivityByID.clear();
   resetMessageSeq();
   setUserGroup(0);
   // The DOM is wiped (e.g. history restore renders completions from persisted
@@ -126,6 +305,8 @@ export function clearMessages() {
   // otherwise a task spoken before the clear would be suppressed if it legitly
   // re-arrives live afterwards.
   spokenTaskIDs.clear();
+  taskBubbles.clear();
+  taskStatuses.clear();
 }
 
 export function closeMessageMenu() {
@@ -160,7 +341,7 @@ function showUserMessageMenu(item: HTMLElement) {
   activeMessageMenu = menu;
 }
 
-function wireUserMessage(item: HTMLElement, _text: string) {
+export function wireUserMessage(item: HTMLElement, _text: string) {
   item.tabIndex = 0;
   item.addEventListener('click', (event) => {
     if (window.getSelection()?.toString()) return;
@@ -175,7 +356,7 @@ function wireUserMessage(item: HTMLElement, _text: string) {
   });
 }
 
-function wireErrorMessage(item: HTMLElement) {
+export function wireErrorMessage(item: HTMLElement) {
   const actions = document.createElement('div');
   actions.className = 'message-inline-actions';
   actions.innerHTML = `<button type="button" title="Retry">↻</button>`;
@@ -301,6 +482,7 @@ export function appendThinkingBubble(text: string, groupID = getUserGroup()) {
   const body = document.createElement('div');
   body.className = 'thinking-body';
   body.append(renderMarkdown(text));
+  if (!hasVisibleText(body)) return;
 
   header.addEventListener('click', (event) => {
     event.stopPropagation();

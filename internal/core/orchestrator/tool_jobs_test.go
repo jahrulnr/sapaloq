@@ -48,6 +48,41 @@ func TestToolJobSchedulerRunsIndependentJobsInParallel(t *testing.T) {
 	}
 }
 
+func TestToolJobSchedulerParallelizesExecWritesToDifferentPaths(t *testing.T) {
+	s := newToolJobScheduler(t.TempDir(), 4, nil)
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	items := make([]scheduledTool, 2)
+	for i, path := range []string{"/tmp/a.html", "/tmp/b.css"} {
+		p := path
+		raw, _ := json.Marshal(map[string]string{"command": "cat > " + p + " <<'EOF'"})
+		items[i] = scheduledTool{
+			index: i,
+			call:  parse.ToolCall{Name: "exec", Arguments: raw},
+			execute: func(context.Context) turnOutcome {
+				started <- struct{}{}
+				<-release
+				return turnOutcome{text: "ok", handled: true}
+			},
+		}
+	}
+	done := make(chan struct{})
+	go func() {
+		for range s.submitBatch(context.Background(), "run-1", "session-1", items) {
+		}
+		close(done)
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("exec writes to different paths did not start concurrently")
+		}
+	}
+	close(release)
+	<-done
+}
+
 func TestToolJobSchedulerSerializesSameResourceLane(t *testing.T) {
 	s := newToolJobScheduler(t.TempDir(), 4, nil)
 	var mu sync.Mutex
@@ -139,11 +174,10 @@ func TestRunTurnLoopDispatchesProviderToolBatchInParallel(t *testing.T) {
 		}
 	}()
 	cfg := turnConfig{
-		sessionID:      "s1",
-		runID:          "actor-1",
-		tools:          []string{"read_file"},
-		sink:           chatSink{o: o, out: out},
-		finishOnNoTool: true,
+		sessionID: "s1",
+		runID:     "actor-1",
+		tools:     []string{"read_file"},
+		sink:      chatSink{o: o, out: out},
 		dispatch: func(context.Context, parse.ToolCall) turnOutcome {
 			started <- struct{}{}
 			<-release
@@ -216,11 +250,10 @@ func TestRunTurnLoopAppliesTargetedSteeringAtSafePoint(t *testing.T) {
 		entry: config.LLMBridge{Key: "test", Model: "model"},
 		br:    fake,
 	}, "task", []bridge.Message{{Role: "user", Content: "implement"}}, turnConfig{
-		sessionID:      "s1",
-		runID:          "agent-1",
-		sink:           chatSink{o: o, out: out},
-		finishOnNoTool: true,
-		dispatch:       func(context.Context, parse.ToolCall) turnOutcome { return turnOutcome{} },
+		sessionID: "s1",
+		runID:     "agent-1",
+		sink:      chatSink{o: o, out: out},
+		dispatch:  func(context.Context, parse.ToolCall) turnOutcome { return turnOutcome{} },
 	})
 	close(out)
 	if err != nil {
