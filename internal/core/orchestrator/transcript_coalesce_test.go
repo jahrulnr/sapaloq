@@ -38,3 +38,35 @@ func TestCoalesceAutopilotNudge(t *testing.T) {
 		t.Fatalf("autopilot nudge must not surface in transcript, got %+v", out)
 	}
 }
+
+func TestCoalesceEventsSkipsTaskUpdateCards(t *testing.T) {
+	now := time.Now().UTC()
+	events := []bridge.StreamEvent{
+		{Kind: bridge.EventResponseDelta, Delta: "working", At: now},
+		{
+			Kind: bridge.EventTaskUpdate, SessionID: "s1", TaskID: "task-1",
+			TaskRole: "task-runner", TaskStatus: "in_progress",
+			Summary: "Menjalankan `exec`.", At: now,
+		},
+	}
+	out := CoalesceEvents("task-1", events)
+	if len(out) != 1 || out[0].Kind != bridge.TranscriptText {
+		t.Fatalf("task cards must not appear in sub-agent replay, got %+v", out)
+	}
+}
+
+func TestEntriesWithPendingStreamsPartialText(t *testing.T) {
+	c := NewTranscriptCoalescer("42")
+	c.Apply(bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "Hel"})
+	c.Apply(bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "lo"})
+	if len(c.Entries()) != 0 {
+		t.Fatalf("buffered text must not flush to Entries() yet, got %d", len(c.Entries()))
+	}
+	pending := c.EntriesWithPending()
+	if len(pending) != 1 || pending[0].Text != "Hello" {
+		t.Fatalf("pending snapshot = %+v, want single Hello row", pending)
+	}
+	if pending[0].ID != "42-pending-text" {
+		t.Fatalf("pending id = %q, want stable id for DOM patch", pending[0].ID)
+	}
+}

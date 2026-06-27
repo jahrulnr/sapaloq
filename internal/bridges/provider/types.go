@@ -219,6 +219,8 @@ func wireRole(role string) string {
 	switch role {
 	case "tool", "error":
 		return "user"
+	case "checkpoint":
+		return "system"
 	default:
 		return role
 	}

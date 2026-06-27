@@ -64,7 +64,8 @@ func MigrateLegacyLayout(dirs RuntimeDirsInfo) error {
 	moves := []struct{ from, to string }{
 		{filepath.Join(dirs.MemoryDir, "tasks"), dirs.TasksDir},
 		{filepath.Join(dirs.MemoryDir, "workers"), dirs.WorkersDir},
-		{filepath.Join(dirs.MemoryDir, "progress"), dirs.ProgressDir},
+		{filepath.Join(dirs.MemoryDir, "progress"), dirs.RolloutDir},
+		{filepath.Join(dirs.StateDir, "progress"), dirs.RolloutDir},
 		{filepath.Join(dirs.MemoryDir, "events.jsonl"), filepath.Join(dirs.StateDir, "events.jsonl")},
 	}
 	var errs []error

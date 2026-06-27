@@ -304,10 +304,6 @@ func (o *Orchestrator) handleSubAgentTool(ctx context.Context, record *taskRecor
 			return subToolResult{text: "No plan available yet."}
 		}
 		return subToolResult{text: plan}
-	case "sapaloq_compact_session":
-		args := parseToolArgs(call.Arguments)
-		text, _ := o.handleSubAgentCompactSession(ctx, compactCtx, args.Summary, args.Reason)
-		return subToolResult{text: text}
 	case "sapaloq_update_task_progress":
 		note := strings.TrimSpace(args.Note)
 		if note == "" {

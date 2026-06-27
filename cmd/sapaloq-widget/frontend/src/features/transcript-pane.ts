@@ -14,6 +14,12 @@ export function resetChatTranscriptState() {
   paneState.renderedEntryCount = 0;
 }
 
+/** Keep incremental sync aligned with the current DOM after a new user send. */
+export function syncChatTranscriptStateFromDOM() {
+  const pane = getMessageList()?.querySelector('.transcript-pane');
+  paneState.renderedEntryCount = pane?.children.length ?? 0;
+}
+
 export function mountChatTranscript(entries: ReadonlyArray<TranscriptEntry | TranscriptEntryInput>) {
   const list = getMessageList();
   if (!list) return;

@@ -296,11 +296,11 @@
             "resumeAfterCompaction": { "type": "boolean", "default": true },
             "useCheckpoints": { "type": "boolean", "default": true, "description": "Enables the LLM-authored checkpoint compaction model. When false, the legacy heuristic compaction path is used." },
             "headroomPercent": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.05, "description": "Fraction of the context window that must remain free before forced compaction fires (0.05 = 5% headroom, fires at 95% used)." },
-            "steerPercent": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.85, "description": "Context usage at which autopilot suggests sapaloq_compact_session (non-blocking). Should be below the headroom threshold." },
+            "steerPercent": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.85, "description": "Pre-turn soft compaction threshold anchor (orchestrator runs pre_turn at steerPercent+5 before headroom force)." },
             "keepRecentTurns": { "type": "integer", "minimum": 1, "default": 4, "description": "Max turns retained in the post-checkpoint tail (in addition to the anchored last assistant turn)." },
             "preserveLastAgentTurn": { "type": "boolean", "default": true, "description": "Hard rule: the post-checkpoint tail always includes the last assistant turn. Not disableable in v1." },
             "preservePrecedingUserTurn": { "type": "boolean", "default": true, "description": "Also keep the user turn immediately before the anchored last assistant turn." },
-            "maxForceRetries": { "type": "integer", "minimum": 1, "default": 3, "description": "Max forced-compaction turn retries if the model refuses sapaloq_compact_session before the run errors out." }
+            "maxForceRetries": { "type": "integer", "minimum": 1, "default": 3, "description": "Max isolated compaction attempts before orchestrator fallback summary." }
           }
         },
         "antiContextPoisoning": {

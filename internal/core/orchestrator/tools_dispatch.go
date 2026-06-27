@@ -28,6 +28,10 @@ func (o *Orchestrator) runSharedTool(ctx context.Context, call parse.ToolCall) (
 			return o.spawnBgTool(ctx, call.Name, run), true
 		}
 		out, _ := run(ctx)
+		out = enrichToolResultWithArtifactFingerprint(call.Name, args.Command, out)
+		if args.Path != "" && (call.Name == "write_file" || call.Name == "create_file" || call.Name == "edit_file") {
+			out = enrichToolResultWithArtifactFingerprint(call.Name, args.Path, out)
+		}
 		return out, true
 	}
 	return "", false

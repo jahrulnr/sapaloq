@@ -29,6 +29,38 @@ func (c *TranscriptCoalescer) Entries() []bridge.TranscriptEntry {
 	return out
 }
 
+// EntriesWithPending includes in-flight response/thinking buffers as stable
+// transcript rows so the widget can patch streaming text before flushText().
+func (c *TranscriptCoalescer) EntriesWithPending() []bridge.TranscriptEntry {
+	out := c.Entries()
+	if text := c.textBuf.String(); strings.TrimSpace(text) != "" {
+		out = append(out, bridge.TranscriptEntry{
+			ID:           c.pendingID("text"),
+			Kind:         bridge.TranscriptText,
+			GenerationID: c.generationID,
+			At:           time.Now().UTC(),
+			Text:         text,
+		})
+	}
+	if text := c.thinkBuf.String(); strings.TrimSpace(text) != "" {
+		out = append(out, bridge.TranscriptEntry{
+			ID:           c.pendingID("thinking"),
+			Kind:         bridge.TranscriptThinking,
+			GenerationID: c.generationID,
+			At:           time.Now().UTC(),
+			Text:         text,
+		})
+	}
+	return out
+}
+
+func (c *TranscriptCoalescer) pendingID(kind string) string {
+	if c.generationID == "" {
+		return "pending-" + kind
+	}
+	return c.generationID + "-pending-" + kind
+}
+
 func (c *TranscriptCoalescer) Apply(ev bridge.StreamEvent) bool {
 	c.changed = false
 	if ev.GenerationID != "" {
@@ -220,17 +252,10 @@ func (c *TranscriptCoalescer) appendStatus(ev bridge.StreamEvent) {
 }
 
 func (c *TranscriptCoalescer) appendTask(ev bridge.StreamEvent) {
-	c.entries = append(c.entries, bridge.TranscriptEntry{
-		ID:           c.newID("task"),
-		Kind:         bridge.TranscriptTask,
-		GenerationID: c.generationID,
-		At:           ev.At,
-		TaskID:       ev.TaskID,
-		TaskRole:     ev.TaskRole,
-		TaskStatus:   ev.TaskStatus,
-		Summary:      ev.Summary,
-	})
-	c.changed = true
+	// Task lifecycle cards are orchestrator-chat UI only (session timeline +
+	// live task_update bus). Sub-agent progress replay is for thinking/tools/
+	// text; the monitor header already shows role/status.
+	_ = ev
 }
 
 func (c *TranscriptCoalescer) newID(kind string) string {

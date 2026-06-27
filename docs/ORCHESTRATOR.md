@@ -1312,16 +1312,30 @@ user sees: "Ada notif Slack - mau aku rangkum?"
 Orchestrator reads **summaries**, not raw dumps.
 
 ```text
-~/SapaLOQ/memory/
-  companion.db           # namespaces: personal, hobby, work
-  tasks/                 # task stack persistence
-  context-packets/       # ephemeral, task-scoped
-    <taskId>.json
-  progress/              # sub-agent progress streams
-    <subAgentId>.jsonl
-  control/               # orchestrator → sub-agent commands
-    <subAgentId>.json
-  events.jsonl           # unified event bus (GNOME, custom, internal)
+~/SapaLOQ/state/
+  rollout/               # canonical session JSONL (tool stream + progress)
+    orch-<sessionId>.jsonl
+  sessions/
+    index.json           # session list + active flag
+    <sessionId>/
+      turns.json         # user/assistant/tool/checkpoint turns
+      checkpoints.json
+  memory/
+    facts.json           # durable memory facts (substring search)
+    feedback.jsonl
+  config/
+    nodes.json
+    skills_index.json
+    prefetch_rules.json
+
+~/SapaLOQ/memory/        # legacy root (companion.db migrated on first boot)
+```
+
+**Codex alignment (2026):** conversation persistence is JSON-first under `state/`; the orchestrator maintains a single transcript via per-turn assistant persist + rollout JSONL. Compaction rewrites `turns.json` and rebuilds the live `cleanMessages` slice atomically.
+
+```text
+~/SapaLOQ/memory/        # pre-migration only
+  companion.db.bak         # after one-shot SQLite export
 ```
 
 **memory-janitor** (auto-spawn):

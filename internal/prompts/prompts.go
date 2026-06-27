@@ -35,6 +35,7 @@ const (
 	RolePlanner    = "planner"
 	RoleAgent      = "agent" // task-runner
 	RoleScribe     = "scribe"
+	RoleCompaction = "compaction" // isolated summarizer; not a chat/sub-agent role
 	RolePersona    = "persona"
 	RoleRules      = "rules"
 	manifestName   = "prompts.manifest.json"
@@ -52,6 +53,8 @@ func fileFor(role string) (string, bool) {
 		return "agent.md", true
 	case RoleScribe:
 		return "scribe.md", true
+	case RoleCompaction:
+		return "compaction.md", true
 	case RolePersona:
 		return "persona.md", true
 	case RoleRules:
@@ -91,6 +94,7 @@ func roles() []struct{ role, file string } {
 		{RolePlanner, "planner.md"},
 		{RoleAgent, "agent.md"},
 		{RoleScribe, "scribe.md"},
+		{RoleCompaction, "compaction.md"},
 		{RolePersona, "persona.md"},
 		{RoleRules, "rules.md"},
 	}

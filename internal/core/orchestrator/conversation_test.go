@@ -853,8 +853,8 @@ func TestRunConversationRecoversFromMalformedToolCall(t *testing.T) {
 	}
 	// The nudge must have been appended as a user message before the retry.
 	last := fake.requests[1].Messages[len(fake.requests[1].Messages)-1].Content
-	if !strings.Contains(last, "ONE tool call at a time") {
-		t.Fatalf("retry prompt missing the one-call-at-a-time nudge: %q", last)
+	if !strings.Contains(last, "well-formed call") {
+		t.Fatalf("retry prompt missing malformed-tool nudge: %q", last)
 	}
 }
 
@@ -1180,5 +1180,28 @@ func TestRunEmitsTurnBoundaryBetweenTurns(t *testing.T) {
 		if kinds[i] == bridge.EventTurnBoundary {
 			t.Fatalf("turn_boundary emitted after final done at index %d, kinds=%v", i, kinds)
 		}
+	}
+}
+
+func TestEnsureConversationEndsWithUser(t *testing.T) {
+	msgs := []bridge.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "hello"},
+	}
+	out := ensureConversationEndsWithUser(msgs)
+	if len(out) != len(msgs)+1 {
+		t.Fatalf("expected user continuation, got %d messages", len(out))
+	}
+	if out[len(out)-1].Role != "user" {
+		t.Fatalf("last role = %q, want user", out[len(out)-1].Role)
+	}
+	unchanged := ensureConversationEndsWithUser([]bridge.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "assistant", Content: "mid"},
+		{Role: "user", Content: "latest"},
+	})
+	if len(unchanged) != 3 {
+		t.Fatalf("expected unchanged slice, got %d", len(unchanged))
 	}
 }

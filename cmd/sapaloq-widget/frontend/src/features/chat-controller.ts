@@ -10,7 +10,7 @@ import { renderUsage, setConnection, setRingState, runPing } from './connection'
 import { appendMessage, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
 import { applyChatResetFromBE } from './apply-session-reset';
-import { mountChatTranscript, resetChatTranscriptState, syncChatTranscript } from './transcript-pane';
+import { mountChatTranscript, resetChatTranscriptState, syncChatTranscript, syncChatTranscriptStateFromDOM } from './transcript-pane';
 import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus } from './runtime-status';
@@ -56,12 +56,14 @@ function applyTranscriptPatch(patch: TranscriptPatch) {
   if (patch.reset) {
     applyChatResetFromBE(patch);
     if (patch.finished) releaseInFlightTurn();
+    if (patch.usage) renderUsage(patch.usage as ChatUsage);
     void loadSessionList();
     return;
   }
   if (!patch.entries?.length) return;
   if (activeGeneration && patch.generation_id && patch.generation_id !== activeGeneration) return;
   syncChatTranscript(patch.entries);
+  if (patch.usage) renderUsage(patch.usage as ChatUsage);
   if (patch.finished) releaseInFlightTurn();
 }
 
@@ -77,7 +79,7 @@ async function sendText(text: string, _visibleText = text, _attachments: Attachm
   setSubmittingUI(true);
   setComposeDisabled(true);
   activeGeneration = null;
-  resetChatTranscriptState();
+  syncChatTranscriptStateFromDOM();
   try {
     const res = await SendMessage(getSessionID(), text);
     if (res.generation_id) activeGeneration = res.generation_id;
@@ -90,7 +92,7 @@ async function sendText(text: string, _visibleText = text, _attachments: Attachm
       void loadSessionList();
     } else {
       if (res.session_id) setSessionID(res.session_id);
-      if (res.transcript?.length) mountChatTranscript(res.transcript);
+      if (res.transcript?.length) syncChatTranscript(res.transcript);
     }
     await bindLatestGroupTurnID();
     renderUsage(res.usage as ChatUsage | undefined);

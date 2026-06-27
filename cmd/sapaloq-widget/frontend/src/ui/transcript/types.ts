@@ -55,6 +55,13 @@ export type TranscriptPatch = {
   turn_id?: number;
   /** BE signals the widget to discard the current transcript and render entries. */
   reset?: boolean;
+  usage?: {
+    used_tokens?: number;
+    context_window?: number;
+    percent?: number;
+    provider?: string;
+    model?: string;
+  };
 };
 
 /** Wails/JSON payloads use plain string for kind — coerce at the UI boundary. */

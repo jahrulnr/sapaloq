@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -391,11 +392,44 @@ func toolResourceKey(runID string, call parse.ToolCall) string {
 		"sapaloq_update_task_progress", "sapaloq_stop", "sapaloq_answer_clarification":
 		return "actor:" + runID + ":lifecycle"
 	case "exec":
-		// Commands sharing a cwd are conservatively serialized because their
-		// filesystem side effects are opaque. Explicit file tools remain
-		// parallel across distinct paths.
-		return "cwd:" + filepath.Clean(expandHome(args.Cwd))
+		// Recognized single-file writes (cat > /path, tee /path) use the same
+		// path lane as write_file so independent scaffolds run in parallel.
+		if target := execWriteTargetPath(args.Command); target != "" {
+			return "path:" + target
+		}
+		// Opaque exec in the same cwd is serialized; distinct cwds may overlap.
+		if cwd := strings.TrimSpace(args.Cwd); cwd != "" {
+			return "cwd:" + filepath.Clean(expandHome(cwd))
+		}
+		// Default-cwd shell glue (mkdir, probes) stays per-run serialized.
+		return "exec:" + runID
 	default:
 		return ""
 	}
+}
+
+var (
+	execCatWriteRE = regexp.MustCompile(`(?i)\bcat\s+(?:>>?)\s*([^\s<&|;"']+)`)
+	execTeeWriteRE = regexp.MustCompile(`(?i)\btee\s+(?:-a\s+)?([^\s<&|;"']+)`)
+)
+
+// execWriteTargetPath returns the destination path when command is a recognized
+// single-file write (cat/tee redirect). Empty when side effects are opaque.
+func execWriteTargetPath(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	for _, re := range []*regexp.Regexp{execCatWriteRE, execTeeWriteRE} {
+		m := re.FindStringSubmatch(command)
+		if len(m) < 2 {
+			continue
+		}
+		p := strings.Trim(m[1], `"'`)
+		if p == "" || p == "&" {
+			continue
+		}
+		return filepath.Clean(expandHome(p))
+	}
+	return ""
 }

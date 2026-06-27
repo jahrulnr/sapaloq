@@ -7,16 +7,214 @@ import (
 	"strings"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
-// compaction.go owns the LLM-driven checkpoint compaction path: deciding which
-// turns survive as the post-checkpoint tail (anchored on the last assistant
-// turn so the model never loses "what I just did"), persisting the checkpoint,
-// and rebuilding the in-memory message slice from the latest checkpoint
-// summary + that tail. It is the durable, model-authored counterpart to the
-// deleted heuristic compactConversationMessages path.
+// compaction.go owns checkpoint compaction: isolated summarization (Codex-style),
+// tail anchoring, persistence, and in-memory rebuild helpers.
 
+// compactionSummaryPrefix frames model-authored summaries (Codex-aligned).
+const compactionSummaryPrefix = "[Checkpoint summary]"
+
+// compactionPrompt returns the isolated summarization system prompt (no persona/rules/ask).
+func (o *Orchestrator) compactionPrompt() string {
+	return strings.TrimSpace(o.rolePrompt(prompts.RoleCompaction))
+}
+
+// runCompactSession is the orchestrator-driven compaction path: one tool-free
+// LLM call to summarize archivable turns, then persist a checkpoint + anchored tail.
+func (o *Orchestrator) runCompactSession(ctx context.Context, snap providerSnapshot, sink turnSink, sessionID, reason string) (chatstore.CheckpointResult, bool, error) {
+	if o.chat == nil {
+		return chatstore.CheckpointResult{}, false, nil
+	}
+	turns, err := o.chat.ActiveTurns(ctx, sessionID, false)
+	if err != nil {
+		return chatstore.CheckpointResult{}, false, err
+	}
+	cfg := snap.cfg.Orchestrator.WithDefaults().Compaction
+	plan := computeTailPreserve(turns, cfg.KeepRecentTurns, cfg.PreservePrecedingUserTurn)
+	if plan.tailStart <= 0 || len(plan.archiveTurnIDs) == 0 {
+		return chatstore.CheckpointResult{}, false, nil
+	}
+	transcript := serializeTurnsForCompaction(turns[:plan.tailStart])
+	summary, err := o.summarizeTranscript(ctx, snap, sessionID, transcript)
+	if err != nil {
+		return chatstore.CheckpointResult{}, false, err
+	}
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return chatstore.CheckpointResult{}, false, fmt.Errorf("compaction returned empty summary")
+	}
+	if !strings.HasPrefix(summary, compactionSummaryPrefix) {
+		summary = compactionSummaryPrefix + "\n" + summary
+	}
+	rr := strings.TrimSpace(reason)
+	if rr == "" {
+		rr = "orchestrator"
+	}
+	pcfg := preserveCfg{keepRecentTurns: cfg.KeepRecentTurns, preservePrecedingUser: cfg.PreservePrecedingUserTurn}
+	res, ok, err := o.createCheckpoint(ctx, sessionID, summary, rr, pcfg)
+	if err != nil || !ok {
+		return res, ok, err
+	}
+	o.emitCheckpoint(ctx, sink, sessionID, res, summary)
+	return res, true, nil
+}
+
+func (o *Orchestrator) summarizeTranscript(ctx context.Context, snap providerSnapshot, sessionID, transcript string) (string, error) {
+	transcript = strings.TrimSpace(transcript)
+	if transcript == "" {
+		return "", fmt.Errorf("nothing to summarize")
+	}
+	prompt := o.compactionPrompt()
+	if prompt == "" {
+		return "", fmt.Errorf("compaction prompt is not configured")
+	}
+	stream, err := snap.br.Complete(ctx, bridge.Request{
+		SessionID: sessionID,
+		Model:     snap.entry.Model,
+		Messages: []bridge.Message{
+			{Role: "system", Content: prompt},
+			{Role: "user", Content: transcript},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return drainBridgeText(ctx, stream)
+}
+
+func drainBridgeText(ctx context.Context, stream <-chan bridge.StreamEvent) (string, error) {
+	var b strings.Builder
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case ev, ok := <-stream:
+			if !ok {
+				return strings.TrimSpace(b.String()), nil
+			}
+			switch ev.Kind {
+			case bridge.EventResponseDelta:
+				b.WriteString(ev.Delta)
+			case bridge.EventError:
+				if ev.Error != "" {
+					return "", fmt.Errorf("%s", ev.Error)
+				}
+			}
+		}
+	}
+}
+
+func serializeTurnsForCompaction(turns []chatstore.Turn) string {
+	var b strings.Builder
+	b.WriteString("Summarize the following conversation transcript.\n\n")
+	for _, t := range turns {
+		if t.Role == "thinking" || t.Role == "autopilot" || t.Role == "checkpoint" {
+			continue
+		}
+		content := strings.TrimSpace(t.Content)
+		if content == "" {
+			continue
+		}
+		if len(content) > 12_000 {
+			content = content[:12_000] + "\n…[truncated]"
+		}
+		b.WriteString("## ")
+		b.WriteString(t.Role)
+		b.WriteString("\n")
+		b.WriteString(content)
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
+func serializeMessagesForCompaction(messages []bridge.Message) string {
+	var b strings.Builder
+	b.WriteString("Summarize the following conversation transcript.\n\n")
+	for _, m := range messages {
+		if m.Role == "thinking" || m.Role == "autopilot" {
+			continue
+		}
+		content := strings.TrimSpace(m.Content)
+		if content == "" {
+			continue
+		}
+		if len(content) > 12_000 {
+			content = content[:12_000] + "\n…[truncated]"
+		}
+		b.WriteString("## ")
+		b.WriteString(m.Role)
+		b.WriteString("\n")
+		b.WriteString(content)
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
+// runSubAgentCompact summarizes in-memory sub-agent history via the same isolated
+// compaction call, then applies compactMessagesWithSummary to the live slice.
+func (o *Orchestrator) runSubAgentCompact(ctx context.Context, snap providerSnapshot, c *subAgentCompactCtx, reason string) error {
+	if c == nil || c.messages == nil {
+		return fmt.Errorf("nothing to compact")
+	}
+	msgs := *c.messages
+	bodyStart := 0
+	for i, m := range msgs {
+		if m.Role != "system" {
+			bodyStart = i
+			break
+		}
+	}
+	body := msgs[bodyStart:]
+	if len(body) <= 6 {
+		return fmt.Errorf("not enough history to compact")
+	}
+	preserve := snap.cfg.Orchestrator.WithDefaults().Compaction.PreserveRecentFraction
+	if preserve <= 0 || preserve >= 1 {
+		preserve = 0.30
+	}
+	keep := int(math.Ceil(float64(len(body)) * preserve))
+	if keep < 4 {
+		keep = 4
+	}
+	if keep >= len(body) {
+		return fmt.Errorf("recent tail already covers context")
+	}
+	transcript := serializeMessagesForCompaction(body[:len(body)-keep])
+	summary, err := o.summarizeTranscript(ctx, snap, c.parentSessionID, transcript)
+	if err != nil {
+		return err
+	}
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return fmt.Errorf("compaction returned empty summary")
+	}
+	if !strings.HasPrefix(summary, compactionSummaryPrefix) {
+		summary = compactionSummaryPrefix + "\n" + summary
+	}
+	compacted := compactMessagesWithSummary(msgs, c.fallbackTask, summary, preserve)
+	if len(compacted) >= len(msgs) {
+		return fmt.Errorf("compaction did not shrink history")
+	}
+	*c.messages = compacted
+	c.checkpointIndex++
+	rr := strings.TrimSpace(reason)
+	if rr == "" {
+		rr = "orchestrator"
+	}
+	if c.sink != nil {
+		ev := bridge.NewEvent(bridge.EventCheckpoint)
+		ev.SessionID = c.parentSessionID
+		ev.TaskID = c.taskID
+		ev.CheckpointIndex = c.checkpointIndex
+		ev.CheckpointReason = rr
+		ev.CheckpointSummary = summary
+		c.sink.emit(ctx, ev)
+	}
+	return nil
+}
 // tailPreservePlan is the result of computeTailPreserve: the indices into the
 // active-in-context turn list that form the post-checkpoint tail, plus the
 // ids to archive and the tail-start id for audit.
@@ -161,15 +359,19 @@ func rebuildMessagesFromCheckpoint(systemPrefix []bridge.Message, ckpt chatstore
 		if t.Role == "thinking" || t.Role == "autopilot" {
 			continue
 		}
+		// Checkpoint marker turns are already injected as a system summary
+		// from ckpt above; replaying the tail row would duplicate content and
+		// send role=checkpoint to the wire (rejected by OpenAI-compatible APIs).
+		if t.Role == "checkpoint" {
+			continue
+		}
 		out = append(out, bridge.Message{Role: t.Role, Content: t.Content})
 	}
 	return out
 }
 
 // orchestratorFallbackCheckpoint persists a checkpoint with an orchestrator-
-// authored summary when the model refuses sapaloq_compact_session. This
-// prevents a run from staying above the context window (and repeatedly
-// allocating an ever-growing message slice) when forced LLM compaction fails.
+// authored summary when isolated LLM compaction fails or returns nothing to archive.
 func (o *Orchestrator) orchestratorFallbackCheckpoint(ctx context.Context, sessionID, reason string) (chatstore.CheckpointResult, bool, error) {
 	if o.chat == nil {
 		return chatstore.CheckpointResult{}, false, nil
@@ -221,29 +423,6 @@ func (o *Orchestrator) buildHeuristicCheckpointSummary(ctx context.Context, sess
 	return b.String(), nil
 }
 
-// The model supplies a structured markdown summary; the orchestrator persists a
-// checkpoint (archiving pre-checkpoint turns for the UI, keeping the anchored
-// tail + summary in context) and emits a live EventCheckpoint so the widget can
-// insert a "Checkpoint n" divider. Returns a tool result that tells the model
-// the checkpoint was created and it should continue from the live tail.
-func (o *Orchestrator) handleCompactSession(ctx context.Context, snap providerSnapshot, sink turnSink, sessionID, summary, reason string) askToolResult {
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return askToolResult{text: "Error: summary is required for `sapaloq_compact_session`.", handled: true}
-	}
-	cfg := snap.cfg.Orchestrator.WithDefaults().Compaction
-	pcfg := preserveCfg{keepRecentTurns: cfg.KeepRecentTurns, preservePrecedingUser: cfg.PreservePrecedingUserTurn}
-	res, ok, err := o.createCheckpoint(ctx, sessionID, summary, "model", pcfg)
-	if err != nil {
-		return askToolResult{text: "Compaction failed: " + err.Error(), handled: true}
-	}
-	if !ok {
-		return askToolResult{text: "Nothing to compact yet - the recent tail already covers the active context. Continue your work; you do not need to compact again right now.", handled: true}
-	}
-	o.emitCheckpoint(ctx, sink, sessionID, res, summary)
-	return askToolResult{text: fmt.Sprintf("Checkpoint %d created. The pre-checkpoint thread is archived for the user; your context now carries the summary + the most recent turns (including your last action). Continue the task from there - do not re-state what the summary already covers.", res.Index), handled: true}
-}
-
 // emitCheckpoint publishes a live EventCheckpoint to the widget sink + event bus
 // so the UI can flush the current chat segment and insert a "Checkpoint n"
 // divider. Best-effort: a closed ctx only skips the live emit, not the
@@ -259,54 +438,29 @@ func (o *Orchestrator) emitCheckpoint(ctx context.Context, sink turnSink, sessio
 	}
 }
 
-// forceCheckpoint runs one blocking compaction turn: it injects a forced
-// <sapaloq:autopilot> steering message telling the model to call
-// sapaloq_compact_session with a full summary before any other work, then runs
-// inference until the tool is called (or the retry budget is exhausted). On
-// success the checkpoint is persisted and a live EventCheckpoint is emitted.
-// It is the system-driven counterpart to the model-initiated tool, used by the
-// headroom (95%) and overflow-400 triggers.
-//
-// Returns the created checkpoint result + true when a checkpoint was created,
-// false when the model refused within the retry budget (caller surfaces an
-// error suggesting /compaction or a shorter message - no silent heuristic
-// fallback in v1).
-func (o *Orchestrator) forceCheckpoint(ctx context.Context, snap providerSnapshot, sink turnSink, sessionID, fallbackTask, reason string, cleanMessages []bridge.Message) (chatstore.CheckpointResult, bool, error) {
+// forceCheckpoint runs isolated compaction (tool-free summarization call) when
+// context headroom or overflow requires a checkpoint before the next Ask turn.
+func (o *Orchestrator) forceCheckpoint(ctx context.Context, snap providerSnapshot, sink turnSink, sessionID, _, reason string, _ []bridge.Message) (chatstore.CheckpointResult, bool, error) {
 	cfg := snap.cfg.Orchestrator.WithDefaults()
 	maxRetries := cfg.Compaction.MaxForceRetries
 	if maxRetries <= 0 {
 		maxRetries = 3
 	}
-	steering := sapaloqControlBody("Forced compaction: the conversation is too long for the context window. Before doing ANY other work, call `sapaloq_compact_session` with a full structured markdown summary (goals, decisions, open items, key facts) of the thread so far. Do NOT call `sapaloq_stop`. Do NOT repeat your last message in the summary - it is preserved in context separately. After the checkpoint succeeds, continue the task from the summary + recent tail.")
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		select {
 		case <-ctx.Done():
 			return chatstore.CheckpointResult{}, false, ctx.Err()
 		default:
 		}
-		// Append the forced steering as the latest user turn and run ONE
-		// inference turn offering the Ask tool surface (so the only useful
-		// action is sapaloq_compact_session). We re-use the chat sink so the
-		// user sees a brief "compacting" status, not the steering text.
-		msgs := append([]bridge.Message{}, cleanMessages...)
-		msgs = append(msgs, bridge.Message{Role: "user", Content: steering})
-		// The compaction turn is bounded: runConversationActorSink drives the
-		// loop until a terminal tool or the toolless-turn budget finish. The
-		// sapaloq_compact_session handler persists the checkpoint and emits
-		// EventCheckpoint inline; we detect success by reading the latest
-		// checkpoint afterward.
-		before, _ := o.latestCheckpointIndex(ctx, sessionID)
-		var think strings.Builder
-		_, _ = o.runConversationActorSink(ctx, snap, sink, sessionID, sessionID, fallbackTask, msgs, &think)
-		after, _ := o.latestCheckpointIndex(ctx, sessionID)
-		if after > before {
-			ck, err := o.chat.LatestCheckpoint(ctx, sessionID)
-			if err == nil {
-				return chatstore.CheckpointResult{Index: ck.Index, SummaryTurnID: ck.SummaryTurnID, Reason: reason, CompactedTurns: ck.CompactedTurns, TailStartTurnID: ck.TailStartTurnID}, true, nil
-			}
+		res, ok, err := o.runCompactSession(ctx, snap, sink, sessionID, reason)
+		if err != nil {
+			return chatstore.CheckpointResult{}, false, err
+		}
+		if ok {
+			return res, true, nil
 		}
 	}
-	return chatstore.CheckpointResult{}, false, nil
+	return o.orchestratorFallbackCheckpoint(ctx, sessionID, reason+"_fallback")
 }
 
 // latestCheckpointIndex returns the current highest checkpoint index for a
@@ -344,18 +498,28 @@ func (o *Orchestrator) contextPercent(messages []bridge.Message, contextWindow i
 // would undercount huge pasted images and never fire forced compaction while
 // the UI pill already shows 100%+.
 func (o *Orchestrator) effectiveContextPercent(ctx context.Context, sessionID string, live []bridge.Message, contextWindow int) int {
-	livePct := o.contextPercent(live, contextWindow)
-	if o.chat == nil || sessionID == "" {
+	if contextWindow <= 0 {
+		return 0
+	}
+	userMsg := ""
+	if o.chat != nil && sessionID != "" {
+		userMsg = o.latestUserMessageContent(ctx, sessionID)
+	}
+	overhead := o.estimatePerTurnOverhead(ctx, sessionID, userMsg)
+	liveUsed := estimateMessagesTokens(live) + overhead
+	livePct := (liveUsed * 100) / contextWindow
+
+	storePct := 0
+	if o.chat != nil && sessionID != "" {
+		usage, err := o.ContextUsage(ctx, sessionID)
+		if err == nil && usage.ContextWindow > 0 {
+			storePct = usage.Percent
+		}
+	}
+	if livePct > storePct {
 		return livePct
 	}
-	usage, err := o.ContextUsage(ctx, sessionID)
-	if err != nil || usage.ContextWindow <= 0 {
-		return livePct
-	}
-	if livePct > usage.Percent {
-		return livePct
-	}
-	return usage.Percent
+	return storePct
 }
 
 // shrinkContextForRun compacts the in-flight message slice before the next
@@ -370,23 +534,14 @@ func (o *Orchestrator) shrinkContextForRun(ctx context.Context, snap providerSna
 	before := len(cleanMessages)
 
 	if tryCheckpoint && runtimeCfg.Compaction.UseCheckpointsEnabled() {
-		var checkpointOK bool
-		var ferr error
-		_, checkpointOK, ferr = o.forceCheckpoint(ctx, snap, sink, sessionID, fallbackTask, reason, cleanMessages)
+		_, checkpointOK, ferr := o.forceCheckpoint(ctx, snap, sink, sessionID, fallbackTask, reason, cleanMessages)
 		if ferr != nil {
 			return cleanMessages, false, ferr
-		}
-		if !checkpointOK {
-			var fbErr error
-			_, checkpointOK, fbErr = o.orchestratorFallbackCheckpoint(ctx, sessionID, reason+"_fallback")
-			if fbErr != nil {
-				return cleanMessages, false, fbErr
-			}
 		}
 		if checkpointOK {
 			rebuilt, rerr := o.rebuildAfterCheckpoint(ctx, sessionID, cleanMessages)
 			if rerr == nil && len(rebuilt) < before {
-				return rebuilt, true, nil
+				return ensureConversationEndsWithUser(rebuilt), true, nil
 			}
 		}
 	}
@@ -498,38 +653,7 @@ func compactMessagesWithSummary(messages []bridge.Message, originalTask, summary
 	compacted = append(compacted, prefix...)
 	compacted = append(compacted, bridge.Message{Role: "system", Content: checkpoint.String()})
 	compacted = append(compacted, body[cut:]...)
-	return compacted
-}
-
-func (o *Orchestrator) handleSubAgentCompactSession(ctx context.Context, c *subAgentCompactCtx, summary, reason string) (string, bool) {
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return "Error: summary is required for `sapaloq_compact_session`.", true
-	}
-	if c == nil || c.messages == nil {
-		return "Nothing to compact yet - continue your work.", true
-	}
-	msgs := *c.messages
-	preserve := o.snapshot().cfg.Orchestrator.WithDefaults().Compaction.PreserveRecentFraction
-	compacted := compactMessagesWithSummary(msgs, c.fallbackTask, summary, preserve)
-	if len(compacted) >= len(msgs) {
-		return "Nothing to compact yet - the recent tail already covers the active context. Continue your work; you do not need to compact again right now.", true
-	}
-	*c.messages = compacted
-	c.checkpointIndex++
-	if reason == "" {
-		reason = "model"
-	}
-	if c.sink != nil {
-		ev := bridge.NewEvent(bridge.EventCheckpoint)
-		ev.SessionID = c.parentSessionID
-		ev.TaskID = c.taskID
-		ev.CheckpointIndex = c.checkpointIndex
-		ev.CheckpointReason = reason
-		ev.CheckpointSummary = summary
-		c.sink.emit(ctx, ev)
-	}
-	return fmt.Sprintf("Checkpoint %d created. Your context now carries the summary + the most recent turns (including your last action). Continue from there.", c.checkpointIndex), true
+	return ensureConversationEndsWithUser(compacted)
 }
 
 func itoa(n int) string {

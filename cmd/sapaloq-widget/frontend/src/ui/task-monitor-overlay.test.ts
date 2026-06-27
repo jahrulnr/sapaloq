@@ -127,6 +127,35 @@ describe('task-monitor-overlay', () => {
     expect(overlay.querySelectorAll('.tool-activity')).toHaveLength(1);
   });
 
+  it('drops orchestrator task cards from the sub-agent activity stream', async () => {
+    runtimeStatusMock.mockResolvedValue({
+      actors: [makeActor('task-runner', 'in_progress', 'task-agent')],
+    });
+    taskInspectMock.mockResolvedValue(makeInspect({
+      id: 'task-agent',
+      role: 'task-runner',
+      task: 'build site',
+      transcript: [
+        { kind: 'text', text: 'Building files.' },
+        {
+          kind: 'task',
+          task_id: 'task-agent',
+          task_role: 'task-runner',
+          task_status: 'in_progress',
+          summary: 'Menjalankan `exec`.',
+        },
+      ],
+      event_count: 2,
+    }));
+    await openTaskMonitor({ tab: 'agent' });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+    const overlay = document.getElementById('task-monitor-overlay')!;
+    expect(overlay.querySelector('.message--task')).toBeNull();
+    expect(overlay.textContent).not.toContain('Menjalankan');
+    expect(overlay.querySelectorAll('.transcript-text')).toHaveLength(1);
+  });
+
   it('hides autopilot continuing nudges from the activity pane', async () => {
     taskInspectMock.mockResolvedValue(makeInspect({
       transcript: [

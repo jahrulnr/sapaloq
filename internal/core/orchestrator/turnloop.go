@@ -87,6 +87,8 @@ type turnConfig struct {
 	// recordToolTurns persists tool-result turns to the chat store for context
 	// accounting. Chat-only.
 	recordToolTurns bool
+	// generationID links persisted turns to the active chat run (runSeq).
+	generationID string
 	// maxInferenceTurns overrides the continuation budget's turn cap when > 0
 	// (sub-agent roles use roleMaxTurns); 0 means use the budget value.
 	maxInferenceTurns int

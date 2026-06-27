@@ -4,9 +4,24 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/config"
 )
+
+type summaryBridge struct{}
+
+func (summaryBridge) ID() string              { return "summary" }
+func (summaryBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{} }
+func (summaryBridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
+	ch := make(chan bridge.StreamEvent, 2)
+	go func() {
+		defer close(ch)
+		ch <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "## Goals\n- ship feature", At: time.Now().UTC()}
+	}()
+	return ch, nil
+}
 
 func TestCompactMessagesWithSummary(t *testing.T) {
 	messages := []bridge.Message{
@@ -28,8 +43,8 @@ func TestCompactMessagesWithSummary(t *testing.T) {
 	}
 }
 
-func TestHandleSubAgentCompactSession(t *testing.T) {
-	o := &Orchestrator{}
+func TestRunSubAgentCompact(t *testing.T) {
+	o := &Orchestrator{cfg: config.Config{Orchestrator: config.DefaultOrchestratorConfig()}}
 	msgs := []bridge.Message{
 		{Role: "system", Content: "persona"},
 		{Role: "user", Content: "do work"},
@@ -38,11 +53,18 @@ func TestHandleSubAgentCompactSession(t *testing.T) {
 		msgs = append(msgs, bridge.Message{Role: "assistant", Content: "progress"})
 	}
 	ctx := &subAgentCompactCtx{messages: &msgs, fallbackTask: "do work", taskID: "task-1", parentSessionID: "sess-1"}
-	text, ok := o.handleSubAgentCompactSession(context.Background(), ctx, "summary body", "model")
-	if !ok || !strings.Contains(text, "Checkpoint 1") {
-		t.Fatalf("unexpected result ok=%v text=%q", ok, text)
+	snap := providerSnapshot{
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    summaryBridge{},
+		cfg:   o.cfg,
+	}
+	if err := o.runSubAgentCompact(context.Background(), snap, ctx, "force_headroom"); err != nil {
+		t.Fatal(err)
 	}
 	if len(msgs) >= 12 {
 		t.Fatalf("messages not compacted: %d", len(msgs))
+	}
+	if ctx.checkpointIndex != 1 {
+		t.Fatalf("checkpointIndex = %d, want 1", ctx.checkpointIndex)
 	}
 }

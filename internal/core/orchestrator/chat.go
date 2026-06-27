@@ -78,9 +78,10 @@ type Orchestrator struct {
 }
 
 type activeRun struct {
-	id        uint64
-	cancel    context.CancelFunc
-	coalescer *TranscriptCoalescer
+	id             uint64
+	cancel         context.CancelFunc
+	coalescer      *TranscriptCoalescer
+	transcriptBase []bridge.TranscriptEntry
 }
 
 func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) (*Orchestrator, error) {
@@ -318,13 +319,20 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		}
 		genStr := fmt.Sprintf("%d", runID)
 		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "user", message, estimateTextTokens(message), genStr)
+		o.refreshActiveTranscriptBase(ctx, sessionID)
+		o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{
+			Kind:         bridge.EventTurnBoundary,
+			SessionID:    sessionID,
+			GenerationID: genStr,
+			At:           time.Now().UTC(),
+		})
 		messages, err := o.contextMessages(ctx, sessionID, message)
 		if err != nil {
 			o.emitChatTerminalError(ctx, out, sessionID, err)
 			return
 		}
 		var thinking strings.Builder
-		assistant, err := o.runConversation(runCtx, snap, out, sessionID, message, messages, &thinking)
+		assistant, err := o.runConversationWithGeneration(runCtx, snap, out, sessionID, genStr, message, messages, &thinking)
 		if err != nil {
 			debug.Debugf("orchestrator: conversation error session=%s err=%v", sessionID, err)
 			o.emitChatTerminalError(runCtx, out, sessionID, err)
@@ -335,7 +343,22 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		if strings.TrimSpace(thinking.String()) != "" {
 			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
 		}
-		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+		// Assistant turns are persisted per inference round inside runTurnLoop.
+		// Only append a final blob when the run produced visible text that was not
+		// already recorded (e.g. a single tool-less answer).
+		if strings.TrimSpace(assistant.String()) != "" {
+			turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)
+			needsFinal := true
+			for i := len(turns) - 1; i >= 0; i-- {
+				if turns[i].Role == "assistant" && turns[i].GenerationID == genStr {
+					needsFinal = false
+					break
+				}
+			}
+			if needsFinal {
+				_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+			}
+		}
 		usage, _ := o.ContextUsage(ctx, sessionID)
 		_ = o.chat.SnapshotUsage(ctx, usage)
 		// Flush + close the async progress drain for this session so the JSONL
@@ -391,16 +414,28 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 		return
 	}
 	var thinking strings.Builder
-	assistant, err := o.runConversation(ctx, snap, out, sessionID, message, messages, &thinking)
+	genStr := fmt.Sprintf("%d", runID)
+	assistant, err := o.runConversationWithGeneration(ctx, snap, out, sessionID, genStr, message, messages, &thinking)
 	if err != nil {
 		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
 	}
-	genStr := fmt.Sprintf("%d", runID)
 	if strings.TrimSpace(thinking.String()) != "" {
 		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
 	}
-	_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+	if strings.TrimSpace(assistant.String()) != "" {
+		turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)
+		needsFinal := true
+		for i := len(turns) - 1; i >= 0; i-- {
+			if turns[i].Role == "assistant" && turns[i].GenerationID == genStr {
+				needsFinal = false
+				break
+			}
+		}
+		if needsFinal {
+			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+		}
+	}
 	usage, _ := o.ContextUsage(ctx, sessionID)
 	_ = o.chat.SnapshotUsage(ctx, usage)
 	if o.progress != nil {
@@ -442,6 +477,30 @@ func (o *Orchestrator) activeCoalescer(sessionID string) *TranscriptCoalescer {
 		return run.coalescer
 	}
 	return nil
+}
+
+func (o *Orchestrator) refreshActiveTranscriptBase(ctx context.Context, sessionID string) {
+	base, err := o.SessionTranscript(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	o.activeMu.Lock()
+	if run := o.active[sessionID]; run != nil {
+		run.transcriptBase = base
+	}
+	o.activeMu.Unlock()
+}
+
+func (o *Orchestrator) activeTranscriptBase(sessionID string) []bridge.TranscriptEntry {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	run := o.active[sessionID]
+	if run == nil || len(run.transcriptBase) == 0 {
+		return nil
+	}
+	out := make([]bridge.TranscriptEntry, len(run.transcriptBase))
+	copy(out, run.transcriptBase)
+	return out
 }
 
 func (o *Orchestrator) clearActiveGeneration(sessionID string, runID uint64) {
@@ -624,8 +683,26 @@ func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamE
 		return true
 	}
 	var entries []bridge.TranscriptEntry
-	if o.chat != nil && coalescer != nil {
-		entries, _ = o.LiveSessionTranscript(ctx, sessionID, coalescer)
+	if coalescer != nil {
+		switch ev.Kind {
+		case bridge.EventResponseDelta, bridge.EventThinkingDelta:
+			base := o.activeTranscriptBase(sessionID)
+			if base == nil {
+				base, _ = o.SessionTranscript(ctx, sessionID)
+			}
+			entries = mergeLiveTranscript(base, coalescer.EntriesWithPending())
+		default:
+			if ev.Kind == bridge.EventTurnBoundary || ev.Kind == bridge.EventCheckpoint ||
+				ev.Kind == bridge.EventToolUpdate || ev.Kind == bridge.EventToolCall {
+				o.refreshActiveTranscriptBase(ctx, sessionID)
+			}
+			base := o.activeTranscriptBase(sessionID)
+			if base == nil {
+				entries, _ = o.LiveSessionTranscript(ctx, sessionID, coalescer)
+			} else {
+				entries = mergeLiveTranscript(base, coalescer.EntriesWithPending())
+			}
+		}
 	} else if scratch != nil {
 		entries = scratch.Entries()
 	}
@@ -635,6 +712,17 @@ func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamE
 		GenerationID: genID,
 		Entries:      entries,
 		Finished:     finished,
+	}
+	if ev.Kind != bridge.EventResponseDelta && ev.Kind != bridge.EventThinkingDelta && o.chat != nil {
+		if u, err := o.ContextUsage(ctx, sessionID); err == nil {
+			patch.Usage = &bridge.TranscriptUsage{
+				UsedTokens:    u.UsedTokens,
+				ContextWindow: u.ContextWindow,
+				Percent:       u.Percent,
+				Provider:      u.Provider,
+				Model:         u.Model,
+			}
+		}
 	}
 	patchEv := bridge.StreamEvent{
 		Kind:         bridge.EventTranscript,

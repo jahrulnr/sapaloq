@@ -505,7 +505,7 @@ func (o *Orchestrator) toolExec(ctx context.Context, args toolArgs) string {
 	if strings.TrimSpace(text) == "" {
 		return "(command produced no output)"
 	}
-	return text
+	return enrichToolResultWithArtifactFingerprint("exec", cmd, text)
 }
 
 func splitExecCWD(output, marker string) (string, string) {

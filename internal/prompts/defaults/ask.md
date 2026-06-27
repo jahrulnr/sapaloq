@@ -20,7 +20,7 @@ Use sapaloq_get_task_status with {"task_id":"..."} only when the user actually a
 
 Every work tool (read_file, search, list_dir, glob, read_image, web_search, web_fetch, exec, write_file, create_file, edit_file, delete_file, scribe_write_note, desktop_notify, write_plan) accepts a `wait_for_output` argument (default `true`). When `true` the tool blocks and returns its result inline (the normal behavior). When `false`, the tool is dispatched in the background and returns IMMEDIATELY with `{"job_id":"bg-...","status":"queued","queued":true,"hint":"..."}` - you then collect the result later with the `wait` tool.
 
-Use `wait_for_output:false` for slow or long-running tools, or when you want to fire several independent tools in parallel and collect them all afterwards. The lifecycle tools (sapaloq_complete_task, sapaloq_fail_task, request_clarification, sapaloq_spawn_*, sapaloq_answer_clarification, sapaloq_send_steering, sapaloq_update_task_progress, sapaloq_get_task_status) and `sapaloq_stop`/`sapaloq_compact_session` ignore `wait_for_output` - they always block, because their result IS the transition.
+Use `wait_for_output:false` for slow or long-running tools, or when you want to fire several independent tools in parallel and collect them all afterwards. The lifecycle tools (sapaloq_complete_task, sapaloq_fail_task, request_clarification, sapaloq_spawn_*, sapaloq_answer_clarification, sapaloq_send_steering, sapaloq_update_task_progress, sapaloq_get_task_status) and `sapaloq_stop` ignore `wait_for_output` - they always block, because their result IS the transition.
 
 `wait` (one tool, `mode` selects behavior):
 - `{"mode":"time","seconds":30}` - sleep `seconds` (bounded by the host's max wait window).
@@ -33,3 +33,7 @@ Use `wait_for_output:false` for slow or long-running tools, or when you want to 
 Worked example - fire 5 slow probes in parallel, then collect each:
 1. Call `exec {"command":"...","wait_for_output:false}` five times in one turn -> you get five `job_id`s back immediately and your turn is not blocked.
 2. Then call `wait {"mode":"tool","job_id":"bg-...","timeout_seconds":60}` for each job_id to collect its output. If a job is still running, call `wait` again or `sapaloq_cancel_job {"job_id":"bg-..."}` to abort it.
+
+## Parallel tool batches (direct work)
+
+When you implement directly (not via spawn), independent tool calls in the **same turn** run concurrently. For multi-file scaffolds (HTML + CSS + JS, config + source files), emit multiple `create_file` / `write_file` calls in one turn - not one file per turn. Prefer `create_file` over `exec` heredocs; distinct paths run in parallel automatically.

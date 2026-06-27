@@ -2,82 +2,10 @@ package chat
 
 import (
 	"context"
-	"database/sql"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
-
-// TestMigrationUpgradesLegacyFacts proves that a companion.db created with the
-// pre-Context-SOP facts schema (kind, content, created_at) is upgraded
-// idempotently: the new columns appear, the legacy row survives with a default
-// namespace, and a second Open is a no-op (no duplicate-column error).
-func TestMigrationUpgradesLegacyFacts(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "companion.db")
-
-	// Seed a legacy DB by hand: the original bare facts schema + one row.
-	raw, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("raw open: %v", err)
-	}
-	if _, err := raw.Exec(`CREATE TABLE facts (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		kind TEXT NOT NULL,
-		content TEXT NOT NULL,
-		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-	)`); err != nil {
-		t.Fatalf("legacy create: %v", err)
-	}
-	if _, err := raw.Exec(`INSERT INTO facts(kind, content, created_at) VALUES ('preference','legacy likes dark mode','2026-01-01 10:00:00')`); err != nil {
-		t.Fatalf("legacy insert: %v", err)
-	}
-	_ = raw.Close()
-
-	// Open via the store: migrate() must add the new columns without error.
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatalf("open (migrate): %v", err)
-	}
-	ctx := context.Background()
-
-	cols := factColumns(t, s)
-	for _, want := range []string{"namespace", "key", "value", "confidence", "obsolete_at", "updated_at"} {
-		if !cols[want] {
-			t.Fatalf("expected facts column %q after migration; have %v", want, cols)
-		}
-	}
-
-	// Legacy row survives and is searchable, with namespace defaulted.
-	got, err := s.SearchFacts(ctx, "dark", nil, 10)
-	if err != nil {
-		t.Fatalf("search legacy: %v", err)
-	}
-	if len(got) != 1 || got[0].Content != "legacy likes dark mode" {
-		t.Fatalf("legacy row lost after migration: %+v", got)
-	}
-	if got[0].Namespace != "default" {
-		t.Fatalf("expected default namespace, got %q", got[0].Namespace)
-	}
-	_ = s.Close()
-
-	// Reopen: idempotent - addColumnIfMissing must not re-ALTER.
-	s2, err := Open(dir)
-	if err != nil {
-		t.Fatalf("reopen (idempotent migrate): %v", err)
-	}
-	defer s2.Close()
-	again, err := s2.SearchFacts(ctx, "dark", nil, 10)
-	if err != nil {
-		t.Fatalf("search after reopen: %v", err)
-	}
-	if len(again) != 1 {
-		t.Fatalf("expected 1 row after reopen, got %d", len(again))
-	}
-}
 
 func TestUpsertFactDedupeByKey(t *testing.T) {
 	s := openStore(t)
@@ -165,10 +93,8 @@ func TestObsoleteFactHiddenFromSearch(t *testing.T) {
 	if got, _ := s.FactsByNamespace(ctx, "personal", "", 10); len(got) != 0 {
 		t.Fatalf("expected 0 from namespace after obsolete, got %d", len(got))
 	}
-	// LIKE fallback path must also hide it.
-	s.ftsEnabled = false
 	if got, _ := s.SearchFacts(ctx, "postgres", nil, 10); len(got) != 0 {
-		t.Fatalf("expected 0 via LIKE after obsolete, got %d", len(got))
+		t.Fatalf("expected 0 after obsolete, got %d", len(got))
 	}
 }
 
@@ -359,30 +285,4 @@ func openStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
-}
-
-// factColumns returns the set of column names on the facts table.
-func factColumns(t *testing.T, s *Store) map[string]bool {
-	t.Helper()
-	rows, err := s.db.Query(`PRAGMA table_info(facts)`)
-	if err != nil {
-		t.Fatalf("table_info: %v", err)
-	}
-	defer rows.Close()
-	cols := map[string]bool{}
-	for rows.Next() {
-		var (
-			cid        int
-			name       string
-			ctype      string
-			notnull    int
-			dflt       sql.NullString
-			primaryKey int
-		)
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &primaryKey); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		cols[name] = true
-	}
-	return cols
 }

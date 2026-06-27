@@ -105,7 +105,7 @@ func (o *Orchestrator) runClarificationResolver(sessionID string, record taskRec
 	}()
 
 	ctx := context.Background()
-	_, _ = o.runConversationActor(ctx, snap, out, sessionID, "decision:"+record.ID, record.Task, messages, nil)
+	_, _ = o.runConversationActor(ctx, snap, out, sessionID, "decision:"+record.ID, "", record.Task, messages, nil)
 	close(out)
 	<-done
 

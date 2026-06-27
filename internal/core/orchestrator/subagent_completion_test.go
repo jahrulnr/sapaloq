@@ -118,8 +118,8 @@ func TestSubAgentProgressDoesNotPersistBridgeDoneAsTaskCompletion(t *testing.T) 
 	if bytes.Contains(raw, []byte(`"kind":"done"`)) {
 		t.Fatalf("bridge turn completion leaked into task progress: %s", raw)
 	}
-	if !bytes.Contains(raw, []byte(`"kind":"task_update"`)) {
-		t.Fatalf("tool activity task_update missing from progress: %s", raw)
+	if !bytes.Contains(raw, []byte(`"kind":"tool_call"`)) {
+		t.Fatalf("tool activity must be persisted to progress: %s", raw)
 	}
 }
 
@@ -185,6 +185,41 @@ func TestRoleAllowsHonorsValidAllowlist(t *testing.T) {
 	}
 	if o.roleAllows("scribe", "exec") {
 		t.Fatalf("scribe must NOT be allowed exec (not in its valid allowlist)")
+	}
+}
+
+// TestPublishTaskActivityBusOnlyNotProgress verifies ephemeral "Menjalankan …"
+// hints refresh the orchestrator task card via the bus but do not pollute the
+// per-task progress JSONL that feeds the sub-agent monitor.
+func TestPublishTaskActivityBusOnlyNotProgress(t *testing.T) {
+	b := bus.New()
+	events, cancel := b.Subscribe(8)
+	defer cancel()
+	dir := t.TempDir()
+	o := &Orchestrator{
+		bus:      b,
+		progress: newAsyncProgressWriter(ProgressWriter{Dir: dir}),
+		cfg:      config.Config{},
+	}
+
+	o.publishTaskActivity("s1", taskRecord{ID: "t1", Role: "task-runner", Status: "in_progress", Task: "build"}, "Menjalankan `exec`.")
+
+	select {
+	case ev := <-events:
+		if ev.Data.Kind != bridge.EventTaskUpdate {
+			t.Fatalf("kind = %q, want task_update", ev.Data.Kind)
+		}
+		if ev.Data.Summary != "Menjalankan `exec`." {
+			t.Fatalf("summary = %q", ev.Data.Summary)
+		}
+	default:
+		t.Fatalf("expected orchestrator bus event")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "orch-t1.jsonl")); err == nil {
+		raw, _ := os.ReadFile(filepath.Join(dir, "orch-t1.jsonl"))
+		if bytes.Contains(raw, []byte("Menjalankan")) {
+			t.Fatalf("ephemeral activity must not be persisted to progress: %s", raw)
+		}
 	}
 }
 

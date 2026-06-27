@@ -186,7 +186,13 @@ SQLite = **authoritative index**; markdown = human-readable source + agent appen
 
 ---
 
-## SQLite index (primary store)
+## JSON index (primary store, 2026)
+
+Path: `~/SapaLOQ/state/memory/facts.json` (+ rollout/session JSON under `~/SapaLOQ/state/`). Facts use substring search (FTS removed with SQLite). One-shot migration exports legacy `companion.db` → JSON on first boot.
+
+---
+
+## SQLite index (legacy — migrated on first boot)
 
 Path: `~/SapaLOQ/memory/companion.db` - **only** persistence engine. Hot cache = in-memory in same binary; optional `hot_cache` SQLite table for restart warm-up.
 

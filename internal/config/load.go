@@ -657,26 +657,22 @@ type CompactionConfig struct {
 	PreserveRecentFraction float64 `json:"preserveRecentFraction"`
 	ResumeAfterCompaction  bool    `json:"resumeAfterCompaction"`
 
-	// UseCheckpoints enables the LLM-authored checkpoint compaction model: the
-	// model writes the summary (via sapaloq_compact_session or a forced
-	// compaction turn), the orchestrator persists a checkpoint, and the model's
-	// context is rebuilt from the latest checkpoint summary + an anchored tail.
+	// UseCheckpoints enables orchestrator-driven checkpoint compaction: an
+	// isolated tool-free summarization call, checkpoint persistence, and
+	// context rebuilt from the latest checkpoint summary + an anchored tail.
 	// When false, the legacy heuristic compaction path is used. Omitted from
 	// JSON means true (schema default); use a pointer so Go's zero-value false
 	// does not disable checkpoints for configs that predate this key.
 	UseCheckpoints *bool `json:"useCheckpoints,omitempty"`
 
 	// HeadroomPercent is the fraction of the context window that must remain
-	// free before a forced compaction turn is injected (default 0.05 = 5%).
+	// free before forced compaction runs (default 0.05 = 5%).
 	// When usedTokens >= contextWindow * (1 - headroomPercent) the loop pauses
-	// and steers the model to call sapaloq_compact_session before any other
-	// work.
+	// and runs isolated summarization before any other work.
 	HeadroomPercent float64 `json:"headroomPercent"`
 
-	// SteerPercent is the soft threshold at which the autopilot continuation
-	// adds a non-blocking suggestion to consider sapaloq_compact_session
-	// (default 0.85 = 85%). The model may compact or keep working; it is not
-	// forced until HeadroomPercent.
+	// SteerPercent is retained for config compatibility (default 0.85). Pre-turn
+	// soft compaction uses steerPercent+5 as a threshold below headroom.
 	SteerPercent float64 `json:"steerPercent"`
 
 	// KeepRecentTurns bounds how many recent turns are preserved verbatim in
@@ -693,10 +689,8 @@ type CompactionConfig struct {
 	// anchored last assistant turn so the last exchange stays paired.
 	PreservePrecedingUserTurn bool `json:"preservePrecedingUserTurn"`
 
-	// MaxForceRetries bounds how many forced-compaction turns the loop will
-	// attempt if the model refuses to call sapaloq_compact_session (default 3).
-	// After exhausting retries the run surfaces an error suggesting the user
-	// run /compaction or shorten the conversation.
+	// MaxForceRetries bounds how many isolated compaction attempts run before
+	// falling back to an orchestrator-authored summary (default 3).
 	MaxForceRetries int `json:"maxForceRetries"`
 }
 

@@ -88,6 +88,7 @@ export function renderTranscriptEntry(
     const wrap = document.createElement('div');
     wrap.className = 'transcript-entry transcript-checkpoint';
     wrap.dataset.entryKind = 'checkpoint';
+    if (entry.id) wrap.dataset.entryId = entry.id;
     const divider = document.createElement('div');
     divider.className = 'checkpoint-divider';
     const ruleBefore = document.createElement('span');
@@ -101,8 +102,32 @@ export function renderTranscriptEntry(
     wrap.append(divider);
     if (entry.text?.trim()) {
       const card = document.createElement('div');
-      card.className = 'message summary-panel summary-panel--checkpoint';
-      card.append(renderMarkdown(entry.text));
+      card.className = 'message summary-panel summary-panel--checkpoint is-collapsed';
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('aria-expanded', 'false');
+      const header = document.createElement('span');
+      header.textContent = `+  Session summary  ·  Context checkpoint ${entry.checkpoint_index || 0}`;
+      const body = document.createElement('div');
+      body.className = 'summary-panel__body';
+      body.hidden = true;
+      body.append(renderMarkdown(entry.text));
+      const toggle = () => {
+        const open = card.classList.toggle('is-open');
+        card.classList.toggle('is-collapsed', !open);
+        card.setAttribute('aria-expanded', String(open));
+        header.textContent = `${open ? '−' : '+'}  Session summary  ·  Context checkpoint ${entry.checkpoint_index || 0}`;
+        body.hidden = !open;
+      };
+      card.addEventListener('click', toggle);
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          toggle();
+        }
+      });
+      body.addEventListener('click', (event) => event.stopPropagation());
+      card.append(header, body);
       wrap.append(card);
     }
     el = wrap;

@@ -62,6 +62,16 @@ func (o *Orchestrator) handleSlash(ctx context.Context, out chan<- bridge.Stream
 }
 
 func (o *Orchestrator) compactActiveSession(ctx context.Context, sessionID, reason string) (int, error) {
+	if o.snapshot().cfg.Orchestrator.WithDefaults().Compaction.UseCheckpointsEnabled() {
+		res, ok, err := o.runCompactSession(ctx, o.snapshot(), nil, sessionID, reason)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 0, nil
+		}
+		return res.CompactedTurns, nil
+	}
 	turns, err := o.chat.ActiveTurns(ctx, sessionID, false)
 	if err != nil {
 		return 0, err

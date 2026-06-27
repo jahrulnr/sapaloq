@@ -55,24 +55,47 @@ func (o *Orchestrator) LiveSessionTranscript(ctx context.Context, sessionID stri
 	if live == nil {
 		return base, nil
 	}
-	liveEntries := live.Entries()
+	liveEntries := live.EntriesWithPending()
 	if len(liveEntries) == 0 {
 		return base, nil
 	}
-	genID := liveEntries[0].GenerationID
-	if genID == "" {
-		return append(base, liveEntries...), nil
+	return mergeLiveTranscript(base, liveEntries), nil
+}
+
+// mergeLiveTranscript overlays in-flight coalescer rows for the active generation
+// onto the persisted transcript snapshot.
+func mergeLiveTranscript(base []bridge.TranscriptEntry, live []bridge.TranscriptEntry) []bridge.TranscriptEntry {
+	if len(live) == 0 {
+		return base
 	}
-	// Drop any prior partial entries for this generation (shouldn't exist in base).
-	filtered := base[:0]
+	genID := live[0].GenerationID
+	if genID == "" {
+		out := make([]bridge.TranscriptEntry, 0, len(base)+len(live))
+		out = append(out, base...)
+		out = append(out, live...)
+		return out
+	}
+	filtered := make([]bridge.TranscriptEntry, 0, len(base))
 	for _, e := range base {
-		if e.GenerationID != genID || (e.Kind != bridge.TranscriptText && e.Kind != bridge.TranscriptThinking &&
-			e.Kind != bridge.TranscriptTool && e.Kind != bridge.TranscriptStatus && e.Kind != bridge.TranscriptProgress &&
-			e.Kind != bridge.TranscriptError && e.Kind != bridge.TranscriptTask) {
+		if e.GenerationID != genID || !isLiveGenerationEntryKind(e.Kind) {
 			filtered = append(filtered, e)
 		}
 	}
-	return append(filtered, liveEntries...), nil
+	out := make([]bridge.TranscriptEntry, 0, len(filtered)+len(live))
+	out = append(out, filtered...)
+	out = append(out, live...)
+	return out
+}
+
+func isLiveGenerationEntryKind(kind bridge.TranscriptEntryKind) bool {
+	switch kind {
+	case bridge.TranscriptText, bridge.TranscriptThinking, bridge.TranscriptTool,
+		bridge.TranscriptStatus, bridge.TranscriptProgress, bridge.TranscriptError,
+		bridge.TranscriptTask, bridge.TranscriptCheckpoint:
+		return true
+	default:
+		return false
+	}
 }
 
 func mergeTranscriptItems(turns []chatstore.Turn, events []bridge.StreamEvent) []bridge.TranscriptEntry {

@@ -14,9 +14,10 @@ func TestWireRole(t *testing.T) {
 		// Semantic-only roles must collapse to a wire-accepted role. They are
 		// model input (observations), so they map to "user" rather than
 		// "assistant" - otherwise the model treats them as its own speech.
-		"tool":    "user",
-		"error":   "user",
-		"unknown": "unknown",
+		"tool":       "user",
+		"error":      "user",
+		"checkpoint": "system",
+		"unknown":    "unknown",
 	}
 	for in, want := range cases {
 		if got := wireRole(in); got != want {

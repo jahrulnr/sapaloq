@@ -48,6 +48,38 @@ func TestToolJobSchedulerRunsIndependentJobsInParallel(t *testing.T) {
 	}
 }
 
+func TestToolJobSchedulerParallelizesExecWritesToDifferentPaths(t *testing.T) {
+	s := newToolJobScheduler(t.TempDir(), 4, nil)
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	items := make([]scheduledTool, 2)
+	for i, path := range []string{"/tmp/a.html", "/tmp/b.css"} {
+		p := path
+		raw, _ := json.Marshal(map[string]string{"command": "cat > " + p + " <<'EOF'"})
+		items[i] = scheduledTool{
+			index: i,
+			call:  parse.ToolCall{Name: "exec", Arguments: raw},
+			execute: func(context.Context) turnOutcome {
+				started <- struct{}{}
+				<-release
+				return turnOutcome{text: "ok", handled: true}
+			},
+		}
+	}
+	go func() {
+		for range s.submitBatch(context.Background(), "run-1", "session-1", items) {
+		}
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("exec writes to different paths did not start concurrently")
+		}
+	}
+	close(release)
+}
+
 func TestToolJobSchedulerSerializesSameResourceLane(t *testing.T) {
 	s := newToolJobScheduler(t.TempDir(), 4, nil)
 	var mu sync.Mutex

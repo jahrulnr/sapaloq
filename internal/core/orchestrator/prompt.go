@@ -446,28 +446,32 @@ func (o *Orchestrator) sessionSignals(sessionID string) autopilotSignals {
 }
 
 // buildAutopilotContinuation composes the tool-less-turn continuation nudge from
-// concrete session signals + an escalation counter, instead of the old single
-// static string. It never judges the model's prose to infer "done"; it injects
-// facts ("a task is awaiting clarification") and an escalating instruction so
-// repeated tool-less turns converge on a silent sapaloq_stop.
+// concrete session signals + a tool-less streak counter, instead of the old
+// single static string. It never judges the model's prose to infer "done"; it
+// injects facts ("a task is awaiting clarification") and an escalating
+// instruction so repeated narration-only turns eventually converge on stop.
 //
-//   - inferenceTurn: the 1-based index of the NEXT inference turn (i.e. how many
-//     tool-less turns have already happened). Used for escalation.
-//   - toolResults:   the results produced this turn (empty for a tool-less turn,
+//   - toolCalls:       total tool calls so far in this run (steers agent vs chat).
+//   - toollessStreak:  consecutive inference turns with no tool results (escalation).
+//   - toolResults:     the results produced this turn (empty for a tool-less turn,
 //     which is the only path that calls this builder).
-//   - sig:           live session signals (running tasks, clarification, context).
-//   - steerPercent:  the soft compaction-steer threshold (0..1); when
-//     sig.contextPercent >= steerPercent*100 a non-blocking compact suggestion
-//     is appended. <=0 disables the steer.
-func buildAutopilotContinuation(inferenceTurn int, toolResults []string, sig autopilotSignals, steerPercent float64) string {
+//   - sig:             live session signals (running tasks, clarification, context).
+//   - steerPercent:    unused (orchestrator-driven compaction; kept for API stability).
+func buildAutopilotContinuation(toolCalls, toollessStreak int, toolResults []string, sig autopilotSignals, steerPercent float64) string {
+	_ = steerPercent
 	// Tool-less turn => no results to feed back. The continuation is pure
 	// steering authored by SapaLOQ.
 	var b strings.Builder
 
-	// Escalation: the first tool-less turn gets the full reasoning; turns >=3
-	// get a short imperative that suppresses re-narration. This bounds the
-	// "narrate without acting" tail without ever judging the text.
-	escalated := inferenceTurn >= 3
+	// Escalation is keyed on consecutive narration-only turns, not total turn
+	// count. Agent sessions (toolCalls > 0) get more patience so autopilot does
+	// not rush the model to sapaloq_stop while concrete edits remain.
+	escalateAt := 4
+	if toolCalls > 0 {
+		escalateAt = 6
+	}
+	escalated := toollessStreak >= escalateAt
+	agentSession := toolCalls > 0
 
 	switch {
 	case sig.awaitingClarification:
@@ -479,23 +483,20 @@ func buildAutopilotContinuation(inferenceTurn int, toolResults []string, sig aut
 			b.WriteString("Background task(s) are running and you cannot advance them from here. If you have already replied to the user, call `sapaloq_stop` immediately - stopping is a silent action, so do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
 		}
 	default:
-		// No background work at all: the model either answered the user or has
-		// nothing concrete left to do. The correct next action is almost always
-		// a silent stop.
-		if escalated {
+		switch {
+		case agentSession && !escalated:
+			b.WriteString("Brief narration is fine. Next, use a tool (read_file, edit_file, exec, etc.) to finish or verify the deliverable—check missing sections (e.g. footer), run a quick read/list, and fix gaps. Call `sapaloq_stop` only when the task is actually complete, not after a plan or status-only message.")
+		case agentSession && escalated:
+			b.WriteString("If the deliverable is complete and you have verified it with a tool, call `sapaloq_stop` silently. If concrete work remains (missing UI sections, unverified files, incomplete edits), take one tool action now—do not stop or re-summarize mid-task.")
+		case !agentSession && escalated:
 			b.WriteString("Invoke `sapaloq_stop` silently now - do not repeat your answer or write a sign-off. If a concrete next step genuinely remains for YOU to take now, take it with a single concrete action; otherwise stop.")
-		} else {
+		default:
 			b.WriteString("Continue the existing task only if a concrete next step remains for YOU to take now. If the work is finished, or the only remaining work is running in the background (a delegated task you cannot advance), call `sapaloq_stop` immediately - stopping is a silent action, so do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
 		}
 	}
 
-	// Non-blocking compaction steer: when the context is getting full but has
-	// not yet hit the force threshold, suggest the model compact on its own
-	// initiative. This is advisory; the orchestrator still force-compacts at
-	// the headroom threshold.
-	if steerPercent > 0 && sig.contextPercent > 0 && float64(sig.contextPercent) >= steerPercent*100 {
-		b.WriteString(" The conversation is getting long; if you have a natural pause point, you may call `sapaloq_compact_session` with a structured summary of the thread so far to free up context before continuing.")
-	}
+	// Non-blocking compaction steer removed: compaction is orchestrator-driven
+	// (isolated summarization at headroom/overflow/manual /compaction).
 
 	return sapaloqControlBody(b.String())
 }
@@ -546,8 +547,8 @@ func calledToolsNote(tools []scheduledTool) string {
 //
 // Legacy heuristic auto-compaction (compactActiveSession @ 80%) only runs when
 // the LLM checkpoint model is disabled (compaction.useCheckpoints=false). With
-// the checkpoint model on (the default), compaction is driven by the
-// sapaloq_compact_session tool + the force triggers in runTurnLoop, so a long
+// the checkpoint model on (the default), compaction is driven by isolated
+// orchestrator summarization + the force triggers in runTurnLoop, so a long
 // session is compacted by a model-authored checkpoint instead of a truncated
 // heuristic summary before the next request.
 func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUserMessage string) ([]bridge.Message, error) {

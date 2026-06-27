@@ -110,7 +110,7 @@ func TestIsReadOnlyAssessmentTool(t *testing.T) {
 			t.Errorf("isReadOnlyAssessmentTool(%q) = %v, want %v", name, got, want)
 		}
 	}
-	for _, name := range []string{"write_file", "run_command", "sapaloq_stop", "sapaloq_compact_session", "request_clarification", "delete_file"} {
+	for _, name := range []string{"write_file", "run_command", "sapaloq_stop", "request_clarification", "delete_file"} {
 		if isReadOnlyAssessmentTool(name) {
 			t.Errorf("isReadOnlyAssessmentTool(%q) = true, want false (side-effecting/lifecycle)", name)
 		}
@@ -150,6 +150,44 @@ func TestOrchestratorFallbackCheckpointArchivesOldTurns(t *testing.T) {
 	}
 	if len(active) > 6 {
 		t.Fatalf("expected shrunk active tail, got %d turns", len(active))
+	}
+}
+
+func TestRunCompactSession(t *testing.T) {
+	ctx := context.Background()
+	store, err := chatstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := store.ActiveSession(ctx, "p", "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		if err := store.AppendTurn(ctx, sessionID, role, "turn content "+string(rune('a'+i)), 50); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{chat: store, cfg: config.Config{Orchestrator: config.DefaultOrchestratorConfig()}}
+	snap := providerSnapshot{
+		entry: config.LLMBridge{Key: "p", Model: "m"},
+		br:    summaryBridge{},
+		cfg:   o.cfg,
+	}
+	res, ok, err := o.runCompactSession(ctx, snap, nil, sessionID, "manual")
+	if err != nil || !ok {
+		t.Fatalf("runCompactSession: ok=%v err=%v", ok, err)
+	}
+	if res.Index != 1 {
+		t.Fatalf("index = %d, want 1", res.Index)
+	}
+	ck, err := store.LatestCheckpoint(ctx, sessionID)
+	if err != nil || !strings.Contains(ck.Summary, "ship feature") {
+		t.Fatalf("checkpoint summary missing model output: err=%v summary=%q", err, ck.Summary)
 	}
 }
 

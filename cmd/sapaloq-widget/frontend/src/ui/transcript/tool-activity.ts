@@ -130,7 +130,7 @@ export function createToolActivityElement(
   wireToolToggle(item, body, header);
   item.append(header, body);
 
-  const open = waiting;
+  const open = false;
   setToolActivityOpen(item, open, body);
   paintToolActivityHeader(item, header);
   return item;
@@ -173,4 +173,6 @@ export function patchToolActivityElement(
   const code = responseSection.querySelector('code');
   if (code) code.textContent = response || '(no output)';
   responseSection.dataset.state = state;
+  setToolActivityOpen(item, false);
+  if (header) paintToolActivityHeader(item, header);
 }

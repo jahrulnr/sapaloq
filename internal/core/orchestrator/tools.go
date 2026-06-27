@@ -47,7 +47,6 @@ var askTools = append(append([]string{
 	"sapaloq_answer_clarification",
 	"sapaloq_send_steering",
 	"sapaloq_stop",
-	"sapaloq_compact_session",
 	"exec",
 }, readOnlyAssessmentTools...), desktopTools...)
 
@@ -58,7 +57,6 @@ var scribeTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"scribe_write_note",
 	"wait",
 	"sapaloq_cancel_job",
-	"sapaloq_compact_session",
 	"sapaloq_update_task_progress",
 	"sapaloq_complete_task",
 	"sapaloq_fail_task",
@@ -77,7 +75,6 @@ var planTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"sapaloq_cancel_job",
 	"write_plan",
 	"read_plan",
-	"sapaloq_compact_session",
 	"sapaloq_stop",
 	"request_clarification",
 	"sapaloq_request_decision",
@@ -96,7 +93,6 @@ var agentTools = append(append([]string{}, readOnlyAssessmentTools...),
 	"edit_file",
 	"delete_file",
 	"read_plan",
-	"sapaloq_compact_session",
 	"sapaloq_update_task_progress",
 	"sapaloq_complete_task",
 	"sapaloq_fail_task",
@@ -170,11 +166,10 @@ func knownToolSet() map[string]struct{} {
 func init() {
 	// waitForOutputExempt is the locked set of tools that do NOT get the
 	// wait_for_output argument: their result IS the lifecycle transition
-	// (sapaloq_compact_session, sapaloq_stop) and cannot be deferred. Every
-	// other registered tool gets the arg injected into its schema.
+	// (sapaloq_stop) and cannot be deferred. Every other registered tool gets
+	// the arg injected into its schema.
 	waitForOutputExempt := map[string]struct{}{
-		"sapaloq_compact_session": {},
-		"sapaloq_stop":            {},
+		"sapaloq_stop": {},
 	}
 	reg := func(name, schema string) {
 		if _, exempt := waitForOutputExempt[name]; !exempt {
@@ -415,15 +410,6 @@ func init() {
 	}`)
 
 	reg("desktop_dnd_status", `{"type":"object","properties":{}}`)
-
-	reg("sapaloq_compact_session", `{
-		"type":"object",
-		"properties":{
-			"summary":{"type":"string","description":"Structured markdown summary of the conversation so far: goals, decisions, open items, key facts. Do NOT repeat the last assistant message verbatim - it is preserved in context separately."},
-			"reason":{"type":"string","description":"Optional: why you are compacting now (e.g. 'thread long', 'natural pause')."}
-		},
-		"required":["summary"]
-	}`)
 
 	// wait: the unified wait tool. mode selects behavior:
 	//   time   - sleep `seconds` (bounded by continuation.maxWaitSeconds).

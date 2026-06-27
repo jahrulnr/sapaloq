@@ -88,7 +88,7 @@ func toolIsBarrier(name string) bool {
 	// actor's terminal state, so all ordinary jobs must finish first. `wait`
 	// and `sapaloq_cancel_job` are NOT barriers - they collect/control other
 	// jobs and must run alongside them.
-	case "sapaloq_complete_task", "sapaloq_fail_task", "request_clarification", "sapaloq_stop", "sapaloq_compact_session":
+	case "sapaloq_complete_task", "sapaloq_fail_task", "request_clarification", "sapaloq_stop":
 		return true
 	default:
 		return false

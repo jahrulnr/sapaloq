@@ -129,10 +129,16 @@ func TestActivateSwitchesActiveSession(t *testing.T) {
 		t.Fatalf("expected active=%q after Activate, got %q", first, active)
 	}
 
-	// Exactly one active row in the table.
-	var activeCount int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_sessions WHERE active=1`).Scan(&activeCount); err != nil {
+	// Exactly one active session in the index.
+	list, err := store.ListSessions(ctx, 50)
+	if err != nil {
 		t.Fatal(err)
+	}
+	activeCount := 0
+	for _, s := range list {
+		if s.Active {
+			activeCount++
+		}
 	}
 	if activeCount != 1 {
 		t.Fatalf("expected exactly 1 active session, got %d", activeCount)
@@ -156,10 +162,15 @@ func TestActivateRejectsUnknownAndEmpty(t *testing.T) {
 	if err := store.Activate(ctx, "   "); err == nil {
 		t.Fatal("expected error for empty session id")
 	}
-	// The original active session must remain active after a rejected switch.
-	var activeCount int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_sessions WHERE active=1`).Scan(&activeCount); err != nil {
+	list, err := store.ListSessions(ctx, 50)
+	if err != nil {
 		t.Fatal(err)
+	}
+	activeCount := 0
+	for _, s := range list {
+		if s.Active {
+			activeCount++
+		}
 	}
 	if activeCount != 1 {
 		t.Fatalf("rejected switch must not drop active session, got active count %d", activeCount)

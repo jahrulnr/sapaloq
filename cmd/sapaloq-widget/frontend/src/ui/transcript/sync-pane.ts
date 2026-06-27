@@ -27,7 +27,7 @@ export function mountTranscriptPane(
   body.querySelector('.transcript-pane')?.remove();
   body.querySelectorAll('.transcript-empty').forEach((node) => node.remove());
 
-  const visible = visibleTranscriptEntries(entries);
+  const visible = visibleTranscriptEntries(entries, mode);
   if (visible.length === 0) {
     body.append(emptyTranscriptState(emptyMessage, emptyExtraClass));
     state.renderedEntryCount = 0;
@@ -53,7 +53,7 @@ export function syncTranscriptPane(
   let pane = body.querySelector('.transcript-pane') as HTMLElement | null;
   body.querySelectorAll('.transcript-empty').forEach((node) => node.remove());
 
-  const visible = visibleTranscriptEntries(entries);
+  const visible = visibleTranscriptEntries(entries, mode);
 
   if (visible.length === 0) {
     pane?.remove();

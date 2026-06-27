@@ -59,4 +59,16 @@ type TranscriptPatch struct {
 	// backend has persisted the new/empty session so the UI never clears on a
 	// failed reset.
 	Reset bool `json:"reset,omitempty"`
+	// Usage is attached on turn boundaries, checkpoints, and terminal events so
+	// the context pill updates without querying on every streaming delta.
+	Usage *TranscriptUsage `json:"usage,omitempty"`
+}
+
+// TranscriptUsage is a lightweight context-window snapshot for the widget pill.
+type TranscriptUsage struct {
+	UsedTokens    int    `json:"used_tokens"`
+	ContextWindow int    `json:"context_window"`
+	Percent       int    `json:"percent"`
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"`
 }

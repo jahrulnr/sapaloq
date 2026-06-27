@@ -337,8 +337,6 @@ func (o *Orchestrator) handleAskTool(ctx context.Context, snap providerSnapshot,
 			return askToolResult{text: fmt.Sprintf("generation and %d task(s) stopped: %s", stopped, reason), handled: true, stop: true}
 		}
 		return askToolResult{text: "Invalid stop scope: " + scope, handled: true}
-	case "sapaloq_compact_session":
-		return o.handleCompactSession(ctx, snap, chatSink{o: o, out: out}, sessionID, args.Summary, args.Reason)
 	case "sapaloq_send_steering":
 		target := strings.TrimSpace(args.TargetTaskID)
 		message := strings.TrimSpace(args.Message)
@@ -624,7 +622,10 @@ func (o *Orchestrator) publishTaskActivity(sessionID string, record taskRecord, 
 	record.UpdatedAt = time.Now().UTC()
 	ev := taskUpdateEvent(sessionID, record)
 	ev.Summary = summary
-	_ = o.progress.Append(record.ID, ev)
+	// Orchestrator-only live hint: push to the chat bus so the main transcript
+	// can refresh its task card. Do NOT append to the per-task progress JSONL —
+	// that stream feeds the sub-agent monitor, which should show
+	// thinking/tools/text only (status lives in the pop-up header).
 	if o.bus != nil {
 		o.bus.Publish(topicFor(bridge.EventTaskUpdate), ev)
 	}

@@ -142,7 +142,7 @@ func (o *Orchestrator) composeCompletionAnnouncement(sessionID string, record ta
 		close(done)
 	}()
 
-	all, _ := o.runConversationActor(context.Background(), snap, out, sessionID, "announce:"+record.ID, record.Task, messages, nil)
+	all, _ := o.runConversationActor(context.Background(), snap, out, sessionID, "announce:"+record.ID, "", record.Task, messages, nil)
 	close(out)
 	<-done
 
