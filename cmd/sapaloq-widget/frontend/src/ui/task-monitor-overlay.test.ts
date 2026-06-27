@@ -130,12 +130,14 @@ describe('task-monitor-overlay', () => {
     expect(tool).not.toBeNull();
     expect(tool!.classList.contains('is-open')).toBe(false);
     expect(tool!.querySelector<HTMLElement>('.task-monitor-tool-body')?.hidden).toBe(true);
-    expect(tool!.querySelector('.task-monitor-entry-label')?.textContent).toContain('$ exec');
+    expect(tool!.firstChild?.nodeType).toBe(3);
+    expect(tool!.firstChild?.textContent).toContain('$ exec');
+    expect(tool!.querySelector('button')).toBeNull();
     const sections = tool!.querySelectorAll('.task-monitor-tool-section');
     expect(sections).toHaveLength(2);
     expect(sections[0].textContent).toContain('cd /tmp/profile');
     expect(sections[1].textContent).toContain('installed successfully');
-    (tool!.querySelector('.task-monitor-entry-label') as HTMLButtonElement).click();
+    tool!.click();
     expect(tool!.classList.contains('is-open')).toBe(true);
     expect(tool!.querySelector<HTMLElement>('.task-monitor-tool-body')?.hidden).toBe(false);
   });

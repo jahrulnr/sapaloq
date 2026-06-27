@@ -877,25 +877,16 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .tool-activity {
   width: 100%;
   max-width: none;
-  padding: 0;
+  min-height: 34px;
+  padding: 8px 10px;
   overflow: hidden;
   border-color: oklch(100% 0 0 / 0.14);
   border-radius: 8px;
+  color: var(--silver);
   background: oklch(15% 0.01 255 / 0.88);
   box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.035);
-}
-.tool-activity__header {
-  display: block;
-  width: 100%;
-  min-height: 34px;
-  padding: 7px 10px;
-  border: 0;
-  color: var(--silver);
-  background: transparent;
   font: 650 0.7rem/1.35 ui-monospace, "SF Mono", Menlo, monospace;
-  text-align: left;
   cursor: pointer;
-  list-style: none;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -918,8 +909,12 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 .tool-activity[data-complete='true'] .tool-activity__status { color: oklch(76% 0.1 150); }
 .tool-activity__body {
   display: grid;
+  margin: 8px -10px -8px;
   border-top: 1px solid oklch(100% 0 0 / 0.09);
   background: oklch(10% 0.008 255 / 0.72);
+  cursor: default;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .tool-activity__body[hidden],
 .summary-panel__body[hidden],
@@ -1834,27 +1829,18 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
 .task-monitor-tool {
   width: 100%;
   max-width: none;
-  padding: 0;
+  min-height: 34px;
+  padding: 8px 10px;
   overflow: hidden;
   border-radius: 8px;
   border-color: oklch(100% 0 0 / 0.14);
   color: var(--silver);
   background: oklch(15% 0.01 255 / 0.9);
   box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.035);
-}
-.task-monitor-tool > .task-monitor-entry-label {
-  display: block;
-  width: 100%;
-  min-height: 34px;
-  margin: 0;
-  padding: 7px 10px;
-  border: 0;
-  background: transparent;
   font: 650 0.7rem/1.35 ui-monospace, monospace;
-  text-align: left;
   cursor: pointer;
-  list-style: none;
-  color: var(--silver);
+  user-select: none;
+  -webkit-user-select: none;
 }
 .task-monitor-tool-name {
   flex: 1;
@@ -1871,7 +1857,14 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.task-monitor-tool-body { border-top: 1px solid oklch(100% 0 0 / 0.09); background: oklch(10% 0.008 255 / 0.7); }
+.task-monitor-tool-body {
+  margin: 8px -10px -8px;
+  border-top: 1px solid oklch(100% 0 0 / 0.09);
+  background: oklch(10% 0.008 255 / 0.7);
+  cursor: default;
+  user-select: text;
+  -webkit-user-select: text;
+}
 .task-monitor-tool-section + .task-monitor-tool-section { border-top: 1px solid oklch(100% 0 0 / 0.08); }
 .task-monitor-tool-section > span {
   display: block;

@@ -576,13 +576,13 @@ function renderActivityEntry(entry: ActivityEntry): HTMLElement {
   if (entry.kind === 'tool') {
     const wrap = document.createElement('div');
     wrap.className = 'task-monitor-entry task-monitor-tool';
-    const label = document.createElement('button');
-    label.type = 'button';
-    label.className = 'task-monitor-entry-label';
-    label.setAttribute('aria-expanded', 'false');
+    wrap.setAttribute('role', 'button');
+    wrap.setAttribute('tabindex', '0');
+    wrap.setAttribute('aria-expanded', 'false');
+    const label = document.createTextNode('');
     const paintLabel = () => {
       const marker = wrap.classList.contains('is-open') ? '⌄' : '›';
-      label.textContent = `${marker}  $ ${entry.name}  ·  ${entry.status || 'running'}`;
+      label.nodeValue = `${marker}  $ ${entry.name}  ·  ${entry.status || 'running'}`;
     };
     paintLabel();
     const body = document.createElement('div');
@@ -590,12 +590,21 @@ function renderActivityEntry(entry: ActivityEntry): HTMLElement {
     body.hidden = true;
     body.append(toolMonitorSection('Request', entry.args || 'No arguments'));
     body.append(toolMonitorSection('Response', entry.response === undefined ? 'Waiting for response…' : entry.response || 'No payload', entry.status));
-    label.addEventListener('click', () => {
+    const toggle = () => {
       const open = wrap.classList.toggle('is-open');
-      label.setAttribute('aria-expanded', String(open));
+      wrap.setAttribute('aria-expanded', String(open));
       paintLabel();
       body.hidden = !open;
+    };
+    wrap.addEventListener('click', toggle);
+    wrap.addEventListener('keydown', (event) => {
+      if (event.target !== wrap) return;
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggle();
+      }
     });
+    body.addEventListener('click', (event) => event.stopPropagation());
     wrap.append(label, body);
     return wrap;
   }

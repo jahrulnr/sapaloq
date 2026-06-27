@@ -65,13 +65,20 @@ function findToolActivity(call: ToolActivityCall): HTMLElement | undefined {
     item.dataset.toolName === (call.name || 'unknown') && item.dataset.complete !== 'true');
 }
 
-function paintToolActivityHeader(item: HTMLElement, header: HTMLButtonElement) {
+function paintToolActivityHeader(item: HTMLElement, header: Text) {
   const marker = item.classList.contains('is-open') ? '⌄' : '›';
-  header.textContent = `${marker}  $ ${item.dataset.toolName || 'unknown'}  ·  ${item.dataset.toolStatus || 'running'}`;
+  header.nodeValue = `${marker}  $ ${item.dataset.toolName || 'unknown'}  ·  ${item.dataset.toolStatus || 'running'}`;
 }
 
-// appendToolActivity creates one Cursor-like activity row. Its explicit
-// button disclosure keeps request and response paired in WebKitGTK.
+function getToolActivityHeader(item: HTMLElement): Text | null {
+  const node = item.firstChild;
+  return node?.nodeType === 3 ? node as Text : null;
+}
+
+// appendToolActivity creates one Cursor-like activity row. The disclosure is
+// the root element itself and its label is a direct text node. WebKitGTK can
+// collapse a nested button to zero height when this row lands between two
+// streamed thinking bubbles, leaving only the parent's borders visible.
 export function appendToolActivity(call: ToolActivityCall): HTMLElement | undefined {
   const list = getMessageList();
   if (!list) return;
@@ -87,10 +94,10 @@ export function appendToolActivity(call: ToolActivityCall): HTMLElement | undefi
   item.dataset.toolStatus = 'running';
   if (call.id) item.dataset.toolId = call.id;
 
-  const header = document.createElement('button');
-  header.type = 'button';
-  header.className = 'tool-activity__header';
-  header.setAttribute('aria-expanded', 'false');
+  item.setAttribute('role', 'button');
+  item.setAttribute('tabindex', '0');
+  item.setAttribute('aria-expanded', 'false');
+  const header = document.createTextNode('');
   paintToolActivityHeader(item, header);
 
   const body = document.createElement('div');
@@ -99,12 +106,21 @@ export function appendToolActivity(call: ToolActivityCall): HTMLElement | undefi
   const request = formatToolPayload(call.arguments);
   body.append(toolPayloadSection('Request', request || 'No arguments'));
   body.append(toolPayloadSection('Response', '', 'pending'));
-  header.addEventListener('click', () => {
+  const toggle = () => {
     const open = item.classList.toggle('is-open');
-    header.setAttribute('aria-expanded', String(open));
+    item.setAttribute('aria-expanded', String(open));
     paintToolActivityHeader(item, header);
     body.hidden = !open;
+  };
+  item.addEventListener('click', toggle);
+  item.addEventListener('keydown', (event) => {
+    if (event.target !== item) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggle();
+    }
   });
+  body.addEventListener('click', (event) => event.stopPropagation());
   item.append(header, body);
   list.append(item);
   if (call.id) toolActivityByID.set(call.id, item);
@@ -117,7 +133,7 @@ export function completeToolActivity(call: ToolActivityCall, result: string, sta
   if (!item) return;
   item.dataset.complete = 'true';
   item.dataset.toolStatus = statusText;
-  const header = item.querySelector<HTMLButtonElement>('.tool-activity__header');
+  const header = getToolActivityHeader(item);
   if (header) paintToolActivityHeader(item, header);
   const old = item.querySelector<HTMLElement>('.tool-activity__section[data-state="pending"]');
   old?.replaceWith(toolPayloadSection('Response', formatToolPayload(result), statusText === 'completed' ? 'complete' : 'error'));

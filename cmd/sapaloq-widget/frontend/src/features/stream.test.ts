@@ -100,12 +100,32 @@ describe('tool activity', () => {
     expect(activity.classList.contains('is-open')).toBe(false);
     expect(activity.querySelector<HTMLElement>('.tool-activity__body')?.hidden).toBe(true);
     expect(activity.dataset.complete).toBe('true');
-    expect(activity.querySelector('.tool-activity__header')?.textContent).toContain('$ exec');
+    expect(activity.firstChild?.nodeType).toBe(3);
+    expect(activity.firstChild?.textContent).toContain('$ exec');
+    expect(activity.querySelector('button')).toBeNull();
     expect(activity.textContent).toContain('make install');
     expect(activity.textContent).toContain('installed');
-    (activity.querySelector('.tool-activity__header') as HTMLButtonElement).click();
+    activity.click();
     expect(activity.classList.contains('is-open')).toBe(true);
     expect(activity.querySelector<HTMLElement>('.tool-activity__body')?.hidden).toBe(false);
+  });
+
+  it('keeps a root-level tool disclosure between consecutive thinking bubbles', () => {
+    const r = newStreamRenderer();
+    feedStreamEvent(r, { kind: 'thinking_delta', delta: 'Inspecting files' });
+    feedStreamEvent(r, {
+      kind: 'tool_call',
+      tool_call: { id: 'call-between', name: 'read_file', arguments: { path: '/tmp/profile' } },
+    });
+    feedStreamEvent(r, { kind: 'thinking_delta', delta: 'Reviewing the result' });
+
+    const list = document.getElementById('message-list')!;
+    const activity = list.querySelector('.tool-activity') as HTMLElement;
+    expect(activity).not.toBeNull();
+    expect(activity.parentElement).toBe(list);
+    expect(activity.firstChild?.nodeType).toBe(3);
+    expect(activity.firstChild?.textContent).toContain('$ read_file');
+    expect(activity.getAttribute('aria-expanded')).toBe('false');
   });
 });
 
