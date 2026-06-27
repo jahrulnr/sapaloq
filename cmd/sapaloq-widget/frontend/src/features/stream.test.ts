@@ -97,14 +97,17 @@ describe('tool activity', () => {
 
     const activity = document.querySelector('.tool-activity') as HTMLElement;
     expect(document.querySelectorAll('.tool-activity')).toHaveLength(1);
-    expect(activity.classList.contains('is-open')).toBe(true);
-    expect(activity.querySelector<HTMLElement>('.tool-activity__body')?.hidden).toBe(false);
+    expect(activity.classList.contains('is-open')).toBe(false);
+    expect(activity.querySelector<HTMLElement>('.tool-activity__body')?.hidden).toBe(true);
     expect(activity.dataset.complete).toBe('true');
     expect(activity.firstChild?.nodeType).toBe(3);
     expect(activity.firstChild?.textContent).toContain('$ exec');
     expect(activity.querySelector('button')).toBeNull();
     expect(activity.textContent).toContain('make install');
     expect(activity.textContent).toContain('installed');
+    activity.click();
+    expect(activity.classList.contains('is-open')).toBe(true);
+    expect(activity.querySelector<HTMLElement>('.tool-activity__body')?.hidden).toBe(false);
     activity.click();
     expect(activity.classList.contains('is-open')).toBe(false);
     expect(activity.querySelector<HTMLElement>('.tool-activity__body')?.hidden).toBe(true);
@@ -126,7 +129,7 @@ describe('tool activity', () => {
     const activity = document.querySelector('.tool-activity') as HTMLElement;
     expect(activity.firstChild?.textContent).toContain('mkdir -p /tmp/foo');
     expect(activity.textContent).toContain('(no output)');
-    expect(activity.classList.contains('is-open')).toBe(true);
+    expect(activity.classList.contains('is-open')).toBe(false);
   });
 
   it('keeps a root-level tool disclosure between consecutive thinking bubbles', () => {

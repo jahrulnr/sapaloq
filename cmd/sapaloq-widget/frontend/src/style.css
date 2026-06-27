@@ -511,6 +511,11 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   -webkit-user-select: text;
 }
 
+/* Bubbles must not shrink when a new row (e.g. task card) is appended below. */
+.message-list > * {
+  flex-shrink: 0;
+}
+
 .message {
   position: relative;
   max-width: min(92%, 680px);
@@ -921,8 +926,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   -webkit-user-select: text;
 }
 .tool-activity__body[hidden],
-.summary-panel__body[hidden],
-.task-monitor-tool-body[hidden] { display: none; }
+.summary-panel__body[hidden] { display: none; }
 .tool-activity__section { min-width: 0; }
 .tool-activity__section + .tool-activity__section { border-top: 1px solid oklch(100% 0 0 / 0.08); }
 .tool-activity__section-label {
@@ -1788,11 +1792,15 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
    .message / .message--assistant / .message--tool / .message--thinking) so the
    pop-up reads as a transcript, not a stack of flat outline boxes. Each tool
    call, assistant text, and thinking block is its own bubble. */
+/* Shared transcript pane: sub-agent monitor today; orchestrator chat can adopt
+   the same incremental renderer next. */
+.transcript-pane,
 .task-monitor-activity {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
+.transcript-entry,
 .task-monitor-entry {
   position: relative;
   max-width: min(92%, 660px);
@@ -1807,6 +1815,7 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.transcript-entry-label,
 .task-monitor-entry-label {
   display: block;
   color: var(--accent);
@@ -1815,92 +1824,50 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
   letter-spacing: 0.04em;
   margin-bottom: 5px;
 }
+.transcript-entry-body,
 .task-monitor-entry-body { color: var(--ink); }
-/* Assistant text bubble: same translucent surface as .message--assistant. */
+.transcript-text,
 .task-monitor-text {
   background: linear-gradient(145deg, oklch(100% 0 0 / 0.095), oklch(100% 0 0 / 0.05));
 }
+.transcript-text .transcript-entry-label,
 .task-monitor-text .task-monitor-entry-label { color: oklch(76% 0.15 205); }
+.transcript-text .transcript-entry-body :where(p,ul,ol,pre,code),
 .task-monitor-text .task-monitor-entry-body :where(p,ul,ol,pre,code) { margin: 0.2em 0; }
-/* Thinking bubble: muted, collapsible, mirroring .message--thinking. */
+/* Autopilot continuation nudges (status "continuing - call …") mirror user bubbles. */
+.transcript-user {
+  align-self: flex-end;
+  border-color: oklch(76% 0.15 205 / 0.38);
+  border-radius: 11px 11px 4px 11px;
+  color: oklch(96% 0.01 245);
+  background: linear-gradient(135deg, oklch(50% 0.14 245), oklch(45% 0.17 280));
+  box-shadow: 0 9px 22px oklch(0% 0 0 / 0.24), inset 0 1px 0 oklch(100% 0 0 / 0.18);
+}
+.transcript-user .transcript-entry-body :where(code) {
+  color: var(--silver-bright);
+  background: oklch(0% 0 0 / 0.18);
+}
+.transcript-thinking,
 .task-monitor-thinking {
   background: linear-gradient(145deg, oklch(63% 0.22 285 / 0.08), oklch(100% 0 0 / 0.035));
   border-color: oklch(63% 0.22 285 / 0.2);
 }
+.transcript-thinking summary,
 .task-monitor-thinking summary {
   cursor: pointer;
   color: var(--muted);
   font-weight: 700;
   list-style: none;
 }
+.transcript-thinking summary::-webkit-details-marker,
 .task-monitor-thinking summary::-webkit-details-marker { display: none; }
+.transcript-thinking summary::before,
 .task-monitor-thinking summary::before { content: '▸ '; }
+.transcript-thinking[open] summary::before,
 .task-monitor-thinking[open] summary::before { content: '▾ '; }
-/* Tool activity mirrors the compact Cursor-like rows in the main transcript. */
-.task-monitor-tool {
-  width: 100%;
-  max-width: none;
-  min-height: 34px;
-  padding: 8px 10px;
-  overflow: hidden;
-  border-radius: 8px;
-  border-color: oklch(100% 0 0 / 0.14);
-  color: var(--silver);
-  background: oklch(15% 0.01 255 / 0.9);
-  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.035);
-  font: 650 0.7rem/1.35 ui-monospace, monospace;
-  cursor: pointer;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.task-monitor-tool-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 650 0.7rem/1.2 ui-monospace, monospace;
-}
-.task-monitor-tool-name::before { content: "$ "; color: oklch(75% 0.12 150); }
-.task-monitor-tool-status {
-  color: var(--subtle);
-  font: 700 0.54rem/1.2 ui-monospace, monospace;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.task-monitor-tool-body {
-  margin-top: 8px;
-  min-width: 0;
-  border-top: 1px solid oklch(100% 0 0 / 0.09);
-  background: oklch(10% 0.008 255 / 0.7);
-  cursor: default;
-  user-select: text;
-  -webkit-user-select: text;
-}
-.task-monitor-tool-section + .task-monitor-tool-section { border-top: 1px solid oklch(100% 0 0 / 0.08); }
-.task-monitor-tool-section > span {
-  display: block;
-  padding: 7px 10px 0;
-  color: var(--subtle);
-  font: 750 0.54rem/1.2 ui-monospace, monospace;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-.task-monitor-tool-section[data-status='completed'] > span { color: oklch(72% 0.09 150); }
-.task-monitor-tool-section[data-status='failed'] > span { color: oklch(78% 0.12 28); }
-.task-monitor-tool-section pre {
-  max-height: 280px;
-  max-width: 100%;
-  margin: 0;
-  overflow: auto;
-  padding: 7px 10px 10px;
-  color: oklch(78% 0.015 255);
-  font: 0.66rem/1.48 ui-monospace, monospace;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+/* Tool rows inside a transcript pane reuse .tool-activity (same as main chat). */
+.transcript-pane .tool-activity {
+  align-self: stretch;
 }
 /* Turn boundary: a subtle centered divider (like the checkpoint divider) - it
    is a seam in the transcript, not content. The ::before/::after rules flank
@@ -1929,9 +1896,9 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
   height: 1px;
   background: oklch(100% 0 0 / 0.16);
 }
-/* Status + task-activity lines: plain muted left-aligned text (a status hint
-   like "Menjalankan `read_file`." or "continuing - call sapaloq_stop"), not a
-   divider - they can be long and frequent. */
+/* Status hints (provider retry, compaction, etc.) stay as muted centered lines.
+   Autopilot "continuing …" nudges render as .transcript-user instead. */
+.transcript-status-line,
 .task-monitor-status-line,
 .task-monitor-task-line {
   width: 100%;

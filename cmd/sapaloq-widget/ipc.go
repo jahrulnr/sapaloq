@@ -585,6 +585,7 @@ func roundTripWithEvent(socketPath string, req ipcRequest, onResponse func(ipcRe
 	// inlined images/files), which exceed bufio.Scanner's default 64KB line cap.
 	sc.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
 	var responses []ipcResponse
+scanLoop:
 	for sc.Scan() {
 		var res ipcResponse
 		if err := json.Unmarshal(sc.Bytes(), &res); err != nil {
@@ -594,8 +595,14 @@ func roundTripWithEvent(socketPath string, req ipcRequest, onResponse func(ipcRe
 		if onResponse != nil {
 			onResponse(res)
 		}
-		if req.Op != "chat_send" && req.Op != "chat_retry" || res.Op == "event" && res.Event != nil && res.Event.Kind == bridge.EventDone {
-			break
+		if req.Op != "chat_send" && req.Op != "chat_retry" {
+			break scanLoop
+		}
+		if res.Op == "event" && res.Event != nil {
+			switch res.Event.Kind {
+			case bridge.EventDone, bridge.EventError:
+				break scanLoop
+			}
 		}
 	}
 	if err := sc.Err(); err != nil {

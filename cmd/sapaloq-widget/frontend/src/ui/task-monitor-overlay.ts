@@ -12,6 +12,12 @@
 import { RuntimeStatus, TaskInspect } from '../../wailsjs/go/main/App';
 import type { main } from '../../wailsjs/go/models';
 import { renderMarkdown } from './markdown';
+import {
+  coalesceEvents,
+  mountTranscriptPane,
+  syncTranscriptPane,
+  emptyTranscriptState,
+} from './transcript';
 
 type Tab = 'planner' | 'agent';
 type SubTab = 'activity' | 'plan';
@@ -402,7 +408,7 @@ function renderCurrent() {
   if (activeSubTab === 'plan') {
     const planPane = body.querySelector('.task-monitor-plan');
     if (!planPane) {
-      body.querySelector('.task-monitor-activity')?.remove();
+      body.querySelector('.transcript-pane')?.remove();
       body.append(buildPlanPane(res));
       state.renderedEntryCount = 0;
     }
@@ -529,276 +535,27 @@ function buildPlanPane(res: TaskInspectResult): HTMLElement {
 }
 
 function mountActivityPane(body: HTMLElement, state: ActorState, res: TaskInspectResult) {
-  const coalesced = coalesceEvents(res.events || []);
-  if (coalesced.length === 0) {
-    body.append(emptyState('Belum ada aktivitas'));
-    state.renderedEntryCount = 0;
-    return;
-  }
-  const pane = document.createElement('div');
-  pane.className = 'task-monitor-activity';
-  for (const entry of coalesced) pane.append(renderActivityEntry(entry));
-  body.append(pane);
-  state.renderedEntryCount = coalesced.length;
+  mountTranscriptPane(
+    body,
+    state,
+    coalesceEvents(res.events || []),
+    'Belum ada aktivitas',
+    'monitor',
+    'task-monitor-empty',
+  );
 }
 
 function syncActivityPane(body: HTMLElement, state: ActorState, res: TaskInspectResult) {
-  const coalesced = coalesceEvents(res.events || []);
-  let pane = body.querySelector('.task-monitor-activity') as HTMLElement | null;
-  body.querySelector('.task-monitor-empty')?.remove();
-
-  if (coalesced.length === 0) {
-    pane?.remove();
-    if (!body.querySelector('.task-monitor-empty')) {
-      body.append(emptyState('Belum ada aktivitas'));
-    }
-    state.renderedEntryCount = 0;
-    return;
-  }
-
-  if (!pane) {
-    pane = document.createElement('div');
-    pane.className = 'task-monitor-activity';
-    body.append(pane);
-    state.renderedEntryCount = 0;
-  }
-
-  const prev = state.renderedEntryCount;
-  const patchEnd = Math.min(prev, coalesced.length);
-  for (let i = 0; i < patchEnd; i++) {
-    const el = pane.children[i] as HTMLElement | undefined;
-    if (!el || el.dataset.entryKind !== coalesced[i].kind) {
-      while (pane.children.length > i) pane.lastChild?.remove();
-      state.renderedEntryCount = i;
-      for (let j = i; j < coalesced.length; j++) pane.append(renderActivityEntry(coalesced[j]));
-      state.renderedEntryCount = coalesced.length;
-      return;
-    }
-    patchActivityEntry(el, coalesced[i]);
-  }
-
-  for (let i = prev; i < coalesced.length; i++) {
-    pane.append(renderActivityEntry(coalesced[i]));
-  }
-  while (pane.children.length > coalesced.length) pane.lastChild?.remove();
-  state.renderedEntryCount = coalesced.length;
-}
-
-function formatMonitorPayload(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return trimmed;
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
-  } catch {
-    return value;
-  }
-}
-
-function patchActivityEntry(el: HTMLElement, entry: ActivityEntry) {
-  if (entry.kind === 'text' || entry.kind === 'thinking') {
-    const body = el.querySelector('.task-monitor-entry-body');
-    if (body) body.replaceChildren(renderMarkdown(entry.text));
-    return;
-  }
-  if (entry.kind === 'tool') {
-    patchToolEntry(el, entry);
-    return;
-  }
-  if (entry.kind === 'status') {
-    el.textContent = entry.label;
-  }
-}
-
-function patchToolEntry(wrap: HTMLElement, entry: Extract<ActivityEntry, { kind: 'tool' }>) {
-  const label = wrap.firstChild;
-  if (label?.nodeType === 3) {
-    const marker = wrap.classList.contains('is-open') ? '⌄' : '›';
-    (label as Text).nodeValue = `${marker}  $ ${entry.name}  ·  ${entry.status || 'running'}`;
-  }
-  const sections = wrap.querySelectorAll('.task-monitor-tool-section');
-  if (sections.length < 2 || entry.response === undefined) return;
-  const response = entry.response || '(no output)';
-  const responseSection = sections[1] as HTMLElement;
-  const code = responseSection.querySelector('code');
-  if (code) code.textContent = formatMonitorPayload(response);
-  if (entry.status) responseSection.dataset.status = entry.status;
-}
-
-type ActivityEntry =
-  | { kind: 'thinking'; text: string }
-  | { kind: 'text'; text: string }
-  | { kind: 'tool'; id: string; name: string; args: string; response?: string; status?: string }
-  | { kind: 'status'; label: string };
-
-function coalesceEvents(events: TaskInspectEvent[]): ActivityEntry[] {
-  const out: ActivityEntry[] = [];
-  let textBuf = '';
-  let thinkBuf = '';
-  const flushText = () => {
-    if (textBuf.trim()) out.push({ kind: 'text', text: textBuf });
-    textBuf = '';
-  };
-  const flushThinking = () => {
-    if (thinkBuf.trim()) out.push({ kind: 'thinking', text: thinkBuf });
-    thinkBuf = '';
-  };
-  for (const ev of events) {
-    switch (ev.kind) {
-      case 'response_delta':
-        flushThinking();
-        textBuf += ev.delta || '';
-        break;
-      case 'thinking_delta':
-        flushText();
-        thinkBuf += ev.delta || '';
-        break;
-      case 'tool_call':
-        flushText();
-        flushThinking();
-        out.push({ kind: 'tool', id: ev.tool_id || '', name: ev.tool_name || 'tool', args: ev.tool_arguments || '' });
-        break;
-      case 'tool_update': {
-        flushText();
-        flushThinking();
-        const match = [...out].reverse().find((item): item is Extract<ActivityEntry, { kind: 'tool' }> =>
-          item.kind === 'tool' && (ev.tool_id ? item.id === ev.tool_id : item.name === (ev.tool_name || 'tool')) && item.response === undefined);
-        if (match) {
-          match.response = ev.tool_result || ev.error || '';
-          match.status = ev.error ? 'failed' : (ev.status || 'completed');
-        } else {
-          out.push({
-            kind: 'tool', id: ev.tool_id || '', name: ev.tool_name || 'tool', args: ev.tool_arguments || '',
-            response: ev.tool_result || ev.error || '', status: ev.error ? 'failed' : (ev.status || 'completed'),
-          });
-        }
-        break;
-      }
-      case 'turn_boundary':
-        flushText();
-        flushThinking();
-        break;
-      case 'task_update':
-        flushText();
-        flushThinking();
-        break;
-      case 'status':
-        if (ev.status && ev.status !== 'working') {
-          flushText();
-          flushThinking();
-          out.push({ kind: 'status', label: ev.status });
-        }
-        break;
-      case 'error':
-        flushText();
-        flushThinking();
-        out.push({ kind: 'status', label: 'error: ' + (ev.error || 'unknown') });
-        break;
-      default:
-        break;
-    }
-  }
-  flushText();
-  flushThinking();
-  return out;
-}
-
-function renderActivityEntry(entry: ActivityEntry): HTMLElement {
-  if (entry.kind === 'thinking') {
-    const details = document.createElement('details');
-    details.className = 'task-monitor-entry task-monitor-thinking is-collapsed';
-    details.dataset.entryKind = 'thinking';
-    const sum = document.createElement('summary');
-    sum.textContent = '💭 thinking';
-    const body = document.createElement('div');
-    body.className = 'task-monitor-entry-body';
-    body.append(renderMarkdown(entry.text));
-    details.append(sum, body);
-    return details;
-  }
-  if (entry.kind === 'text') {
-    const wrap = document.createElement('div');
-    wrap.className = 'task-monitor-entry task-monitor-text';
-    wrap.dataset.entryKind = 'text';
-    const label = document.createElement('span');
-    label.className = 'task-monitor-entry-label';
-    label.textContent = 'Assistant';
-    const body = document.createElement('div');
-    body.className = 'task-monitor-entry-body';
-    body.append(renderMarkdown(entry.text));
-    wrap.append(label, body);
-    return wrap;
-  }
-  if (entry.kind === 'tool') {
-    const waiting = entry.response === undefined;
-    const wrap = document.createElement('div');
-    wrap.className = 'task-monitor-entry task-monitor-tool';
-    wrap.dataset.entryKind = 'tool';
-    if (entry.id) wrap.dataset.toolId = entry.id;
-    wrap.classList.toggle('is-open', waiting);
-    wrap.setAttribute('role', 'button');
-    wrap.setAttribute('tabindex', '0');
-    wrap.setAttribute('aria-expanded', String(waiting));
-    const label = document.createTextNode('');
-    const paintLabel = () => {
-      const marker = wrap.classList.contains('is-open') ? '⌄' : '›';
-      label.nodeValue = `${marker}  $ ${entry.name}  ·  ${entry.status || 'running'}`;
-    };
-    paintLabel();
-    const body = document.createElement('div');
-    body.className = 'task-monitor-tool-body';
-    body.hidden = !waiting;
-    body.append(toolMonitorSection('Request', entry.args || 'No arguments'));
-    const response = waiting ? 'Waiting for response…' : entry.response || '(no output)';
-    body.append(toolMonitorSection('Response', response, entry.status));
-    const toggle = () => {
-      const open = !wrap.classList.contains('is-open');
-      wrap.classList.toggle('is-open', open);
-      wrap.setAttribute('aria-expanded', String(open));
-      paintLabel();
-      body.hidden = !open;
-    };
-    wrap.addEventListener('click', toggle);
-    wrap.addEventListener('keydown', (event) => {
-      if (event.target !== wrap) return;
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        toggle();
-      }
-    });
-    body.addEventListener('click', (event) => event.stopPropagation());
-    wrap.append(label, body);
-    return wrap;
-  }
-  const wrap = document.createElement('div');
-  wrap.className = 'task-monitor-entry task-monitor-status-line';
-  wrap.dataset.entryKind = 'status';
-  wrap.textContent = entry.label;
-  return wrap;
-}
-
-function toolMonitorSection(label: string, payload: string, status = ''): HTMLElement {
-  const section = document.createElement('section');
-  section.className = 'task-monitor-tool-section';
-  if (status) section.dataset.status = status;
-  const heading = document.createElement('span');
-  heading.textContent = label;
-  const pre = document.createElement('pre');
-  const code = document.createElement('code');
-  let formatted = payload.trim();
-  try {
-    formatted = JSON.stringify(JSON.parse(formatted), null, 2);
-  } catch {
-    // Commands and plain-text responses should remain byte-for-byte readable.
-  }
-  code.textContent = formatted;
-  pre.append(code);
-  section.append(heading, pre);
-  return section;
+  syncTranscriptPane(
+    body,
+    state,
+    coalesceEvents(res.events || []),
+    'Belum ada aktivitas',
+    'monitor',
+    'task-monitor-empty',
+  );
 }
 
 function emptyState(message: string): HTMLElement {
-  const el = document.createElement('div');
-  el.className = 'task-monitor-empty';
-  el.textContent = message;
-  return el;
+  return emptyTranscriptState(message, 'task-monitor-empty');
 }

@@ -18,70 +18,22 @@ import {
 } from '../core/state';
 import { copyText, deleteTurn, editText, retryTurn } from './message-actions';
 
+import {
+  type ToolActivityCall,
+  createToolActivityElement,
+  formatToolPayload,
+  getToolActivityHeader,
+  paintToolActivityHeader,
+  patchToolActivityElement,
+  setToolActivityOpen,
+  toolActivityHint,
+  toolEntryFromCall,
+} from '../ui/transcript';
+
+export type { ToolActivityCall };
+
 let activeMessageMenu: HTMLElement | null = null;
 const toolActivityByID = new Map<string, HTMLElement>();
-
-export type ToolActivityCall = {
-  id?: string;
-  name?: string;
-  arguments?: unknown;
-  source?: string;
-};
-
-function formatToolPayload(value: unknown): string {
-  if (value === undefined || value === null || value === '') return '';
-  if (typeof value === 'string') {
-    try {
-      return JSON.stringify(JSON.parse(value), null, 2);
-    } catch {
-      return value;
-    }
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function toolPayloadSection(label: string, value: string, state = ''): HTMLElement {
-  const section = document.createElement('section');
-  section.className = 'tool-activity__section';
-  if (state) section.dataset.state = state;
-  const heading = document.createElement('span');
-  heading.className = 'tool-activity__section-label';
-  heading.textContent = label;
-  const pre = document.createElement('pre');
-  const code = document.createElement('code');
-  code.textContent = value || (state === 'pending' ? 'Waiting for response…' : '(no output)');
-  pre.append(code);
-  section.append(heading, pre);
-  return section;
-}
-
-function toolActivityHint(call: ToolActivityCall): string {
-  const args = call.arguments;
-  if (typeof args === 'object' && args !== null) {
-    const record = args as Record<string, unknown>;
-    if (typeof record.command === 'string' && record.command.trim()) return record.command.trim();
-    if (typeof record.path === 'string' && record.path.trim()) return record.path.trim();
-    const compact = formatToolPayload(args).replace(/\s+/g, ' ').trim();
-    if (!compact) return '';
-    return compact.length <= 72 ? compact : `${compact.slice(0, 69)}…`;
-  }
-  if (typeof args === 'string' && args.trim()) {
-    const text = args.trim();
-    return text.length <= 72 ? text : `${text.slice(0, 69)}…`;
-  }
-  return '';
-}
-
-function setToolActivityOpen(item: HTMLElement, open: boolean) {
-  item.classList.toggle('is-open', open);
-  item.setAttribute('aria-expanded', String(open));
-  const body = item.querySelector<HTMLElement>('.tool-activity__body');
-  if (body) body.hidden = !open;
-}
 
 function findToolActivity(call: ToolActivityCall): HTMLElement | undefined {
   if (call.id) {
@@ -90,17 +42,6 @@ function findToolActivity(call: ToolActivityCall): HTMLElement | undefined {
   }
   return [...toolActivityByID.values()].reverse().find((item) =>
     item.dataset.toolName === (call.name || 'unknown') && item.dataset.complete !== 'true');
-}
-
-function paintToolActivityHeader(item: HTMLElement, header: Text) {
-  const marker = item.classList.contains('is-open') ? '⌄' : '›';
-  const hint = item.dataset.toolHint ? `  ${item.dataset.toolHint}` : '';
-  header.nodeValue = `${marker}  $ ${item.dataset.toolName || 'unknown'}${hint}  ·  ${item.dataset.toolStatus || 'running'}`;
-}
-
-function getToolActivityHeader(item: HTMLElement): Text | null {
-  const node = item.firstChild;
-  return node?.nodeType === 3 ? node as Text : null;
 }
 
 // appendToolActivity creates one Cursor-like activity row. The disclosure is
@@ -114,44 +55,15 @@ export function appendToolActivity(call: ToolActivityCall): HTMLElement | undefi
     const existing = toolActivityByID.get(call.id);
     if (existing?.isConnected) return existing;
   }
-  const item = document.createElement('div');
-  item.className = 'message tool-activity';
+  const item = createToolActivityElement(toolEntryFromCall(call), {
+    mode: 'chat',
+    extraClass: 'message',
+  });
   item.dataset.seq = `${nextMessageSeq()}`;
   item.dataset.group = `${getUserGroup()}`;
-  item.dataset.toolName = call.name || 'unknown';
-  item.dataset.toolStatus = 'running';
   item.dataset.toolHint = toolActivityHint(call);
-  if (call.id) item.dataset.toolId = call.id;
-
-  item.setAttribute('role', 'button');
-  item.setAttribute('tabindex', '0');
-  const header = document.createTextNode('');
-  paintToolActivityHeader(item, header);
-
-  const body = document.createElement('div');
-  body.className = 'tool-activity__body';
-  const request = formatToolPayload(call.arguments);
-  body.append(toolPayloadSection('Request', request || 'No arguments'));
-  body.append(toolPayloadSection('Response', '', 'pending'));
-  const toggle = () => {
-    const open = !item.classList.contains('is-open');
-    setToolActivityOpen(item, open);
-    paintToolActivityHeader(item, header);
-  };
-  item.addEventListener('click', toggle);
-  item.addEventListener('keydown', (event) => {
-    if (event.target !== item) return;
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      toggle();
-    }
-  });
-  body.addEventListener('click', (event) => event.stopPropagation());
-  item.append(header, body);
-  // Keep request/response visible while the tool is running so output does not
-  // appear only after completion (and vanish when the body stays collapsed).
-  setToolActivityOpen(item, true);
-  paintToolActivityHeader(item, header);
+  const header = getToolActivityHeader(item);
+  if (header) paintToolActivityHeader(item, header);
   list.append(item);
   if (call.id) toolActivityByID.set(call.id, item);
   list.scrollTop = list.scrollHeight;
@@ -161,16 +73,18 @@ export function appendToolActivity(call: ToolActivityCall): HTMLElement | undefi
 export function completeToolActivity(call: ToolActivityCall, result: string, statusText = 'completed'): HTMLElement | undefined {
   const item = findToolActivity(call) || appendToolActivity(call);
   if (!item) return;
-  item.dataset.complete = 'true';
-  item.dataset.toolStatus = statusText;
+  patchToolActivityElement(item, {
+    kind: 'tool',
+    id: call.id || item.dataset.toolId || '',
+    name: call.name || item.dataset.toolName || 'unknown',
+    args: formatToolPayload(call.arguments) || item.querySelector('.tool-activity__section code')?.textContent || '',
+    response: result,
+    status: statusText,
+  });
+  // Collapse when done — same default as the sub-agent monitor. Header line
+  // stays visible; click to expand request/response.
+  setToolActivityOpen(item, false);
   const header = getToolActivityHeader(item);
-  if (header) paintToolActivityHeader(item, header);
-  const old = item.querySelector<HTMLElement>('.tool-activity__section[data-state="pending"]');
-  old?.replaceWith(toolPayloadSection('Response', formatToolPayload(result), statusText === 'completed' ? 'complete' : 'error'));
-  // Stay expanded after completion so the response remains visible; the user can
-  // collapse manually. Auto-collapsing here made "(no output)" look like the
-  // tool result had disappeared.
-  if (!item.classList.contains('is-open')) setToolActivityOpen(item, true);
   if (header) paintToolActivityHeader(item, header);
   return item;
 }

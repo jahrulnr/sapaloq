@@ -264,6 +264,18 @@ func (o *Orchestrator) auditTool(sessionID, source string, call parse.ToolCall) 
 	})
 }
 
+// emitChatTerminalError surfaces a failed chat run to the widget. Every
+// terminal failure must be followed by EventDone so the chat_send IPC consumer
+// and the widget's SendMessage promise unblock. When runTurnLoop already
+// emitted EventError+EventDone (errStreamErrorSurfaced), this is a no-op.
+func (o *Orchestrator) emitChatTerminalError(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, err error) {
+	if err == nil || errors.Is(err, errStreamErrorSurfaced) {
+		return
+	}
+	o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+	o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+}
+
 func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) (<-chan bridge.StreamEvent, error) {
 	o.reloadConfigIfChanged(ctx)
 	snap := o.snapshot()
@@ -290,19 +302,14 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		_ = o.chat.AppendTurn(ctx, sessionID, "user", message, estimateTextTokens(message))
 		messages, err := o.contextMessages(ctx, sessionID, message)
 		if err != nil {
-			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+			o.emitChatTerminalError(ctx, out, sessionID, err)
 			return
 		}
 		var thinking strings.Builder
 		assistant, err := o.runConversation(runCtx, snap, out, sessionID, message, messages, &thinking)
 		if err != nil {
 			debug.Debugf("orchestrator: conversation error session=%s err=%v", sessionID, err)
-			// errStreamErrorSurfaced means runTurnLoop already emitted the
-			// EventError (and an EventDone) to this same channel; re-emitting
-			// would duplicate the error bubble in the widget.
-			if !errors.Is(err, errStreamErrorSurfaced) {
-				o.emit(runCtx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
-			}
+			o.emitChatTerminalError(runCtx, out, sessionID, err)
 			return
 		}
 		// Persist reasoning as a show-only "thinking" turn before the answer so
@@ -361,17 +368,13 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 	defer cancel()
 	messages, err := o.contextMessages(ctx, sessionID, message)
 	if err != nil {
-		o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
+		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
 	}
 	var thinking strings.Builder
 	assistant, err := o.runConversation(ctx, snap, out, sessionID, message, messages, &thinking)
 	if err != nil {
-		// See the streaming path above: skip the duplicate emit when the
-		// stream error was already surfaced to this channel by runTurnLoop.
-		if !errors.Is(err, errStreamErrorSurfaced) {
-			o.emit(ctx, out, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
-		}
+		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
 	}
 	if strings.TrimSpace(thinking.String()) != "" {

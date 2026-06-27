@@ -93,6 +93,19 @@ function setSubmittingUI(active: boolean) {
   button.innerHTML = active ? ICON_STOP : ICON_SEND;
 }
 
+// Release the in-flight turn UI when a terminal stream event arrives. The
+// widget normally waits for SendMessage to resolve, but a backend error that
+// omitted EventDone used to leave the stop button stuck until the IPC timeout.
+function releaseInFlightTurn() {
+  if (!isSubmitting()) return;
+  clearProgressBubble();
+  setSubmitting(false);
+  setSubmittingUI(false);
+  setComposeDisabled(false);
+  setRingState('idle');
+  getComposeInput()?.focus();
+}
+
 async function sendText(text: string, visibleText = text, attachments: AttachmentData[] = []) {
   const input = getComposeInput();
   if (isSubmitting() || !input || !text.trim()) return;
@@ -277,8 +290,15 @@ export function initChatController() {
         // is a failed run — both are terminal for the foreground run.
         if (event.kind === 'done') {
           void notifyCompletion('orchestrator', 'SapaLOQ selesai', 'Run selesai.');
-        } else if (event.kind === 'error') {
+          feedLiveEvent(event);
+          releaseInFlightTurn();
+          return;
+        }
+        if (event.kind === 'error') {
           void notifyCompletion('orchestrator', 'SapaLOQ gagal', (event.error || 'run gagal').slice(0, 200));
+          feedLiveEvent(event);
+          releaseInFlightTurn();
+          return;
         }
         feedLiveEvent(event);
       }

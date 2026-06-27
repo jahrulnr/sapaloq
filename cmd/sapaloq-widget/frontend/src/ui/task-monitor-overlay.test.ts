@@ -82,13 +82,13 @@ describe('task-monitor-overlay', () => {
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
     const overlay = document.getElementById('task-monitor-overlay')!;
-    const texts = overlay.querySelectorAll('.task-monitor-text');
+    const texts = overlay.querySelectorAll('.transcript-text');
     expect(texts.length).toBe(1);
     expect(texts[0].textContent).toContain('Hello world');
-    const tools = overlay.querySelectorAll('.task-monitor-tool');
+    const tools = overlay.querySelectorAll('.tool-activity');
     expect(tools.length).toBe(1);
     expect(tools[0].textContent).toContain('read_file');
-    const thinking = overlay.querySelectorAll('.task-monitor-thinking');
+    const thinking = overlay.querySelectorAll('.transcript-thinking');
     expect(thinking.length).toBe(1);
   });
 
@@ -107,7 +107,7 @@ describe('task-monitor-overlay', () => {
     await vi.advanceTimersByTimeAsync(0);
     const overlay = document.getElementById('task-monitor-overlay')!;
     expect(overlay.querySelectorAll('.task-monitor-turn')).toHaveLength(0);
-    const texts = overlay.querySelectorAll('.task-monitor-text');
+    const texts = overlay.querySelectorAll('.transcript-text');
     expect(texts).toHaveLength(2);
     expect(texts[0].textContent).toContain('turn 1');
     expect(texts[1].textContent).toContain('turn 2');
@@ -127,7 +127,28 @@ describe('task-monitor-overlay', () => {
     const overlay = document.getElementById('task-monitor-overlay')!;
     expect(overlay.querySelector('.task-monitor-task-line')).toBeNull();
     expect(overlay.textContent).not.toContain('Menjalankan');
-    expect(overlay.querySelectorAll('.task-monitor-tool')).toHaveLength(1);
+    expect(overlay.querySelectorAll('.tool-activity')).toHaveLength(1);
+  });
+
+  it('renders autopilot continuing nudges as a right-aligned user bubble', async () => {
+    taskInspectMock.mockResolvedValue(makeInspect({
+      events: [
+        { kind: 'response_delta', delta: 'Working on files.' },
+        { kind: 'status', status: 'continuing - call `sapaloq_stop` to finish' },
+        { kind: 'response_delta', delta: 'Next step.' },
+      ],
+      event_count: 3,
+    }));
+    await openTaskMonitor({ tab: 'planner' });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+    const overlay = document.getElementById('task-monitor-overlay')!;
+    const user = overlay.querySelector('.transcript-user') as HTMLElement | null;
+    expect(user).not.toBeNull();
+    expect(user!.textContent).toContain('continuing');
+    expect(user!.textContent).toContain('sapaloq_stop');
+    expect(overlay.querySelector('.transcript-status-line')).toBeNull();
+    expect(overlay.querySelectorAll('.transcript-text')).toHaveLength(2);
   });
 
   it('renders request and response inside one expandable tool activity block', async () => {
@@ -144,23 +165,23 @@ describe('task-monitor-overlay', () => {
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
     const overlay = document.getElementById('task-monitor-overlay')!;
-    const tool = overlay.querySelector('.task-monitor-tool') as HTMLElement | null;
+    const tool = overlay.querySelector('.tool-activity') as HTMLElement | null;
     expect(tool).not.toBeNull();
     expect(tool!.classList.contains('is-open')).toBe(false);
-    expect(tool!.querySelector<HTMLElement>('.task-monitor-tool-body')?.hidden).toBe(true);
+    expect(tool!.querySelector<HTMLElement>('.tool-activity__body')?.hidden).toBe(true);
     expect(tool!.firstChild?.nodeType).toBe(3);
     expect(tool!.firstChild?.textContent).toContain('$ exec');
     expect(tool!.querySelector('button')).toBeNull();
-    const sections = tool!.querySelectorAll('.task-monitor-tool-section');
+    const sections = tool!.querySelectorAll('.tool-activity__section');
     expect(sections).toHaveLength(2);
     expect(sections[0].textContent).toContain('cd /tmp/profile');
     expect(sections[1].textContent).toContain('installed successfully');
     tool!.click();
     expect(tool!.classList.contains('is-open')).toBe(true);
-    expect(tool!.querySelector<HTMLElement>('.task-monitor-tool-body')?.hidden).toBe(false);
+    expect(tool!.querySelector<HTMLElement>('.tool-activity__body')?.hidden).toBe(false);
     tool!.click();
     expect(tool!.classList.contains('is-open')).toBe(false);
-    expect(tool!.querySelector<HTMLElement>('.task-monitor-tool-body')?.hidden).toBe(true);
+    expect(tool!.querySelector<HTMLElement>('.tool-activity__body')?.hidden).toBe(true);
   });
 
   it('close button removes the overlay from the DOM', async () => {
@@ -278,11 +299,11 @@ describe('task-monitor-overlay', () => {
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
     let overlay = document.getElementById('task-monitor-overlay')!;
-    expect(overlay.querySelector('.task-monitor-text')?.textContent).toContain('building profile');
+    expect(overlay.querySelector('.transcript-text')?.textContent).toContain('building profile');
     await vi.advanceTimersByTimeAsync(2000);
     overlay = document.getElementById('task-monitor-overlay')!;
     expect(overlay.querySelector('.task-monitor-empty')).toBeNull();
-    expect(overlay.querySelector('.task-monitor-text')?.textContent).toContain('building profile');
+    expect(overlay.querySelector('.transcript-text')?.textContent).toContain('building profile');
     expect(taskInspectMock).toHaveBeenLastCalledWith('task-1', 1);
   });
 
@@ -299,7 +320,7 @@ describe('task-monitor-overlay', () => {
     await openTaskMonitor({ tab: 'planner' });
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
-    const tool = document.querySelector('.task-monitor-tool') as HTMLElement;
+    const tool = document.querySelector('.tool-activity') as HTMLElement;
     expect(tool.classList.contains('is-open')).toBe(false);
     tool.click();
     expect(tool.classList.contains('is-open')).toBe(true);
