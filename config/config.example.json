@@ -25,7 +25,9 @@
         "model": "default",
         "credentialsEnv": "SAPALOQ_CURSOR_TOKEN",
         "requestTimeoutSec": 600,
-        "declaredTools": []
+        "declaredTools": [],
+        "maxTokens": 64000,
+        "contextWindow": 200000
       },
       {
         "key": "openai",
