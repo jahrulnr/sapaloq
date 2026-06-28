@@ -2,7 +2,9 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**sub-agent resume**: `sapaloq_resume_task` continues failed/stopped tasks from persisted turns; chat delete purges task artifacts)
+> Last updated: 2026-06-28 (**Linux-only xdotool skill**: bundled desktop documentation/testing automation guidance + read-only environment check)
+>
+> Prior: 2026-06-28 (**sub-agent resume**: `sapaloq_resume_task` continues failed/stopped tasks from persisted turns; chat delete purges task artifacts)
 >
 > Prior: 2026-06-28 (**sapaloq_stop agent docs** + RUNTIME sapaloq.sock timeout guide)
 >
@@ -69,7 +71,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `feedback_events` table + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; bounded negative-guidance slice injected into Ask prompt (`session.go`); widget 👍/👎 + correction box wired (`app.go`, `ipc.go`, `main.ts`). `learning_queue` now live: each feedback enqueues a `feedback` event and a best-effort in-proc janitor (`orchestrator/learning.go`, `drainLearningQueue`) promotes `promote` events into facts (drained at boot + after each feedback). No bandit auto-tuning yet |
 | 20 | Named sub-agent roles (scribe, memory-janitor, intent-router, boundary-guard, event-watcher, learning-agent, research) | 🟡 | `scribe` is now spawnable (`sapaloq_spawn_scribe`); the sub-agent tool gate is config-driven (`roleAllows` honors `subAgents.roles[].allowedTools` with `*`-wildcards, default-deny mutation when unconfigured); `toolsForRole` offers only allowed+registered tools. `intent-router` and `memory-janitor` now exist as **in-process orchestrator hooks** (`intent.go` classify, `learning.go` drain) rather than spawnable sub-agents. boundary-guard/event-watcher/learning-agent/research still not spawnable |
 | 21 | Mode-aware scribe storage mapping (personal/work/hobby) | ✅ | `scribe_write_note` resolves a destination via `storage.intents`/explicit id/mode(+kind) and appends a timestamped note, boundary-enforced to declared `storage.paths` only. `internal/config/load.go` (`StorageConfig`/`StoragePath`/`Resolve`), `scribe.go` |
-| 22 | Skills system | 🟡 | Scan + trigger/FTS match + bounded injection done; embedded defaults auto-seeded with upgrade-if-unmodified (`internal/skills/embed.go`). Shipped defaults: `frontend-design`, `skill-creator`, `code-styleguides`, **`peek-agents`** (terminal-based agent/planner/worker inspection via `read_file`/`glob`/`exec`; bundles a no-jq POSIX `scripts/peek.sh`; reads `state/tasks/<id>/status.json` + `state/workers/<id>/{health.json,error.log}`). learning-agent skill *writing* still deferred |
+| 22 | Skills system | 🟡 | Scan + trigger/FTS match + bounded injection done; embedded defaults auto-seeded with upgrade-if-unmodified (`internal/skills/embed.go`). Shipped defaults: `frontend-design`, `skill-creator`, `code-styleguides`, `peek-agents`, and **`xdotool`** (Linux-only X11 UI documentation/testing/diagnostics guidance with read-only `scripts/check-environment.sh`; explicitly rejects non-Linux and native-Wayland automation). learning-agent skill *writing* still deferred |
 | 23 | Nodes (remote sub-agents) | 🟡 | nodes table + local-default bootstrap + role/priority picker + local spawn routing (no behavior change) + remote Transport (ws) behind a connect probe + fake for tests; full remote execution wiring (envelope→runSubAgentLoop bridge) + /settings node CRUD still deferred |
 | 24 | Driver / Platform (GNOME / D-Bus notifications, `desktop_*`) | 🟡 | `internal/platform` abstraction + headless + freedesktop/gnome D-Bus adapter (behind session-bus probe) + `desktop_notify`/`desktop_dnd_status` + notify→bus bridge; window/screenshot/clipboard still deferred |
 | 25 | Replaceable per-mode system prompts (Ask/planner/agent/scribe) | ✅ | `internal/prompts` - embedded defaults materialized to `~/SapaLOQ/prompts` with a sha256 manifest; user edits preserved, unmodified files upgraded when the shipped default changes. Wired via `Orchestrator.systemPrompt` in `session.go` (Ask) + `subagent.go` (planner/agent/scribe). `config.prompts.{enabled,dir}` |
@@ -80,6 +82,24 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (wraps the public Codex CLI) | ✅ | `internal/bridges/codex` - spawn-per-turn wrapper over `codex exec --json` + `codex exec resume`; binds only to the documented CLI contract (`CODEX_CLI_CONTRACT.md`), no RE. `bridge.go` (`New`/`ID`/`Caps`/`Complete`/`runTurn`/`composePrompt`/`safeReasoning`/`authOK`), `invoke.go` (typed argv, no `-a`; `--json` precedes `resume`; stdin prompt; image temp files), `stream.go` (tolerant JSONL scanner → `bridge.StreamEvent`; event-authoritative terminal via `scanStream`/`finalizeTerminal` - `turn.failed` with exit 0 still → `EventError`), `session.go` (vault-backed `SessionID→thread_id` store `codex-threads.jsonl` + resume self-heal), `explain.go` (`explainCodexError` mirrors cursor), `proc_unix.go`/`proc_other.go` (process-group kill on cancel). Reuses existing `config.LLMBridge` fields (no new config field); sandbox/cwd/CODEX_HOME default safely and are env-overridable; minimal reasoning-effort downgraded to `low` (incompatible with built-in tools). Registered in `newBridge()`. Offline golden-fixture + tolerant-parser + cancellation tests (`testdata/*.jsonl`); e2e build-tagged + auto-skip without the CLI |
 
 ---
+
+## Implemented this session (2026-06-28) - Linux-only xdotool skill
+
+- **Added `internal/skills/defaults/xdotool/`.** The bundled default describes
+  when to use visible X11 automation for UI documentation, functional and
+  regression testing, smoke tests, demos, and focus/geometry diagnostics. It
+  prefers stable PID/WM_CLASS selectors, requires visible postcondition checks,
+  restores focus when appropriate, and places guardrails around secrets,
+  destructive actions, and broad window matches.
+- **Made the platform boundary explicit.** The skill stops on non-Linux hosts
+  and does not claim native Wayland support; XWayland coverage must be verified
+  per target. `scripts/check-environment.sh` performs a read-only Linux/X11/
+  active-window preflight and is seeded executable. The skill also includes
+  standard `agents/openai.yaml` UI metadata.
+- **Covered seeding and matching.** `embed_test.go` now expects five defaults,
+  checks the helper is seeded executable, and verifies representative xdotool,
+  documentation, regression-test, and focus-debug prompts trigger the skill
+  while unrelated code work does not.
 
 ## Implemented this session (2026-06-28) - foreground user steering
 

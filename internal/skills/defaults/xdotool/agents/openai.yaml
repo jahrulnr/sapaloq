@@ -1,0 +1,4 @@
+interface:
+  display_name: "xdotool Desktop Automation"
+  short_description: "Automate and verify Linux X11 desktop interactions"
+  default_prompt: "Use $xdotool to automate and verify this Linux X11 desktop interaction safely."
