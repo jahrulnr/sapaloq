@@ -80,8 +80,10 @@ func (o *Orchestrator) runActor(ctx context.Context, snap providerSnapshot, acto
 		sink:            sink,
 		thinkingOut:     actor.ThinkingOut,
 		recordToolTurns: true,
+		foregroundAsk:   actor.Foreground && actor.Role == "ask",
 		generationID:    actor.GenerationID,
 		compactCtx:      actor.compactCtx,
+		taskAnchor:      actor.TaskText,
 		dispatch: func(callCtx context.Context, call parse.ToolCall) turnOutcome {
 			return o.dispatchTool(callCtx, snap, actor, call)
 		},

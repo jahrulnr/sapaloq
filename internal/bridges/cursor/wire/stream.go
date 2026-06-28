@@ -18,14 +18,18 @@ import (
 const defaultChatPath = "/aiserver.v1.ChatService/StreamUnifiedChatWithTools"
 
 type StreamOptions struct {
-	Endpoint    string
-	Token       string
-	MachineID   string
-	Model       string
-	Messages    []ChatMessage
-	GhostMode   bool
-	Timeout     time.Duration
-	InsecureTLS bool // test/local: skip TLS certificate verification
+	Endpoint        string
+	Token           string
+	MachineID       string
+	Model           string
+	Messages        []ChatMessage
+	Tools           []MCPToolDecl
+	Instruction     string
+	ForceAgentMode  bool
+	ReasoningEffort string
+	GhostMode       bool
+	Timeout         time.Duration
+	InsecureTLS     bool // test/local: skip TLS certificate verification
 }
 
 type FrameHandler func(part ExtractedPart)
@@ -46,7 +50,12 @@ func StreamChat(ctx context.Context, opts StreamOptions, onFrame FrameHandler) e
 	if model == "" {
 		model = "default"
 	}
-	body := BuildChatBody(opts.Messages, model)
+	body := BuildChatBodyWithOptions(opts.Messages, model, ChatEncodeOptions{
+		Tools:           opts.Tools,
+		Instruction:     opts.Instruction,
+		ForceAgentMode:  opts.ForceAgentMode,
+		ReasoningEffort: opts.ReasoningEffort,
+	})
 	headers := BuildHeaders(opts.Token, opts.MachineID, opts.GhostMode)
 
 	debug.Debugf("wire: POST %s model=%s messages=%d body_bytes=%d machine=%s ghost=%v",
@@ -144,6 +153,14 @@ func StreamChat(ctx context.Context, opts StreamOptions, onFrame FrameHandler) e
 		rawBytes, frameCount, emptyExtracts, len(buf))
 	if frameCount == 0 {
 		debug.Debugf("wire: no connect frames parsed - check protobuf encode or auth")
+		if rawBytes > 0 && len(buf) >= 5 {
+			if err := ParseConnectJSONError(buf[5:]); err != nil {
+				return err
+			}
+		}
+		if rawBytes > 0 {
+			return fmt.Errorf("cursor stream returned %d bytes but no connect frames were decoded", rawBytes)
+		}
 	}
 	return nil
 }

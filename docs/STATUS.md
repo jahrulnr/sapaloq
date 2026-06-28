@@ -2,7 +2,27 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**codex-bridge app-server socket refactor**: lifecycle, JSON-RPC notifications, dynamic SapaLOQ tools, CLI path removed)
+> Last updated: 2026-06-28 (**ask noise auto-retry** — 3 retries before FallbackAskNoiseRetry; default provider → cursor-9router)
+>
+> Prior: 2026-06-28 (**ask thinking-only task fallback** — real (non-ping) foreground ask gets `FallbackAskNoiseRetry()` when cursor returns no visible text; thinking confab reset before finish policy)
+>
+> Prior: 2026-06-28 (**task resume UI + IPC** — Lanjutkan button on failed/stopped task cards; `task_resume` op)
+>
+> Prior: 2026-06-28 (**turn persist order fix** — thinking before assistant; retry retags user generation_id)
+>
+> Prior: 2026-06-28 (**ask empty-reply fix** — thinking confabulation dropped; conversational ping gets fallback greeting; no autopilot when toolCalls==0)
+>
+> Prior: 2026-06-28 (**ask noise filter + auto-stop** — drop confabulated edit artifacts; foreground ask finishes on first clean tool-less reply)
+>
+> Prior: 2026-06-28 (**cursor-bridge 9router wire parity** — INSTRUCTION guard, forceAgentMode, MCP tools, stream hygiene, undeclared tool gate)
+>
+> Prior: 2026-06-28 (**shellenv full import**: boot loads all shell-rc/dotenv vars — no prefix allowlist)
+>
+> Prior: 2026-06-28 (**cursor-bridge message role fix**: system/tool turns normalized before api2 wire — matches 9router `openai-to-cursor` framing; stops ask.md appearing as fake assistant turns)
+>
+> Prior: 2026-06-28 (**cursor-bridge credentials + mock autopilot fix**: vscdb autoload implemented; offline mock honors `<sapaloq:autopilot>` with `sapaloq_stop`)
+>
+> Prior: 2026-06-28 (**codex-bridge app-server socket refactor**: lifecycle, JSON-RPC notifications, dynamic SapaLOQ tools, CLI path removed)
 >
 > Prior: 2026-06-28 (**Linux-only xdotool skill**: bundled desktop documentation/testing automation guidance + read-only environment check)
 >
@@ -63,7 +83,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 10 | Vault audit log | ✅ | `internal/vault`, wired via `Orchestrator.auditTool` (`chat.go`) at Ask + sub-agent chokepoints; cursor-bridge logs undeclared calls |
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema + **wire description** via `toolschema.go` + `internal/tooldocs/defaults/*.md` (frontmatter `description` → OpenAI/Claude tool list). **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
-| 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor` |
+| 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor`; api2 wire normalizes `system`→`user` + tool XML; **9router parity guard** (`guard.go`: INSTRUCTION, forceAgentMode default/auto, MCP tools, Kimi suppress, leak sanitizer, undeclared emit gate) |
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
 | 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering is applied before the next inference after the current tool batch, does not create a chat turn, and its optimistic bubble is UI-only. V1 is normal-priority, foreground-target, text-only |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
@@ -85,6 +105,42 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Implemented this session (2026-06-28) - sub-agent halu / echo loop fix
+
+- **Root cause:** task `task-1782604335473755563` persisted dozens of assistant turns echoing `<sapaloq:autopilot>` / resume nudges as `"SapaLOQ received: …"`, plus cross-session thinking (FiveM, todo app, desktop automation) — Cursor/api2 confabulation poisoning sub-agent context.
+- **`IsAutopilotEcho` + replay filter:** `actorTurnsToMessages` skips echoed assistant turns; `persistAssistantTurn` refuses to store them; turn loop does not feed echoes back into `cleanMessages`.
+- **`IsUnanchoredThinkingConfabulation`:** thinking without token overlap with `taskAnchor` is dropped before persist (sub-agents pass `actor.TaskText`).
+- **Tests:** `artifacts/noise_test.go`; `go test ./...` green.
+
+## Implemented this session (2026-06-28) - cursor empty-stream recovery + resume UX
+
+- **Root cause:** task resume on `task-1782604335473755563` failed instantly with `cursor node stream returned empty response: stream error already surfaced to sink` — the Node wire treated a blank api2 turn as a hard error, while the orchestrator is designed to nudge empty tool-less turns (`subagent_stream_retry_test.go`).
+- **Node wire** (`wire/node.go`): empty thinking/content/toolCalls now completes successfully; orchestrator autopilot nudge handles the next turn.
+- **Bridge** (`bridge.go`): removed the second guard that turned zero-frame streams into `EventError`; emits `EventDone` instead.
+- **Transport retry** (`conversation.go`): `empty response` / `returned no data` classified transient (bounded retry before fail).
+- **Widget:** history restore passes `restore: true` so failed task cards show **Lanjutkan task** without side-effect ring updates; `.message--task` flex column for the button.
+
+## Implemented this session (2026-06-28) - cursor-bridge 9router wire parity
+
+- **INSTRUCTION guard** (`internal/bridges/cursor/guard.go`): protobuf `INSTRUCTION` text matches 9router `cursorToolGuard.js` for `default`/`auto` models; skipped on real Agent-session native tool declarations.
+- **Wire encode** (`wire/proto.go`): `forceAgentMode`, MCP `tools[]`, reasoning effort, Agent vs Ask mode fields — passed through Go raw/http2, Node `cursor-node-stream.mjs`, and `probeCursorChat`.
+- **Stream hygiene**: suppress Kimi inline tool chunks; `SanitizeToolSchemaLeakContent` replaces native schema dumps; undeclared structured tool calls are **vaulted and dropped** (not emitted to orchestrator).
+- **Tests**: `guard_test.go`, `wire/encode_guard_test.go`, scenario + vault tests updated; `go test ./...` green.
+
+## Implemented this session (2026-06-28) - shellenv full import
+
+- **User ask:** load all env from shell rc/dotenv (including `PATH`) — no prefix allowlist; any custom `credentialsEnv` name (e.g. `NROUTER_API_KEY`, `INI_EXPERIMENT_APIKEY`) must work under systemd.
+- **`internal/shellenv`:** removed `relevantPrefixes`/`isRelevant()`; `applyEnv` imports every key not already set in the process env. Dotenv unchanged.
+- **Tests:** `TestApplyEnvSkipsAlreadySet` covers `PATH` + custom keys; `go test ./...` green.
+
+## Implemented this session (2026-06-28) - cursor-bridge credentials + mock autopilot
+
+- **Root cause:** session `chat-1782609516993947229` hit `inference-turn budget exhausted after 128 turns` because cursor fell back to offline `streamMock` (no env token) while `maxNoProgressTurns: -1` disabled the toolless guard; mock echoed every autopilot nudge without calling `sapaloq_stop`.
+- **vscdb autoload:** `internal/bridges/cursor/credentials/vscdb.go` reads `ItemTable` from Cursor IDE `state.vscdb` (`cursorAuth/accessToken`, `storage.serviceMachineId`) after env + `.env` — matching documented priority but previously unimplemented.
+- **`CURSOR_STATE_VSCDB`:** when set, only that path is consulted (tests can point at a missing file to force mock mode).
+- **Mock belt:** `streamMock` emits `sapaloq_stop` on `<sapaloq:autopilot>` continuations so offline/tests cannot spin 128 turns.
+- **Tests:** `credentials/vscdb_test.go`, `TestBridgeMockHonorsAutopilotStop`; `go test ./...` green.
+
 ## Implemented this session (2026-06-28) - codex-bridge app-server socket
 
 - Replaced the per-inference legacy transport with `codex app-server` only.
@@ -105,6 +161,30 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   pass against `codex-cli 0.141.0`.
 - Added doctor coverage, `CODEX_APP_SERVER_CONTRACT.md`, `BRIDGE_DESIGN.md`, and
   `scripts/codex-bridge-poc.sh`; synchronized bridge/runtime/orchestrator docs.
+
+## Implemented this session (2026-06-28) - ask noise filter + auto-stop
+
+- **`internal/parse/artifacts/noise.go`.** Detects confabulated edit artifacts
+  (`### Final file content`, patch headers, large unrelated source dumps) that
+  Cursor/api2 sometimes emits on innocent chat turns like `"heyy"`.
+- **Foreground ask finish policy.** `turnConfig.foregroundAsk` (set from
+  `actor.go` for foreground role `ask`) ends the run after one clean tool-less
+  reply when no background tasks or clarifications are pending — no autopilot
+  continuation loop. Sub-agents and harness loops keep the explicit-stop model.
+- **Defense in depth.** Orchestrator drops artifact text before persist/emit;
+  cursor-bridge withholds response deltas once accumulated text matches artifact
+  heuristics. Tests: `artifacts/noise_test.go`,
+  `conversation_test.go` (`TestForegroundAskAutoStopsAfterCleanToolLessReply`,
+  `TestForegroundAskDropsConfabulatedArtifact`).
+- **Empty-reply follow-up.** When Cursor returns thinking-only confabulation and
+  no visible text, foreground ask stops after one turn (no autopilot spam), drops
+  confabulated thinking from persistence, and emits a fallback: conversational
+  pings like `"heyy"` get `FallbackAskGreeting()`; real task messages get
+  `FallbackAskNoiseRetry()` so the UI is not blank.
+- **Turn order fix.** Thinking is now persisted inside `runTurnLoop` immediately
+  before the assistant turn (not after in `chat.go`). Transcript merge sorts
+  thinking before assistant within the same `generation_id`. Chat retry retags
+  the preserved user turn with the new run generation id.
 
 ## Implemented this session (2026-06-28) - Linux-only xdotool skill
 
@@ -700,18 +780,16 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 ## Implemented this session (2026-06-24) - Shell-rc credential autoload
 
 - **`internal/shellenv` (`LoadOnce`).** At boot `sapaloq-core` now sources the
-  user's shell rc - `~/.bashrc` then `~/.zshrc` (Linux only) - and folds the
-  relevant, not-already-set env vars into the process environment before the
-  credential loader runs. Fixes the systemd `--user`/XDG-autostart case where no
-  login shell runs, so a token exported only in the shell rc was invisible and
-  the loader fell through to `.env`/vscdb. Conservative by design: best-effort
-  and silent on any failure (missing shell, missing rc, non-zero source,
-  timeout), 3s per-shell timeout so a hanging rc can't freeze startup, an
-  allowlist of key prefixes (`SAPALOQ_/CURSOR_/BLACKBOX_/OPENAI_/ANTHROPIC_/`
-  `KIMI_/MOONSHOT_/OPENROUTER_`) so unrelated shell vars (PATH, prompt, …) never
-  leak in, and it never overrides an already-set variable. Resulting priority:
-  process env > shell rc > `.env` > vscdb. Hooked once at the top of
-  `cmd/sapaloq-core/main.go`; covered by `internal/shellenv/shellenv_test.go`.
+  user's shell rc - `~/.bashrc` then `~/.zshrc` (Linux only) - and folds **all**
+  not-already-set env vars from the sourced environment into the process before
+  the credential loader runs (including `PATH` and arbitrary provider token names
+  referenced by `credentialsEnv`). Fixes the systemd `--user`/XDG-autostart case
+  where no login shell runs, so exports in the shell rc were invisible. Best-effort
+  and silent on any failure (missing shell, missing rc, non-zero source, timeout),
+  3s per-shell timeout so a hanging rc can't freeze startup, and it never
+  overrides an already-set variable. Resulting priority: process env > shell rc >
+  `.env` > vscdb. Hooked once at the top of `cmd/sapaloq-core/main.go`; covered by
+  `internal/shellenv/shellenv_test.go`.
 
 ## Implemented this session (2026-06-24) - Ask delegation ordering (planner→agent hand-off stall)
 

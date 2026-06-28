@@ -14,6 +14,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/parse"
+	"github.com/jahrulnr/sapaloq/internal/parse/artifacts"
 )
 
 // errStreamErrorSurfaced wraps a non-recoverable provider/stream error that the
@@ -147,6 +148,10 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	transportRetries := 0
 	const maxTransportRetries = 4
 
+	// Foreground ask: retry empty/noise api2 turns before showing FallbackAskNoiseRetry.
+	noiseRetries := 0
+	const maxNoiseRetries = 3
+
 	// Bounds how many consecutive turns may emit tool calls that produce no
 	// usable result (a non-native model leaking malformed inline tool calls).
 	// Instead of mistaking such a turn for a clean tool-less finish and ending
@@ -155,6 +160,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	// finishes instead of looping forever.
 	malformedToolTurns := 0
 	const maxMalformedToolTurns = 3
+	var turnThinking strings.Builder
 
 	// maxInferenceTurns: a positive value caps the loop; a NEGATIVE value means
 	// UNLIMITED - the loop is then bounded only by the real anomaly guards
@@ -173,6 +179,8 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	}
 
 	for inferenceTurn := 1; unlimitedTurns || inferenceTurn <= maxInferenceTurns; inferenceTurn++ {
+		turnThinking.Reset()
+		allTurnStart := all.Len()
 		if err := runCtx.Err(); err != nil {
 			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			if ctx.Err() != nil {
@@ -488,6 +496,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				// it can be persisted as a show-only "thinking" turn (survives
 				// restart), then forward it live.
 				resetIdle()
+				turnThinking.WriteString(ev.Delta)
 				if thinkingOut != nil {
 					thinkingOut.WriteString(ev.Delta)
 				}
@@ -671,6 +680,73 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		if len(toolResults) > 0 {
 			malformedToolTurns = 0
 		}
+		// Drop confabulated edit artifacts (### Final file content, large unrelated
+		// source dumps) that Cursor/api2 sometimes emits on innocent chat turns.
+		if body := strings.TrimSpace(response.String()); body != "" && artifacts.IsModelResponseArtifact(body) {
+			response.Reset()
+			if all.Len() > allTurnStart {
+				buf := all.String()
+				all.Reset()
+				all.WriteString(buf[:allTurnStart])
+			}
+			if cfg.foregroundAsk {
+				msg := artifacts.FallbackAskNoiseRetry()
+				response.WriteString(msg)
+				all.WriteString(msg)
+				out.emit(runCtx, bridge.StreamEvent{
+					Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: msg, At: time.Now().UTC(),
+				})
+				turnThinking.Reset()
+			}
+			stop = true
+		}
+		if thinkingOut != nil && (artifacts.IsThinkingConfabulation(thinkingOut.String()) ||
+			artifacts.IsUnanchoredThinkingConfabulation(thinkingOut.String(), cfg.taskAnchor)) {
+			thinkingOut.Reset()
+			turnThinking.Reset()
+		}
+		// Foreground ask chat: a clean tool-less reply finishes the run without
+		// an autopilot continuation. When no tools have been used yet and the
+		// provider returns thinking-only noise, stop immediately (with a small
+		// fallback for casual pings like "heyy", or a noise-retry hint for real tasks).
+		if !stop && cfg.foregroundAsk && toolCallsThisTurn == 0 && len(toolResults) == 0 {
+			sig := o.sessionSignals(sessionID)
+			if sig.runningTasks == 0 && !sig.awaitingClarification {
+				visible := strings.TrimSpace(StripCalledToolsMarkers(response.String()))
+				if visible != "" {
+					stop = true
+				} else if toolCalls == 0 {
+					if artifacts.IsConversationalPing(fallbackTask) {
+						msg := artifacts.FallbackAskGreeting()
+						response.WriteString(msg)
+						all.WriteString(msg)
+						out.emit(runCtx, bridge.StreamEvent{
+							Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: msg, At: time.Now().UTC(),
+						})
+						turnThinking.Reset()
+						stop = true
+					} else if noiseRetries < maxNoiseRetries {
+						noiseRetries++
+						out.emit(runCtx, statusEvent(sessionID, fmt.Sprintf("provider noise - retrying (%d/%d)", noiseRetries, maxNoiseRetries)))
+						continue
+					} else {
+						msg := artifacts.FallbackAskNoiseRetry()
+						response.WriteString(msg)
+						all.WriteString(msg)
+						out.emit(runCtx, bridge.StreamEvent{
+							Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: msg, At: time.Now().UTC(),
+						})
+						turnThinking.Reset()
+						stop = true
+					}
+				}
+			}
+		}
+		// Duplicate guard: thinking reset after policy so flushTurnThinking never persists bleed.
+		if turnThinking.Len() > 0 && (artifacts.IsThinkingConfabulation(turnThinking.String()) ||
+			artifacts.IsUnanchoredThinkingConfabulation(turnThinking.String(), cfg.taskAnchor)) {
+			turnThinking.Reset()
+		}
 		// The ONLY explicit end signal is a terminal tool (chat: sapaloq_stop;
 		// sub-agent: sapaloq_stop / sapaloq_complete_task / sapaloq_fail_task),
 		// surfaced here as `stop`. A tool-less turn NEVER ends the run - the
@@ -684,12 +760,17 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		if stop {
 			if cfg.recordToolTurns {
 				final := response.String()
-				if note := calledToolsNote(pendingTools); note != "" && final != "" {
-					final += "\n\n" + note
-				} else if note != "" {
-					final = note
+				if final != "" {
+					if note := calledToolsNote(pendingTools); note != "" {
+						final += "\n\n" + note
+					}
+					o.persistAssistantTurnWithThinking(ctx, persistID, final, cfg.generationID, cfg, &turnThinking)
+				} else if note := calledToolsNote(pendingTools); note != "" {
+					o.flushTurnThinking(ctx, persistID, cfg.generationID, cfg, &turnThinking)
+					o.persistAssistantTurn(ctx, persistID, note, cfg.generationID)
+				} else {
+					o.flushTurnThinking(ctx, persistID, cfg.generationID, cfg, &turnThinking)
 				}
-				o.persistAssistantTurn(ctx, persistID, final, cfg.generationID)
 			}
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return all, nil
@@ -750,7 +831,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// budget.MaxNoProgressTurns <= 0 disables this bound entirely.
 		if budget.MaxNoProgressTurns > 0 && toollessBudget <= 0 {
 			if cfg.recordToolTurns {
-				o.persistAssistantTurn(ctx, persistID, response.String(), cfg.generationID)
+				o.persistAssistantTurnWithThinking(ctx, persistID, response.String(), cfg.generationID, cfg, &turnThinking)
 			}
 			out.emit(runCtx, statusEvent(sessionID, "tool-less budget exhausted - ending turn"))
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
@@ -839,23 +920,26 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 			assistantContent += note
 		}
-		if cfg.recordToolTurns {
-			o.persistAssistantTurn(ctx, persistID, assistantContent, cfg.generationID)
+		assistantContent = strings.TrimSpace(artifacts.StripModelResponseArtifact(assistantContent))
+		if artifacts.IsAutopilotEcho(assistantContent) {
+			assistantContent = ""
+		}
+		if cfg.recordToolTurns && assistantContent != "" {
+			o.persistAssistantTurnWithThinking(ctx, persistID, assistantContent, cfg.generationID, cfg, &turnThinking)
+		} else if cfg.recordToolTurns {
+			o.flushTurnThinking(ctx, persistID, cfg.generationID, cfg, &turnThinking)
 		}
 		// A turn carrying tool output is fed back under the dedicated "tool"
-		// role so the model can tell an observation apart from a user request
-		// (the wire layer maps it to an API-accepted role). A tool-less
-		// autopilot continuation goes under "user" (the only role left once
-		// tool/system are unavailable mid-conversation) but its CONTENT is
-		// wrapped in <sapaloq:autopilot> by sapaloqControlBody above, so the
-		// model still distinguishes this system-generated nudge from a real
-		// human "user" turn - the role is "user", the marker says "not human".
 		continuationRole := "user"
 		if len(toolResults) > 0 {
 			continuationRole = "tool"
 		}
+		if assistantContent != "" {
+			cleanMessages = append(cleanMessages,
+				bridge.Message{Role: "assistant", Content: assistantContent},
+			)
+		}
 		cleanMessages = append(cleanMessages,
-			bridge.Message{Role: "assistant", Content: assistantContent},
 			bridge.Message{Role: continuationRole, Content: continuation},
 		)
 		// This turn did not end the run (no terminal tool, no toolless-budget
@@ -1189,6 +1273,7 @@ func looksLikeTransientTransport(message string) bool {
 		"status 500", "status 502", "status 503", "status 504", "status 429",
 		"500 ", "502 ", "503 ", "504 ", "429 ",
 		"bad gateway", "service unavailable", "gateway timeout", "too many requests",
+		"empty response", "returned no data", "stream ended with no data",
 	} {
 		if strings.Contains(lower, kw) {
 			return true

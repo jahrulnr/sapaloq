@@ -74,6 +74,30 @@ func Load(opts Options) (Credentials, error) {
 		}
 	}
 
+	for _, path := range vscdbCandidates() {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		token, machine, ok := loadVSCDB(path)
+		if !ok {
+			continue
+		}
+		if accessToken == "" {
+			accessToken = token
+		}
+		if machineID == "" {
+			machineID = machine
+		}
+		creds := Credentials{
+			AccessToken: accessToken,
+			MachineID:   machineID,
+			GhostMode:   ghostMode,
+			Source:      path,
+		}
+		logLoaded(creds)
+		return creds, nil
+	}
+
 	if accessToken == "" {
 		return Credentials{}, fmt.Errorf(
 			"cursor credentials missing: set %s or %s (and %s for machine id)",

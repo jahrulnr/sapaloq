@@ -2,7 +2,9 @@
 
 > **Brain bridge drivers** - connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-06-28 (**codex-bridge** is socket-only via app-server JSON-RPC/WebSocket over UDS/WS, with dynamic SapaLOQ tools)
+> Last updated: 2026-06-28 (**cursor-bridge** buffer-per-turn finalize — 9router-style accumulate-then-hygiene; defer Kimi tools; drop unanchored noise tools)
+>
+> Prior: 2026-06-28 (**cursor-bridge** vscdb credential autoload + offline mock `sapaloq_stop` on autopilot)
 
 Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
@@ -70,8 +72,35 @@ Platform driver = desktop automation. LLM bridge driver = **companion brain** + 
 | Role               | Runtime driver di `sapaloq-core` | Source of truth schema + test vectors    | Legacy proxy pattern (referensi transport) |
 | Dependency         | Embed/sync schema at build       | Dev reference                            | **Tidak** third-party dep                  |
 | Unknown tool calls | **Vault** JSONL review log       | Schema aliases + test vectors            | Partial (transport only)                   |
-| Thinking text      | Stream as-is; no leak filter     | `leakMarkers` in schema (reference only) | Collapses pre-tag thinking                 |
+| Thinking text      | Kimi suppress + leak sanitizer (`guard.go`) | `leakMarkers` in schema (reference only) | Collapses pre-tag thinking                 |
 
+
+### api2 message framing (live chat)
+
+Before `wire.StreamChat*` / Node `cursor-proto-lab`, `normalizeCursorWireMessages`
+(`internal/bridges/cursor/messages.go`) maps roles like 9router
+`openai-to-cursor.js`:
+
+- `system` → `user` with prefix `[System Instructions]\n` (ask.md, runtime context, skills, etc.)
+- `tool` → `user` with a `<tool_result>...</tool_result>` XML block (avoids protobuf `tool_results` loop bugs)
+- `user` / `assistant` unchanged
+
+**9router wire parity** (same session, `guard.go` + `wire/proto.go`):
+
+- **INSTRUCTION guard** — protobuf field populated for `default`/`auto` models (`OpenAI bridge: callable tools are …` or no-tools variant); skipped when declared tools **or prompt-embedded** native Agent-session triggers (`run_terminal_cmd`, etc.) are detected.
+- **forceAgentMode** — `default`/`auto` → Agent wire (`IS_AGENTIC=1`, `UNIFIED_MODE=Agent`, tools enabled).
+- **MCP tools[]** — declared SapaLOQ tools encoded on the wire (schemas from `provider.RegisteredToolSchema`).
+- **Response hygiene** — accumulate one api2 turn in `stream_buffer.go`, then finalize (9router `transformProtobufToSSE` parity): defer Kimi inline tool extraction until stream end; `cleanKimiAssistantContent` + `finalizeAssistantContentWithToolCalls`; end-of-turn sanitizer (skip when tools present); drop undeclared structured tool calls (vault only); **drop all tools + visible text when thinking is unanchored confabulation** vs the user prompt; normalize `web_search.search_term` → executor `query`.
+- **Thinking promote** — `default`/`auto`/`composer*`/` *-thinking` models promote post-`</think>` tail to visible assistant text (9router `visibleContentFromThinking`).
+- **Prompt agent detect** — scan messages for embedded native tool schemas (`"name": "…"`, markdown headers) to skip guard on real Agent sessions.
+
+Disable guard: `SAPALOQ_CURSOR_TOOL_GUARD=0` (also honors `NINEROUTER_CURSOR_TOOL_GUARD`).
+
+**Why message roles still matter:**
+Passing orchestrator `system` turns through unchanged made multi-kilobyte ask.md
+look like prior assistant speech, which triggered agent-task confabulation on
+short greetings (`hey hey` → invented website/21st.dev tasks). OpenClaw +
+9router never had this bug because the translator runs before encode.
 
 Reference artifacts (dev / regen):
 
@@ -350,13 +379,13 @@ Credentials **never** in config.json - env, `.env`, or IDE `state.vscdb` only.
 Autoload priority (ported from `@cursor-bridge/credential-loader`):
 
 1. `SAPALOQ_CURSOR_TOKEN` or `CURSOR_ACCESS_TOKEN` + optional `CURSOR_MACHINE_ID` in process env
-2. **Shell rc** - at boot `sapaloq-core` sources `~/.bashrc` then `~/.zshrc` (Linux only) and folds the relevant, not-already-set vars (`SAPALOQ_*`, `CURSOR_*`, `BLACKBOX_*`, `OPENAI_*`, `ANTHROPIC_*`, `KIMI_*`, `MOONSHOT_*`, `OPENROUTER_*`) into the process env. This matters under systemd `--user`/XDG autostart, where there is no login shell so rc exports would otherwise be invisible. The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) on purpose: the stock Debian/Ubuntu `~/.bashrc` begins with `case $- in *i*) ;; *) return;; esac`, which would `return` before any exports under a non-interactive shell. Best-effort, silent on any failure, stdin detached and stderr discarded so the interactive shell can't prompt/block, never overrides an already-set var, short timeout so a hanging rc can't freeze startup (`internal/shellenv`).
+2. **Shell rc** - at boot `sapaloq-core` sources `~/.bashrc` then `~/.zshrc` (Linux only) and folds **all** not-already-set vars from the sourced environment into the process env (tokens, `PATH`, custom `credentialsEnv` names, etc.). This matters under systemd `--user`/XDG autostart, where there is no login shell so rc exports would otherwise be invisible. The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) on purpose: the stock Debian/Ubuntu `~/.bashrc` begins with `case $- in *i*) ;; *) return;; esac`, which would `return` before any exports under a non-interactive shell. Best-effort, silent on any failure, stdin detached and stderr discarded so the interactive shell can't prompt/block, never overrides an already-set var, short timeout so a hanging rc can't freeze startup (`internal/shellenv`).
 3. `.env` in cwd, then `~/.config/sapaloq/.env`
 4. `~/.config/Cursor/User/globalStorage/state.vscdb` (`cursorAuth/accessToken`, `storage.serviceMachineId`)
 
-Override vscdb path: `CURSOR_STATE_VSCDB`. Ghost mode default on unless `CURSOR_GHOST_MODE=false`.
+Override vscdb path: `CURSOR_STATE_VSCDB` (when set, **only** that path is consulted — default IDE locations are skipped). Ghost mode default on unless `CURSOR_GHOST_MODE=false`.
 
-`sapaloq-core doctor` prints credential source. Mock stream when autoload finds no token.
+`sapaloq-core doctor` prints credential source. Mock stream when autoload finds no token; offline mock emits `sapaloq_stop` on `<sapaloq:autopilot>` continuations so the orchestrator does not burn the inference-turn budget.
 
 Agent may `/settings set llmBridge.driver openai-compat` - no settings UI.
 

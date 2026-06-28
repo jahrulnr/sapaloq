@@ -52,8 +52,9 @@ func main() {
 	// environment before anything reads credentials. Under systemd --user /
 	// XDG autostart there is no login shell, so tokens exported only in the
 	// shell rc would otherwise be invisible. Best-effort + silent on any
-	// failure; never overrides an already-set variable. (.env is still handled
-	// later by the credential loader, ranking below shell rc.)
+	// failure; never overrides an already-set variable. Dotenv (~/.config/sapaloq/.env)
+	// is loaded here too (same prefix allowlist) so provider-bridge env vars work
+	// under systemd, not only cursor-bridge's credential loader.
 	shellenv.LoadOnce()
 	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
 		printUsage()

@@ -22,14 +22,17 @@ function toolEntryFromTranscript(entry: TranscriptEntry) {
   };
 }
 
+export type TranscriptRenderOptions = { restore?: boolean };
+
 export function renderTranscriptEntry(
   entry: TranscriptEntry,
   mode: ToolActivityMode = 'chat',
+  options?: TranscriptRenderOptions,
 ): HTMLElement {
   let el: HTMLElement;
   if (entry.kind === 'thinking') {
     const details = document.createElement('details');
-    details.className = `transcript-entry transcript-thinking message message--thinking${entry.archived ? ' message--archived' : ''}`;
+    details.className = `transcript-entry transcript-thinking${entry.archived ? ' message--archived' : ''}`;
     details.dataset.entryKind = 'thinking';
     if (entry.id) details.dataset.entryId = entry.id;
     const sum = document.createElement('summary');
@@ -86,7 +89,7 @@ export function renderTranscriptEntry(
     el.dataset.entryKind = 'tool';
     if (entry.id) el.dataset.entryId = entry.id;
   } else if (entry.kind === 'task') {
-    el = renderTaskCardElement(entry);
+    el = renderTaskCardElement(entry, options);
   } else if (entry.kind === 'checkpoint') {
     const wrap = document.createElement('div');
     wrap.className = 'transcript-entry transcript-checkpoint';
@@ -167,13 +170,18 @@ export function renderTranscriptEntry(
   return el;
 }
 
-export function patchTranscriptEntry(el: HTMLElement, entry: TranscriptEntry, _mode: ToolActivityMode = 'chat') {
+export function patchTranscriptEntry(
+  el: HTMLElement,
+  entry: TranscriptEntry,
+  _mode: ToolActivityMode = 'chat',
+  options?: TranscriptRenderOptions,
+) {
   if (entry.kind === 'tool') {
     patchToolActivityElement(el, toolEntryFromTranscript(entry));
     return;
   }
   if (entry.kind === 'task') {
-    patchTaskCardElement(el, entry);
+    patchTaskCardElement(el, entry, options);
     return;
   }
   if (entry.kind === 'text' || entry.kind === 'thinking' || entry.kind === 'user' || entry.kind === 'error') {

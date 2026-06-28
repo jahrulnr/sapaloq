@@ -19,29 +19,22 @@ func TestParseNulEnv(t *testing.T) {
 	}
 }
 
-func TestIsRelevant(t *testing.T) {
-	for _, k := range []string{"SAPALOQ_X", "CURSOR_ACCESS_TOKEN", "BLACKBOX_API_KEY", "OPENAI_API_KEY"} {
-		if !isRelevant(k) {
-			t.Fatalf("%q should be relevant", k)
-		}
-	}
-	for _, k := range []string{"PATH", "HOME", "PS1", "RANDOM_SECRET"} {
-		if isRelevant(k) {
-			t.Fatalf("%q should NOT be relevant", k)
-		}
-	}
-}
-
-func TestApplyEnvSkipsAlreadySetAndIrrelevant(t *testing.T) {
+func TestApplyEnvSkipsAlreadySet(t *testing.T) {
 	t.Setenv("SAPALOQ_PRESET", "keep-me")
-	// SAPALOQ_NEW absent; ensure clean.
 	os.Unsetenv("SAPALOQ_NEW")
-	t.Cleanup(func() { os.Unsetenv("SAPALOQ_NEW") })
+	os.Unsetenv("INI_EXPERIMENT_APIKEY")
+	os.Unsetenv("PATH")
+	t.Cleanup(func() {
+		os.Unsetenv("SAPALOQ_NEW")
+		os.Unsetenv("INI_EXPERIMENT_APIKEY")
+		os.Unsetenv("PATH")
+	})
 
 	applyEnv(map[string]string{
-		"SAPALOQ_PRESET": "should-not-override",
-		"SAPALOQ_NEW":    "imported",
-		"PATH":           "/evil/bin", // irrelevant prefix → ignored
+		"SAPALOQ_PRESET":         "should-not-override",
+		"SAPALOQ_NEW":            "imported",
+		"INI_EXPERIMENT_APIKEY":  "custom-provider",
+		"PATH":                   "/custom/bin",
 	})
 
 	if got := os.Getenv("SAPALOQ_PRESET"); got != "keep-me" {
@@ -50,8 +43,11 @@ func TestApplyEnvSkipsAlreadySetAndIrrelevant(t *testing.T) {
 	if got := os.Getenv("SAPALOQ_NEW"); got != "imported" {
 		t.Fatalf("new var not imported: %q", got)
 	}
-	if got := os.Getenv("PATH"); got == "/evil/bin" {
-		t.Fatalf("irrelevant PATH should not have been imported")
+	if got := os.Getenv("INI_EXPERIMENT_APIKEY"); got != "custom-provider" {
+		t.Fatalf("custom api key not imported: %q", got)
+	}
+	if got := os.Getenv("PATH"); got != "/custom/bin" {
+		t.Fatalf("PATH not imported when unset: %q", got)
 	}
 }
 
@@ -65,8 +61,6 @@ func TestSourceShellRCMissingFileIsSilent(t *testing.T) {
 	}
 }
 
-// TestLoadEndToEnd drives the full load() (bash rc → process env) with a temp
-// HOME, proving the wiring main() relies on works.
 func TestLoadEndToEnd(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("shell-rc sourcing is linux-only")
@@ -83,7 +77,7 @@ func TestLoadEndToEnd(t *testing.T) {
 	os.Unsetenv("SAPALOQ_E2E_PROBE")
 	t.Cleanup(func() { os.Unsetenv("SAPALOQ_E2E_PROBE") })
 
-	load() // call the unexported worker directly (bypasses the process-wide sync.Once)
+	load()
 
 	if got := os.Getenv("SAPALOQ_E2E_PROBE"); got != "from-rc" {
 		t.Fatalf("SAPALOQ_E2E_PROBE = %q, want from-rc", got)
@@ -99,7 +93,7 @@ func TestSourceShellRCImportsExportedVar(t *testing.T) {
 	}
 	rc := filepath.Join(t.TempDir(), ".bashrc")
 	body := "export SAPALOQ_FROM_RC='rc-token'\n" +
-		"export NOT_RELEVANT='should-be-ignored-by-caller'\n" +
+		"export INI_EXPERIMENT_APIKEY='any-name'\n" +
 		"echo 'noise to stderr' 1>&2\n"
 	if err := os.WriteFile(rc, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -111,17 +105,11 @@ func TestSourceShellRCImportsExportedVar(t *testing.T) {
 	if env["SAPALOQ_FROM_RC"] != "rc-token" {
 		t.Fatalf("exported var not captured: %#v", env["SAPALOQ_FROM_RC"])
 	}
+	if env["INI_EXPERIMENT_APIKEY"] != "any-name" {
+		t.Fatalf("custom key not captured: %#v", env["INI_EXPERIMENT_APIKEY"])
+	}
 }
 
-// TestSourceShellRCPassesInteractiveGuard is the regression for the bug where a
-// token set in a stock Debian/Ubuntu ~/.bashrc was invisible to the service.
-// That rc begins with the standard guard
-//
-//	case $- in *i*) ;; *) return;; esac
-//
-// which `return`s immediately under a non-interactive shell, skipping every
-// export below it. sourceShellRC now runs the shell with `-i` so the guard
-// passes; this fixture places the guard BEFORE the export to prove it.
 func TestSourceShellRCPassesInteractiveGuard(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("shell-rc sourcing is linux-only")
@@ -145,6 +133,51 @@ func TestSourceShellRCPassesInteractiveGuard(t *testing.T) {
 		t.Fatalf("expected ok=true sourcing a guarded rc")
 	}
 	if env["SAPALOQ_GUARDED_TOKEN"] != "past-the-guard" {
-		t.Fatalf("export below the interactive guard was not captured (the -i fix regressed): %#v", env["SAPALOQ_GUARDED_TOKEN"])
+		t.Fatalf("export below the interactive guard was not captured: %#v", env["SAPALOQ_GUARDED_TOKEN"])
+	}
+}
+
+func TestLoadDotEnvImportsAllKeys(t *testing.T) {
+	home := t.TempDir()
+	dotenvDir := filepath.Join(home, ".config", "sapaloq")
+	if err := os.MkdirAll(dotenvDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dotenvDir, ".env"),
+		[]byte("NROUTER_API_KEY=from-dotenv\nINI_EXPERIMENT_APIKEY=dotenv\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Unsetenv("NROUTER_API_KEY")
+	os.Unsetenv("INI_EXPERIMENT_APIKEY")
+	t.Cleanup(func() {
+		os.Unsetenv("NROUTER_API_KEY")
+		os.Unsetenv("INI_EXPERIMENT_APIKEY")
+	})
+
+	loadDotEnvFiles(home)
+
+	if got := os.Getenv("NROUTER_API_KEY"); got != "from-dotenv" {
+		t.Fatalf("NROUTER_API_KEY = %q, want from-dotenv", got)
+	}
+	if got := os.Getenv("INI_EXPERIMENT_APIKEY"); got != "dotenv" {
+		t.Fatalf("INI_EXPERIMENT_APIKEY = %q, want dotenv", got)
+	}
+}
+
+func TestRealHomeImportsNrouter(t *testing.T) {
+	if os.Getenv("SAPALOQ_SHELLENV_E2E") != "1" {
+		t.Skip("set SAPALOQ_SHELLENV_E2E=1")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash missing")
+	}
+	os.Unsetenv("NROUTER_API_KEY")
+	t.Cleanup(func() { os.Unsetenv("NROUTER_API_KEY") })
+	load()
+	if os.Getenv("NROUTER_API_KEY") == "" {
+		t.Fatal("NROUTER_API_KEY still empty after load() with real HOME")
 	}
 }

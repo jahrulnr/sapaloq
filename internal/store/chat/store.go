@@ -524,6 +524,30 @@ func (s *Store) Turn(ctx context.Context, sessionID string, turnID int64) (Turn,
 	return Turn{}, fmt.Errorf("turn %d not found", turnID)
 }
 
+// SetTurnGenerationID re-tags an existing turn with the active generation id
+// (e.g. chat retry reuses the user turn under a new runSeq).
+func (s *Store) SetTurnGenerationID(ctx context.Context, sessionID string, turnID int64, generationID string) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns, err := s.loadSessionTurns(sessionID)
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range turns {
+		if turns[i].ID == turnID {
+			turns[i].GenerationID = generationID
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("turn %d not found", turnID)
+	}
+	return s.saveSessionTurns(sessionID, turns)
+}
+
 func (s *Store) DeleteFromTurn(ctx context.Context, sessionID string, turnID int64) error {
 	return s.deleteRelativeToTurn(ctx, sessionID, turnID, true)
 }

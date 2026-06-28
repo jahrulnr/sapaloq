@@ -382,14 +382,9 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 			o.emitChatTerminalError(runCtx, out, sessionID, err)
 			return
 		}
-		// Persist reasoning as a show-only "thinking" turn before the answer so
-		// it survives a restart (excluded from the LLM context window).
-		if strings.TrimSpace(thinking.String()) != "" {
-			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
-		}
-		// Assistant turns are persisted per inference round inside runTurnLoop.
-		// Only append a final blob when the run produced visible text that was not
-		// already recorded (e.g. a single tool-less answer).
+		// Thinking turns are persisted per inference round inside runTurnLoop
+		// (before the assistant turn for that round). Only append a final blob
+		// when the run produced visible text that was not already recorded.
 		if strings.TrimSpace(assistant.String()) != "" {
 			turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)
 			needsFinal := true
@@ -455,6 +450,8 @@ func (o *Orchestrator) RetryChat(ctx context.Context, sessionID string, turnID i
 	out := make(chan bridge.StreamEvent, 32)
 	runCtx, cancel := context.WithCancel(ctx)
 	runID := o.setActiveGeneration(sessionID, cancel)
+	genStr := fmt.Sprintf("%d", runID)
+	_ = o.chat.SetTurnGenerationID(ctx, sessionID, turnID, genStr)
 	o.refreshActiveTranscriptBase(ctx, sessionID)
 	go o.completeExistingTurn(runCtx, cancel, runID, snap, out, sessionID, turn.Content)
 	return out, nil
@@ -475,9 +472,6 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 	if err != nil {
 		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
-	}
-	if strings.TrimSpace(thinking.String()) != "" {
-		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
 	}
 	if strings.TrimSpace(assistant.String()) != "" {
 		turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)

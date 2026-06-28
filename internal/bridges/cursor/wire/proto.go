@@ -39,7 +39,9 @@ const (
 	fieldConversationID  = 23
 	fieldMetadata        = 26
 	fieldIsAgentic       = 27
+	fieldSupportedTools  = 29
 	fieldMessageIDs      = 30
+	fieldMCPTools        = 34
 	fieldLargeContext    = 35
 	fieldUnknown38       = 38
 	fieldUnifiedMode     = 46
@@ -55,6 +57,12 @@ const (
 	fieldMsgID          = 13
 	fieldMsgIsAgentic   = 29
 	fieldMsgUnifiedMode = 47
+	fieldMsgSupportedTools = 51
+
+	fieldMCPToolName   = 1
+	fieldMCPToolDesc   = 2
+	fieldMCPToolParams = 3
+	fieldMCPToolServer = 4
 
 	fieldModelName  = 1
 	fieldModelEmpty = 4
@@ -318,17 +326,70 @@ func encodeMessageID(id string, role int) []byte {
 	)
 }
 
-func encodeConversationMessage(content string, role int, messageID string, isLast bool) []byte {
-	return concat(
+func encodeConversationMessage(content string, role int, messageID string, isLast, hasTools bool) []byte {
+	msgMode := uint64(modeChat)
+	msgAgentic := uint64(0)
+	if hasTools {
+		msgMode = modeAgent
+		msgAgentic = 1
+	}
+	parts := [][]byte{
 		encodeField(fieldMsgContent, wireLen, content),
 		encodeField(fieldMsgRole, wireVarint, uint64(role)),
 		encodeField(fieldMsgID, wireLen, messageID),
-		encodeField(fieldMsgIsAgentic, wireVarint, 0),
-		encodeField(fieldMsgUnifiedMode, wireVarint, uint64(modeChat)),
-	)
+		encodeField(fieldMsgIsAgentic, wireVarint, msgAgentic),
+		encodeField(fieldMsgUnifiedMode, wireVarint, msgMode),
+	}
+	if isLast && hasTools {
+		parts = append(parts, encodeField(fieldMsgSupportedTools, wireLen, encodeVarint(1)))
+	}
+	return concat(parts...)
 }
 
-func encodeRequest(messages []ChatMessage, model string) []byte {
+// MCPToolDecl is one OpenAI-style tool declaration encoded on the Cursor wire.
+type MCPToolDecl struct {
+	Name           string
+	Description    string
+	ParametersJSON string
+}
+
+// ChatEncodeOptions controls 9router-compatible chat request encoding.
+type ChatEncodeOptions struct {
+	Tools           []MCPToolDecl
+	ReasoningEffort string
+	ForceAgentMode  bool
+	Instruction     string
+}
+
+func encodeMcpToolDecl(tool MCPToolDecl) []byte {
+	var parts [][]byte
+	if tool.Name != "" {
+		parts = append(parts, encodeField(fieldMCPToolName, wireLen, tool.Name))
+	}
+	if tool.Description != "" {
+		parts = append(parts, encodeField(fieldMCPToolDesc, wireLen, tool.Description))
+	}
+	if strings.TrimSpace(tool.ParametersJSON) != "" && tool.ParametersJSON != "{}" {
+		parts = append(parts, encodeField(fieldMCPToolParams, wireLen, tool.ParametersJSON))
+	}
+	parts = append(parts, encodeField(fieldMCPToolServer, wireLen, "custom"))
+	return concat(parts...)
+}
+
+func thinkingLevelForEffort(effort string) uint64 {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "medium":
+		return 1
+	case "high":
+		return 2
+	default:
+		return 0
+	}
+}
+
+func encodeRequest(messages []ChatMessage, model string, opts ChatEncodeOptions) []byte {
+	hasTools := len(opts.Tools) > 0
+	isAgentic := hasTools || opts.ForceAgentMode
 	var parts [][]byte
 	var messageIDs []struct {
 		id   string
@@ -341,15 +402,30 @@ func encodeRequest(messages []ChatMessage, model string) []byte {
 		}
 		msgID := uuid.NewString()
 		isLast := i == len(messages)-1
-		parts = append(parts, encodeField(fieldMessages, wireLen, encodeConversationMessage(msg.Content, role, msgID, isLast)))
+		parts = append(parts, encodeField(fieldMessages, wireLen, encodeConversationMessage(msg.Content, role, msgID, isLast, hasTools)))
 		messageIDs = append(messageIDs, struct {
 			id   string
 			role int
 		}{id: msgID, role: role})
 	}
+	instructionBody := encodeInstruction(opts.Instruction)
 	parts = append(parts,
 		encodeField(fieldUnknown2, wireVarint, 1),
-		encodeField(fieldInstruction, wireLen, encodeInstruction("")),
+		encodeField(fieldInstruction, wireLen, instructionBody),
+	)
+	agenticFlag := uint64(0)
+	if isAgentic {
+		agenticFlag = 1
+	}
+	unifiedMode := uint64(modeChat)
+	unifiedName := "Ask"
+	shouldDisable := uint64(1)
+	if isAgentic {
+		unifiedMode = modeAgent
+		unifiedName = "Agent"
+		shouldDisable = 0
+	}
+	parts = append(parts,
 		encodeField(fieldUnknown4, wireVarint, 1),
 		encodeField(fieldModel, wireLen, encodeModel(model)),
 		encodeField(fieldWebTool, wireLen, ""),
@@ -358,21 +434,27 @@ func encodeRequest(messages []ChatMessage, model string) []byte {
 		encodeField(fieldUnknown19, wireVarint, 1),
 		encodeField(fieldConversationID, wireLen, uuid.NewString()),
 		encodeField(fieldMetadata, wireLen, encodeMetadata()),
-		encodeField(fieldIsAgentic, wireVarint, 0),
+		encodeField(fieldIsAgentic, wireVarint, agenticFlag),
 	)
+	if isAgentic {
+		parts = append(parts, encodeField(fieldSupportedTools, wireLen, encodeVarint(1)))
+	}
 	for _, mid := range messageIDs {
 		parts = append(parts, encodeField(fieldMessageIDs, wireLen, encodeMessageID(mid.id, mid.role)))
+	}
+	for _, tool := range opts.Tools {
+		parts = append(parts, encodeField(fieldMCPTools, wireLen, encodeMcpToolDecl(tool)))
 	}
 	parts = append(parts,
 		encodeField(fieldLargeContext, wireVarint, 0),
 		encodeField(fieldUnknown38, wireVarint, 0),
-		encodeField(fieldUnifiedMode, wireVarint, uint64(modeChat)),
+		encodeField(fieldUnifiedMode, wireVarint, unifiedMode),
 		encodeField(fieldUnknown47, wireLen, ""),
-		encodeField(fieldShouldDisable, wireVarint, 1),
-		encodeField(fieldThinkingLevel, wireVarint, 0),
+		encodeField(fieldShouldDisable, wireVarint, shouldDisable),
+		encodeField(fieldThinkingLevel, wireVarint, thinkingLevelForEffort(opts.ReasoningEffort)),
 		encodeField(fieldUnknown51, wireVarint, 0),
 		encodeField(fieldUnknown53, wireVarint, 1),
-		encodeField(fieldUnifiedModeName, wireLen, "Ask"),
+		encodeField(fieldUnifiedModeName, wireLen, unifiedName),
 	)
 	return concat(parts...)
 }
@@ -383,7 +465,11 @@ type ChatMessage struct {
 }
 
 func BuildChatBody(messages []ChatMessage, model string) []byte {
-	request := encodeField(fieldRequest, wireLen, encodeRequest(messages, model))
+	return BuildChatBodyWithOptions(messages, model, ChatEncodeOptions{})
+}
+
+func BuildChatBodyWithOptions(messages []ChatMessage, model string, opts ChatEncodeOptions) []byte {
+	request := encodeField(fieldRequest, wireLen, encodeRequest(messages, model, opts))
 	return WrapConnectFrame(request, false)
 }
 

@@ -27,15 +27,18 @@ func DecodeFrame(schema Schema, b []byte) []bridge.StreamEvent {
 	case "response":
 		events := []bridge.StreamEvent{}
 		if frame.Text != "" {
-			ev := bridge.NewEvent(bridge.EventResponseDelta)
-			ev.Delta = frame.Text
-			events = append(events, ev)
-		}
-		for _, call := range kimi.ParseInline(frame.Text) {
-			coerced := CoerceToolCall(schema, call)
-			ev := bridge.NewEvent(bridge.EventToolCall)
-			ev.ToolCall = &coerced
-			events = append(events, ev)
+			extracted := kimi.ExtractWithTokens(frame.Text, schema.KimiTokens())
+			if extracted.CleanedText != "" {
+				ev := bridge.NewEvent(bridge.EventResponseDelta)
+				ev.Delta = extracted.CleanedText
+				events = append(events, ev)
+			}
+			for _, call := range extracted.Calls {
+				coerced := CoerceToolCall(schema, call)
+				ev := bridge.NewEvent(bridge.EventToolCall)
+				ev.ToolCall = &coerced
+				events = append(events, ev)
+			}
 		}
 		return events
 	case "tool_call":

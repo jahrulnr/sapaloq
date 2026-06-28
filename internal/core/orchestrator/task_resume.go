@@ -63,6 +63,7 @@ func isTransientTaskFailure(errMsg string) bool {
 		"provider", "connection", "timeout", "orphaned", "stalled",
 		"sse", "unavailable", "broken pipe", "eof", "429", "503", "502",
 		"reset by peer", "i/o timeout", "core restart",
+		"empty response", "returned no data",
 	} {
 		if strings.Contains(lower, needle) {
 			return true
@@ -133,6 +134,13 @@ func (o *Orchestrator) resumeTask(snap providerSnapshot, sessionID, taskID strin
 	}
 	o.resumeBackground(snap, record.SessionID, record)
 	return record.ID, nil
+}
+
+// ResumeTask re-enters a failed or stopped background task from persisted turns.
+func (o *Orchestrator) ResumeTask(ctx context.Context, sessionID, taskID string) (string, error) {
+	_ = ctx
+	o.reloadConfigIfChanged(context.Background())
+	return o.resumeTask(o.snapshot(), sessionID, taskID)
 }
 
 func (o *Orchestrator) listTasksForSession(sessionID string) []taskRecord {

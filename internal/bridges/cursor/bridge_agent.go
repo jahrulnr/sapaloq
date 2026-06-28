@@ -16,24 +16,26 @@ import (
 )
 
 // wantsAgentPath decides whether this request should go through the
-// agent.v1.AgentService/Run RPC (which supports vision + composer models)
-// instead of the legacy chat stream.
+// agent.v1.AgentService/Run RPC (api5) instead of the legacy chat stream
+// (api2 StreamUnifiedChatWithTools).
 //
-// Three triggers, in order:
-//  1. SAPALOQ_AGENT_PATH=1 - explicit operator override (used by live tests).
-//  2. Any message content has a data:image/ URL - inline image data.
-//  3. Any message content has an http(s)://...png/jpg/webp/gif URL - remote
-//     image. We won't fetch it here (that's the caller's job - they pass
-//     bytes via req.Images) but we use the URL as a signal that vision is
-//     requested.
+// Agent path is used for vision (images in messages). Chat stream uses the
+// Node wire driver when available (see bridge.go streamLive).
 func wantsAgentPath(req bridge.Request) bool {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("SAPALOQ_AGENT_PATH")), "1") {
-		return true
-	}
 	if len(req.Images) > 0 {
 		return true
 	}
-	for _, m := range req.Messages {
+	if messageHasVisionSignal(req.Messages) {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SAPALOQ_AGENT_PATH")), "1") {
+		return true
+	}
+	return false
+}
+
+func messageHasVisionSignal(messages []bridge.Message) bool {
+	for _, m := range messages {
 		if strings.Contains(m.Content, "data:image/") {
 			return true
 		}

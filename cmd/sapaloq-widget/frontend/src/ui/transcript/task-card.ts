@@ -1,7 +1,9 @@
 import { renderMarkdown } from '../markdown';
 import { setRingState } from '../../features/connection';
 import { refreshRuntimeStatus } from '../../features/runtime-status';
-import { taskBubbles, taskStatuses } from '../../core/state';
+import { restoreChatHistory } from '../../features/history';
+import { taskBubbles, taskStatuses, getSessionID } from '../../core/state';
+import { ResumeTask } from '../../../wailsjs/go/main/App';
 import type { TranscriptEntry } from './types';
 
 function taskPrefix(status: string, role: string): string {
@@ -71,7 +73,30 @@ export function renderTaskCardElement(entry: TranscriptEntry, options?: { restor
       });
     }
   }
-  item.replaceChildren(renderMarkdown(text));
+  const body = document.createElement('div');
+  body.className = 'transcript-task-body';
+  body.append(renderMarkdown(text));
+  item.replaceChildren(body);
+  if (taskID && (status === 'failed' || status === 'stopped')) {
+    const resume = document.createElement('button');
+    resume.type = 'button';
+    resume.className = 'task-card-resume';
+    resume.textContent = 'Lanjutkan task';
+    resume.addEventListener('click', (event) => {
+      event.stopPropagation();
+      resume.disabled = true;
+      void ResumeTask(getSessionID(), taskID)
+        .then(() => {
+          setRingState('delegating');
+          void refreshRuntimeStatus();
+          void restoreChatHistory();
+        })
+        .catch(() => {
+          resume.disabled = false;
+        });
+    });
+    item.append(resume);
+  }
   return item;
 }
 

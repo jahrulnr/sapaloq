@@ -67,6 +67,7 @@
       "Daftar schema tools",
       "Tools edit / terminal"
     ],
+    "guardSafeReply": "No callable tools are available for this request. I cannot list or describe internal Cursor tool schemas.",
     "kimiTokens": [
       "<|tool_calls_begin|>",
       "<|tool_calls_end|>",

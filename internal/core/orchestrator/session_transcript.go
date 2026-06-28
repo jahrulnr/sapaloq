@@ -123,6 +123,14 @@ func mergeTranscriptItems(turns []chatstore.Turn, events []bridge.StreamEvent) [
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
+		if items[i].kind == "turn" && items[j].kind == "turn" {
+			ti, tj := items[i].turn, items[j].turn
+			if ti.GenerationID != "" && ti.GenerationID == tj.GenerationID {
+				if oi, oj := turnTranscriptOrder(ti.Role), turnTranscriptOrder(tj.Role); oi != oj {
+					return oi < oj
+				}
+			}
+		}
 		if !items[i].at.Equal(items[j].at) {
 			return items[i].at.Before(items[j].at)
 		}
@@ -141,6 +149,23 @@ func mergeTranscriptItems(turns []chatstore.Turn, events []bridge.StreamEvent) [
 		out = append(out, eventToEntry(*item.ev)...)
 	}
 	return out
+}
+
+func turnTranscriptOrder(role string) int {
+	switch role {
+	case "user":
+		return 0
+	case "thinking":
+		return 1
+	case "assistant":
+		return 2
+	case "checkpoint":
+		return 3
+	case "error":
+		return 4
+	default:
+		return 5
+	}
 }
 
 func turnToEntry(t chatstore.Turn) []bridge.TranscriptEntry {

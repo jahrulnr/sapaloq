@@ -23,7 +23,7 @@ export function syncChatTranscriptStateFromDOM() {
 export function mountChatTranscript(entries: ReadonlyArray<TranscriptEntry | TranscriptEntryInput>) {
   const list = getMessageList();
   if (!list) return;
-  mountTranscriptPane(list, paneState, coerceTranscriptEntries(entries), '', 'chat');
+  mountTranscriptPane(list, paneState, coerceTranscriptEntries(entries), '', 'chat', '', true);
   scrollMessagesToBottom();
 }
 

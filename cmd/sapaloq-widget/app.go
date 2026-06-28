@@ -140,6 +140,11 @@ func (a *App) StopChat(sessionID string) error {
 	return stopChat(a.socketPath, sessionID)
 }
 
+// ResumeTask continues a failed or stopped background task from persisted turns.
+func (a *App) ResumeTask(sessionID, taskID string) error {
+	return resumeTask(a.socketPath, sessionID, taskID)
+}
+
 // SteerChat queues text guidance for the next safe point of the active Ask run.
 func (a *App) SteerChat(sessionID string, message string) error {
 	return steerChat(a.socketPath, sessionID, message)

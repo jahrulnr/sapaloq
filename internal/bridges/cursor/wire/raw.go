@@ -22,6 +22,8 @@ import (
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
+
+	"github.com/jahrulnr/sapaloq/internal/debug"
 )
 
 // StreamChatRaw is the cursor-bridge-compatible stream driver. It opens a
@@ -48,7 +50,12 @@ func StreamChatRaw(ctx context.Context, opts StreamOptions, onFrame FrameHandler
 		host += ":443"
 	}
 
-	body := BuildChatBody(opts.Messages, opts.Model)
+	body := BuildChatBodyWithOptions(opts.Messages, opts.Model, ChatEncodeOptions{
+		Tools:           opts.Tools,
+		Instruction:     opts.Instruction,
+		ForceAgentMode:  opts.ForceAgentMode,
+		ReasoningEffort: opts.ReasoningEffort,
+	})
 	headers := BuildHeaders(opts.Token, opts.MachineID, opts.GhostMode)
 	headers[":method"] = "POST"
 	headers[":path"] = u.Path
@@ -208,6 +215,7 @@ func (c *h2Conn) sendAndRecv(ctx context.Context, headers map[string]string, bod
 	}
 
 	var dataBuf bytes.Buffer
+	var statusCode string
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -222,13 +230,22 @@ func (c *h2Conn) sendAndRecv(ctx context.Context, headers map[string]string, bod
 		switch fr := f.(type) {
 		case *http2.MetaHeadersFrame:
 			for _, hf := range fr.Fields {
-				if hf.Name == ":status" && hf.Value != "200" {
-					return fmt.Errorf("cursor api status %s", hf.Value)
+				if hf.Name == ":status" {
+					statusCode = hf.Value
 				}
 			}
+			debug.Debugf("wire/raw: headers stream=%d status=%s ended=%v bytes=%d",
+				fr.StreamID, statusCode, fr.StreamEnded(), dataBuf.Len())
 			if fr.StreamEnded() {
-				if dataBuf.Len() > 0 {
-					dispatchRawFrames(dataBuf.Bytes(), onFrame)
+				if err := dispatchRawFrames(dataBuf.Bytes(), onFrame); err != nil {
+					return err
+				}
+				debug.Debugf("wire/raw: dispatch on header end total=%d", dataBuf.Len())
+				if statusCode != "" && statusCode != "200" {
+					return fmt.Errorf("cursor api status %s", statusCode)
+				}
+				if dataBuf.Len() == 0 {
+					return fmt.Errorf("cursor stream ended with no data (status %s)", defaultIfEmpty(statusCode, "unknown"))
 				}
 				return nil
 			}
@@ -239,8 +256,19 @@ func (c *h2Conn) sendAndRecv(ctx context.Context, headers map[string]string, bod
 			if n := len(fr.Data()); n > 0 {
 				dataBuf.Write(fr.Data())
 			}
+			debug.Debugf("wire/raw: data stream=%d chunk=%d total=%d ended=%v",
+				fr.StreamID, len(fr.Data()), dataBuf.Len(), fr.StreamEnded())
 			if fr.StreamEnded() {
-				dispatchRawFrames(dataBuf.Bytes(), onFrame)
+				if err := dispatchRawFrames(dataBuf.Bytes(), onFrame); err != nil {
+					return err
+				}
+				debug.Debugf("wire/raw: dispatch on data end total=%d", dataBuf.Len())
+				if os.Getenv("SAPALOQ_CAPTURE_CURSOR_RAW") != "" {
+					_ = os.WriteFile(os.Getenv("SAPALOQ_CAPTURE_CURSOR_RAW"), dataBuf.Bytes(), 0o600)
+				}
+				if dataBuf.Len() == 0 {
+					return fmt.Errorf("cursor stream ended with no data (status %s)", defaultIfEmpty(statusCode, "200"))
+				}
 				return nil
 			}
 		case *http2.WindowUpdateFrame, *http2.PingFrame, *http2.SettingsFrame:
@@ -252,12 +280,22 @@ func (c *h2Conn) sendAndRecv(ctx context.Context, headers map[string]string, bod
 		}
 	}
 	if dataBuf.Len() > 0 {
-		dispatchRawFrames(dataBuf.Bytes(), onFrame)
+		if err := dispatchRawFrames(dataBuf.Bytes(), onFrame); err != nil {
+			return err
+		}
+		return nil
 	}
-	return nil
+	return fmt.Errorf("cursor stream closed without response data (status %s)", defaultIfEmpty(statusCode, "unknown"))
 }
 
-func dispatchRawFrames(raw []byte, onFrame FrameHandler) {
+func defaultIfEmpty(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func dispatchRawFrames(raw []byte, onFrame FrameHandler) error {
 	consumed := 0
 	for consumed < len(raw) {
 		flags, payload, used, ok := ParseConnectFrame(raw[consumed:])
@@ -265,8 +303,11 @@ func dispatchRawFrames(raw []byte, onFrame FrameHandler) {
 			break
 		}
 		consumed += used
-		_ = DispatchConnectPayload(flags, payload, onFrame)
+		if err := DispatchConnectPayload(flags, payload, onFrame); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // emptySettingsFrame is the SETTINGS frame (length 0, type 4, flags 0, stream 0).

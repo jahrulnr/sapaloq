@@ -33,6 +33,8 @@ export function PingCore():Promise<main.pingResult>;
 
 export function ReadDroppedFile(arg1:string):Promise<main.droppedFile>;
 
+export function ResumeTask(arg1:string,arg2:string):Promise<void>;
+
 export function RetryChatTurn(arg1:string,arg2:number):Promise<main.chatResult>;
 
 export function RuntimeStatus():Promise<main.runtimeStatus>;

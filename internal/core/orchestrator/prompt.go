@@ -40,6 +40,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/parse/artifacts"
 	"github.com/jahrulnr/sapaloq/internal/prompts"
 	"github.com/jahrulnr/sapaloq/internal/skills"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
@@ -645,6 +646,13 @@ func actorTurnsToMessages(turns []chatstore.Turn) []bridge.Message {
 		content := turn.Content
 		if role == "assistant" {
 			content = stripPlannerSummaryMarker(content)
+			if artifacts.IsAutopilotEcho(content) {
+				continue
+			}
+			content = artifacts.StripModelResponseArtifact(content)
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
 		}
 		if role != "assistant" && role != "user" && role != "system" && role != "tool" && role != "error" {
 			role = "user"

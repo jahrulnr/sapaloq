@@ -47,8 +47,39 @@ func TestBridgeStreamsThinkingResponseAndTool(t *testing.T) {
 	}
 }
 
-func TestVaultLogsUndeclaredTool(t *testing.T) {
+func TestBridgeMockHonorsAutopilotStop(t *testing.T) {
 	forceMockCredentials(t)
+	entry, runtime := defaultTestEntry()
+	b, err := New(entry, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := "<sapaloq:autopilot>\nInvoke `sapaloq_stop` silently now.\n</sapaloq:autopilot>"
+	events, err := b.Complete(context.Background(), bridge.Request{
+		Messages: []bridge.Message{{Role: "user", Content: msg}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toolName string
+	var responseText string
+	for ev := range events {
+		if ev.Kind == bridge.EventToolCall && ev.ToolCall != nil {
+			toolName = ev.ToolCall.Name
+		}
+		if ev.Kind == bridge.EventResponseDelta {
+			responseText += ev.Delta
+		}
+	}
+	if toolName != "sapaloq_stop" {
+		t.Fatalf("tool = %q want sapaloq_stop", toolName)
+	}
+	if responseText != "" {
+		t.Fatalf("autopilot mock should not emit response text, got %q", responseText)
+	}
+}
+
+func TestVaultLogsUndeclaredTool(t *testing.T) {
 	dir := t.TempDir()
 	entry, _ := defaultTestEntry()
 	entry.DeclaredTools = []string{"read_file"}
@@ -57,15 +88,8 @@ func TestVaultLogsUndeclaredTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := b.Complete(context.Background(), bridge.Request{
-		SessionID: "vault-test",
-		Messages:  []bridge.Message{{Role: "user", Content: "use glob tool"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range events {
-	}
+	call := parse.ToolCall{Name: "glob_file_search", Source: "kimi_inline"}
+	b.tryEmitToolCall(context.Background(), nil, "vault-test", entry.DeclaredTools, call)
 
 	logPath := filepath.Join(dir, "vault", "tool-calls.jsonl")
 	blob, err := os.ReadFile(logPath)
