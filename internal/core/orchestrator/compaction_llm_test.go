@@ -191,7 +191,19 @@ func TestRunCompactSession(t *testing.T) {
 	}
 }
 
-func TestEffectiveContextPercentUsesPersistedAttachmentWeight(t *testing.T) {
+func TestEstimateContentTokensIgnoresImageBase64Payload(t *testing.T) {
+	huge := strings.Repeat("A", 3_600_000) // ~900k if counted as len/4 text
+	content := "![img.png](data:image/png;base64," + huge + ")"
+	got := estimateContentTokens(content)
+	if got >= 10_000 {
+		t.Fatalf("estimateContentTokens = %d, want vision budget not base64 len/4", got)
+	}
+	if got < visionImageTokenBudget {
+		t.Fatalf("estimateContentTokens = %d, want at least %d vision budget", got, visionImageTokenBudget)
+	}
+}
+
+func TestContextUsageDoesNotInflateOnPastedImage(t *testing.T) {
 	ctx := context.Background()
 	store, err := chatstore.Open(t.TempDir())
 	if err != nil {
@@ -201,27 +213,47 @@ func TestEffectiveContextPercentUsesPersistedAttachmentWeight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Simulate a pasted image turn: huge token_estimate in DB, placeholder in
-	// the live slice after extractImages strips the inline data URI.
-	huge := strings.Repeat("A", 3_600_000) // ~900k tokens at len/4
-	if err := store.AppendTurn(ctx, sessionID, "user", "![img.png](data:image/png;base64,"+huge+")", estimateTextTokens("![img.png](data:image/png;base64,"+huge+")")); err != nil {
+	huge := strings.Repeat("A", 3_600_000)
+	content := "bisa lihat gambar ini ga?\n![paste.png](data:image/png;base64," + huge + ")"
+	// Simulate a session stored before strip-aware estimates existed.
+	if err := store.AppendTurn(ctx, sessionID, "user", content, estimateTextTokens(content)); err != nil {
 		t.Fatal(err)
 	}
-	o := &Orchestrator{chat: store}
-	live, images := extractImages([]bridge.Message{{Role: "user", Content: "[Image attachment: img.png]"}})
-	if len(images) != 0 {
-		t.Fatalf("expected stripped live slice without vision payload, got %d images", len(images))
+	o := &Orchestrator{chat: store, cfg: config.Config{Orchestrator: config.DefaultOrchestratorConfig()}}
+	usage, err := o.ContextUsage(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	const window = 900_000
+	const window = 200_000
+	if usage.UsedTokens >= window/2 {
+		t.Fatalf("ContextUsage used %d tokens on one pasted image, want well under %d", usage.UsedTokens, window/2)
+	}
+}
+
+func TestEffectiveContextPercentMatchesStrippedLiveSlice(t *testing.T) {
+	ctx := context.Background()
+	store, err := chatstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := store.ActiveSession(ctx, "p", "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat("A", 3_600_000)
+	content := "![img.png](data:image/png;base64," + huge + ")"
+	if err := store.AppendTurn(ctx, sessionID, "user", content, estimateContentTokens(content)); err != nil {
+		t.Fatal(err)
+	}
+	o := &Orchestrator{chat: store, cfg: config.Config{Orchestrator: config.DefaultOrchestratorConfig()}}
+	live, images := extractImages([]bridge.Message{{Role: "user", Content: content}})
+	if len(images) != 1 {
+		t.Fatalf("expected one vision image, got %d", len(images))
+	}
+	const window = 200_000
 	livePct := o.contextPercent(live, window)
-	if livePct >= 50 {
-		t.Fatalf("live slice alone should be tiny after image strip, got %d%%", livePct)
-	}
 	effective := o.effectiveContextPercent(ctx, sessionID, live, window)
-	if effective < 95 {
-		t.Fatalf("effective = %d%%, want >=95 from persisted attachment estimate", effective)
-	}
-	if !o.contextHeadroomReached(ctx, sessionID, live, window, 0.05) {
-		t.Fatal("headroom should be reached when persisted usage exceeds 95%")
+	if effective > livePct+5 {
+		t.Fatalf("effective = %d%%, live = %d%%; pasted image should not inflate persisted usage", effective, livePct)
 	}
 }

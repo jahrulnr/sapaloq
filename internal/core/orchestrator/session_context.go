@@ -40,7 +40,7 @@ func (o *Orchestrator) persistAssistantTurn(ctx context.Context, sessionID, cont
 	if content == "" || artifacts.IsAutopilotEcho(content) {
 		return
 	}
-	_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", content, estimateTextTokens(content), generationID)
+	_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", content, estimateContentTokens(content), generationID)
 }
 
 func (o *Orchestrator) persistThinkingTurn(ctx context.Context, sessionID, content, generationID string) {

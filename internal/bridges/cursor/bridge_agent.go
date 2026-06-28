@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -101,12 +102,14 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 			send(ctx, out, ev)
 		},
 		MCPExecutor: func(callCtx context.Context, toolName, toolCallID string, args map[string]any) (string, bool, error) {
-			if req.ToolExecutor == nil {
-				return "", true, nil
-			}
 			argsJSON, err := json.Marshal(args)
 			if err != nil {
+				emitMCPToolUpdate(ctx, out, req.SessionID, b.schema, toolName, toolCallID, argsJSON, "", err)
 				return "", true, err
+			}
+			if req.ToolExecutor == nil {
+				emitMCPToolUpdate(ctx, out, req.SessionID, b.schema, toolName, toolCallID, argsJSON, "", fmt.Errorf("tool executor unavailable"))
+				return "", true, nil
 			}
 			resolved := ResolveToolCall(b.schema, parse.ToolCall{
 				ID:        toolCallID,
@@ -115,6 +118,7 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 				Source:    "cursor",
 			})
 			text, err := req.ToolExecutor(callCtx, resolved)
+			emitMCPToolUpdate(ctx, out, req.SessionID, b.schema, toolName, toolCallID, argsJSON, text, err)
 			if err != nil {
 				return err.Error(), true, nil
 			}
@@ -206,4 +210,45 @@ func decodeDataURI(s string) ([]byte, string, bool) {
 		data = []byte(payload)
 	}
 	return data, mime, true
+}
+
+const maxBridgeToolResultUIBytes = 24 * 1024
+
+func truncateBridgeToolResult(text string) string {
+	if strings.Contains(text, "data:image/") {
+		return "[image payload delivered to the model]"
+	}
+	if len(text) <= maxBridgeToolResultUIBytes {
+		return text
+	}
+	return text[:maxBridgeToolResultUIBytes] + "\n\n[output truncated for display]"
+}
+
+func emitMCPToolUpdate(
+	ctx context.Context,
+	out chan<- bridge.StreamEvent,
+	sessionID string,
+	schema Schema,
+	toolName, toolCallID string,
+	argsJSON json.RawMessage,
+	result string,
+	execErr error,
+) {
+	resolved := ResolveToolCall(schema, parse.ToolCall{
+		ID:        toolCallID,
+		Name:      toolName,
+		Arguments: argsJSON,
+		Source:    "cursor",
+	})
+	update := bridge.NewEvent(bridge.EventToolUpdate)
+	update.SessionID = sessionID
+	update.ToolCall = &resolved
+	if execErr != nil {
+		update.ToolResult = execErr.Error()
+		update.Status = "failed"
+	} else {
+		update.ToolResult = truncateBridgeToolResult(result)
+		update.Status = "completed"
+	}
+	send(ctx, out, update)
 }

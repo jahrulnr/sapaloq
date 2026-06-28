@@ -886,7 +886,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// the cancelable runCtx) so a wall-time timeout does not drop the
 		// audit/accounting record. Chat-only (recordToolTurns).
 		if cfg.recordToolTurns && o.chat != nil && len(toolResults) > 0 {
-			_ = o.chat.AppendTurn(ctx, persistID, "tool", toolResultsBody, estimateTextTokens(toolResultsBody))
+			_ = o.chat.AppendTurn(ctx, persistID, "tool", toolResultsBody, estimateContentTokens(toolResultsBody))
 		}
 		// Persist a tool-less autopilot continuation as a dedicated "autopilot"
 		// turn so it counts toward ContextUsage / auto-compaction accounting
@@ -906,7 +906,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				}
 			}
 			if !skipPersist {
-				_ = o.chat.AppendAutopilotTurn(ctx, persistID, toolResultsBody, estimateTextTokens(toolResultsBody))
+				_ = o.chat.AppendAutopilotTurn(ctx, persistID, toolResultsBody, estimateContentTokens(toolResultsBody))
 			}
 		}
 		continuation := toolResultsBody
@@ -1000,7 +1000,7 @@ func conversationTokenRatio(messages []bridge.Message, contextWindow int) float6
 	}
 	total := 0
 	for _, message := range messages {
-		total += estimateTextTokens(message.Content)
+		total += estimateContentTokens(message.Content)
 	}
 	return float64(total) / float64(contextWindow)
 }

@@ -401,7 +401,7 @@ func (o *Orchestrator) spawnBackground(snap providerSnapshot, sessionID, role, t
 	node := o.pickNode(context.Background(), role, "")
 	record := taskRecord{ID: id, SessionID: sessionID, Role: role, Status: "pending", Task: task, PlanTaskID: planTaskID, Node: node.Name, CreatedAt: now, UpdatedAt: now}
 	if o.chat != nil {
-		if err := o.chat.AppendTurn(context.Background(), id, "user", task, estimateTextTokens(task)); err != nil {
+		if err := o.chat.AppendTurn(context.Background(), id, "user", task, estimateContentTokens(task)); err != nil {
 			return "", fmt.Errorf("persist actor intent: %w", err)
 		}
 	}
@@ -765,14 +765,14 @@ func (o *Orchestrator) migrateLegacyTaskTranscripts() {
 			continue
 		}
 		if strings.TrimSpace(record.Task) != "" {
-			_ = o.chat.AppendTurn(ctx, record.ID, "user", record.Task, estimateTextTokens(record.Task))
+			_ = o.chat.AppendTurn(ctx, record.ID, "user", record.Task, estimateContentTokens(record.Task))
 		}
 		for _, turn := range record.Transcript {
 			role := turn.Role
 			if role != "user" && role != "assistant" && role != "system" && role != "tool" {
 				role = "user"
 			}
-			_ = o.chat.AppendTurn(ctx, record.ID, role, turn.Content, estimateTextTokens(turn.Content))
+			_ = o.chat.AppendTurn(ctx, record.ID, role, turn.Content, estimateContentTokens(turn.Content))
 		}
 		record.Transcript = nil
 		_ = o.writeTask(record)

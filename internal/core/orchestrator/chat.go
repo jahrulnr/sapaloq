@@ -362,7 +362,7 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 			return
 		}
 		genStr := fmt.Sprintf("%d", runID)
-		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "user", message, estimateTextTokens(message), genStr)
+		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "user", message, estimateContentTokens(message), genStr)
 		o.refreshActiveTranscriptBase(ctx, sessionID)
 		o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{
 			Kind:         bridge.EventTurnBoundary,
@@ -395,7 +395,7 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 				}
 			}
 			if needsFinal {
-				_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+				_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateContentTokens(assistant.String()), genStr)
 			}
 		}
 		usage, _ := o.ContextUsage(ctx, sessionID)
@@ -483,7 +483,7 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 			}
 		}
 		if needsFinal {
-			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateContentTokens(assistant.String()), genStr)
 		}
 	}
 	usage, _ := o.ContextUsage(ctx, sessionID)

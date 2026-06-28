@@ -2,7 +2,11 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**cursor_tool spam removed** — undeclared upstream tools surface as failed tool rows)
+> Last updated: 2026-06-28 (**cursor agent MCP tool completion** — api5 path emits EventToolUpdate after exec)
+
+> Prior: 2026-06-28 (**image paste token pill fix** — base64 payloads no longer counted as text tokens in context usage)
+
+> Prior: 2026-06-28 (**cursor_tool spam removed** — undeclared upstream tools surface as failed tool rows)
 
 > Prior: 2026-06-28 (**orchestrator upstream tool normalize** — glob/grep/openai_inline map before dispatch)
 
@@ -120,6 +124,18 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-28) - cursor agent MCP tool completion UI
+
+- **Bug:** Widget showed every api5 MCP tool as `running` / "Waiting for response…" forever. Tools executed in-bridge (`MCPExecutor`) but only `EventToolCall` fired on start — no `EventToolUpdate` on finish (orchestrator skips `Source:"cursor"` for double dispatch).
+- **Fix:** `bridge_agent.go` `emitMCPToolUpdate` after each MCP exec (completed/failed + truncated result for display).
+- **Tests:** `bridge_agent_test.go`.
+
+## Implemented this session (2026-06-28) - image paste token pill fix
+
+- **Bug:** Pasting a screenshot inflated the widget context pill to 400k+/200k because `estimateTextTokens(message)` counted the full `data:image/...;base64,...` payload as text (len/4).
+- **Fix:** `estimateContentTokens` strips attachment metadata + inline data URIs (same rules as `extractImages`) and adds a fixed **1024** vision budget per image. `ContextUsage` recomputes from turn bodies so existing sessions recover without re-send. Persist paths (`chat_send`, tool turns, tasks) use the new estimator.
+- **Tests:** `TestEstimateContentTokensIgnoresImageBase64Payload`, `TestContextUsageDoesNotInflateOnPastedImage`, `TestEffectiveContextPercentMatchesStrippedLiveSlice` in `compaction_llm_test.go`.
 
 ## Implemented this session (2026-06-28) - Glob/Grep openai_inline dispatch
 
