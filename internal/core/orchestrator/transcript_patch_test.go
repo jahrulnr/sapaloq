@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 func TestEmitWidgetDeltaPatchOnResponseDelta(t *testing.T) {
@@ -54,6 +55,16 @@ func TestEmitWidgetSnapshotOnDone(t *testing.T) {
 	ctx := context.Background()
 	_ = o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: "ok"})
 	<-out
+	toolCall := bridge.NewEvent(bridge.EventToolCall)
+	toolCall.ToolCall = &parse.ToolCall{ID: "tc-1", Name: "exec", Arguments: []byte(`{"command":"ls"}`)}
+	_ = o.emitWidget(ctx, out, sessionID, toolCall)
+	<-out
+	toolDone := bridge.NewEvent(bridge.EventToolUpdate)
+	toolDone.ToolCall = &parse.ToolCall{ID: "tc-1", Name: "exec"}
+	toolDone.ToolResult = "ok\n"
+	toolDone.Status = "completed"
+	_ = o.emitWidget(ctx, out, sessionID, toolDone)
+	<-out
 
 	if !o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID}) {
 		t.Fatal("done patch should send")
@@ -64,5 +75,14 @@ func TestEmitWidgetSnapshotOnDone(t *testing.T) {
 	}
 	if !ev.Transcript.Finished {
 		t.Fatal("done patch should be finished")
+	}
+	var sawTool bool
+	for _, e := range ev.Transcript.Entries {
+		if e.Kind == bridge.TranscriptTool && e.ToolName == "exec" && e.ToolResult == "ok\n" {
+			sawTool = true
+		}
+	}
+	if !sawTool {
+		t.Fatalf("done snapshot missing completed tool: %+v", ev.Transcript.Entries)
 	}
 }

@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-28 (incremental transcript patch IPC: snapshot vs delta ops)
+> Last updated: 2026-06-28 (steering interrupt + pending bubble lifecycle)
 
 **Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, JSON store, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
 
@@ -87,14 +87,17 @@ The compose remains editable during a foreground generation. Its amber
 `is-steering` state replaces Send with two explicit actions: **Stop** cancels
 the existing generation, while **Steer** queues text guidance through the
 `chat_steering` IPC operation. Enter sends steering, Shift+Enter remains a
-newline, and the placeholder/hint states that guidance is applied after the
-current tool batch. When idle, the same Enter gesture and Send button start a
+newline, and the placeholder/hint states that guidance interrupts the current
+bridge stream when possible (otherwise after the orchestrator tool batch).
+When idle, the same Enter gesture and Send button start a
 normal chat turn.
 
 Steering v1 is text-only: attachment controls are disabled during a run and a
 draft containing an attachment is rejected without clearing it. A queued
-message gets a local optimistic `message--steering` bubble and status ack; a
-failed enqueue keeps the draft and marks the bubble failed. These bubbles are
+message gets a local optimistic `message--steering is-pending` bubble; the
+bubble clears to `is-applied` when the backend emits `steering applied`, or
+`is-failed` when enqueue fails or the run ends with `steering skipped - run
+ended`. These bubbles are
 UI-only and are not restored from chat history because steering is actor
 control input, not a persisted user turn. Background actor targeting and
 mid-stream `priority: interrupt` remain follow-ups.

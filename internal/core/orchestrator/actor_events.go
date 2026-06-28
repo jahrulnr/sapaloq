@@ -217,3 +217,10 @@ func (o *Orchestrator) appendActorEvents(messages []bridge.Message, runID string
 	}
 	return messages, false
 }
+
+// skipPendingSteering drains unconsumed inbox events when a run ends before the
+// next inference safe point (stop, cancel, or hard failure). The widget uses the
+// emitted status to clear optimistic steering bubbles.
+func (o *Orchestrator) skipPendingSteering(runID string) bool {
+	return len(o.drainActorEvents(runID)) > 0
+}

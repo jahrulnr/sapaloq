@@ -417,7 +417,9 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		if o.progress != nil {
 			o.progress.Close(sessionID)
 		}
-		o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+		if runCtx.Err() == nil {
+			o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+		}
 	}()
 	return out, nil
 }
@@ -542,6 +544,9 @@ func (o *Orchestrator) activeCoalescer(sessionID string) *TranscriptCoalescer {
 }
 
 func (o *Orchestrator) refreshActiveTranscriptBase(ctx context.Context, sessionID string) {
+	if o.chat == nil {
+		return
+	}
 	base, err := o.SessionTranscript(ctx, sessionID)
 	if err != nil {
 		return
@@ -744,22 +749,39 @@ func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamE
 		return o.emitWidgetTextDelta(ctx, out, sessionID, genID, coalescer, ev)
 	}
 	o.resetPendingDeltaUpsert(sessionID, ev.Kind)
+	finished := ev.Kind == bridge.EventError || ev.Kind == bridge.EventDone
 	var entries []bridge.TranscriptEntry
 	if coalescer != nil {
-		if ev.Kind == bridge.EventTurnBoundary || ev.Kind == bridge.EventCheckpoint ||
+		if finished || ev.Kind == bridge.EventTurnBoundary || ev.Kind == bridge.EventCheckpoint ||
 			ev.Kind == bridge.EventToolUpdate || ev.Kind == bridge.EventToolCall {
 			o.refreshActiveTranscriptBase(ctx, sessionID)
 		}
-		base := o.activeTranscriptBase(sessionID)
-		if base == nil {
-			entries, _ = o.LiveSessionTranscript(ctx, sessionID, coalescer)
+		if finished {
+			if live, err := o.LiveSessionTranscript(ctx, sessionID, coalescer); err == nil && len(live) > 0 {
+				entries = live
+			} else {
+				base := o.activeTranscriptBase(sessionID)
+				if base == nil {
+					entries = coalescer.EntriesWithPending()
+				} else {
+					entries = mergeLiveTranscript(base, coalescer.EntriesWithPending())
+				}
+			}
 		} else {
-			entries = mergeLiveTranscript(base, coalescer.EntriesWithPending())
+			base := o.activeTranscriptBase(sessionID)
+			if base == nil {
+				entries, _ = o.LiveSessionTranscript(ctx, sessionID, coalescer)
+			} else {
+				entries = mergeLiveTranscript(base, coalescer.EntriesWithPending())
+			}
 		}
 	} else if scratch != nil {
-		entries = scratch.Entries()
+		if finished && o.chat != nil {
+			entries, _ = o.SessionTranscript(ctx, sessionID)
+		} else {
+			entries = scratch.Entries()
+		}
 	}
-	finished := ev.Kind == bridge.EventError || ev.Kind == bridge.EventDone
 	patch := bridge.SnapshotPatch(sessionID, genID, entries, finished)
 	if ev.Kind != bridge.EventResponseDelta && ev.Kind != bridge.EventThinkingDelta && o.chat != nil {
 		if u, err := o.ContextUsage(ctx, sessionID); err == nil {

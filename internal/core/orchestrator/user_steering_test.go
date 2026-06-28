@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
@@ -147,4 +148,189 @@ func TestUserSteeringRejectsInvalidOrCancelledInput(t *testing.T) {
 	if !errors.Is(cancelled.Err(), context.Canceled) {
 		t.Fatal("cancelled test context was not cancelled")
 	}
+}
+
+func TestUserSteeringInterruptsBridgeStream(t *testing.T) {
+	fake := &interruptibleBridge{started: make(chan struct{}, 1)}
+	o := &Orchestrator{
+		stateDir: t.TempDir(),
+		vision:   make(map[string]bool),
+		active:   map[string]*activeRun{"session-1": {id: 1, cancel: func() {}}},
+	}
+	out := make(chan bridge.StreamEvent, 32)
+	statuses := make(chan string, 8)
+	go func() {
+		for ev := range out {
+			if ev.Kind == bridge.EventStatus && ev.Status != "" {
+				statuses <- ev.Status
+			}
+		}
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    fake,
+		}, "task", []bridge.Message{{Role: "user", Content: "implement"}}, turnConfig{
+			sessionID: "session-1",
+			runID:     "session-1",
+			sink:      chatSink{o: o, out: out},
+			dispatch: func(_ context.Context, call parse.ToolCall) turnOutcome {
+				if call.Name == "sapaloq_stop" {
+					return turnOutcome{text: "Stopped", handled: true, stop: true}
+				}
+				return turnOutcome{}
+			},
+		})
+		done <- err
+	}()
+
+	select {
+	case <-fake.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bridge stream did not start")
+	}
+	if err := o.UserSteering(context.Background(), "session-1", "Ignore logs/qa-*"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case status := <-statuses:
+			if status == "steering applied" {
+				goto steeringApplied
+			}
+		case <-deadline:
+			t.Fatal("steering was not applied during bridge stream")
+		}
+	}
+steeringApplied:
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("turn loop did not finish after steering interrupt")
+	}
+	close(out)
+	if fake.calls < 2 {
+		t.Fatalf("Complete calls = %d, want at least 2 after steering interrupt", fake.calls)
+	}
+	var joined strings.Builder
+	for _, message := range fake.requests[len(fake.requests)-1].Messages {
+		joined.WriteString(message.Content)
+		joined.WriteByte('\n')
+	}
+	if !strings.Contains(joined.String(), "Ignore logs/qa-*") {
+		t.Fatalf("steering missing from follow-up inference: %s", joined.String())
+	}
+	if pending := o.drainActorEvents("session-1"); len(pending) != 0 {
+		t.Fatalf("steering inbox not drained: %+v", pending)
+	}
+}
+
+func TestSteeringSkippedWhenRunStopsWithLateQueue(t *testing.T) {
+	o := &Orchestrator{
+		stateDir: t.TempDir(),
+		vision:   make(map[string]bool),
+		active:   map[string]*activeRun{"session-1": {id: 1, cancel: func() {}}},
+	}
+	out := make(chan bridge.StreamEvent, 16)
+	statuses := make(chan string, 4)
+	go func() {
+		for ev := range out {
+			if ev.Kind == bridge.EventStatus {
+				statuses <- ev.Status
+			}
+		}
+	}()
+	_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+		cfg:   config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    &lateSteeringStopBridge{},
+	}, "task", []bridge.Message{{Role: "user", Content: "implement"}}, turnConfig{
+		sessionID: "session-1",
+		runID:     "session-1",
+		sink:      chatSink{o: o, out: out},
+		dispatch: func(ctx context.Context, call parse.ToolCall) turnOutcome {
+			if call.Name == "sapaloq_stop" {
+				_ = o.UserSteering(ctx, "session-1", "too late")
+				return turnOutcome{text: "Stopped", handled: true, stop: true}
+			}
+			return turnOutcome{}
+		},
+	})
+	close(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case status := <-statuses:
+			if status == "steering skipped - run ended" {
+				if pending := o.drainActorEvents("session-1"); len(pending) != 0 {
+					t.Fatalf("inbox not drained after skip: %+v", pending)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("steering skipped status was not emitted")
+		}
+	}
+}
+
+type interruptibleBridge struct {
+	started  chan struct{}
+	calls    int
+	requests []bridge.Request
+}
+
+func (b *interruptibleBridge) ID() string              { return "interruptible" }
+func (b *interruptibleBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *interruptibleBridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	b.requests = append(b.requests, req)
+	if b.started == nil {
+		b.started = make(chan struct{}, 1)
+	}
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+	out := make(chan bridge.StreamEvent, 4)
+	if b.calls == 1 {
+		go func() {
+			out <- bridge.StreamEvent{Kind: bridge.EventThinkingDelta, Delta: "thinking"}
+			<-ctx.Done()
+			out <- bridge.StreamEvent{Kind: bridge.EventDone}
+			close(out)
+		}()
+		return out, nil
+	}
+	go func() {
+		out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "ack"}
+		stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+		out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+		close(out)
+	}()
+	return out, nil
+}
+
+type lateSteeringStopBridge struct{}
+
+func (b *lateSteeringStopBridge) ID() string              { return "late-stop" }
+func (b *lateSteeringStopBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *lateSteeringStopBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	out := make(chan bridge.StreamEvent, 4)
+	go func() {
+		stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+		out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+		close(out)
+	}()
+	return out, nil
 }
