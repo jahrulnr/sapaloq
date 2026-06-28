@@ -98,13 +98,7 @@ func (a *App) emitTranscriptPatch(event bridge.StreamEvent) {
 }
 
 func (a *App) SendMessage(sessionID string, text string) (chatResult, error) {
-	return sendChatWithStatus(a.socketPath, sessionID, text, func(event bridge.StreamEvent) {
-		if event.Kind == bridge.EventTranscript {
-			go a.emitTranscriptPatch(event)
-			return
-		}
-		a.emitTranscriptPatch(event)
-	})
+	return sendChatWithStatus(a.socketPath, sessionID, text, nil)
 }
 
 func (a *App) ChatHistory() (chatHistoryResult, error) {
@@ -139,13 +133,7 @@ func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 }
 
 func (a *App) RetryChatTurn(sessionID string, turnID int64) (chatResult, error) {
-	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, func(event bridge.StreamEvent) {
-		if event.Kind == bridge.EventTranscript {
-			go a.emitTranscriptPatch(event)
-			return
-		}
-		a.emitTranscriptPatch(event)
-	})
+	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, nil)
 }
 
 func (a *App) StopChat(sessionID string) error {

@@ -2,7 +2,13 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**delta transcript throttle** — long sessions no longer serialize full history on every token)
+> Last updated: 2026-06-28 (**steering interrupt** — mid-stream actor signal cancels bridge; skip stale inbox on stop/cancel)
+
+> Prior: 2026-06-28 (**stop preserves tool bubbles** — finished remount + LiveSessionTranscript)
+
+> Prior: 2026-06-28 (**Codex-style delta transcript IPC** — `TranscriptPatch` `mode=delta` + `ops[]`; watch-only live stream; FE `applyDeltaOps`)
+
+> Prior: 2026-06-28 (**delta transcript throttle** — long sessions no longer serialize full history on every token)
 
 > Prior: 2026-06-28 (**live transcript + stop persistence** — watch-stream foreground patches, cancel flush to turns.json)
 
@@ -121,7 +127,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema + **wire description** via `toolschema.go` + `internal/tooldocs/defaults/*.md` (frontmatter `description` → OpenAI/Claude tool list). **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor`; api2 path + **agent api5 port** (`wire/proto_agent_exec.go`: full exec loop, MCP `ToolExecutor`, built-in rejections; `agent/mapper.go`); enable via `useAgentPath` / `SAPALOQ_AGENT_PATH=1`. See `CURSOR_AGENT_CONTRACT.md` |
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. Live transcript updates auto-follow only while the reader is at the chat end; scrolling upward preserves the reading position until the reader returns to the bottom. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
-| 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering drains at inference safe points (turn start, after bridge stream ends, after orchestrator tool batch, before continuation body) and emits `steering applied` so the widget clears the pending bubble; does not create a chat turn. V1 is normal-priority, foreground-target, text-only |
+| 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering interrupts an in-flight bridge stream via `actorSignal` (cancels attempt, applies inbox, continues inference); additional drains at turn start, after bridge stream ends, after orchestrator tool batch, and before continuation body. Run end (stop/cancel/error/budget) skips unconsumed inbox with `steering skipped - run ended`. Widget keeps the STEERING bubble `is-pending` until `steering applied` / skip status; does not create a chat turn. V1 is normal-priority, foreground-target, text-only |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | JSON chat store (sessions/turns/checkpoints/rollout) | ✅ | `internal/store/chat/store.go` — `state/sessions/index.json`, per-session `turns.json` / `checkpoints.json`, `state/rollout/*.jsonl` (no SQLite) |
 | 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
@@ -140,6 +146,38 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-28) - steering interrupt
+
+- **Bug:** User steering felt like a queue — STEERING bubble stayed pending during long Cursor bridge streams (thinking/MCP in-bridge) and could remain stuck after `sapaloq_stop` because inbox was only drained at fixed safe points and never on run end.
+- **Fix:** `streamLoop` listens on `actorSignal(runID)`; steering cancels the current bridge attempt, appends inbox to `cleanMessages`, emits `steering applied`, and continues inference. `skipPendingSteering` drains leftover inbox on cancel/stop/error/budget exit with status `steering skipped - run ended`. Widget keeps optimistic bubble `is-pending` until backend confirms applied/skipped.
+- **Tests:** `TestUserSteeringInterruptsBridgeStream`, `TestSteeringSkippedWhenRunStopsWithLateQueue`, `chat-steering.test.ts` pending bubble; `go test ./...` + widget tests.
+
+## Implemented this session (2026-06-28) - stop preserves tool bubbles
+
+- **Bug:** Stop triggered finished snapshot via index-based `syncTranscriptPane`, misaligning delta-built DOM with coalescer entries → tool rows patched empty.
+- **Fix:** Terminal `EventDone` uses `LiveSessionTranscript`; skip duplicate done after cancel; FE remounts on `finished` + `scheduleRestoreChatHistory` after Stop; progress JSONL tool_call+tool_update coalesced in `SessionTranscript`.
+
+## Implemented this session (2026-06-28) - cursor agent conversation scope + thinking UI
+
+- **Root cause (context pill ~7k):** after checkpoint compaction, only ~24 `included_in_context` turns count toward the pill (480 older turns compacted). Tooltip now shows active vs compacted turn counts.
+- **Root cause (Cursor “mulai dari 0”):** agent path sent empty `ConversationState` + full `flattenMessages` every `Complete`, duplicating/misaligning server history; system prompts were dropped. Fix: `conversation_id = sessionID:generationID`, `ComposeAgentUserText` (system + conversation on first inference; assistant-tail only on tool continuation).
+- **UI freeze during reasoning:** thinking deltas skip markdown re-parse and scroll capture/restore on every patch.
+
+## Implemented this session (2026-06-28) - per-chat workspace only
+
+- **Model:** Install default `~/SapaLOQ/workspace` needs no file. Only chat rooms the user sets via WORKSPACE picker get `state/workspaces/chat-{id}.json`. Removed `_last.json` and cross-room inheritance on new chat/reset.
+- **Chat exec:** `exec` cd no longer writes chat workspace files (background task actors unchanged).
+- **Legacy:** Chat files that only store the install default are treated as unset.
+- **Tests:** `workspace_test.go`, `workspace_session_test.go`.
+
+## Implemented this session (2026-06-28) - Codex-style delta transcript IPC
+
+- **Problem:** Throttling reduced patch frequency but each frame still carried O(n) `entries[]` JSON on long sessions.
+- **Protocol:** `bridge.TranscriptPatch` gains `mode` (`snapshot`|`delta`) and `ops[]` (`upsert`, `append_text`, `remove`). Empty `mode` = legacy snapshot.
+- **Emitter:** `emitWidget` sends delta ops for streaming text/thinking; snapshots on tool/status/boundary/done. Patches publish on the event bus (`emitTranscriptPatch`).
+- **Widget:** `applyDeltaOps` patches DOM by `data-entry-id`; debounced markdown refresh on `append_text`. `SendMessage`/`RetryChatTurn` no longer duplicate transcript EventsEmit (watch-only).
+- **Tests:** `transcript_patch_test.go`, `apply-transcript-delta.test.ts`; `go test ./internal/core/orchestrator/...` + `npm test`.
 
 ## Implemented this session (2026-06-28) - delta transcript throttle
 

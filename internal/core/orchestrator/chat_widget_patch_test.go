@@ -40,4 +40,15 @@ func TestEmitWidgetThrottlesDeltaPatches(t *testing.T) {
 	if len(out) < 2 {
 		t.Fatalf("scheduled flush count = %d, want >= 2", len(out))
 	}
+	first := <-out
+	if first.Transcript == nil || first.Transcript.Mode != bridge.TranscriptPatchDelta {
+		t.Fatalf("first patch mode = %+v", first.Transcript)
+	}
+	flush := <-out
+	if flush.Transcript == nil || flush.Transcript.Mode != bridge.TranscriptPatchDelta {
+		t.Fatalf("flush patch = %+v", flush.Transcript)
+	}
+	if len(flush.Transcript.Ops) == 0 || flush.Transcript.Ops[len(flush.Transcript.Ops)-1].Delta != "b" {
+		t.Fatalf("flush ops = %+v", flush.Transcript.Ops)
+	}
 }

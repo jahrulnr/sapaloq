@@ -204,9 +204,9 @@ export function patchTranscriptEntry(
     }
     const body = el.querySelector('.transcript-entry-body') || el;
     if (body instanceof HTMLElement && entry.text !== undefined) {
+      el.dataset.rawText = entry.text;
       const target = body.classList.contains('transcript-entry-body') ? body : el;
-      const displayText = entry.text;
-      target.replaceChildren(renderMarkdown(displayText));
+      target.replaceChildren(renderMarkdown(entry.text));
       if (entry.kind === 'error') wireErrorMessage(el);
     }
     return;
@@ -220,3 +220,41 @@ export function patchTranscriptEntry(
 export const renderActivityEntry = renderTranscriptEntry;
 /** @deprecated use patchTranscriptEntry */
 export const patchActivityEntry = patchTranscriptEntry;
+
+const markdownRefreshTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+
+/** Append streaming plain text immediately; debounce full markdown re-render. */
+export function appendTextDelta(el: HTMLElement, delta: string) {
+  if (!delta) return;
+  const next = (el.dataset.rawText || '') + delta;
+  el.dataset.rawText = next;
+  const body = el.querySelector('.transcript-entry-body') || el;
+  if (body instanceof HTMLElement) {
+    let stream = body.querySelector('.stream-plain') as HTMLElement | null;
+    if (!stream) {
+      body.replaceChildren();
+      stream = document.createElement('span');
+      stream.className = 'stream-plain';
+      body.append(stream);
+    }
+    stream.append(document.createTextNode(delta));
+  }
+  const isThinking = el.dataset.entryKind === 'thinking' || !!el.closest('.transcript-thinking');
+  if (isThinking) return;
+  const pending = markdownRefreshTimers.get(el);
+  if (pending) clearTimeout(pending);
+  markdownRefreshTimers.set(
+    el,
+    setTimeout(() => {
+      markdownRefreshTimers.delete(el);
+      flushTextDeltaMarkdown(el);
+    }, 48),
+  );
+}
+
+export function flushTextDeltaMarkdown(el: HTMLElement) {
+  const body = el.querySelector('.transcript-entry-body') || el;
+  if (!(body instanceof HTMLElement)) return;
+  const text = el.dataset.rawText || '';
+  body.replaceChildren(renderMarkdown(text));
+}

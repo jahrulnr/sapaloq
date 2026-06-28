@@ -3,13 +3,13 @@ import { DeleteChatTurn, RetryChatTurn, SendMessage, SteerChat, StopChat } from 
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { AttachmentData } from '../ui/compose';
 import type { ChatUsage, StreamEvent, TranscriptPatch } from '../core/types';
-import { errorText, getComposeInput, getMessageList } from '../ui/dom';
+import { errorText, getComposeInput, getMessageList, captureMessageScroll } from '../ui/dom';
 import { autosizeCompose, resetComposeSize, setComposeDisabled } from '../ui/compose-ui';
 import { renderUsage, setConnection, setRingState, runPing } from './connection';
 import { appendMessage, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
 import { applyChatResetFromBE } from './apply-session-reset';
-import { syncChatTranscript, syncChatTranscriptStateFromDOM, scheduleSyncChatTranscript, flushScheduledChatTranscript } from './transcript-pane';
+import { syncChatTranscript, syncChatTranscriptStateFromDOM, scheduleSyncChatTranscript, flushScheduledChatTranscript, applyDeltaChatTranscript, mountChatTranscript, resetChatTranscriptState } from './transcript-pane';
 import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory, scheduleRestoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus } from './runtime-status';
@@ -65,6 +65,15 @@ export function markSteeringApplied() {
   showSteeringStatus('Steering diterapkan.');
 }
 
+export function markSteeringSkipped() {
+  document.querySelectorAll('.message--steering.is-pending').forEach((el) => {
+    el.classList.remove('is-pending');
+    el.classList.add('is-failed');
+    el.title = 'Run berakhir sebelum steering diterapkan.';
+  });
+  showSteeringStatus('Steering tidak diterapkan — run sudah berakhir.', true);
+}
+
 function showSteeringStatus(message: string, error = false) {
   const hint = document.getElementById('steering-hint');
   if (!hint) return;
@@ -98,17 +107,34 @@ function applyTranscriptPatch(patch: TranscriptPatch) {
     void loadSessionList();
     return;
   }
+  if (patch.finished) {
+    flushScheduledChatTranscript();
+    releaseInFlightTurn();
+    if (patch.usage) renderUsage(patch.usage as ChatUsage);
+    const list = getMessageList();
+    if (patch.entries?.length && list) {
+      resetChatTranscriptState();
+      mountChatTranscript(patch.entries, captureMessageScroll(list));
+    }
+    scheduleRestoreChatHistory(150);
+    return;
+  }
+  if (patch.mode === 'delta' && patch.ops?.length) {
+    if (activeGeneration && patch.generation_id && patch.generation_id !== activeGeneration) return;
+    applyDeltaChatTranscript(patch.ops);
+    if (patch.usage) renderUsage(patch.usage as ChatUsage);
+    return;
+  }
   if (!patch.entries?.length) return;
   if (patch.entries.some((e) => (e.kind === 'status' || e.kind === 'progress') && e.label === 'steering applied')) {
     markSteeringApplied();
   }
+  if (patch.entries.some((e) => (e.kind === 'status' || e.kind === 'progress') && e.label === 'steering skipped - run ended')) {
+    markSteeringSkipped();
+  }
   if (activeGeneration && patch.generation_id && patch.generation_id !== activeGeneration) return;
   scheduleSyncChatTranscript(patch.entries);
   if (patch.usage) renderUsage(patch.usage as ChatUsage);
-  if (patch.finished) {
-    flushScheduledChatTranscript();
-    releaseInFlightTurn();
-  }
 }
 
 async function sendText(text: string, _visibleText = text, _attachments: AttachmentData[] = []) {
@@ -183,10 +209,9 @@ export async function submitSteering() {
   if (steerButton) steerButton.disabled = true;
   try {
     await SteerChat(getSessionID(), message);
-    bubble?.classList.remove('is-pending');
     compose.clear();
     resetComposeSize();
-    showSteeringStatus('Steering queued.');
+    showSteeringStatus('Steering diterapkan setelah tool batch selesai.');
   } catch (err) {
     bubble?.classList.remove('is-pending');
     bubble?.classList.add('is-failed');
@@ -246,6 +271,7 @@ export async function stopActiveResponse() {
   try {
     await StopChat(getSessionID());
     flushScheduledChatTranscript();
+    scheduleRestoreChatHistory(200);
   } catch (err) {
     appendMessage('message--error', errorText(err), getUserGroup());
   }

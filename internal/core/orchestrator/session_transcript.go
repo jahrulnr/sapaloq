@@ -21,9 +21,10 @@ var plannerSummaryRE = regexp.MustCompile(`^<!--sapaloq-planner-summary:([^>]+)-
 type transcriptItem struct {
 	at   time.Time
 	seq  int
-	kind string // turn | tool | task
+	kind string // turn | event | entry
 	turn *chatstore.Turn
 	ev   *bridge.StreamEvent
+	entry *bridge.TranscriptEntry
 }
 
 // SessionTranscript rebuilds the full widget transcript from SQLite turns and
@@ -48,6 +49,12 @@ func (o *Orchestrator) SessionTranscript(ctx context.Context, sessionID string) 
 // LiveSessionTranscript returns persisted transcript plus in-flight coalescer
 // entries for the active generation (assistant block not yet in SQLite).
 func (o *Orchestrator) LiveSessionTranscript(ctx context.Context, sessionID string, live *TranscriptCoalescer) ([]bridge.TranscriptEntry, error) {
+	if o.chat == nil {
+		if live == nil {
+			return nil, nil
+		}
+		return live.EntriesWithPending(), nil
+	}
 	base, err := o.SessionTranscript(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -109,17 +116,29 @@ func mergeTranscriptItems(turns []chatstore.Turn, events []bridge.StreamEvent) [
 	}
 	for i := range events {
 		ev := events[i]
-		if ev.Kind == bridge.EventToolUpdate {
-			if ev.ToolCall == nil || ev.ToolCall.ID == "" {
-				continue
-			}
-			evCopy := events[i]
-			items = append(items, transcriptItem{at: ev.At, kind: "event", ev: &evCopy})
-			continue
-		}
 		if ev.Kind == bridge.EventTaskUpdate {
 			evCopy := events[i]
 			items = append(items, transcriptItem{at: ev.At, kind: "event", ev: &evCopy})
+		}
+	}
+	var toolEvents []bridge.StreamEvent
+	for i := range events {
+		ev := events[i]
+		if ev.Kind == bridge.EventToolCall || ev.Kind == bridge.EventToolUpdate {
+			toolEvents = append(toolEvents, events[i])
+		}
+	}
+	if len(toolEvents) > 0 {
+		genID := ""
+		for _, ev := range toolEvents {
+			if ev.GenerationID != "" {
+				genID = ev.GenerationID
+				break
+			}
+		}
+		for _, entry := range CoalesceEvents(genID, toolEvents) {
+			e := entry
+			items = append(items, transcriptItem{at: e.At, kind: "entry", entry: &e})
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -142,6 +161,10 @@ func mergeTranscriptItems(turns []chatstore.Turn, events []bridge.StreamEvent) [
 
 	var out []bridge.TranscriptEntry
 	for _, item := range items {
+		if item.kind == "entry" && item.entry != nil {
+			out = append(out, *item.entry)
+			continue
+		}
 		if item.kind == "turn" {
 			out = append(out, turnToEntry(*item.turn)...)
 			continue

@@ -177,6 +177,17 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	if unlimitedTurns {
 		turnBudgetLabel = "∞"
 	}
+	steeringPendingAck := false
+	emitSteeringSkipped := func() {
+		if steeringPendingAck {
+			out.emit(runCtx, statusEvent(sessionID, "steering skipped - run ended"))
+			steeringPendingAck = false
+			return
+		}
+		if o.skipPendingSteering(runID) {
+			out.emit(runCtx, statusEvent(sessionID, "steering skipped - run ended"))
+		}
+	}
 
 	for inferenceTurn := 1; unlimitedTurns || inferenceTurn <= maxInferenceTurns; inferenceTurn++ {
 		turnThinking.Reset()
@@ -188,9 +199,13 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 			return all, fmt.Errorf("run stalled: no activity for %d minutes", budget.MaxWallTimeMinutes)
 		}
-		if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
-			cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
+		if messages, applied := o.appendActorEvents(cleanMessages, runID); applied {
+			cleanMessages = messages
+			steeringPendingAck = true
+		}
+		if steeringPendingAck {
 			out.emit(runCtx, statusEvent(sessionID, "steering applied"))
+			steeringPendingAck = false
 		}
 		// Heartbeat at the top of every turn so the health watchdog can tell a
 		// genuinely-working agent (advancing turns) from a wedged goroutine.
@@ -296,11 +311,13 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		var dynamicStop atomic.Bool
 		var dynamicProgress atomic.Bool
 		stream, err := snap.br.Complete(attemptCtx, bridge.Request{
-			SessionID:     sessionID,
-			Messages:      attemptMessages,
-			Model:         snap.entry.Model,
-			DeclaredTools: cfg.tools,
-			Images:        images,
+			SessionID:            sessionID,
+			ConversationScope:    cfg.generationID,
+			ProviderContinuation: inferenceTurn > 1,
+			Messages:             attemptMessages,
+			Model:                snap.entry.Model,
+			DeclaredTools:        cfg.tools,
+			Images:               images,
 			ToolExecutor: func(callCtx context.Context, call parse.ToolCall) (string, error) {
 				outcome := cfg.dispatch(withActorRunID(callCtx, runID), call)
 				if !outcome.handled {
@@ -341,11 +358,20 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// call tools but they failed to parse/execute (the latter must not be
 		// mistaken for a clean tool-less finish).
 		toolCallsThisTurn := 0
+		steeringInterrupted := false
 	streamLoop:
 		for {
 			var ev bridge.StreamEvent
 			select {
 			case <-runCtx.Done():
+				cancelAttempt()
+				break streamLoop
+			case <-o.actorSignal(runID):
+				if messages, applied := o.appendActorEvents(cleanMessages, runID); applied {
+					cleanMessages = messages
+					steeringInterrupted = true
+					steeringPendingAck = true
+				}
 				cancelAttempt()
 				break streamLoop
 			case next, ok := <-stream:
@@ -511,6 +537,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		cancelAttempt()
 		if runCtx.Err() != nil {
+			emitSteeringSkipped()
 			if cfg.recordToolTurns {
 				body := strings.TrimSpace(artifacts.StripModelResponseArtifact(StripCalledToolsMarkers(response.String())))
 				if body != "" && !artifacts.IsAutopilotEcho(body) {
@@ -534,9 +561,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			all.WriteString(tail)
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: tail, At: time.Now().UTC()})
 		}
-		if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
-			cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
-			out.emit(runCtx, statusEvent(sessionID, "steering applied"))
+		if messages, applied := o.appendActorEvents(cleanMessages, runID); applied {
+			cleanMessages = messages
+			steeringPendingAck = true
 		}
 		if len(pendingTools) > 0 && !retryTextOnly && !retryCompacted && !retryTransport && !hadError {
 			beforeCheckpoint, _ := o.latestCheckpointIndex(runCtx, sessionID)
@@ -572,9 +599,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 					lastCompactedMessageCount = len(cleanMessages)
 				}
 			}
-			if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
-				cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
-				out.emit(runCtx, statusEvent(sessionID, "steering applied"))
+			if messages, applied := o.appendActorEvents(cleanMessages, runID); applied {
+				cleanMessages = messages
+				steeringPendingAck = true
 			}
 		}
 		stop = stop || dynamicStop.Load()
@@ -643,7 +670,19 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// A turn that finished without a transport error clears the retry
 		// budget, so an occasional blip during a long run doesn't accumulate.
 		transportRetries = 0
+		if steeringInterrupted {
+			if body := strings.TrimSpace(response.String()); body != "" {
+				cleanMessages = append(cleanMessages, bridge.Message{Role: "assistant", Content: body})
+			}
+			response.Reset()
+			turnThinking.Reset()
+			if thinkingOut != nil {
+				thinkingOut.Reset()
+			}
+			continue
+		}
 		if hadError {
+			emitSteeringSkipped()
 			// The error event itself was already emitted to the sink above;
 			// the dedicated EventDone is what unblocks the chat IPC consumer
 			// (and the widget) - without it, the channel closes silently and
@@ -777,6 +816,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// (turn cap, idle wall-time, MaxToolCalls, toolless-turn budget) are
 		// the only bounds.
 		if stop {
+			emitSteeringSkipped()
 			if cfg.recordToolTurns {
 				final := response.String()
 				if final != "" {
@@ -857,6 +897,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// (EventDone) rather than surfacing a scary "loop detected" error.
 		// budget.MaxNoProgressTurns <= 0 disables this bound entirely.
 		if budget.MaxNoProgressTurns > 0 && toollessBudget <= 0 {
+			emitSteeringSkipped()
 			if cfg.recordToolTurns {
 				o.persistAssistantTurnWithThinking(ctx, persistID, response.String(), cfg.generationID, cfg, &turnThinking)
 			}
@@ -875,9 +916,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// pacing) now lives in the persona system prompt, so the tool turn stays
 		// clean - just <untrusted_data>-wrapped results - which models reason
 		// over best.
-		if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
-			cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
-			out.emit(runCtx, statusEvent(sessionID, "steering applied"))
+		if messages, applied := o.appendActorEvents(cleanMessages, runID); applied {
+			cleanMessages = messages
+			steeringPendingAck = true
 		}
 		toolResultsBody := toolObservationBody(toolResults)
 		if len(toolResults) == 0 {

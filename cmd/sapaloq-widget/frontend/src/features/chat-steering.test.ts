@@ -83,6 +83,7 @@ describe('foreground chat steering', () => {
     expect(document.getElementById('stop-btn')?.hasAttribute('hidden')).toBe(false);
     expect(document.getElementById('send-btn')?.hasAttribute('hidden')).toBe(true);
     expect(document.querySelector('.message--steering')?.textContent).toContain('Use the JSON API instead.');
+    expect(document.querySelector('.message--steering')?.classList.contains('is-pending')).toBe(true);
     expect(compose.isEmpty()).toBe(true);
   });
 

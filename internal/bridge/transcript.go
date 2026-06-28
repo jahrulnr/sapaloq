@@ -47,12 +47,15 @@ type TranscriptEntry struct {
 	WaitSeconds int    `json:"wait_seconds,omitempty"`
 }
 
-// TranscriptPatch is a live snapshot for one chat generation.
+// TranscriptPatch is a live transcript update for one chat generation.
+// Mode "" or "snapshot" carries a full Entries slice; mode "delta" carries Ops.
 type TranscriptPatch struct {
 	SessionID       string            `json:"session_id"`
 	ActorID         string            `json:"actor_id,omitempty"`
 	ParentSessionID string            `json:"parent_session_id,omitempty"`
 	GenerationID    string            `json:"generation_id"`
+	Mode            string            `json:"mode,omitempty"` // "" | snapshot | delta
+	Ops             []TranscriptPatchOp `json:"ops,omitempty"`
 	Entries         []TranscriptEntry `json:"entries"`
 	Finished        bool              `json:"finished,omitempty"`
 	TurnID          int64             `json:"turn_id,omitempty"`
