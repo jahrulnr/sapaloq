@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/config"
@@ -26,8 +28,10 @@ type RuntimeStatus struct {
 	DataPath      string               `json:"data_path"`
 	MemoryPath    string               `json:"memory_path"`
 	StatePath     string               `json:"state_path"`
-	WorkspacePath string               `json:"workspace_path"`
-	Actors        []ActorRuntimeStatus `json:"actors"`
+	WorkspacePath    string               `json:"workspace_path"`
+	SessionID        string               `json:"session_id,omitempty"`
+	SessionWorkspace string               `json:"session_workspace,omitempty"`
+	Actors           []ActorRuntimeStatus `json:"actors"`
 }
 
 func (o *Orchestrator) RuntimeStatus() RuntimeStatus {
@@ -43,6 +47,12 @@ func (o *Orchestrator) RuntimeStatus() RuntimeStatus {
 		MemoryPath:    dirs.MemoryDir,
 		StatePath:     dirs.StateDir,
 		WorkspacePath: dirs.WorkspaceDir,
+	}
+	if o.chat != nil {
+		if sessionID, err := o.ActiveSession(context.Background()); err == nil && strings.TrimSpace(sessionID) != "" {
+			status.SessionID = sessionID
+			status.SessionWorkspace = o.actorCWD(sessionID)
+		}
 	}
 	if o.workers == nil {
 		return status

@@ -122,15 +122,22 @@ export class ComposeBox {
   // before the box's own Enter-submit / pill-delete logic runs. Returning true
   // means the caller consumed the event and the box must do nothing further.
   private onKeyDown: (e: KeyboardEvent) => boolean;
+  private onPaste: (clipboard: DataTransfer | null) => boolean | Promise<boolean>;
 
   constructor(
     el: HTMLElement,
-    handlers: { onChange?: () => void; onSubmit?: () => void; onKeyDown?: (e: KeyboardEvent) => boolean } = {},
+    handlers: {
+      onChange?: () => void;
+      onSubmit?: () => void;
+      onKeyDown?: (e: KeyboardEvent) => boolean;
+      onPaste?: (clipboard: DataTransfer | null) => boolean | Promise<boolean>;
+    } = {},
   ) {
     this.el = el;
     this.onChange = handlers.onChange || (() => {});
     this.onSubmit = handlers.onSubmit || (() => {});
     this.onKeyDown = handlers.onKeyDown || (() => false);
+    this.onPaste = handlers.onPaste || (() => false);
     this.wire();
   }
 
@@ -169,16 +176,12 @@ export class ComposeBox {
         }
       }
     });
-    // Force plain-text paste so foreign HTML never enters the box. File paste is
-    // handled by the caller's clipboard logic (which calls insertAttachment).
+    // All paste paths go through onPaste (plain text, URLs, files, images).
     this.el.addEventListener('paste', (event) => {
-      const e = event as ClipboardEvent;
-      const items = Array.from(e.clipboardData?.items || []);
-      if (items.some((it) => it.kind === 'file')) return; // let caller handle files
-      e.preventDefault();
-      const text = e.clipboardData?.getData('text/plain') || '';
-      this.insertText(text);
-      this.onChange();
+      event.preventDefault();
+      void Promise.resolve(this.onPaste((event as ClipboardEvent).clipboardData)).then((handled) => {
+        if (handled) this.onChange();
+      });
     });
     // Click on a pill's × removes it.
     this.el.addEventListener('click', (event) => {

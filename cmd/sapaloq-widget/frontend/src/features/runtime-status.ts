@@ -1,8 +1,12 @@
 import { RuntimeStatus } from '../../wailsjs/go/main/App';
 import type { ActorRuntimeStatus, RuntimeStatus as RuntimeStatusData } from '../core/types';
+import { getSessionID, setSessionID } from '../core/state';
 import { openTaskMonitor } from '../ui/task-monitor-overlay';
 
 let timer: ReturnType<typeof setInterval> | null = null;
+// Per chat-room workspace cache. Never reuse another session's path when the
+// active room has no persisted cwd yet (switch room / restart race).
+const workspaceBySession = new Map<string, string>();
 
 function shortPath(path: string) {
   const home = path.match(/^\/home\/[^/]+/i)?.[0];
@@ -68,7 +72,34 @@ function actorTile(role: string, actor?: ActorRuntimeStatus) {
   return article;
 }
 
+export function applyWorkspacePath(path: string, sessionID?: string) {
+  const cleaned = path.trim();
+  if (!cleaned) return;
+  const sid = (sessionID || getSessionID()).trim();
+  if (sid) workspaceBySession.set(sid, cleaned);
+  const active = getSessionID().trim();
+  if (active && sid && sid !== active) return;
+  const workspace = document.getElementById('runtime-workspace');
+  const workspaceText = workspace?.querySelector('strong');
+  if (workspace) {
+    workspace.title = cleaned;
+    workspace.dataset.workspacePath = cleaned;
+  }
+  if (workspaceText) workspaceText.textContent = shortPath(cleaned);
+}
+
+function activeWorkspacePath(status: RuntimeStatusData) {
+  const sid = (status.session_id || getSessionID()).trim();
+  const fromCore = (status.session_workspace || '').trim();
+  if (fromCore && sid) workspaceBySession.set(sid, fromCore);
+  if (fromCore) return fromCore;
+  if (sid && workspaceBySession.has(sid)) return workspaceBySession.get(sid)!;
+  return status.workspace_path || '';
+}
+
 export function renderRuntimeStatus(status: RuntimeStatusData) {
+  if (status.session_id) setSessionID(status.session_id);
+
   const model = document.getElementById('runtime-model-name');
   const provider = document.getElementById('runtime-provider');
   if (model) {
@@ -87,10 +118,11 @@ export function renderRuntimeStatus(status: RuntimeStatusData) {
 
   const workspace = document.getElementById('runtime-workspace');
   const workspaceText = workspace?.querySelector('strong');
-  const activeWorkspace = status.actors.find((actor) => actor.role === 'task-runner')?.workspace ||
-    status.actors.find((actor) => actor.role === 'planner')?.workspace ||
-    status.workspace_path;
-  if (workspace && activeWorkspace) workspace.title = activeWorkspace;
+  const activeWorkspace = activeWorkspacePath(status);
+  if (workspace && activeWorkspace) {
+    workspace.title = activeWorkspace;
+    workspace.dataset.workspacePath = activeWorkspace;
+  }
   if (workspaceText && activeWorkspace) workspaceText.textContent = shortPath(activeWorkspace);
 }
 

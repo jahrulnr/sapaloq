@@ -6,7 +6,9 @@ import './style.css';
 import { ComposeBox } from './ui/compose';
 import { APP_TEMPLATE } from './ui/template';
 import { getComposeInput } from './ui/dom';
-import { setCompose, isSubmitting } from './core/state';
+import { ingestComposePaste } from './features/compose-paste';
+import { addFiles } from './features/attachments';
+import { getCompose, setCompose, isSubmitting } from './core/state';
 import {
   cyclePanelSize,
   initWindowLayout,
@@ -16,11 +18,11 @@ import {
 } from './ui/window-layout';
 import { cycleRingState, refreshUsage, runPing, startPingLoop } from './features/connection';
 import { autosizeCompose, toggleComposeExpand } from './ui/compose-ui';
+import { initComposeContextMenu } from './ui/compose-context-menu';
 import { closeMessageMenu } from './features/messages';
 import { refreshSlashSuggest, slashKeydown } from './features/slash';
-import { addClipboardItems, addFiles } from './features/attachments';
 import { initDragAndDrop } from './features/drag-overlay';
-import { initChatController, stopActiveResponse, submitMessage } from './features/chat-controller';
+import { initChatController, stopActiveResponse, submitMessage, submitSteering } from './features/chat-controller';
 import {
   closeHistoryMenu,
   isHistoryMenuOpen,
@@ -32,8 +34,10 @@ import {
   toggleHistoryMenu,
 } from './features/history';
 import { startRuntimeStatusLoop } from './features/runtime-status';
+import { initWorkspacePicker } from './ui/workspace-picker';
 
 document.querySelector('#app')!.innerHTML = APP_TEMPLATE;
+initWorkspacePicker();
 
 void initWindowLayout();
 
@@ -99,9 +103,10 @@ document.getElementById('orb')?.addEventListener('dblclick', (e) => {
   if (!isExpanded()) cycleRingState();
 });
 document.getElementById('send-btn')?.addEventListener('click', () => {
-  if (isSubmitting()) void stopActiveResponse();
-  else void submitMessage();
+  void submitMessage();
 });
+document.getElementById('steer-btn')?.addEventListener('click', () => void submitSteering());
+document.getElementById('stop-btn')?.addEventListener('click', () => void stopActiveResponse());
 document.getElementById('attach-btn')?.addEventListener('click', () => {
   const input = document.getElementById('attach-input') as HTMLInputElement | null;
   input?.click();
@@ -118,21 +123,16 @@ const composeEl = getComposeInput();
 if (composeEl) {
   setCompose(new ComposeBox(composeEl, {
     onChange: () => { autosizeCompose(); void refreshSlashSuggest(); },
-    onSubmit: () => void submitMessage(),
+    onSubmit: () => void (isSubmitting() ? submitSteering() : submitMessage()),
     onKeyDown: (e) => slashKeydown(e),
+    onPaste: (clipboard) => {
+      const compose = getCompose();
+      return compose ? ingestComposePaste(compose, clipboard) : false;
+    },
   }));
+  initComposeContextMenu(composeEl);
 }
 document.getElementById('compose-expand')?.addEventListener('click', () => toggleComposeExpand());
-// File paste is handled here (ComposeBox lets file pastes through); plain-text
-// paste is normalised inside ComposeBox.
-composeEl?.addEventListener('paste', (event) => {
-  const clipboard = (event as ClipboardEvent).clipboardData;
-  const hasFile = Array.from(clipboard?.items || []).some((item) => item.kind === 'file');
-  if (hasFile) {
-    event.preventDefault();
-    void addClipboardItems(clipboard);
-  }
-});
 document.addEventListener('click', (event) => {
   const target = event.target as HTMLElement | null;
   if (!target?.closest('.message-menu') && !target?.closest('.message--user')) closeMessageMenu();
@@ -140,9 +140,10 @@ document.addEventListener('click', (event) => {
 
 document.addEventListener('paste', (event) => {
   if (document.activeElement?.id === 'compose-input') return;
-  const clipboard = (event as ClipboardEvent).clipboardData;
-  if (Array.from(clipboard?.items || []).some((item) => item.kind === 'file')) event.preventDefault();
-  void addClipboardItems(clipboard).then((handled) => {
+  event.preventDefault();
+  const compose = getCompose();
+  if (!compose) return;
+  void ingestComposePaste(compose, (event as ClipboardEvent).clipboardData).then((handled) => {
     if (handled) {
       void setExpanded(true);
       document.getElementById('compose-input')?.focus();

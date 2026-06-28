@@ -11,7 +11,7 @@ import (
 // matching upgrade step in migrationSteps so older configs are upgraded in
 // place. Old JSON formats are always preserved in code (the upgrade steps are
 // additive and idempotent) so a config written by any prior version still loads.
-const CurrentSchemaVersion = "1.4.0"
+const CurrentSchemaVersion = "1.5.0"
 
 // migrationStep upgrades a raw config map from one schema version to the next.
 // from is the version the step applies to; to is the version it produces. Steps
@@ -138,6 +138,13 @@ var migrationSteps = []migrationStep{
 			replaceLegacyPath(raw, []string{"events", "bus", "walPath"}, "~/.config/sapaloq/state/events.jsonl", "~/SapaLOQ/state/events.jsonl")
 		},
 	},
+	{
+		from: "1.4.0",
+		to:   "1.5.0",
+		apply: func(raw map[string]any) {
+			ensureSubAgentMandatoryTools(raw)
+		},
+	},
 }
 
 func replaceLegacyPath(raw map[string]any, path []string, oldValue, newValue string) {
@@ -153,6 +160,54 @@ func replaceLegacyPath(raw map[string]any, path []string, oldValue, newValue str
 	if value, ok := current[key].(string); ok && value == oldValue {
 		current[key] = newValue
 	}
+}
+
+// ensureSubAgentMandatoryTools appends lifecycle tools missing from role
+// allowlists. Older configs omitted sapaloq_stop from planner, which left
+// planners unable to end their run.
+func ensureSubAgentMandatoryTools(raw map[string]any) {
+	required := map[string][]string{
+		"planner":     {"sapaloq_stop"},
+		"task-runner": {"sapaloq_stop", "sapaloq_complete_task", "sapaloq_fail_task"},
+		"scribe":      {"sapaloq_stop", "sapaloq_complete_task", "sapaloq_fail_task"},
+	}
+	subAgents, ok := raw["subAgents"].(map[string]any)
+	if !ok {
+		return
+	}
+	roles, ok := subAgents["roles"].(map[string]any)
+	if !ok {
+		return
+	}
+	for roleName, need := range required {
+		role, ok := roles[roleName].(map[string]any)
+		if !ok {
+			continue
+		}
+		list, ok := role["allowedTools"].([]any)
+		if !ok {
+			continue
+		}
+		role["allowedTools"] = appendMissingStringTools(list, need...)
+	}
+}
+
+func appendMissingStringTools(list []any, need ...string) []any {
+	seen := map[string]bool{}
+	for _, item := range list {
+		if s, ok := item.(string); ok && s != "" {
+			seen[s] = true
+		}
+	}
+	out := append([]any(nil), list...)
+	for _, name := range need {
+		if seen[name] {
+			continue
+		}
+		out = append(out, name)
+		seen[name] = true
+	}
+	return out
 }
 
 func renameNestedKey(raw map[string]any, block, oldKey, newKey string) {

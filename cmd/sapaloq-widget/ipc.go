@@ -120,7 +120,9 @@ type runtimeStatus struct {
 	DataPath      string               `json:"data_path"`
 	MemoryPath    string               `json:"memory_path"`
 	StatePath     string               `json:"state_path"`
-	WorkspacePath string               `json:"workspace_path"`
+	WorkspacePath    string               `json:"workspace_path"`
+	SessionID        string               `json:"session_id,omitempty"`
+	SessionWorkspace string               `json:"session_workspace,omitempty"`
 	Actors        []actorRuntimeStatus `json:"actors"`
 }
 
@@ -378,6 +380,27 @@ func stopChat(socketPath, sessionID string) error {
 	return nil
 }
 
+func steerChat(socketPath, sessionID, message string) error {
+	responses, err := roundTrip(socketPath, ipcRequest{
+		Op:        "chat_steering",
+		SessionID: sessionID,
+		TargetID:  sessionID,
+		Message:   message,
+		Priority:  "normal",
+	})
+	if err != nil {
+		return err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
 func contextUsage(socketPath string) (*chatUsage, error) {
 	responses, err := roundTrip(socketPath, ipcRequest{Op: "context_usage"})
 	if err != nil {
@@ -402,6 +425,7 @@ func runtimeInfo(socketPath string) (*runtimeStatus, error) {
 		Provider: src.Provider, Model: src.Model, Driver: src.Driver,
 		Reasoning: src.Reasoning, ConfigPath: src.ConfigPath, DataPath: src.DataPath,
 		MemoryPath: src.MemoryPath, StatePath: src.StatePath, WorkspacePath: src.WorkspacePath,
+		SessionID: src.SessionID, SessionWorkspace: src.SessionWorkspace,
 	}
 	for _, actor := range src.Actors {
 		out.Actors = append(out.Actors, actorRuntimeStatus{

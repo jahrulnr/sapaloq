@@ -2,7 +2,33 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-27 (**actor unification**: foreground Ask + background planner/agent/scribe share `runActor`/`dispatchTool`/`buildActorMessages` in `actor.go` + `prompt.go`; sub-agent turns persist under `state/tasks/{id}/turns.json`; orphan `in_progress` tasks auto-resume when durable turns exist; widget sub-agent monitor hydrates via `ActorInspect` and live `actor_id` transcript bus patches; context usage pill in monitor header)
+> Last updated: 2026-06-28 (**sub-agent resume**: `sapaloq_resume_task` continues failed/stopped tasks from persisted turns; chat delete purges task artifacts)
+>
+> Prior: 2026-06-28 (**sapaloq_stop agent docs** + RUNTIME sapaloq.sock timeout guide)
+>
+> Prior: 2026-06-28 (**planner stop fix**: mandatory `sapaloq_stop` always offered/permitted; config migration 1.5.0)
+>
+> Prior: 2026-06-28 (**foreground user steering UX**: active Ask keeps compose editable; Steer + Stop queue durable safe-point guidance)
+>
+> Prior: 2026-06-28 (**sub-agent completion follow-up**: speak before task_update bus; widget handles task-stamped response_delta)
+>
+> Prior: 2026-06-28 (**folder drop link fix**: user bubbles run `parseTurnContent` before markdown; `[Local folder: path]` converts to `[name](path)` when backend strips metadata)
+>
+> Prior: 2026-06-28 (**retry purges tools**: chat retry drops stale exec/tool rows from progress JSONL + DOM, not only assistant turns)
+>
+> Prior: 2026-06-28 (**per-session workspace**: WORKSPACE card keyed by chat room; refresh on session switch; no cross-room cache bleed)
+>
+> Prior: 2026-06-28 (**error retry UX**: error ↻ resolves preceding user turn id; retry button survives transcript patches; retry syncs incrementally instead of remounting full history)
+>
+> Prior: 2026-06-28 (**runtime prompt workspace**: `runtimeContextMessage` injects persisted Ask-session cwd into `workspace=` system block, not install default)
+>
+> Prior: 2026-06-28 (**workspace picker**: WORKSPACE runtime card opens native GTK directory dialog; user sets Ask-session cwd via `workspace_set` IPC; hidden dot-directories visible in dialog)
+>
+> Prior: 2026-06-28 (**compose paste fix v2**: unified `ingestComposePaste` uses Wails `ClipboardGetText` for context-menu URL paste; Linux `ClipboardGetImage` reads GTK clipboard for Ctrl+V screenshots when WebKit omits image payloads)
+>
+> Prior: 2026-06-28 (**compose UX fixes**: slash popover no longer steals Enter — Tab accepts suggestions, Enter submits; WebKitGTK image paste via `kind:"string"` + `type:"image/*"` clipboard items; custom compose context menu for Cut/Copy/Paste when the native Linux menu is suppressed in Wails)
+>
+> Prior: 2026-06-27 (**actor unification**: foreground Ask + background planner/agent/scribe share `runActor`/`dispatchTool`/`buildActorMessages` in `actor.go` + `prompt.go`; sub-agent turns persist under `state/tasks/{id}/turns.json`; orphan `in_progress` tasks auto-resume when durable turns exist; widget sub-agent monitor hydrates via `ActorInspect` and live `actor_id` transcript bus patches; context usage pill in monitor header)
 >
 > Prior: 2026-06-26 (**sharpen autopilot continuation + rules.md**: the tool-less autopilot continuation in `conversation.go` and the `rules.md` "Who is speaking" paragraph now close both branches explicitly - continue only if a concrete next step remains for YOU now; if work is finished OR the only remaining work is a background/delegated task you cannot advance, call `sapaloq_stop` immediately. Stopping is framed as a SILENT action (no status recap / sign-off / "nothing left to do" prose - invoking stop IS the whole turn), and rules.md calls out that right after a fire-and-forget delegate the correct reply to the next autopilot turn is almost always an immediate `sapaloq_stop`. Architecture unchanged (markers, EventTurnBoundary, calledToolsNote intact); pure wording. The continuation string deliberately avoids the bare words "tool"/"glob" so the offline cursor mock stream (`streamMock` keys off those substrings) doesn't loop. `conversation_test.go` continuation assertion extended to pin `sapaloq_stop` + `silent` + the `<sapaloq:autopilot>` wrap. Docs: PROMPT-BUILDER-SOP.md rules.md section. See PROMPT-BUILDER-SOP.md)
 >
@@ -29,11 +55,13 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 7 | Plan artifact + handoff | ✅ | `subagent.go` (`write_plan`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment. `ask.md` now states the delegation action order (spawn tool call first, then acknowledge) so a context-sensitive model doesn't narrate the hand-off and END turn without emitting the spawn call |
 | 8 | Plan iteration (revise before finishing) | 🟡 | `write_plan_markdown` is non-terminal; planner can rewrite + read its own plan. Ask prompt requires user review before passing `plan_task_id`, but no approval-gate UI/state machine yet; no post-handoff agent amend |
 | 9 | Clarification loop | ✅ | Two-way: `request_clarification` pauses, `sapaloq_answer_clarification` resumes the paused sub-agent loop (transcript replayed, answer nudge injected). `tasks.go`, `subagent.go`, `tools.go`, `session.go` |
+| 9b | Sub-agent resume (failed/stopped) | ✅ | Ask `sapaloq_resume_task` re-enters same task id from `turns.json`; boot auto-resumes transient `failed`; `DeleteSession` → `purgeSessionTasks`. Parallel spawn unchanged. `task_resume.go`, `tasks.go`, `session.go`, `prompt.go`, `ask.md` |
 | 10 | Vault audit log | ✅ | `internal/vault`, wired via `Orchestrator.auditTool` (`chat.go`) at Ask + sub-agent chokepoints; cursor-bridge logs undeclared calls |
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
-| 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go`. **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
+| 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema + **wire description** via `toolschema.go` + `internal/tooldocs/defaults/*.md` (frontmatter `description` → OpenAI/Claude tool list). **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor` |
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
+| 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering is applied before the next inference after the current tool batch, does not create a chat turn, and its optimistic bubble is UI-only. V1 is normal-priority, foreground-target, text-only |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
 | 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
@@ -50,6 +78,132 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` - the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
 | 30 | codex-bridge driver (wraps the public Codex CLI) | ✅ | `internal/bridges/codex` - spawn-per-turn wrapper over `codex exec --json` + `codex exec resume`; binds only to the documented CLI contract (`CODEX_CLI_CONTRACT.md`), no RE. `bridge.go` (`New`/`ID`/`Caps`/`Complete`/`runTurn`/`composePrompt`/`safeReasoning`/`authOK`), `invoke.go` (typed argv, no `-a`; `--json` precedes `resume`; stdin prompt; image temp files), `stream.go` (tolerant JSONL scanner → `bridge.StreamEvent`; event-authoritative terminal via `scanStream`/`finalizeTerminal` - `turn.failed` with exit 0 still → `EventError`), `session.go` (vault-backed `SessionID→thread_id` store `codex-threads.jsonl` + resume self-heal), `explain.go` (`explainCodexError` mirrors cursor), `proc_unix.go`/`proc_other.go` (process-group kill on cancel). Reuses existing `config.LLMBridge` fields (no new config field); sandbox/cwd/CODEX_HOME default safely and are env-overridable; minimal reasoning-effort downgraded to `low` (incompatible with built-in tools). Registered in `newBridge()`. Offline golden-fixture + tolerant-parser + cancellation tests (`testdata/*.jsonl`); e2e build-tagged + auto-skip without the CLI |
+
+---
+
+## Implemented this session (2026-06-28) - foreground user steering
+
+- **Compose stays usable during Ask.** Running state shows dedicated amber
+  Steer and red Stop actions; Enter queues steering, Shift+Enter inserts a
+  newline, and idle Enter still sends a normal message.
+- **Durable safe-point path.** Wails `SteerChat` sends IPC `chat_steering` to
+  `Orchestrator.UserSteering`. Active-session validation rejects idle, empty,
+  mismatched-target, cancelled, and unsupported-priority requests. Accepted
+  text is stored as `steering.proposed` (`source_id=user`) in the session actor
+  inbox and enters context before the next inference after the current tool
+  batch.
+- **History remains clean.** Steering neither starts a generation nor appends a
+  SQLite chat turn. The optimistic bubble is local to the current widget view;
+  enqueue failure retains the draft and marks the bubble failed. V1 rejects
+  attachments, background targets, and `priority: interrupt`.
+- **Tests:** `user_steering_test.go`, `chat-steering.test.ts`; targeted Go tests,
+  Vitest, and frontend production build pass.
+
+## Implemented this session (2026-06-28) - sub-agent completion speaks into chat
+
+- **Agent/planner finish now surfaces an orchestrator follow-up bubble**, not
+  only a toast/card. Root cause: `task_update` reached the widget before
+  `speakTaskCompletion` persisted the assistant turn, and the live
+  `response_delta` handler was missing after the transcript refactor.
+- **Backend:** `publishTaskUpdateDirect` calls `speakTaskCompletion` before
+  publishing `task_update` on the bus.
+- **Frontend:** `applySpokenTaskCompletion` handles task-stamped
+  `response_delta` from `sapaloq:stream` (deduped via `spokenTaskIDs`).
+- **Tests:** `completion_test.go`, `chat-completion.test.ts`.
+
+## Implemented this session (2026-06-28) - folder drop renders as link in bubble
+
+- **Dropped folders no longer show as raw `[Local folder: /path]` text.** Backend
+  transcript strips attachment metadata but kept the model pointer; the widget
+  now runs `parseTurnContent` before rendering user bubbles and converts those
+  pointers into clickable `[name](path)` markdown links.
+- **Tests:** `compose.test.ts`, `render-user.test.ts`.
+
+## Implemented this session (2026-06-28) - retry purges stale tool rows
+
+- **Chat retry no longer leaves exec/tool bubbles behind.** `RetryChat` now purges
+  matching generations from the session progress JSONL (tools were persisted there
+  but not removed with SQLite turns). Refreshes the live transcript base before
+  regenerating.
+- **Frontend:** `removeRepliesAfterTurn` strips all pane siblings after the user
+  turn (including `.tool-activity`) and clears the tool-activity cache.
+- **Tests:** `chat_retry_test.go`, `history-retry.test.ts`.
+
+## Implemented this session (2026-06-28) - per-session workspace (chat rooms)
+
+- **Each chat room keeps its own WORKSPACE.** Persisted under
+  `state/workspaces/{sessionID}.json`; the widget cache is now keyed by
+  `session_id` (no global fallback that showed the previous room's path after
+  switch or restart).
+- **Session switch / new chat** triggers immediate `refreshRuntimeStatus` so the
+  card reflects the active room's cwd.
+- **Tests:** `workspace_session_test.go`, updated `runtime-status-workspace.test.ts`.
+
+## Implemented this session (2026-06-28) - error retry UX
+
+- **Error ↻ is clickable again.** Live error rows had no user `turn_id` and
+  `patchTranscriptEntry` wiped the inline retry button on every stream update.
+  Retry now resolves the preceding user turn; the button lives outside the
+  markdown body and is re-wired after patches.
+- **Retry only replays the failed turn.** Frontend no longer
+  `mountChatTranscript` on retry (full history flash); it trims replies after the
+  user turn and incrementally `syncChatTranscript` like a normal send.
+- **Tests:** `messages-error.test.ts`.
+
+## Implemented this session (2026-06-28) - runtime prompt workspace injection
+
+- **`workspace=` in the runtime system block now matches the UI card.** Ask turns
+  pass the chat `session_id` into `runtimeContextMessage`; background actors pass
+  their task id. The block uses `actorCWD` (persisted via WORKSPACE picker /
+  `cd` / `workspace_set`) instead of the install default `~/SapaLOQ/workspace`.
+- **Test:** `prompt_runtime_test.go`.
+
+## Implemented this session (2026-06-28) - workspace picker (user-controlled cwd)
+
+- **WORKSPACE card is now user-controlled.** Clicking the runtime WORKSPACE tile
+  opens the OS-native directory chooser via Wails `OpenDirectoryDialog`
+  (`PickWorkspaceFolder` in Go; Nautilus-style on GNOME). Hidden dot-directories
+  are visible; cancel leaves cwd unchanged.
+- **Backend:** `Orchestrator.SetSessionWorkspace` persists Ask cwd via existing
+  `state/workspaces/{sessionID}.json`; IPC op `workspace_set`; `RuntimeStatus`
+  exposes `session_workspace` for the card label (`data-workspace-path` for dialog
+  default).
+- **Tests:** `workspace_set_test.go`, `workspace_path_test.go`,
+  `ui/workspace-picker.test.ts`, `runtime-status-workspace.test.ts`.
+
+## Implemented this session (2026-06-28) - compose paste fix v2 (Wails/GTK clipboard)
+
+- **Context-menu Paste was a no-op.** `execCommand('paste')` returned `true` on
+  WebKitGTK without inserting anything, so the `readText()` fallback never ran.
+  Removed that path. All paste (Ctrl+V and menu Paste) now flows through
+  `features/compose-paste.ts` → `ingestComposePaste`.
+- **URL/text paste via Wails runtime.** When the paste event / `navigator.clipboard`
+  is empty (typical for menu Paste in Wails), fall back to Wails
+  `ClipboardGetText()` which reads the GTK clipboard directly.
+- **Image paste via GTK.** WebKitGTK paste events often omit image bytes. Added
+  Go `ClipboardGetImage()` (`clipboard_linux.go` via `gtk_clipboard_wait_for_image`
+  → PNG) as the last-resort path for Ctrl+V screenshots; frontend inserts an IMG
+  pill from the returned data URI.
+- **Tests:** `compose-paste.test.ts` (DataTransfer text, Wails text fallback,
+  Wails image fallback).
+
+## Implemented this session (2026-06-28) - compose UX: Enter submit, image paste, context menu
+
+- **Slash popover no longer blocks Enter.** `slashKeydown` accepts suggestions on
+  **Tab** only; **Enter** passes through to the compose box submit handler so
+  `/model`, `/help`, etc. can be sent while suggestions are visible. Arrow keys
+  and Escape unchanged. `features/slash.ts`, `features/slash-keyboard.test.ts`.
+- **Ctrl+V image paste on WebKitGTK.** Clipboard screenshots often arrive as
+  `DataTransferItem` with `kind:"string"` + `type:"image/png"` rather than
+  `kind:"file"`. New `features/clipboard.ts` detects attachable clipboard
+  payloads; `addClipboardItems` async-collects image blobs via `getType()`.
+  Compose paste routes files/images through `onPasteAttachable`.
+  `features/clipboard.test.ts`.
+- **Right-click paste menu.** Wails/WebKitGTK frameless windows suppress the
+  native contenteditable context menu on Linux. Added
+  `ui/compose-context-menu.ts` (Undo/Redo/Cut/Copy/Paste/Select all) wired from
+  `main.ts`; Paste reuses `execCommand('paste')` so the same handlers as Ctrl+V
+  run. `style.css` `.compose-context-menu`.
 
 ---
 

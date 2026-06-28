@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	provider "github.com/jahrulnr/sapaloq/internal/bridges/provider"
+	"github.com/jahrulnr/sapaloq/internal/tooldocs"
 )
 
 // Tool profiles per execution mode (see docs/ORCHESTRATOR.md "Ask → Plan →
@@ -36,6 +37,7 @@ var askTools = append(append([]string{
 	"sapaloq_spawn_agent",
 	"sapaloq_spawn_scribe",
 	"sapaloq_get_task_status",
+	"sapaloq_resume_task",
 	"wait",
 	"sapaloq_cancel_job",
 	"sapaloq_answer_clarification",
@@ -144,6 +146,50 @@ func (o *Orchestrator) toolsForRole(role string) []string {
 		// isn't left toolless.
 		return static
 	}
+	return mergeToolOffer(out, mandatoryToolsForRole(role))
+}
+
+// mandatoryToolsForRole lists lifecycle tools that must always be offered and
+// permitted for a sub-agent role, even when config allowedTools omits them.
+// Without sapaloq_stop a planner cannot end its run and autopilot continuations
+// loop forever.
+func mandatoryToolsForRole(role string) []string {
+	switch role {
+	case "planner":
+		return []string{"sapaloq_stop"}
+	case "task-runner", "scribe":
+		return []string{"sapaloq_stop", "sapaloq_complete_task", "sapaloq_fail_task"}
+	default:
+		return nil
+	}
+}
+
+func mergeToolOffer(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	known := knownToolSet()
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	out := make([]string, 0, len(base)+len(extra))
+	add := func(name string) {
+		if name == "" {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		if _, ok := known[name]; !ok {
+			return
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	for _, name := range base {
+		add(name)
+	}
+	for _, name := range extra {
+		add(name)
+	}
 	return out
 }
 
@@ -162,18 +208,30 @@ func knownToolSet() map[string]struct{} {
 // init registers concrete JSON parameter schemas so the upstream model knows
 // the arguments for each tool (instead of an open object).
 func init() {
-	// waitForOutputExempt is the locked set of tools that do NOT get the
-	// wait_for_output argument: their result IS the lifecycle transition
-	// (sapaloq_stop) and cannot be deferred. Every other registered tool gets
-	// the arg injected into its schema.
+	// waitForOutputExempt: lifecycle / meta tools whose result IS the transition
+	// or that manage async jobs directly. They never accept wait_for_output.
 	waitForOutputExempt := map[string]struct{}{
-		"sapaloq_stop": {},
+		"sapaloq_stop":                 {},
+		"sapaloq_complete_task":        {},
+		"sapaloq_fail_task":            {},
+		"request_clarification":        {},
+		"sapaloq_answer_clarification": {},
+		"sapaloq_send_steering":        {},
+		"sapaloq_update_task_progress": {},
+		"sapaloq_get_task_status":      {},
+		"sapaloq_resume_task":          {},
+		"sapaloq_spawn_plan":           {},
+		"sapaloq_spawn_agent":          {},
+		"sapaloq_spawn_scribe":         {},
+		"sapaloq_request_decision":     {},
+		"wait":                         {},
+		"sapaloq_cancel_job":           {},
 	}
 	reg := func(name, schema string) {
 		if _, exempt := waitForOutputExempt[name]; !exempt {
 			schema = injectWaitForOutput(schema)
 		}
-		provider.RegisterToolSchema(name, json.RawMessage(schema))
+		provider.RegisterTool(name, json.RawMessage(schema), tooldocs.Description(name))
 	}
 
 	reg("read_file", `{
@@ -435,6 +493,29 @@ func init() {
 			"job_id":{"type":"string","description":"The job_id returned by a fire-and-forget tool (wait_for_output:false). The host cancels the running job and returns its partial output, if any."}
 		},
 		"required":["job_id"]
+	}`)
+
+	reg("sapaloq_stop", `{
+		"type":"object",
+		"properties":{
+			"scope":{"type":"string","enum":["generation","task","all"],"description":"What to stop. Default generation ends the current foreground run only. task stops a background task by task_id. all stops generation and every session task."},
+			"task_id":{"type":"string","description":"Required when scope=task: the background task id to cancel."},
+			"reason":{"type":"string","description":"Optional short reason recorded in the tool result."}
+		}
+	}`)
+
+	reg("sapaloq_get_task_status", `{
+		"type":"object",
+		"properties":{
+			"task_id":{"type":"string","description":"Background task id to inspect. Omit to use the latest task in the session."}
+		}
+	}`)
+
+	reg("sapaloq_resume_task", `{
+		"type":"object",
+		"properties":{
+			"task_id":{"type":"string","description":"Failed or stopped background task to resume from persisted turns. Omit to resume the latest resumable task in this session."}
+		}
 	}`)
 }
 

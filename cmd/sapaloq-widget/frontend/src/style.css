@@ -430,6 +430,29 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   padding: 6px 8px;
   border-radius: 7px;
 }
+button.runtime-workspace {
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+  width: 100%;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.runtime-workspace--clickable {
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+.runtime-workspace--clickable:hover,
+.runtime-workspace--clickable:focus-visible {
+  border-color: oklch(79% 0.09 235 / 0.55);
+  background: linear-gradient(180deg, oklch(100% 0 0 / 0.09), oklch(100% 0 0 / 0.04));
+  box-shadow: 0 0 0 2px oklch(79% 0.09 235 / 0.12);
+  outline: none;
+}
 
 .runtime-kicker {
   color: var(--subtle);
@@ -447,6 +470,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+  pointer-events: none;
 }
 
 .runtime-model > span:last-child {
@@ -459,6 +483,7 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 }
 
 .runtime-workspace strong { color: oklch(79% 0.09 235); }
+button.runtime-workspace .runtime-kicker { pointer-events: none; }
 
 .runtime-actors {
   min-width: 0;
@@ -701,6 +726,27 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   box-shadow: 0 9px 22px oklch(0% 0 0 / 0.24), inset 0 1px 0 oklch(100% 0 0 / 0.18);
   cursor: default;
 }
+.message--steering {
+  align-self: flex-end;
+  max-width: min(88%, 720px);
+  border: 1px dashed oklch(79% 0.15 78 / 0.5);
+  border-radius: 11px 11px 3px 11px;
+  padding: 8px 11px;
+  color: oklch(91% 0.055 78);
+  background: oklch(79% 0.15 78 / 0.1);
+  font-size: 0.82rem;
+}
+.message--steering::before {
+  content: "STEERING";
+  display: block;
+  margin-bottom: 4px;
+  color: oklch(84% 0.1 78);
+  font-size: 0.54rem;
+  font-weight: 950;
+  letter-spacing: 0.11em;
+}
+.message--steering.is-pending { opacity: 0.72; }
+.message--steering.is-failed { border-color: oklch(67% 0.21 28 / 0.58); color: oklch(88% 0.09 28); }
 .message--user code { color: var(--silver-bright); background: oklch(0% 0 0 / 0.18); }
 .message--user a { color: oklch(94% 0.05 210); text-decoration-color: oklch(100% 0 0 / 0.45); }
 .message--user:focus { outline: 2px solid oklch(100% 0 0 / 0.58); outline-offset: 2px; }
@@ -741,15 +787,21 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   margin-top: 8px;
   user-select: none;
   -webkit-user-select: none;
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
 }
 .message-inline-actions button {
   border: 1px solid oklch(67% 0.21 28 / 0.34);
   border-radius: 999px;
   padding: 3px 8px;
+  min-width: 28px;
+  min-height: 28px;
   color: oklch(88% 0.11 28);
   background: oklch(67% 0.21 28 / 0.1);
   font-size: 0.66rem;
   font-weight: 820;
+  pointer-events: auto;
 }
 .message-inline-actions button:hover { background: oklch(67% 0.21 28 / 0.18); }
 .message-feedback {
@@ -1256,6 +1308,15 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   background: linear-gradient(180deg, oklch(100% 0 0 / 0.1), oklch(100% 0 0 / 0.055));
   box-shadow: 0 0 0 3px oklch(76% 0.15 205 / 0.09);
 }
+.compose-wrap.is-steering {
+  border-color: oklch(79% 0.15 78 / 0.48);
+  background: linear-gradient(180deg, oklch(79% 0.15 78 / 0.09), oklch(100% 0 0 / 0.045));
+  box-shadow: inset 3px 0 0 oklch(79% 0.15 78 / 0.72);
+}
+.compose-wrap.is-steering:focus-within {
+  border-color: oklch(82% 0.15 78 / 0.68);
+  box-shadow: inset 3px 0 0 oklch(79% 0.15 78 / 0.82), 0 0 0 3px oklch(79% 0.15 78 / 0.08);
+}
 .compose-wrap.has-attachments { border-color: oklch(100% 0 0 / 0.3); background: oklch(100% 0 0 / 0.08); }
 .compose-row {
   display: flex;
@@ -1382,6 +1443,16 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   pointer-events: none;
 }
 .popup-compose .compose-input.is-disabled { opacity: 0.58; cursor: wait; }
+.steering-hint {
+  display: none;
+  padding: 0 12px 8px 43px;
+  color: oklch(84% 0.08 78);
+  font-size: 0.63rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.compose-wrap.is-steering .steering-hint { display: block; }
+.steering-hint[data-state='error'] { color: oklch(84% 0.13 28); }
 
 /* Inline attachment pill that lives between the user's words at the caret. */
 .att-pill {
@@ -1460,7 +1531,9 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 }
 
 .attach-btn,
-.send-btn {
+.send-btn,
+.stop-btn,
+.steer-btn {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -1470,7 +1543,9 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   transition: background 160ms ease, color 160ms ease, opacity 160ms ease, transform 120ms ease;
 }
 .attach-btn:active,
-.send-btn:active { transform: scale(0.92); }
+.send-btn:active,
+.stop-btn:active,
+.steer-btn:active { transform: scale(0.92); }
 /* Flat ghost: just an icon, no box - keeps the pill clean like ChatGPT's "+". */
 .attach-btn {
   width: 34px;
@@ -1480,6 +1555,14 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   background: transparent;
 }
 .attach-btn:hover { color: var(--ink); background: oklch(100% 0 0 / 0.08); }
+.attach-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.compose-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.compose-actions button[hidden] { display: none; }
 /* Flat solid circle, no gradient, no glow - calm and cohesive inside the pill. */
 .send-btn {
   width: 34px;
@@ -1491,15 +1574,35 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 }
 .send-btn:hover { background: linear-gradient(145deg, oklch(82% 0.14 205), oklch(72% 0.2 260), oklch(67% 0.22 300)); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.send-btn[data-mode='stop'] {
+.stop-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
   color: oklch(96% 0.02 28);
   background: var(--danger);
 }
-.send-btn[data-mode='stop']:hover { background: oklch(72% 0.21 28); }
+.stop-btn:hover { background: oklch(72% 0.21 28); }
+.steer-btn {
+  height: 34px;
+  gap: 5px;
+  border-radius: 7px;
+  padding: 0 10px;
+  color: oklch(18% 0.025 78);
+  background: oklch(82% 0.15 78);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.42);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+.steer-btn:hover { background: oklch(87% 0.13 78); }
+.steer-btn:disabled { opacity: 0.45; cursor: wait; }
 
 /* Inline stroke icons inside the composer buttons. */
 .attach-btn svg,
-.send-btn svg {
+.send-btn svg,
+.stop-btn svg,
+.steer-btn svg {
   width: 19px;
   height: 19px;
   fill: none;
@@ -1510,7 +1613,8 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
   pointer-events: none;
 }
 /* The stop glyph is a filled rounded square, not a stroked outline. */
-.send-btn[data-mode='stop'] svg { fill: currentColor; stroke: none; }
+.stop-btn svg { fill: currentColor; stroke: none; }
+.steer-btn svg { width: 15px; height: 15px; }
 
 .slash-popover {
   position: absolute;
@@ -1542,6 +1646,38 @@ body.expanded .popup { opacity: 1; transform: translateY(0) scale(1); pointer-ev
 }
 .slash-item strong { display: block; font-size: 0.78rem; }
 .slash-item span { display: block; margin-top: 2px; color: var(--muted); font-size: 0.7rem; }
+
+.compose-context-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: oklch(18% 0.008 255 / 0.99);
+  box-shadow: 0 12px 28px oklch(0% 0 0 / 0.42);
+}
+.compose-context-menu-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 10px;
+  text-align: left;
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.compose-context-menu-item:hover:not(:disabled),
+.compose-context-menu-item:focus-visible:not(:disabled) {
+  background: oklch(100% 0 0 / 0.08);
+  outline: none;
+}
+.compose-context-menu-item:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
 
 .orb {
   position: relative;

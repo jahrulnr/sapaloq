@@ -1,7 +1,7 @@
 # SapaLOQ - Runtime: Single Binary
 
 > **Satu binary Go** - goroutine + channel + persistence lokal. Zero external daemons.
-> Last updated: 2026-06-22 (config/data split, persistent actor workspace, runtime map)
+> Last updated: 2026-06-28 (sapaloq.sock IPC timeout troubleshooting; sapaloq_stop scope docs for agents)
 
 Related: [EVENT-BUS.md](./EVENT-BUS.md) · [VISION.md](./VISION.md)
 
@@ -130,6 +130,16 @@ restart are marked cancelled with an explicit restart reason. Cross-actor
 steering is persisted under `state/actor-inbox/<actor-id>/*.json` and consumed
 at inference safe points.
 
+The widget queues foreground corrections through IPC `chat_steering`
+(`session_id`, text `message`, optional matching `target_id`, priority
+`normal`). `Orchestrator.UserSteering` accepts the request only while that
+session has an active foreground generation, then writes
+`steering.proposed` with `source_id=user` to
+`state/actor-inbox/<session-id>/*.json`. The run drains it before the next
+provider inference, after the current tool batch has completed. Steering does
+not start a generation or append a chat turn. `priority: interrupt` and
+background-actor targets are not implemented in this IPC path.
+
 Config and runtime data are intentionally separate. `SAPALOQ_CONFIG` controls
 only the config file path (default `~/.config/sapaloq/config.json`). The default
 runtime root is `~/SapaLOQ`; schema migration 1.4 rewrites only legacy shipped
@@ -219,6 +229,39 @@ An absent `vault` block uses the defaults (the cursor-bridge writer inherits the
 
 ---
 
+## Widget IPC (`sapaloq.sock`) — `i/o timeout`
+
+Path default: `~/SapaLOQ/run/sapaloq.sock` (`events.bus.socketPath`). The widget is a thin client; every ping, history load, and chat op goes over this unix socket.
+
+### Timeouts (widget client)
+
+| Phase | Limit | Ops |
+|-------|-------|-----|
+| Dial | **500 ms** | All ops — fails fast if core is down or not accepting |
+| Read/write on connection | **3 s** | ping, `chat_history`, `context_usage`, `actor_inspect`, `session_*`, … |
+| Read on connection | **35 min** | `chat_send`, `chat_retry` (covers long LLM streams) |
+
+Server write deadline per frame: **5 s** (`internal/ipc/server.go`).
+
+### What the error usually means
+
+| Message | Likely cause |
+|---------|----------------|
+| `dial …/sapaloq.sock: connect: connection refused` | `sapaloq-core` not running |
+| `dial …/sapaloq.sock: i/o timeout` | Core not accepting within 500 ms (slow boot, stale socket file, overloaded host) |
+| `read unix …/sapaloq.sock: i/o timeout` | Core did not finish a **non-chat** IPC handler within **3 s** |
+
+Chat streaming itself uses the 35-minute deadline — a slow model reply does **not** hit the 3 s cap. The 3 s timeout shows up on **side calls** while core is busy: ping (every 4 s), context usage (every 15 s), opening sub-agent monitor (`actor_inspect`), loading a large `chat_history`, or SQLite work during compaction.
+
+### What to do
+
+1. Confirm core is up: `sapaloq-core run` (or your systemd unit).
+2. `sapaloq-core doctor` — socket path writable, config loads.
+3. Transient timeouts during heavy chat/sub-agent load often clear on the next ping; widget marks the conn dot reconnecting.
+4. Persistent timeouts while idle → check core stderr for a wedged IPC handler or disk I/O on `~/SapaLOQ/state/`.
+
+---
+
 ## `sapaloq-core doctor` (no-UI recovery)
 
 Minimum CLI for config/infra validation when widget unavailable:
@@ -238,9 +281,10 @@ sapaloq-core doctor --json       # machine-readable exit payload
 
 Config **schema migration** is implemented: `Load` decodes to a raw map, runs
 an ordered upgrade chain (`internal/config/migrate.go`,
-`CurrentSchemaVersion = 1.4.0`; lower → upgrade + persist, equal → no-op,
+`CurrentSchemaVersion = 1.5.0`; lower → upgrade + persist, equal → no-op,
 higher → load as-is) before unmarshalling. The 1.2 migration aligns active
-`skills.dir`, `prompts.dir`, and `events.bus.walPath` names. Still planned:
+`skills.dir`, `prompts.dir`, and `events.bus.walPath` names; **1.5.0** appends
+missing lifecycle tools (`sapaloq_stop`, etc.) to sub-agent `allowedTools`. Still planned:
 `os.json` regeneration checks and a unified SQL migration runner.
 `maxParallelTools` is additive and receives its default through
 `OrchestratorConfig.WithDefaults`, so existing 1.2 configs do not require a

@@ -346,16 +346,16 @@ func claudePartsForMessage(msg bridge.Message, attachImages bool, images []bridg
 }
 
 // buildOpenAITools converts the declared tool name list into OpenAI tool
-// definitions. We don't have per-tool JSON schemas, so we accept any
-// parameters object.
+// definitions with registered JSON schemas and wire descriptions.
 func buildOpenAITools(names []string) []openAITool {
 	out := make([]openAITool, 0, len(names))
 	for _, name := range names {
 		out = append(out, openAITool{
 			Type: "function",
 			Function: openAIFunc{
-				Name:       name,
-				Parameters: toolSchemaFor(name),
+				Name:        name,
+				Description: toolDescriptionFor(name),
+				Parameters:    toolSchemaFor(name),
 			},
 		})
 	}
@@ -369,6 +369,7 @@ func buildClaudeTools(names []string) []claudeTool {
 	for _, name := range names {
 		out = append(out, claudeTool{
 			Name:        name,
+			Description: toolDescriptionFor(name),
 			InputSchema: toolSchemaFor(name),
 		})
 	}

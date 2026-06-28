@@ -1,7 +1,7 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-27 (Actor model: `runActor` unifies Ask + planner/agent/scribe; durable turns under `state/tasks/{id}/turns.json`; orphan auto-resume)
+> Last updated: 2026-06-28 (sub-agent resume: `sapaloq_resume_task`, session delete purges task artifacts)
 
 ---
 
@@ -16,7 +16,7 @@ Foreground **Ask** and background **planner / task-runner / scribe** share one i
 | Tools | `dispatchTool` → `dispatchAskTool` (orchestrator) or `runBackgroundTool` (lifecycle) |
 | Policy | `policyForRole` / `resolveActorOutcome` (`actor_policy.go`) |
 | Persist | `turns.json` + `checkpoints.json` beside `status.json` for `task-*` actors |
-| Resume | `recoverOrphanedTasks` auto-resumes `in_progress` tasks when turns exist |
+| Resume | `recoverOrphanedTasks` auto-resumes `in_progress` tasks when turns exist; Ask calls `sapaloq_resume_task` for `failed`/`stopped` tasks with turns; `DeleteSession` purges `state/tasks/{id}/` for that chat |
 
 Roles differ only by **system prompt**, **tool profile** (`tools.go`), and **terminal policy**.
 
@@ -49,6 +49,13 @@ Roles differ only by **system prompt**, **tool profile** (`tools.go`), and **ter
 - **Cross-actor steering** - `sapaloq_send_steering` writes a durable target
   inbox. The target folds events into its context only at an inference safe
   point. `sapaloq_wait_events` is the explicit dependency primitive.
+- **Foreground user steering** - IPC `chat_steering` calls
+  `UserSteering(ctx, sessionID, message)`. It requires an active Ask generation
+  for that session and writes `steering.proposed` with `source_id=user` to the
+  same session inbox. The shared turn loop drains it before the next
+  `Complete()`, so a tool batch already running finishes first. It is control
+  input only: no new generation and no SQLite user turn. V1 supports normal
+  priority and the foreground session target only.
 - **Decision mediation** - Planner/Agent questions first spawn an invisible
   mediator sharing a bounded session/task snapshot. It cannot write chat. Only
   unresolved decisions emit `decision.escalated` and reach the UI orchestrator.
@@ -224,6 +231,12 @@ agent:
 ```
 
 Provider `declaredTools` should be generated from this role profile. Static per-provider `declaredTools` remains a compatibility fallback only.
+
+**Per-tool wire descriptions.** Each registered tool has a Markdown doc under `internal/tooldocs/defaults/<name>.md`. The YAML frontmatter `description` field is embedded at build time and sent upstream as OpenAI `function.description` / Claude `tool.description` alongside the JSON parameter schema from `tools.go` init (`provider.RegisterTool`). Role prompts (`ask.md`, `planner.md`, `agent.md`) keep behavioral policy; tool docs close the selection-time gap so the model sees name + description + parameters together. Lifecycle/meta tools (`sapaloq_stop`, spawn, wait, …) omit the injected `wait_for_output` schema property; work tools include it.
+
+**Mandatory lifecycle tools.** `toolsForRole` always merges `sapaloq_stop` (planner/executor/scribe) and terminal task tools for executors, even when `subAgents.roles.*.allowedTools` omits them—so a restrictive config cannot brick sub-agent completion. Config migration `1.5.0` backfills missing entries on disk.
+
+**`sapaloq_stop` scopes.** Documented in `internal/tooldocs/defaults/sapaloq_stop.md` (wire description + extended contract). Default/`generation` stops only the caller's run (Ask foreground turn; sub-agent self-stop). Ask may use `scope=task`/`all` as explicit supervisor abort—see `ask.md` § scopes.
 
 Runtime enforcement rule: reusable/shared tool implementations still pass
 through the active role allowlist before execution. `exec` is expected

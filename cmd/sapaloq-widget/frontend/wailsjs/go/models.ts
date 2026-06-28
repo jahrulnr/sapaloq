@@ -228,6 +228,22 @@ export namespace main {
 		}
 	}
 	
+	export class clipboardImage {
+	    data_uri: string;
+	    mime: string;
+	    size: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new clipboardImage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.data_uri = source["data_uri"];
+	        this.mime = source["mime"];
+	        this.size = source["size"];
+	    }
+	}
 	export class droppedFile {
 	    path?: string;
 	    name: string;
@@ -286,6 +302,8 @@ export namespace main {
 	    memory_path: string;
 	    state_path: string;
 	    workspace_path: string;
+	    session_id?: string;
+	    session_workspace?: string;
 	    actors: actorRuntimeStatus[];
 	
 	    static createFrom(source: any = {}) {
@@ -303,6 +321,8 @@ export namespace main {
 	        this.memory_path = source["memory_path"];
 	        this.state_path = source["state_path"];
 	        this.workspace_path = source["workspace_path"];
+	        this.session_id = source["session_id"];
+	        this.session_workspace = source["session_workspace"];
 	        this.actors = this.convertValues(source["actors"], actorRuntimeStatus);
 	    }
 	
@@ -466,6 +486,24 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class workspaceSetResult {
+	    ok: boolean;
+	    session_id?: string;
+	    path?: string;
+	    message?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new workspaceSetResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.session_id = source["session_id"];
+	        this.path = source["path"];
+	        this.message = source["message"];
+	    }
 	}
 
 }

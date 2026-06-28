@@ -2,6 +2,8 @@
 import { ChatHistory, ContextUsage, DeleteSession, ListSessions, NewSession, SwitchSession } from '../../wailsjs/go/main/App';
 import type { ChatUsage, SessionSummary } from '../core/types';
 import { applyChatResetFromBE } from './apply-session-reset';
+import { clearToolActivityCache } from './messages';
+import { refreshRuntimeStatus } from './runtime-status';
 import { clearMessages } from './messages';
 import { renderUsage } from './connection';
 import { mountChatTranscript, resetChatTranscriptState } from './transcript-pane';
@@ -49,26 +51,28 @@ export function removeRepliesAfterTurn(turnID: number): number {
   const target = list.querySelector<HTMLElement>(`[data-turn-id="${turnID}"]`);
   if (!target) return getUserGroup();
   const group = Number(target.dataset.group || getUserGroup());
-  let seen = false;
-  Array.from(list.querySelectorAll<HTMLElement>('.transcript-entry, .message')).forEach((node) => {
-    if (node === target || node.contains(target)) seen = true;
-    if (seen && node !== target && !target.contains(node)) node.remove();
-    else if (!seen && node.contains(target)) {
-      let n: HTMLElement | null = target;
-      while (n?.nextElementSibling) {
-        const next = n.nextElementSibling as HTMLElement;
-        next.remove();
-      }
-    }
-  });
   const pane = list.querySelector('.transcript-pane');
-  if (pane && target.parentElement === pane) {
+  if (pane && pane.contains(target)) {
     let found = false;
     Array.from(pane.children).forEach((child) => {
       if (child === target) found = true;
       else if (found) child.remove();
     });
+  } else {
+    let seen = false;
+    Array.from(list.querySelectorAll<HTMLElement>('.transcript-entry, .message, .tool-activity')).forEach((node) => {
+      if (node === target || node.contains(target)) seen = true;
+      if (seen && node !== target && !target.contains(node)) node.remove();
+      else if (!seen && node.contains(target)) {
+        let n: HTMLElement | null = target;
+        while (n?.nextElementSibling) {
+          const next = n.nextElementSibling as HTMLElement;
+          next.remove();
+        }
+      }
+    });
   }
+  clearToolActivityCache();
   return group;
 }
 
@@ -209,6 +213,7 @@ export async function toggleHistoryMenu() {
 async function refreshAfterSessionChange() {
   await restoreChatHistory();
   await loadSessionList();
+  void refreshRuntimeStatus();
   try {
     renderUsage((await ContextUsage()) as ChatUsage);
   } catch {
@@ -268,6 +273,7 @@ export async function startNewSession() {
     });
     setSwitcherLabel(DEFAULT_LABEL);
     void loadSessionList();
+    void refreshRuntimeStatus();
     try {
       renderUsage((await ContextUsage()) as ChatUsage);
     } catch {

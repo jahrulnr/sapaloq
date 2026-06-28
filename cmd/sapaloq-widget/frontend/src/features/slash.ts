@@ -1,6 +1,6 @@
 // Slash-command suggestion popover. Detects an active `/query` at the caret and
 // renders matching command suggestions returned by the core. Supports keyboard
-// navigation: ArrowUp/Down moves the highlighted item, Tab/Enter accepts it,
+// navigation: ArrowUp/Down moves the highlight, Tab accepts it, Enter submits.
 // Escape closes the popover. Mouse click still accepts an item directly.
 import { SlashSuggest } from '../../wailsjs/go/main/App';
 import type { CommandEntry } from '../core/types';
@@ -87,7 +87,6 @@ export function slashKeydown(e: KeyboardEvent): boolean {
       paintActive();
       return true;
     case 'Tab':
-    case 'Enter':
       e.preventDefault();
       acceptActive();
       return true;

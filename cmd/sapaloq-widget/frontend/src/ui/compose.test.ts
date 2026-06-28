@@ -88,4 +88,12 @@ describe('parseTurnContent - restored bubbles keep the link', () => {
     expect(parsed.text).not.toContain('[Local folder:');
     expect(parsed.attachments.some((a) => a.name === 'sapaloq' && a.isDir)).toBe(true);
   });
+
+  it('reconstructs a folder link when backend already stripped metadata markers', () => {
+    const parsed = parseTurnContent(
+      'sebelumnya, kamu pernah bikin [Local folder: /apps/template/profile] template.',
+    );
+    expect(parsed.text).toContain('[profile](/apps/template/profile)');
+    expect(parsed.text).not.toContain('[Local folder:');
+  });
 });

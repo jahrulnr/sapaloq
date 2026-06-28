@@ -10,6 +10,10 @@ export function ChatHistory() {
   return window['go']['main']['App']['ChatHistory']();
 }
 
+export function ClipboardGetImage() {
+  return window['go']['main']['App']['ClipboardGetImage']();
+}
+
 export function ContextUsage() {
   return window['go']['main']['App']['ContextUsage']();
 }
@@ -46,6 +50,10 @@ export function OpenExternal(arg1) {
   return window['go']['main']['App']['OpenExternal'](arg1);
 }
 
+export function PickWorkspaceFolder(arg1) {
+  return window['go']['main']['App']['PickWorkspaceFolder'](arg1);
+}
+
 export function PingCore() {
   return window['go']['main']['App']['PingCore']();
 }
@@ -66,12 +74,20 @@ export function SendMessage(arg1, arg2) {
   return window['go']['main']['App']['SendMessage'](arg1, arg2);
 }
 
+export function SetWorkspace(arg1, arg2) {
+  return window['go']['main']['App']['SetWorkspace'](arg1, arg2);
+}
+
 export function SlashSuggest(arg1) {
   return window['go']['main']['App']['SlashSuggest'](arg1);
 }
 
 export function SocketPath() {
   return window['go']['main']['App']['SocketPath']();
+}
+
+export function SteerChat(arg1, arg2) {
+  return window['go']['main']['App']['SteerChat'](arg1, arg2);
 }
 
 export function StopChat(arg1) {

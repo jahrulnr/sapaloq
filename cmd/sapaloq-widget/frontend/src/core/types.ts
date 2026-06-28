@@ -40,5 +40,7 @@ export type RuntimeStatus = {
   state_path: string;
   workspace_path: string;
   actors: ActorRuntimeStatus[];
+  session_id?: string;
+  session_workspace?: string;
 };
 export type PendingAttachment = { name: string; type: string; size: number; path?: string; dataURI?: string; text?: string; isDir?: boolean };

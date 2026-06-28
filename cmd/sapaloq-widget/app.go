@@ -140,6 +140,11 @@ func (a *App) StopChat(sessionID string) error {
 	return stopChat(a.socketPath, sessionID)
 }
 
+// SteerChat queues text guidance for the next safe point of the active Ask run.
+func (a *App) SteerChat(sessionID string, message string) error {
+	return steerChat(a.socketPath, sessionID, message)
+}
+
 // SubmitFeedback records an explicit 👍/👎 reward for an assistant turn. signal
 // is "up" or "down"; correction is an optional note (used on 👎) that becomes
 // negative guidance for future turns.
@@ -153,6 +158,11 @@ func (a *App) ContextUsage() (*chatUsage, error) {
 
 func (a *App) RuntimeStatus() (*runtimeStatus, error) {
 	return runtimeInfo(a.socketPath)
+}
+
+// SetWorkspace persists the active chat session workspace (Ask actor cwd).
+func (a *App) SetWorkspace(sessionID, path string) (workspaceSetResult, error) {
+	return setWorkspace(a.socketPath, sessionID, path)
 }
 
 // TaskInspect returns the durable state + a tail of a sub-agent's progress
@@ -202,6 +212,19 @@ func (a *App) SocketPath() string {
 // SyncInputShape updates GTK input region (Linux: circle when collapsed).
 func (a *App) SyncInputShape(collapsed bool) {
 	scheduleInputShape(collapsed)
+}
+
+// clipboardImage is returned when the system clipboard holds a raster image.
+type clipboardImage struct {
+	DataURI string `json:"data_uri"`
+	MIME    string `json:"mime"`
+	Size    int    `json:"size"`
+}
+
+// ClipboardGetImage reads a PNG snapshot of the current clipboard image, if any.
+// WebKitGTK paste events often omit image payloads; GTK clipboard is authoritative on Linux.
+func (a *App) ClipboardGetImage() (*clipboardImage, error) {
+	return clipboardGetImageLinux()
 }
 
 // droppedFile is the payload returned by ReadDroppedFile for the frontend.

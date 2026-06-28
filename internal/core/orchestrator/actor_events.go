@@ -25,6 +25,39 @@ type actorControlEvent struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// UserSteering queues a text correction for the next safe point of an active
+// foreground Ask run. Steering is actor control input, not a new chat turn, so
+// it is persisted only in the session actor inbox.
+func (o *Orchestrator) UserSteering(ctx context.Context, sessionID, message string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	message = strings.TrimSpace(message)
+	if sessionID == "" {
+		return fmt.Errorf("session_id is required")
+	}
+	if message == "" {
+		return fmt.Errorf("steering message is required")
+	}
+
+	o.activeMu.Lock()
+	active := o.active != nil && o.active[sessionID] != nil
+	o.activeMu.Unlock()
+	if !active {
+		return fmt.Errorf("no active foreground generation for session %s", sessionID)
+	}
+
+	return o.enqueueActorEvent(actorControlEvent{
+		Kind:      "steering.proposed",
+		SessionID: sessionID,
+		SourceID:  "user",
+		TargetID:  sessionID,
+		Message:   message,
+		Priority:  "normal",
+	})
+}
+
 func (o *Orchestrator) actorInboxRoot(targetID string) string {
 	root := o.stateDir
 	if root == "" {
