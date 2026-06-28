@@ -239,7 +239,7 @@ func TestMigrate130MovesOnlyDefaultRuntimePaths(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("migrateRaw changed=%v err=%v", changed, err)
 	}
-	if out["schemaVersion"] != "1.4.0" {
+	if out["schemaVersion"] != "1.5.0" {
 		t.Fatalf("schemaVersion = %v", out["schemaVersion"])
 	}
 	if out["runtime"].(map[string]any)["dataDir"] != "~/SapaLOQ" {
@@ -265,5 +265,36 @@ func TestMigrate130PreservesCustomRuntimePaths(t *testing.T) {
 	}
 	if out["skills"].(map[string]any)["dir"] != "/srv/sapaloq-skills" {
 		t.Fatalf("custom skills path changed: %+v", out["skills"])
+	}
+}
+
+func TestMigrate150AddsMandatoryStopToPlanner(t *testing.T) {
+	raw := map[string]any{
+		"schemaVersion": "1.4.0",
+		"subAgents": map[string]any{
+			"roles": map[string]any{
+				"planner": map[string]any{
+					"allowedTools": []any{"read_file", "write_plan"},
+				},
+			},
+		},
+	}
+	out, changed, err := migrateRaw(raw)
+	if err != nil || !changed {
+		t.Fatalf("migrateRaw changed=%v err=%v", changed, err)
+	}
+	if out["schemaVersion"] != "1.5.0" {
+		t.Fatalf("schemaVersion = %v", out["schemaVersion"])
+	}
+	list := out["subAgents"].(map[string]any)["roles"].(map[string]any)["planner"].(map[string]any)["allowedTools"].([]any)
+	got := map[string]bool{}
+	for _, v := range list {
+		got[v.(string)] = true
+	}
+	if !got["sapaloq_stop"] {
+		t.Fatalf("planner allowlist missing sapaloq_stop: %v", list)
+	}
+	if !got["read_file"] || !got["write_plan"] {
+		t.Fatalf("existing tools dropped: %v", list)
 	}
 }

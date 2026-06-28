@@ -86,6 +86,10 @@ export function SocketPath() {
   return window['go']['main']['App']['SocketPath']();
 }
 
+export function SteerChat(arg1, arg2) {
+  return window['go']['main']['App']['SteerChat'](arg1, arg2);
+}
+
 export function StopChat(arg1) {
   return window['go']['main']['App']['StopChat'](arg1);
 }

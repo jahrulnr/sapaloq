@@ -1,6 +1,6 @@
 // The root #app markup for the dock (orb + popup chat panel). Kept as a single
 // template so main.ts stays a thin wiring/bootstrap module.
-import { ICON_CARET, ICON_EXPAND, ICON_HISTORY, ICON_NEW_CHAT, ICON_SEND } from './icons';
+import { ICON_CARET, ICON_EXPAND, ICON_HISTORY, ICON_NEW_CHAT, ICON_SEND, ICON_STOP } from './icons';
 
 export const APP_TEMPLATE = `
   <div class="dock">
@@ -54,8 +54,13 @@ export const APP_TEMPLATE = `
           <div class="compose-row">
             <button type="button" class="attach-btn" id="attach-btn" aria-label="Attach file" title="Attach file"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
             <div id="compose-input" class="compose-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Ask anything"></div>
-            <button type="button" class="send-btn" id="send-btn" aria-label="Kirim">${ICON_SEND}</button>
+            <div class="compose-actions">
+              <button type="button" class="stop-btn" id="stop-btn" aria-label="Stop response" title="Stop response" hidden>${ICON_STOP}</button>
+              <button type="button" class="steer-btn" id="steer-btn" aria-label="Kirim steering" title="Kirim steering" hidden><span>Steer</span>${ICON_SEND}</button>
+              <button type="button" class="send-btn" id="send-btn" aria-label="Kirim">${ICON_SEND}</button>
+            </div>
           </div>
+          <div class="steering-hint" id="steering-hint" role="status" aria-live="polite">Steering diterapkan setelah tool batch selesai.</div>
           <input type="file" id="attach-input" class="attach-input" multiple aria-hidden="true" tabindex="-1">
         </div>
       </footer>

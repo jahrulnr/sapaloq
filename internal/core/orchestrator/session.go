@@ -161,6 +161,7 @@ func (o *Orchestrator) DeleteSession(ctx context.Context, sessionID string) (str
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+	o.purgeSessionTasks(sessionID)
 	if err := o.chat.DeleteSession(ctx, sessionID); err != nil {
 		return "", false, err
 	}

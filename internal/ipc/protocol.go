@@ -15,6 +15,8 @@ type Request struct {
 	TaskID     string `json:"task_id,omitempty"`
 	AfterLine  int    `json:"after_line,omitempty"`
 	Scope      string `json:"scope,omitempty"`
+	TargetID   string `json:"target_id,omitempty"`
+	Priority   string `json:"priority,omitempty"`
 	Query      string `json:"query,omitempty"`
 	Signal     string `json:"signal,omitempty"`
 	Correction string `json:"correction,omitempty"`

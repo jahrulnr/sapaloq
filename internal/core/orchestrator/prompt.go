@@ -624,6 +624,10 @@ func (o *Orchestrator) buildBackgroundActorMessages(ctx context.Context, record 
 			Content: "Answer to your clarification question: " + strings.TrimSpace(record.Answer) + "\nContinue the task using this answer.",
 		})
 	}
+	if nudge := strings.TrimSpace(record.ResumeNudge); nudge != "" {
+		messages = append(messages, bridge.Message{Role: "user", Content: nudge})
+		record.ResumeNudge = ""
+	}
 	return messages
 }
 

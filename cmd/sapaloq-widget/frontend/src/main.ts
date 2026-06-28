@@ -22,7 +22,7 @@ import { initComposeContextMenu } from './ui/compose-context-menu';
 import { closeMessageMenu } from './features/messages';
 import { refreshSlashSuggest, slashKeydown } from './features/slash';
 import { initDragAndDrop } from './features/drag-overlay';
-import { initChatController, stopActiveResponse, submitMessage } from './features/chat-controller';
+import { initChatController, stopActiveResponse, submitMessage, submitSteering } from './features/chat-controller';
 import {
   closeHistoryMenu,
   isHistoryMenuOpen,
@@ -103,9 +103,10 @@ document.getElementById('orb')?.addEventListener('dblclick', (e) => {
   if (!isExpanded()) cycleRingState();
 });
 document.getElementById('send-btn')?.addEventListener('click', () => {
-  if (isSubmitting()) void stopActiveResponse();
-  else void submitMessage();
+  void submitMessage();
 });
+document.getElementById('steer-btn')?.addEventListener('click', () => void submitSteering());
+document.getElementById('stop-btn')?.addEventListener('click', () => void stopActiveResponse());
 document.getElementById('attach-btn')?.addEventListener('click', () => {
   const input = document.getElementById('attach-input') as HTMLInputElement | null;
   input?.click();
@@ -122,7 +123,7 @@ const composeEl = getComposeInput();
 if (composeEl) {
   setCompose(new ComposeBox(composeEl, {
     onChange: () => { autosizeCompose(); void refreshSlashSuggest(); },
-    onSubmit: () => void submitMessage(),
+    onSubmit: () => void (isSubmitting() ? submitSteering() : submitMessage()),
     onKeyDown: (e) => slashKeydown(e),
     onPaste: (clipboard) => {
       const compose = getCompose();

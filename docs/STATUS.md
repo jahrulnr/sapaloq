@@ -2,7 +2,15 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**sub-agent completion follow-up**: speak before task_update bus; widget handles task-stamped response_delta)
+> Last updated: 2026-06-28 (**sub-agent resume**: `sapaloq_resume_task` continues failed/stopped tasks from persisted turns; chat delete purges task artifacts)
+>
+> Prior: 2026-06-28 (**sapaloq_stop agent docs** + RUNTIME sapaloq.sock timeout guide)
+>
+> Prior: 2026-06-28 (**planner stop fix**: mandatory `sapaloq_stop` always offered/permitted; config migration 1.5.0)
+>
+> Prior: 2026-06-28 (**foreground user steering UX**: active Ask keeps compose editable; Steer + Stop queue durable safe-point guidance)
+>
+> Prior: 2026-06-28 (**sub-agent completion follow-up**: speak before task_update bus; widget handles task-stamped response_delta)
 >
 > Prior: 2026-06-28 (**folder drop link fix**: user bubbles run `parseTurnContent` before markdown; `[Local folder: path]` converts to `[name](path)` when backend strips metadata)
 >
@@ -47,11 +55,13 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 7 | Plan artifact + handoff | ✅ | `subagent.go` (`write_plan`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment. `ask.md` now states the delegation action order (spawn tool call first, then acknowledge) so a context-sensitive model doesn't narrate the hand-off and END turn without emitting the spawn call |
 | 8 | Plan iteration (revise before finishing) | 🟡 | `write_plan_markdown` is non-terminal; planner can rewrite + read its own plan. Ask prompt requires user review before passing `plan_task_id`, but no approval-gate UI/state machine yet; no post-handoff agent amend |
 | 9 | Clarification loop | ✅ | Two-way: `request_clarification` pauses, `sapaloq_answer_clarification` resumes the paused sub-agent loop (transcript replayed, answer nudge injected). `tasks.go`, `subagent.go`, `tools.go`, `session.go` |
+| 9b | Sub-agent resume (failed/stopped) | ✅ | Ask `sapaloq_resume_task` re-enters same task id from `turns.json`; boot auto-resumes transient `failed`; `DeleteSession` → `purgeSessionTasks`. Parallel spawn unchanged. `task_resume.go`, `tasks.go`, `session.go`, `prompt.go`, `ask.md` |
 | 10 | Vault audit log | ✅ | `internal/vault`, wired via `Orchestrator.auditTool` (`chat.go`) at Ask + sub-agent chokepoints; cursor-bridge logs undeclared calls |
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
-| 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema via `toolschema.go`. **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
+| 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema + **wire description** via `toolschema.go` + `internal/tooldocs/defaults/*.md` (frontmatter `description` → OpenAI/Claude tool list). **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor` |
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
+| 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering is applied before the next inference after the current tool batch, does not create a chat turn, and its optimistic bubble is UI-only. V1 is normal-priority, foreground-target, text-only |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
 | 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
@@ -70,6 +80,24 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (wraps the public Codex CLI) | ✅ | `internal/bridges/codex` - spawn-per-turn wrapper over `codex exec --json` + `codex exec resume`; binds only to the documented CLI contract (`CODEX_CLI_CONTRACT.md`), no RE. `bridge.go` (`New`/`ID`/`Caps`/`Complete`/`runTurn`/`composePrompt`/`safeReasoning`/`authOK`), `invoke.go` (typed argv, no `-a`; `--json` precedes `resume`; stdin prompt; image temp files), `stream.go` (tolerant JSONL scanner → `bridge.StreamEvent`; event-authoritative terminal via `scanStream`/`finalizeTerminal` - `turn.failed` with exit 0 still → `EventError`), `session.go` (vault-backed `SessionID→thread_id` store `codex-threads.jsonl` + resume self-heal), `explain.go` (`explainCodexError` mirrors cursor), `proc_unix.go`/`proc_other.go` (process-group kill on cancel). Reuses existing `config.LLMBridge` fields (no new config field); sandbox/cwd/CODEX_HOME default safely and are env-overridable; minimal reasoning-effort downgraded to `low` (incompatible with built-in tools). Registered in `newBridge()`. Offline golden-fixture + tolerant-parser + cancellation tests (`testdata/*.jsonl`); e2e build-tagged + auto-skip without the CLI |
 
 ---
+
+## Implemented this session (2026-06-28) - foreground user steering
+
+- **Compose stays usable during Ask.** Running state shows dedicated amber
+  Steer and red Stop actions; Enter queues steering, Shift+Enter inserts a
+  newline, and idle Enter still sends a normal message.
+- **Durable safe-point path.** Wails `SteerChat` sends IPC `chat_steering` to
+  `Orchestrator.UserSteering`. Active-session validation rejects idle, empty,
+  mismatched-target, cancelled, and unsupported-priority requests. Accepted
+  text is stored as `steering.proposed` (`source_id=user`) in the session actor
+  inbox and enters context before the next inference after the current tool
+  batch.
+- **History remains clean.** Steering neither starts a generation nor appends a
+  SQLite chat turn. The optimistic bubble is local to the current widget view;
+  enqueue failure retains the draft and marks the bubble failed. V1 rejects
+  attachments, background targets, and `priority: interrupt`.
+- **Tests:** `user_steering_test.go`, `chat-steering.test.ts`; targeted Go tests,
+  Vitest, and frontend production build pass.
 
 ## Implemented this session (2026-06-28) - sub-agent completion speaks into chat
 

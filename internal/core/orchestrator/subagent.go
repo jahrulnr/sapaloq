@@ -122,6 +122,9 @@ func (o *Orchestrator) roleMaxTurns(role string) int {
 // denied). This preserves backward-compatible, default-deny-for-mutation
 // behavior while letting config grant capabilities to named roles.
 func (o *Orchestrator) roleAllows(role, tool string) bool {
+	if isMandatoryTool(role, tool) {
+		return true
+	}
 	if roles := o.cfg.SubAgents.Roles; roles != nil {
 		if r, ok := roles[role]; ok && len(r.AllowedTools) > 0 && allowlistMatchesKnownTool(r.AllowedTools) {
 			return matchToolAllowlist(r.AllowedTools, tool)
@@ -159,6 +162,15 @@ func matchToolAllowlist(allow []string, tool string) bool {
 			return true
 		}
 		if strings.HasSuffix(a, "*") && strings.HasPrefix(tool, strings.TrimSuffix(a, "*")) {
+			return true
+		}
+	}
+	return false
+}
+
+func isMandatoryTool(role, tool string) bool {
+	for _, name := range mandatoryToolsForRole(role) {
+		if name == tool {
 			return true
 		}
 	}

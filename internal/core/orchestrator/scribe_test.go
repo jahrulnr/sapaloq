@@ -52,7 +52,8 @@ func TestToolsForRoleHonorsConfig(t *testing.T) {
 	}}}}
 	got := o.toolsForRole("scribe")
 	sort.Strings(got)
-	want := []string{"read_file", "scribe_write_note"}
+	want := []string{"read_file", "scribe_write_note", "sapaloq_stop", "sapaloq_complete_task", "sapaloq_fail_task"}
+	sort.Strings(want)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("toolsForRole(scribe)=%v want %v", got, want)
 	}

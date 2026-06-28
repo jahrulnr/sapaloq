@@ -380,6 +380,27 @@ func stopChat(socketPath, sessionID string) error {
 	return nil
 }
 
+func steerChat(socketPath, sessionID, message string) error {
+	responses, err := roundTrip(socketPath, ipcRequest{
+		Op:        "chat_steering",
+		SessionID: sessionID,
+		TargetID:  sessionID,
+		Message:   message,
+		Priority:  "normal",
+	})
+	if err != nil {
+		return err
+	}
+	if len(responses) == 0 || !responses[0].OK {
+		message := "core error"
+		if len(responses) > 0 && responses[0].Message != "" {
+			message = responses[0].Message
+		}
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
 func contextUsage(socketPath string) (*chatUsage, error) {
 	responses, err := roundTrip(socketPath, ipcRequest{Op: "context_usage"})
 	if err != nil {

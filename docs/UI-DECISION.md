@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-28 (WORKSPACE runtime card opens native GTK directory dialog; user sets Ask-session cwd; hidden dot-directories visible)
+> Last updated: 2026-06-28 (foreground steering compose mode with dedicated Steer + Stop actions)
 
 **Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
 
@@ -79,6 +79,24 @@ OS-native directory chooser (GTK/Nautilus-style on GNOME; hidden dot-directories
 visible); the choice persists per chat session via `workspace_set` IPC. It
 refreshes every three seconds and immediately after task
 events; the existing task cards remain the detailed lifecycle history.
+
+### Foreground steering while Ask is running
+
+The compose remains editable during a foreground generation. Its amber
+`is-steering` state replaces Send with two explicit actions: **Stop** cancels
+the existing generation, while **Steer** queues text guidance through the
+`chat_steering` IPC operation. Enter sends steering, Shift+Enter remains a
+newline, and the placeholder/hint states that guidance is applied after the
+current tool batch. When idle, the same Enter gesture and Send button start a
+normal chat turn.
+
+Steering v1 is text-only: attachment controls are disabled during a run and a
+draft containing an attachment is rejected without clearing it. A queued
+message gets a local optimistic `message--steering` bubble and status ack; a
+failed enqueue keeps the draft and marks the bubble failed. These bubbles are
+UI-only and are not restored from chat history because steering is actor
+control input, not a persisted user turn. Background actor targeting and
+mid-stream `priority: interrupt` remain follow-ups.
 
 ### Visual language
 

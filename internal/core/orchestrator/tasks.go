@@ -36,6 +36,9 @@ type taskRecord struct {
 	// Answer is the user's clarification answer, set transiently on resume and
 	// consumed by buildSubAgentMessages as the resume nudge.
 	Answer string `json:"answer,omitempty"`
+	// ResumeNudge is set in-memory before resumeBackground and consumed once
+	// when building actor messages (not persisted).
+	ResumeNudge string `json:"-"`
 	// Node is the execution node this task was routed to (observability).
 	// "local-default" (or empty) means in-proc execution.
 	Node        string     `json:"node,omitempty"`
@@ -119,7 +122,23 @@ func (o *Orchestrator) dispatchAskTool(ctx context.Context, snap providerSnapsho
 		if record.Error != "" {
 			response += "\n\nError: " + record.Error
 		}
+		if o.taskResumable(record) {
+			response += "\n\nResumable: call `sapaloq_resume_task` with this task_id to continue without re-spawning."
+		}
 		return turnOutcome{text: response, handled: true}
+	case "sapaloq_resume_task":
+		taskID := strings.TrimSpace(args.TaskID)
+		if taskID == "" {
+			taskID = o.latestResumableTaskID(sessionID, "")
+		}
+		if taskID == "" {
+			return turnOutcome{text: "No resumable task found in this session (need failed/stopped task with prior turns).", handled: true}
+		}
+		id, err := o.resumeTask(snap, sessionID, taskID)
+		if err != nil {
+			return turnOutcome{text: "Cannot resume task: " + err.Error(), handled: true}
+		}
+		return turnOutcome{text: fmt.Sprintf("Task `%s` resumed in the background from persisted turns.", id), handled: true}
 	case "wait":
 		mode := strings.TrimSpace(args.Mode)
 		if mode == "" {
@@ -699,6 +718,18 @@ func (o *Orchestrator) recoverOrphanedTasks() {
 			record.CompletedAt = &completedAt
 			_ = o.writeTask(record)
 			o.publishTaskUpdate(record.SessionID, record)
+		case "failed", "stopped":
+			if o.taskHasDurableTurns(record.ID) && isTransientTaskFailure(record.Error) {
+				priorStatus := record.Status
+				priorErr := record.Error
+				record.Status = "pending"
+				record.Error = ""
+				record.UpdatedAt = time.Now().UTC()
+				record.CompletedAt = nil
+				record.ResumeNudge = buildResumeNudge(priorStatus, priorErr)
+				_ = o.writeTask(record)
+				o.resumeBackground(o.snapshot(), record.SessionID, record)
+			}
 		case "stopping":
 			record.Status = "stopped"
 			record.UpdatedAt = time.Now().UTC()

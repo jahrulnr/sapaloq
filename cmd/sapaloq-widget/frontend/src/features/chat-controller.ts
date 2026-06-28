@@ -1,10 +1,9 @@
 // Chat turn controller: send / retry / stop / delete + live transcript patches.
-import { DeleteChatTurn, RetryChatTurn, SendMessage, StopChat } from '../../wailsjs/go/main/App';
+import { DeleteChatTurn, RetryChatTurn, SendMessage, SteerChat, StopChat } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { AttachmentData } from '../ui/compose';
 import type { ChatUsage, StreamEvent, TranscriptPatch } from '../core/types';
 import { errorText, getComposeInput, getMessageList } from '../ui/dom';
-import { ICON_SEND, ICON_STOP } from '../ui/icons';
 import { autosizeCompose, resetComposeSize, setComposeDisabled } from '../ui/compose-ui';
 import { renderUsage, setConnection, setRingState, runPing } from './connection';
 import { appendMessage, closeMessageMenu } from './messages';
@@ -29,14 +28,34 @@ import {
 } from '../core/state';
 
 let activeGeneration: string | null = null;
+let steeringPending = false;
+let steeringStatusTimer: ReturnType<typeof setTimeout> | null = null;
 
-function setSubmittingUI(active: boolean) {
-  const button = document.getElementById('send-btn') as HTMLButtonElement | null;
-  if (!button) return;
-  button.dataset.mode = active ? 'stop' : 'send';
-  button.setAttribute('aria-label', active ? 'Stop response' : 'Kirim');
-  button.title = active ? 'Stop response' : 'Kirim';
-  button.innerHTML = active ? ICON_STOP : ICON_SEND;
+export function setSubmittingUI(active: boolean) {
+  const send = document.getElementById('send-btn') as HTMLButtonElement | null;
+  const steer = document.getElementById('steer-btn') as HTMLButtonElement | null;
+  const stop = document.getElementById('stop-btn') as HTMLButtonElement | null;
+  const attach = document.getElementById('attach-btn') as HTMLButtonElement | null;
+  const input = getComposeInput();
+  send?.toggleAttribute('hidden', active);
+  steer?.toggleAttribute('hidden', !active);
+  stop?.toggleAttribute('hidden', !active);
+  if (attach) attach.disabled = active;
+  input?.closest('.compose-wrap')?.classList.toggle('is-steering', active);
+  input?.setAttribute('data-placeholder', active ? 'Steer SapaLOQ…' : 'Ask anything');
+  setComposeDisabled(false);
+  showSteeringStatus('Steering diterapkan setelah tool batch selesai.');
+}
+
+function showSteeringStatus(message: string, error = false) {
+  const hint = document.getElementById('steering-hint');
+  if (!hint) return;
+  if (steeringStatusTimer) clearTimeout(steeringStatusTimer);
+  hint.textContent = message;
+  hint.dataset.state = error ? 'error' : 'normal';
+  if (message !== 'Steering diterapkan setelah tool batch selesai.') {
+    steeringStatusTimer = setTimeout(() => showSteeringStatus('Steering diterapkan setelah tool batch selesai.'), 2400);
+  }
 }
 
 function releaseInFlightTurn() {
@@ -78,7 +97,7 @@ async function sendText(text: string, _visibleText = text, _attachments: Attachm
   setRingState('thinking');
   setSubmitting(true);
   setSubmittingUI(true);
-  setComposeDisabled(true);
+  setComposeDisabled(false);
   activeGeneration = null;
   syncChatTranscriptStateFromDOM();
   try {
@@ -123,6 +142,39 @@ export async function submitMessage() {
   await sendText(modelText, visibleText || attachments.map((a) => a.name).join(', '), attachments);
 }
 
+export async function submitSteering() {
+  const compose = getCompose();
+  if (!isSubmitting() || !compose || compose.isEmpty() || steeringPending) return;
+  const { visibleText, attachments } = compose.serialize();
+  const message = visibleText.trim();
+  if (!message) return;
+  if (attachments.length) {
+    showSteeringStatus('Steering v1 hanya mendukung teks.', true);
+    return;
+  }
+
+  const bubble = appendMessage('message--steering is-pending', message, getUserGroup());
+  const steerButton = document.getElementById('steer-btn') as HTMLButtonElement | null;
+  steeringPending = true;
+  if (steerButton) steerButton.disabled = true;
+  try {
+    await SteerChat(getSessionID(), message);
+    bubble?.classList.remove('is-pending');
+    compose.clear();
+    resetComposeSize();
+    showSteeringStatus('Steering queued.');
+  } catch (err) {
+    bubble?.classList.remove('is-pending');
+    bubble?.classList.add('is-failed');
+    if (bubble) bubble.title = errorText(err);
+    showSteeringStatus(errorText(err), true);
+  } finally {
+    steeringPending = false;
+    if (steerButton) steerButton.disabled = false;
+    getComposeInput()?.focus();
+  }
+}
+
 async function retryMessage(turnID: number) {
   const input = getComposeInput();
   if (!turnID || isSubmitting() || !input) return;
@@ -132,7 +184,7 @@ async function retryMessage(turnID: number) {
   setRingState('thinking');
   setSubmitting(true);
   setSubmittingUI(true);
-  setComposeDisabled(true);
+  setComposeDisabled(false);
   activeGeneration = null;
   try {
     const res = await RetryChatTurn(getSessionID(), turnID);

@@ -140,6 +140,11 @@ func (a *App) StopChat(sessionID string) error {
 	return stopChat(a.socketPath, sessionID)
 }
 
+// SteerChat queues text guidance for the next safe point of the active Ask run.
+func (a *App) SteerChat(sessionID string, message string) error {
+	return steerChat(a.socketPath, sessionID, message)
+}
+
 // SubmitFeedback records an explicit 👍/👎 reward for an assistant turn. signal
 // is "up" or "down"; correction is an optional note (used on 👎) that becomes
 // negative guidance for future turns.

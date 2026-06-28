@@ -54,7 +54,7 @@ change**, and always update `docs/STATUS.md` (status table row + a short
 | Vault audit log / rotation (`internal/vault/**`) | `docs/RUNTIME.md` (Vault paths + Rotation), `docs/BRIDGE.md` (undeclared section) |
 | Config schema / new config block / migration (`internal/config/**`) | `docs/RUNTIME.md` (migration status), `docs/BLUEPRINT.md` (config-domain table + defaults), `config/config.example.json`, `schema/config.schema.json` |
 | Role/system prompts (`internal/prompts/**`, `orchestrator.systemPrompt`) | `docs/PROMPT-BUILDER-SOP.md` |
-| Tools / tool surface (`internal/core/orchestrator/tools*.go`) | `docs/BLUEPRINT.md` (tools/defaults), `docs/ORCHESTRATOR.md` |
+| Tools / tool surface (`internal/core/orchestrator/tools*.go`, `internal/tooldocs/**`) | `docs/BLUEPRINT.md` (tools/defaults), `docs/ORCHESTRATOR.md` |
 | Provider/bridge wire formats (`internal/bridges/**`, parsers) | `docs/BRIDGE.md`, `docs/PROVIDER-BRIDGE.md`, `docs/RE-CURSOR-THINKING-TOOLS.md` |
 | Event bus / WAL (`internal/bus/**`) | `docs/EVENT-BUS.md` |
 | Orchestrator behavior (spawn, anti-poisoning, clarification, completion) | `docs/ORCHESTRATOR.md`, `docs/CONTEXT-SOP.md` |

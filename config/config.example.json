@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.4.0",
+  "schemaVersion": "1.5.0",
   "updatedAt": "2026-06-21T00:00:00Z",
   "updatedBy": "bootstrap",
   "runtime": {
@@ -167,7 +167,8 @@
           "sapaloq_request_decision",
           "sapaloq_send_steering",
           "wait",
-          "sapaloq_cancel_job"
+          "sapaloq_cancel_job",
+          "sapaloq_stop"
         ],
         "maxTurns": 12,
         "canEditConfig": false,
@@ -197,6 +198,7 @@
           "sapaloq_send_steering",
           "wait",
           "sapaloq_cancel_job",
+          "sapaloq_stop",
           "desktop_notify"
         ],
         "canEditConfig": false,
@@ -220,7 +222,8 @@
           "sapaloq_request_decision",
           "sapaloq_send_steering",
           "wait",
-          "sapaloq_cancel_job"
+          "sapaloq_cancel_job",
+          "sapaloq_stop"
         ],
         "maxTurns": 8,
         "canEditConfig": false

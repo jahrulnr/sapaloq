@@ -2,7 +2,16 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop - bukan repo coding.
-> Last updated: 2026-06-27 (sub-agent turns persist under `state/tasks/{id}/turns.json`; compaction checkpoints durable per actor id)
+> Last updated: 2026-06-28 (sub-agent resume via `sapaloq_resume_task`; task dirs purged on chat delete)
+
+---
+
+## Sub-agent resume (2026-06-28)
+
+When a background actor **failed** or was **stopped** but has durable turns in `state/tasks/{taskId}/turns.json`, Ask should call **`sapaloq_resume_task`** (same task id) to continue that work instead of spawning anew for the same job. Multiple concurrent sub-agents per session remain allowed (e.g. explore two repos in parallel).
+
+- **Boot:** `recoverOrphanedTasks` still resumes `in_progress`; additionally auto-resumes `failed` tasks with turns when the error looks transient (provider/connection/timeout).
+- **Lifecycle:** all task artifacts (`status.json`, turns, progress JSONL, workspace, actor inbox) are removed when the parent chat session is deleted (`DeleteSession` → `purgeSessionTasks`).
 
 ---
 
@@ -52,10 +61,12 @@ SapaLOQ harus **prefetch context yang tepat dalam <2 detik** sebelum sub-agent j
    orchestrator consumer directly; it must not wait for a provider stream to
    emit another event or close its channel. Failed retry attempts are cancelled
    and abandoned, not synchronously drained.
-10. **Shared context is evented, not mutable** - Planner/Agent steering is
-    queued in a durable target inbox and folded into that actor only at a safe
-    point. A decision mediator receives a bounded snapshot; it never mutates the
-    foreground UI orchestrator's live message slice.
+10. **Shared context is evented, not mutable** - Planner/Agent steering and
+    active-session user steering are queued in a durable target inbox and
+    folded into that actor only at a safe point before inference. A decision
+    mediator receives a bounded snapshot; it never mutates the foreground UI
+    orchestrator's live message slice. User steering is not appended to chat
+    history and cannot accidentally fork a second generation.
 
 ---
 

@@ -45,6 +45,8 @@ export function SlashSuggest(arg1:string):Promise<Array<config.CommandEntry>>;
 
 export function SocketPath():Promise<string>;
 
+export function SteerChat(arg1:string,arg2:string):Promise<void>;
+
 export function StopChat(arg1:string):Promise<void>;
 
 export function SubmitFeedback(arg1:string,arg2:number,arg3:string,arg4:string):Promise<void>;

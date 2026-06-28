@@ -3,7 +3,7 @@
 > Setiap spawn sub-agent dapat **system-prompt per role**.
 > Setelah task selesai: **automation-learning** (SapaLOQ) + orchestrator hooks → prompt/skill builder.
 > Learning **tidak hanya** dari interaksi user - bisa **research internet** untuk best practice.
-> Last updated: 2026-06-28 (runtime context block: `workspace=` now reflects persisted actor cwd)
+> Last updated: 2026-06-28 (ask.md + planner.md: sapaloq_stop scope/self-stop contract)
 
 Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [FEEDBACK-SOP.md](./FEEDBACK-SOP.md)
 
