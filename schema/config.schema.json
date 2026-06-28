@@ -10,7 +10,7 @@
       "type": "object",
       "description": "One provider entry in the llmBridge.providers array. Self-contained: which driver, endpoint, model, credentials, and (for provider-bridge) which wire format + auth scheme + API version.",
       "additionalProperties": false,
-      "required": ["key", "driver", "endpoint", "model", "credentialsEnv"],
+      "required": ["key", "driver", "model"],
       "properties": {
         "key": {
           "type": "string",
@@ -19,9 +19,12 @@
         "driver": {
           "type": "string",
           "enum": ["cursor-bridge", "provider-bridge", "codex-bridge", "local-llama"],
-          "description": "Which bridge implementation to use. cursor-bridge = Cursor RE proxy; provider-bridge = direct OpenAI/Claude/Kimi API; codex-bridge = wraps the public Codex CLI (codex exec --json + resume)."
+          "description": "Which bridge implementation to use. cursor-bridge = Cursor RE proxy; provider-bridge = direct OpenAI/Claude/Kimi API; codex-bridge = Codex app-server WebSocket JSON-RPC over UDS/WS (no codex exec fallback)."
         },
-        "endpoint": { "type": "string" },
+        "endpoint": {
+          "type": "string",
+          "description": "HTTP/IDE endpoint for cursor/provider/local drivers. codex-bridge ignores this field and resolves app-server from SAPALOQ_CODEX_APP_SERVER_* environment variables."
+        },
         "model": { "type": "string" },
         "credentialsEnv": {
           "type": "string",
@@ -74,6 +77,11 @@
           "type": "boolean",
           "default": true,
           "description": "provider-bridge only. true (or omitted) streams token deltas as Server-Sent Events; false sends a single non-stream request and parses one complete response. Use false for gateways/endpoints that buffer or don't support SSE. Wire framing only - the bridge emits the same StreamEvent sequence either way (a non-stream turn surfaces as one batch of events + done). Ignored by cursor-bridge."
+        },
+        "useAgentPath": {
+          "type": "boolean",
+          "default": false,
+          "description": "cursor-bridge only. Route all turns through agent.v1.AgentService/Run (api5) instead of StreamUnifiedChatWithTools (api2). Vision always uses api5 regardless. Overridable via SAPALOQ_AGENT_PATH=1."
         }
       }
     }

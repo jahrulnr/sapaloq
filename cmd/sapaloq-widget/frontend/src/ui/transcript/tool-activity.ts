@@ -66,10 +66,23 @@ export function setToolActivityOpen(item: HTMLElement, open: boolean, body?: HTM
   if (sink) sink.hidden = !open;
 }
 
+export function displayToolName(name: string): string {
+  switch (name) {
+    case 'commandExecution': return 'shell';
+    case 'fileChange': return 'edit';
+    case 'webSearch': return 'web_search';
+    case 'mcpToolCall': return 'mcp';
+    case 'imageView': return 'image';
+    case 'imageGeneration': return 'image_gen';
+    default: return name;
+  }
+}
+
 export function paintToolActivityHeader(item: HTMLElement, header: Text) {
   const marker = item.classList.contains('is-open') ? '⌄' : '›';
   const hint = item.dataset.toolHint ? `  ${item.dataset.toolHint}` : '';
-  header.nodeValue = `${marker}  $ ${item.dataset.toolName || 'unknown'}${hint}  ·  ${item.dataset.toolStatus || 'running'}`;
+  const name = displayToolName(item.dataset.toolName || 'unknown');
+  header.nodeValue = `${marker}  $ ${name}${hint}  ·  ${item.dataset.toolStatus || 'running'}`;
 }
 
 export function getToolActivityHeader(item: HTMLElement): Text | null {
@@ -104,7 +117,7 @@ export function createToolActivityElement(
   entry: Extract<ActivityEntry, { kind: 'tool' }>,
   options: CreateToolActivityOptions = {},
 ): HTMLElement {
-  const waiting = entry.response === undefined;
+  const waiting = entry.status === 'running' || entry.response === undefined;
   const item = document.createElement('div');
   item.className = ['tool-activity', options.extraClass].filter(Boolean).join(' ');
   item.dataset.entryKind = 'tool';
@@ -120,10 +133,11 @@ export function createToolActivityElement(
   const body = document.createElement('div');
   body.className = 'tool-activity__body';
   body.append(toolPayloadSection('Request', formatToolPayload(entry.args) || 'No arguments'));
-  if (waiting) {
+  const streaming = entry.status === 'running' && entry.response !== undefined && entry.response !== '';
+  if (waiting && !streaming) {
     body.append(toolPayloadSection('Response', '', 'pending'));
   } else {
-    const state = entry.status === 'failed' ? 'error' : 'complete';
+    const state = entry.status === 'failed' ? 'error' : entry.status === 'running' ? 'pending' : 'complete';
     body.append(toolPayloadSection('Response', formatToolPayload(entry.response || ''), state));
   }
 
@@ -149,7 +163,7 @@ export function patchToolActivityElement(
   item: HTMLElement,
   entry: Extract<ActivityEntry, { kind: 'tool' }>,
 ) {
-  const waiting = entry.response === undefined;
+  const waiting = entry.status === 'running' || entry.response === undefined;
   item.dataset.toolName = entry.name;
   item.dataset.toolStatus = entry.status || (waiting ? 'running' : 'completed');
   if (entry.id) item.dataset.toolId = entry.id;
@@ -165,13 +179,21 @@ export function patchToolActivityElement(
     if (request) request.textContent = formatToolPayload(entry.args) || 'No arguments';
   }
 
-  if (entry.response === undefined || sections.length < 2) return;
+  if (entry.response === undefined && entry.status !== 'running') return;
 
-  const state = entry.status === 'failed' ? 'error' : 'complete';
+  const state = entry.status === 'failed' ? 'error' : entry.status === 'running' ? 'pending' : 'complete';
   const response = formatToolPayload(entry.response);
-  const responseSection = sections[1] as HTMLElement;
+  let responseSection = sections[1] as HTMLElement | undefined;
+  if (!responseSection) {
+    const body = item.querySelector<HTMLElement>('.tool-activity__body');
+    if (body) {
+      responseSection = toolPayloadSection('Response', '', 'pending');
+      body.append(responseSection);
+    }
+  }
+  if (!responseSection) return;
   const code = responseSection.querySelector('code');
-  if (code) code.textContent = response || '(no output)';
+  if (code) code.textContent = response || (state === 'pending' ? 'Waiting for response…' : '(no output)');
   responseSection.dataset.state = state;
   setToolActivityOpen(item, false);
   if (header) paintToolActivityHeader(item, header);

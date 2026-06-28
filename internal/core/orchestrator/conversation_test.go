@@ -12,6 +12,8 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/parse"
+	"github.com/jahrulnr/sapaloq/internal/parse/artifacts"
+	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
 // TestLooksLikeTransientTransport4xx pins the regression that motivated this
@@ -57,6 +59,8 @@ func TestLooksLikeTransientTransport4xx(t *testing.T) {
 		{"provider-bridge: upstream status 429: too many requests", true, "429 IS transient (with backoff)"},
 		{"EOF", true, "premature EOF is transient"},
 		{"i/o timeout", true, "I/O timeout is transient"},
+		{"cursor node stream returned empty response", true, "empty api2 turn is retried before failing"},
+		{"cursor chat stream returned no data", true, "empty chat stream is retried before failing"},
 	}
 	for _, tc := range cases {
 		got := looksLikeTransientTransport(tc.msg)
@@ -158,6 +162,78 @@ func TestRunConversationCancellationDoesNotWaitForBridgeClose(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("cancelled conversation waited for the bridge channel to close")
+	}
+}
+
+type cancelAfterDeltaBridge struct {
+	started chan struct{}
+}
+
+func (b *cancelAfterDeltaBridge) ID() string              { return "cancel-after-delta" }
+func (b *cancelAfterDeltaBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *cancelAfterDeltaBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	out := make(chan bridge.StreamEvent, 4)
+	out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "partial reply"}
+	close(b.started)
+	// Never send EventDone — user stop must cancel without waiting for bridge close.
+	return out, nil
+}
+
+func TestRunConversationCancellationPersistsPartialAssistant(t *testing.T) {
+	fake := &cancelAfterDeltaBridge{started: make(chan struct{})}
+	dir := t.TempDir()
+	store, err := chatstore.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := store.ActiveSession(context.Background(), "test", "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orch := &Orchestrator{
+		memoryDir: dir,
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+		chat:      store,
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
+	out := make(chan bridge.StreamEvent, 16)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := orch.runConversation(ctx, snap, out, sessionID, "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
+		done <- err
+	}()
+
+	select {
+	case <-fake.started:
+	case <-time.After(time.Second):
+		t.Fatal("bridge did not start")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("cancelled conversation returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("cancelled conversation waited for the bridge channel to close")
+	}
+
+	turns, err := store.ActiveTurns(context.Background(), sessionID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, turn := range turns {
+		if turn.Role == "assistant" && strings.Contains(turn.Content, "partial reply") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected partial assistant turn persisted on cancel, got %+v", turns)
 	}
 }
 
@@ -1012,6 +1088,273 @@ func TestToolLessTurnNeverFinishesOnAbsenceOfTool(t *testing.T) {
 	if got := last[0].Content; strings.Contains(got, sapaloqControlOpen) {
 		t.Fatalf("the real user turn must stay unmarked, got %q", got)
 	}
+}
+
+// TestForegroundAskDoesNotAutoStopOnVisibleReply proves foreground ask uses the
+// same explicit-stop loop as agent/planner: a visible tool-less reply continues
+// until sapaloq_stop or the toolless-turn budget — not after one narration.
+func TestForegroundAskDoesNotAutoStopOnVisibleReply(t *testing.T) {
+	fake := &repeatingTextBridge{}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 128)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:     "s1",
+		runID:         "actor-ask",
+		tools:         []string{},
+		sink:          chatSink{o: o, out: out},
+		foregroundAsk: true,
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    fake,
+		}, "task", []bridge.Message{{Role: "user", Content: "heyy"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("foreground ask should finish cleanly via toolless budget: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("foreground ask did not finish - must be bounded by toolless-turn budget")
+	}
+	if fake.calls < 2 {
+		t.Fatalf("calls = %d, want foreground ask to continue past first visible reply", fake.calls)
+	}
+}
+
+type toolThenNarrationBridge struct {
+	calls int
+}
+
+func (b *toolThenNarrationBridge) ID() string              { return "tool-then-narration" }
+func (b *toolThenNarrationBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *toolThenNarrationBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	out := make(chan bridge.StreamEvent, 8)
+	go func() {
+		defer close(out)
+		switch b.calls {
+		case 1:
+			call := parse.ToolCall{Name: "read_file", Arguments: []byte(`{"path":"x"}`), Source: "test"}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &call}
+		case 2:
+			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "Memperbaiki preprocess dan memeriksa region content."}
+		default:
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
+		}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+// TestForegroundAskContinuesAfterToolSessionNarration proves cursor-style agent
+// work (tool turn then narration-only beat) does not auto-stop foreground chat.
+func TestForegroundAskContinuesAfterToolSessionNarration(t *testing.T) {
+	fake := &toolThenNarrationBridge{}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 128)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:     "s-tool-narration",
+		runID:         "actor-ask",
+		tools:         []string{"read_file", "sapaloq_stop"},
+		sink:          chatSink{o: o, out: out},
+		foregroundAsk: true,
+		dispatch: func(_ context.Context, call parse.ToolCall) turnOutcome {
+			if call.Name == "sapaloq_stop" {
+				return turnOutcome{handled: true, stop: true}
+			}
+			return turnOutcome{text: "ok", handled: true}
+		},
+	}
+	_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+		cfg:   o.cfg,
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    fake,
+	}, "fix devlog front page", []bridge.Message{{Role: "user", Content: "fix devlog front page"}}, cfg)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if fake.calls < 3 {
+		t.Fatalf("calls = %d, want narration turn to continue until sapaloq_stop", fake.calls)
+	}
+}
+
+// TestForegroundAskDropsConfabulatedArtifact proves edit-session artifact dumps
+// never persist as assistant turns on foreground ask chat.
+func TestForegroundAskDropsConfabulatedArtifact(t *testing.T) {
+	fake := &artifactDumpBridge{}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 128)
+	var deltas []string
+	go func() {
+		for ev := range out {
+			if ev.Kind == bridge.EventResponseDelta {
+				deltas = append(deltas, ev.Delta)
+			}
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:       "s-artifact",
+		runID:           "actor-artifact",
+		tools:           []string{},
+		sink:            chatSink{o: o, out: out},
+		recordToolTurns: true,
+		foregroundAsk:   true,
+	}
+	result, err := o.runTurnLoop(context.Background(), providerSnapshot{
+		cfg:   o.cfg,
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    fake,
+	}, "heyy", []bridge.Message{{Role: "user", Content: "heyy"}}, cfg)
+	if err != nil {
+		t.Fatalf("artifact run should finish cleanly: %v", err)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("calls = %d, want a single turn before stop", fake.calls)
+	}
+	if got := strings.TrimSpace(result.String()); got != artifacts.FallbackAskNoiseRetry() {
+		t.Fatalf("result = %q, want noise retry fallback", got)
+	}
+}
+
+func TestForegroundAskFallbackOnThinkingOnlyPing(t *testing.T) {
+	fake := &thinkingOnlyBridge{}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 128)
+	var deltas []string
+	go func() {
+		for ev := range out {
+			if ev.Kind == bridge.EventResponseDelta {
+				deltas = append(deltas, ev.Delta)
+			}
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:     "s-ping",
+		runID:         "actor-ping",
+		tools:         []string{},
+		sink:          chatSink{o: o, out: out},
+		foregroundAsk: true,
+	}
+	result, err := o.runTurnLoop(context.Background(), providerSnapshot{
+		cfg:   o.cfg,
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    fake,
+	}, "heyy", []bridge.Message{{Role: "user", Content: "heyy"}}, cfg)
+	if err != nil {
+		t.Fatalf("thinking-only ping should finish cleanly: %v", err)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("calls = %d, want 1 (no autopilot loop)", fake.calls)
+	}
+	if got := strings.TrimSpace(result.String()); got != artifacts.FallbackAskGreeting() {
+		t.Fatalf("result = %q, want fallback greeting", got)
+	}
+}
+
+func TestForegroundAskNoiseRetryOnThinkingOnlyTask(t *testing.T) {
+	fake := &thinkingOnlyBridge{}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 128)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:     "s-task",
+		runID:         "actor-task",
+		tools:         []string{},
+		sink:          chatSink{o: o, out: out},
+		foregroundAsk: true,
+	}
+	result, err := o.runTurnLoop(context.Background(), providerSnapshot{
+		cfg:   o.cfg,
+		entry: config.LLMBridge{Key: "test", Model: "model"},
+		br:    fake,
+	}, "buat web keren di /tmp/profile", []bridge.Message{{Role: "user", Content: "buat web keren di /tmp/profile"}}, cfg)
+	if err != nil {
+		t.Fatalf("thinking-only task should finish with noise retry: %v", err)
+	}
+	if fake.calls != 4 {
+		t.Fatalf("calls = %d, want 4 (3 noise retries + fallback)", fake.calls)
+	}
+	if got := strings.TrimSpace(result.String()); got != artifacts.FallbackAskNoiseRetry() {
+		t.Fatalf("result = %q, want noise retry fallback", got)
+	}
+}
+
+type thinkingOnlyBridge struct{ calls int }
+
+func (b *thinkingOnlyBridge) ID() string              { return "thinking-only" }
+func (b *thinkingOnlyBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{} }
+func (b *thinkingOnlyBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	out := make(chan bridge.StreamEvent, 8)
+	go func() {
+		defer close(out)
+		out <- bridge.StreamEvent{
+			Kind:  bridge.EventThinkingDelta,
+			Delta: "The user wants me to troubleshoot Aether.\n\nThe user wants 16S rRNA analysis.\n",
+		}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+type artifactDumpBridge struct{ calls int }
+
+func (b *artifactDumpBridge) ID() string              { return "artifact" }
+func (b *artifactDumpBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{} }
+func (b *artifactDumpBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	out := make(chan bridge.StreamEvent, 4)
+	go func() {
+		defer close(out)
+		out <- bridge.StreamEvent{
+			Kind:  bridge.EventResponseDelta,
+			Delta: "### Final file content: webapp/client/src/components/CommandPalette.jsx\nimport { useState } from 'react'\nexport function CommandPalette() {}\n",
+		}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
 }
 
 // stopToolBridge narrates for a couple of tool-less turns, then calls the

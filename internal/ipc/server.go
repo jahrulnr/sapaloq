@@ -144,6 +144,22 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 				continue
 			}
 			write(conn, Response{OK: true, Op: req.Op, TaskInspect: &inspect, ServerMs: time.Since(start).Milliseconds()})
+		case "task_resume":
+			sessionID := strings.TrimSpace(req.SessionID)
+			if sessionID == "" {
+				sessionID, _ = s.orch.ActiveSession(ctx)
+			}
+			taskID := strings.TrimSpace(req.TaskID)
+			if taskID == "" {
+				write(conn, Response{OK: false, Op: req.Op, Message: "task_id is required", ServerMs: time.Since(start).Milliseconds()})
+				continue
+			}
+			id, err := s.orch.ResumeTask(ctx, sessionID, taskID)
+			if err != nil {
+				write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
+				continue
+			}
+			write(conn, Response{OK: true, Op: req.Op, Message: "task resumed", SessionID: sessionID, TaskID: id, ServerMs: time.Since(start).Milliseconds()})
 		case "actor_inspect":
 			inspect, err := s.orch.ActorInspect(req.TaskID, req.AfterLine)
 			if err != nil {

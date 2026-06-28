@@ -14,9 +14,12 @@ type Schema struct {
 }
 
 type ProviderBlock struct {
-	NativeTools []string          `json:"nativeTools"`
-	Aliases     map[string]string `json:"aliases"`
-	KimiTokens   []string          `json:"kimiTokens"`
+	NativeTools            []string          `json:"nativeTools"`
+	SessionNonTriggerTools []string          `json:"sessionNonTriggerTools"`
+	Aliases                map[string]string `json:"aliases"`
+	KimiTokens             []string          `json:"kimiTokens"`
+	LeakPatterns           []string          `json:"leakPatterns"`
+	GuardSafeReply         string            `json:"guardSafeReply"`
 }
 
 func (s Schema) Aliases() map[string]string {

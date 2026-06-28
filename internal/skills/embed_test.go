@@ -8,7 +8,7 @@ import (
 
 // wantDefaultSkillCount is the number of skill folders shipped under
 // defaults/. Bump it whenever a default skill is added or removed.
-const wantDefaultSkillCount = 4
+const wantDefaultSkillCount = 5
 
 // TestSeedMaterializesDefaults proves the embedded defaults are written to disk
 // with their folder structure preserved, and that a freshly seeded dir loads as
@@ -26,6 +26,8 @@ func TestSeedMaterializesDefaults(t *testing.T) {
 		"code-styleguides/SKILL.md",
 		"peek-agents/SKILL.md",
 		"peek-agents/scripts/peek.sh",
+		"xdotool/SKILL.md",
+		"xdotool/scripts/check-environment.sh",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected seeded file %s: %v", rel, err)
@@ -34,10 +36,15 @@ func TestSeedMaterializesDefaults(t *testing.T) {
 
 	// Bundled shell scripts must be seeded executable (the seeder marks
 	// scripts/*.sh|*.py with mode 0755 so exec can run them directly).
-	if info, err := os.Stat(filepath.Join(dir, "peek-agents", "scripts", "peek.sh")); err != nil {
-		t.Fatalf("peek.sh not seeded: %v", err)
-	} else if info.Mode().Perm()&0o100 == 0 {
-		t.Fatalf("peek.sh should be executable, got mode %v", info.Mode().Perm())
+	for _, rel := range []string{
+		"peek-agents/scripts/peek.sh",
+		"xdotool/scripts/check-environment.sh",
+	} {
+		if info, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Fatalf("%s not seeded: %v", rel, err)
+		} else if info.Mode().Perm()&0o100 == 0 {
+			t.Fatalf("%s should be executable, got mode %v", rel, info.Mode().Perm())
+		}
 	}
 
 	// At least one bundled resource (nested folder) must be materialized too,
@@ -63,10 +70,39 @@ func TestSeedMaterializesDefaults(t *testing.T) {
 	for _, s := range got {
 		byID[s.ID] = true
 	}
-	for _, want := range []string{"frontend-design", "skill-creator", "code-styleguides", "peek-agents"} {
+	for _, want := range []string{"frontend-design", "skill-creator", "code-styleguides", "peek-agents", "xdotool"} {
 		if !byID[want] {
 			t.Fatalf("missing expected default id %q: %v", want, ids(got))
 		}
+	}
+}
+
+// TestXdotoolSkillTriggers proves the Linux-only desktop automation skill is
+// selected for tool, documentation, and UI-test requests without matching an
+// unrelated non-desktop task.
+func TestXdotoolSkillTriggers(t *testing.T) {
+	dir := t.TempDir()
+	if err := Seed(dir); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	for _, msg := range []string{
+		"pakai xdotool untuk klik tombol ini",
+		"buat dokumentasi UI Linux X11",
+		"run a GUI regression test on X11",
+		"debug window focus with xdotool",
+	} {
+		if matched := Match(loaded, msg); !containsID(matched, "xdotool") {
+			t.Fatalf("xdotool should match %q, got %v", msg, ids(matched))
+		}
+	}
+
+	if containsID(Match(loaded, "refactor the Go JSON parser"), "xdotool") {
+		t.Fatalf("xdotool should not match an unrelated code task")
 	}
 }
 

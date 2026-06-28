@@ -16,10 +16,11 @@ const (
 )
 
 type Credentials struct {
-	AccessToken string
-	MachineID   string
-	GhostMode   bool
-	Source      string
+	AccessToken  string
+	RefreshToken string
+	MachineID    string
+	GhostMode    bool
+	Source       string
 }
 
 type Options struct {
@@ -33,28 +34,43 @@ func Load(opts Options) (Credentials, error) {
 		tokenEnv = "SAPALOQ_CURSOR_TOKEN"
 	}
 
-	accessToken := firstNonEmpty(
-		os.Getenv(tokenEnv),
-		os.Getenv(envCursorAccessToken),
-	)
-	machineID := os.Getenv(envCursorMachineID)
+	envToken := firstNonEmpty(os.Getenv(tokenEnv), os.Getenv(envCursorAccessToken))
+	envRefresh := strings.TrimSpace(os.Getenv("CURSOR_REFRESH_TOKEN"))
+	envMachine := strings.TrimSpace(os.Getenv(envCursorMachineID))
 	ghostMode := os.Getenv(envCursorGhostMode) != "false"
 
-	if accessToken != "" && machineID != "" {
+	// Explicit headless override: both token and machine id in process env.
+	if envToken != "" && envMachine != "" {
 		creds := Credentials{
-			AccessToken: accessToken,
-			MachineID:   machineID,
-			GhostMode:   ghostMode,
-			Source:      "process.env",
+			AccessToken:  envToken,
+			RefreshToken: envRefresh,
+			MachineID:    envMachine,
+			GhostMode:    ghostMode,
+			Source:       "process.env",
 		}
 		logLoaded(creds)
 		return creds, nil
 	}
 
+	// Prefer the live Cursor IDE session over a stale SAPALOQ_CURSOR_TOKEN that
+	// only has a token (common when credentialsEnv is set but the env var was
+	// copied once and never refreshed).
+	if creds, ok := loadFromVSCDB(ghostMode); ok {
+		logLoaded(creds)
+		return creds, nil
+	}
+
+	accessToken := envToken
+	refreshToken := envRefresh
+	machineID := envMachine
+
 	for _, path := range envFileCandidates(opts) {
 		fileEnv := loadEnvFile(path)
 		if accessToken == "" {
 			accessToken = firstNonEmpty(fileEnv[tokenEnv], fileEnv[envCursorAccessToken])
+		}
+		if refreshToken == "" {
+			refreshToken = strings.TrimSpace(fileEnv["CURSOR_REFRESH_TOKEN"])
 		}
 		if machineID == "" {
 			machineID = fileEnv[envCursorMachineID]
@@ -64,10 +80,11 @@ func Load(opts Options) (Credentials, error) {
 		}
 		if accessToken != "" && machineID != "" {
 			creds := Credentials{
-				AccessToken: accessToken,
-				MachineID:   machineID,
-				GhostMode:   ghostMode,
-				Source:      path,
+				AccessToken:  accessToken,
+				RefreshToken: refreshToken,
+				MachineID:    machineID,
+				GhostMode:    ghostMode,
+				Source:       path,
 			}
 			logLoaded(creds)
 			return creds, nil
@@ -76,16 +93,39 @@ func Load(opts Options) (Credentials, error) {
 
 	if accessToken == "" {
 		return Credentials{}, fmt.Errorf(
-			"cursor credentials missing: set %s or %s (and %s for machine id)",
+			"cursor credentials missing: set %s or %s (and %s for machine id), or log in via Cursor IDE",
 			tokenEnv, envCursorAccessToken, envCursorMachineID,
 		)
 	}
-	return Credentials{
-		AccessToken: accessToken,
-		MachineID:   machineID,
-		GhostMode:   ghostMode,
-		Source:      sourceLabel(accessToken, machineID),
-	}, nil
+	creds := Credentials{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		MachineID:    machineID,
+		GhostMode:    ghostMode,
+		Source:       sourceLabel(accessToken, machineID),
+	}
+	logLoaded(creds)
+	return creds, nil
+}
+
+func loadFromVSCDB(ghostMode bool) (Credentials, bool) {
+	for _, path := range vscdbCandidates() {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		token, refresh, machine, ok := loadVSCDB(path)
+		if !ok {
+			continue
+		}
+		return Credentials{
+			AccessToken:  token,
+			RefreshToken: refresh,
+			MachineID:    machine,
+			GhostMode:    ghostMode,
+			Source:       path,
+		}, true
+	}
+	return Credentials{}, false
 }
 
 func logLoaded(creds Credentials) {

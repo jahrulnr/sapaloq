@@ -47,6 +47,7 @@ func (o *Orchestrator) handleSlash(ctx context.Context, out chan<- bridge.Stream
 			o.emitSlash(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 			return ""
 		}
+		o.inheritWorkspace(sessionID, newID)
 		if o.progress != nil {
 			o.progress.Close(sessionID)
 		}
@@ -129,8 +130,14 @@ func (o *Orchestrator) SwitchSession(ctx context.Context, sessionID string) (str
 // NewSession starts a fresh active chat session (same path as the /reset slash
 // command) and returns the new session id.
 func (o *Orchestrator) NewSession(ctx context.Context) (string, error) {
+	oldID, _ := o.ActiveSession(ctx)
 	snap := o.snapshot()
-	return o.chat.Reset(ctx, snap.entry.Key, snap.entry.Model)
+	newID, err := o.chat.Reset(ctx, snap.entry.Key, snap.entry.Model)
+	if err != nil {
+		return "", err
+	}
+	o.inheritWorkspace(oldID, newID)
+	return newID, nil
 }
 
 // DeleteSession removes a chat room. When the active room is deleted, another
@@ -271,6 +278,17 @@ func (o *Orchestrator) ContextUsage(ctx context.Context, sessionID string) (chat
 	if usage.ContextWindow <= 0 {
 		usage.ContextWindow = contextWindow
 	}
+	// Recompute from turn bodies: TokenEstimate on paste may have counted raw
+	// base64 as text tokens before strip-aware accounting existed.
+	if turns, turnErr := o.chat.ActiveTurns(ctx, sessionID, false); turnErr == nil {
+		used := 0
+		for _, t := range turns {
+			if t.IncludedInContext {
+				used += estimateContentTokens(t.Content)
+			}
+		}
+		usage.UsedTokens = used
+	}
 	// Add the fixed per-request prompt overhead that the chat-turn sum ignores:
 	// the Ask system prompt, runtime context block, negative guidance, prefetch
 	// and skills blocks are sent on every turn but never stored as chat_turns.
@@ -295,11 +313,12 @@ func (o *Orchestrator) ContextUsage(ctx context.Context, sessionID string) (chat
 // headroom check prevents the two from drifting (a common cause of the
 // force-trigger firing after, not before, a provider overflow).
 func (o *Orchestrator) estimatePerTurnOverhead(ctx context.Context, sessionID, userMsg string) int {
+	stripped, _ := stripAttachmentPayloads(userMsg)
 	overhead := estimateTextTokens(o.systemPrompt(prompts.RoleAsk))
 	overhead += estimateTextTokens(o.runtimeContextMessage(sessionID).Content)
 	overhead += estimateTextTokens(o.negativeGuidanceBlock(ctx))
-	overhead += estimateTextTokens(o.prefetchBlock(ctx, sessionID, userMsg))
-	overhead += estimateTextTokens(o.skillsBlock(ctx, userMsg))
+	overhead += estimateTextTokens(o.prefetchBlock(ctx, sessionID, stripped))
+	overhead += estimateTextTokens(o.skillsBlock(ctx, stripped))
 	return overhead
 }
 

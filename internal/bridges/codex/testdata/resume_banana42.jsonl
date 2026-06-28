@@ -1,4 +1,0 @@
-{"type":"thread.started","thread_id":"019f02bb-2b45-78b3-bbc5-1eb7038ffd68"}
-{"type":"turn.started"}
-{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"BANANA42"}}
-{"type":"turn.completed","usage":{"input_tokens":16200,"cached_input_tokens":9600,"output_tokens":12,"reasoning_output_tokens":8}}

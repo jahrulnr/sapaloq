@@ -42,4 +42,5 @@ type Response struct {
 	TaskInspect  *orchestrator.TaskInspectResult  `json:"task_inspect,omitempty"`
 	ActorInspect *orchestrator.ActorInspectResult `json:"actor_inspect,omitempty"`
 	Path         string                           `json:"path,omitempty"`
+	TaskID       string                           `json:"task_id,omitempty"`
 }

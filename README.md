@@ -158,7 +158,7 @@ sapaloq/
 ├── schema/               # config + os.json JSON Schema
 ├── config/               # example config.json
 ├── examples/nodes/       # node comm-spec templates
-└── migrations/           # SQLite migrations
+└── migrations/           # Legacy SQL DDL (archived; runtime uses JSON store)
 ```
 
 Config: `~/.config/sapaloq/config.json`. Runtime data (not in repo): `~/SapaLOQ/`.

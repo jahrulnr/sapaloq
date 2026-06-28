@@ -327,23 +327,16 @@ func toolGlob(args toolArgs) string {
 }
 
 // globMatch matches rel against pattern. With recursive=true ("**" present) it
-// matches the trailing segment pattern against the basename and the full rel
-// path; otherwise it uses filepath.Match on the basename and the rel path.
+// uses a path-aware regex; otherwise it uses filepath.Match on basename and rel.
 func globMatch(pattern, rel string, recursive bool) bool {
-	base := filepath.Base(rel)
 	if recursive {
-		// Strip leading "**/" and match the remainder against the basename and
-		// the full relative path.
-		trimmed := strings.TrimPrefix(pattern, "**/")
-		trimmed = strings.ReplaceAll(trimmed, "**/", "")
-		if ok, _ := filepath.Match(trimmed, base); ok {
-			return true
+		re, err := globPatternToRegex(pattern)
+		if err != nil {
+			return false
 		}
-		if ok, _ := filepath.Match(trimmed, rel); ok {
-			return true
-		}
-		return false
+		return re.MatchString(filepath.ToSlash(rel))
 	}
+	base := filepath.Base(rel)
 	if ok, _ := filepath.Match(pattern, base); ok {
 		return true
 	}
@@ -351,6 +344,39 @@ func globMatch(pattern, rel string, recursive bool) bool {
 		return true
 	}
 	return false
+}
+
+// globPatternToRegex converts a glob with ** to a regex anchored to the full
+// relative path. * matches one path segment; ** matches across /.
+func globPatternToRegex(pattern string) (*regexp.Regexp, error) {
+	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
+	var b strings.Builder
+	b.WriteByte('^')
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				i++
+				if i+1 < len(pattern) && pattern[i+1] == '/' {
+					b.WriteString("(?:.*/)?")
+					i++
+				} else {
+					b.WriteString(".*")
+				}
+			} else {
+				b.WriteString("[^/]*")
+			}
+		case '?':
+			b.WriteString("[^/]")
+		case '.', '+', '^', '$', '(', ')', '|', '[', ']', '{', '}', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(pattern[i])
+		default:
+			b.WriteByte(pattern[i])
+		}
+	}
+	b.WriteByte('$')
+	return regexp.Compile(b.String())
 }
 
 func toolListDir(args toolArgs) string {

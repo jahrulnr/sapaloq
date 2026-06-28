@@ -2,9 +2,13 @@
 
 > Reverse-engineering notes dari **sumber langsung** - bukan dari 9router.
 > 9router **skip/collapse** thinking Cursor; jangan jadi referensi behavior thinking.
-> Last updated: 2026-06-19
+> Last updated: 2026-06-28 (clarified that Codex uses a separate app-server notification/tool-callback contract)
 
 Related: [BRIDGE.md](./BRIDGE.md) · [LIMITATIONS.md](./LIMITATIONS.md)
+
+Codex is not a Cursor parser variant. Its sibling bridge consumes app-server
+JSON-RPC notifications and `item/tool/call` server requests; see
+[CODEX_APP_SERVER_CONTRACT.md](./CODEX_APP_SERVER_CONTRACT.md).
 
 Artefak workspace: `cursor-agent-toolcall-spec.json` · `cursor-agent-toolcall-index.json`
 
@@ -107,7 +111,7 @@ func ParseCursorThinking(raw string) CursorThinkingParts
 
 | Output | Default policy |
 |--------|----------------|
-| `PreRedacted` | Stream → ring `thinking`; **strip** dari scribe/SQLite |
+| `PreRedacted` | Stream → ring `thinking`; **strip** dari persisted turns |
 | `PostRedacted` | User-visible content |
 | `KimiToolTail` | `extractKimiToolCalls` → canonical `ToolCall[]` |
 

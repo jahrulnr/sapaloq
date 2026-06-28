@@ -92,11 +92,12 @@ func (c *TranscriptCoalescer) Apply(ev bridge.StreamEvent) bool {
 			c.appendTask(ev)
 		}
 	case bridge.EventStatus:
-		if ev.Status != "" && ev.Status != "working" {
-			c.flushText()
-			c.flushThinking()
-			c.appendStatus(ev)
+		if ev.Status == "" || isSkippedTelemetryStatus(ev.Status) {
+			break
 		}
+		c.flushText()
+		c.flushThinking()
+		c.appendStatus(ev)
 	case bridge.EventError:
 		c.flushText()
 		c.flushThinking()
@@ -202,18 +203,23 @@ func (c *TranscriptCoalescer) completeTool(ev bridge.StreamEvent) {
 	} else if status == "" {
 		status = "completed"
 	}
+	appendChunk := status == "running" && result != ""
 	for i := len(c.entries) - 1; i >= 0; i-- {
 		e := &c.entries[i]
-		if e.Kind != bridge.TranscriptTool || e.ToolResult != "" {
+		if e.Kind != bridge.TranscriptTool {
 			continue
 		}
 		if id != "" && e.ToolID == id {
-			e.ToolResult = result
+			if appendChunk {
+				e.ToolResult += result
+			} else {
+				e.ToolResult = result
+			}
 			e.ToolStatus = status
 			c.changed = true
 			return
 		}
-		if id == "" && e.ToolName == name {
+		if id == "" && e.ToolName == name && e.ToolResult == "" {
 			e.ToolResult = result
 			e.ToolStatus = status
 			c.changed = true
@@ -270,6 +276,15 @@ func isAutopilotNudge(status string) bool {
 func isProgressStatus(status string) bool {
 	switch status {
 	case "waiting", "thinking", "compacting", "stopping":
+		return true
+	default:
+		return strings.HasPrefix(status, "Codex ")
+	}
+}
+
+func isSkippedTelemetryStatus(status string) bool {
+	switch status {
+	case "session", "token_usage", "working", "cursor_tool":
 		return true
 	default:
 		return false

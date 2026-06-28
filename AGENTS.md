@@ -102,7 +102,7 @@ internal/platform/       # desktop/OS adapters (GNOME-first)
 internal/node/           # local/remote sub-agent nodes
 config/                  # config.example.json (template), schema/ json schema
 docs/                    # design specs + STATUS.md (see doc-sync table above)
-migrations/              # SQLite migrations
+migrations/              # Legacy SQL DDL (archived; runtime uses JSON store)
 ```
 
 ## Common commands

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/bridges/codex"
@@ -51,8 +52,9 @@ func main() {
 	// environment before anything reads credentials. Under systemd --user /
 	// XDG autostart there is no login shell, so tokens exported only in the
 	// shell rc would otherwise be invisible. Best-effort + silent on any
-	// failure; never overrides an already-set variable. (.env is still handled
-	// later by the credential loader, ranking below shell rc.)
+	// failure; never overrides an already-set variable. Dotenv (~/.config/sapaloq/.env)
+	// is loaded here too (same prefix allowlist) so provider-bridge env vars work
+	// under systemd, not only cursor-bridge's credential loader.
 	shellenv.LoadOnce()
 	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
 		printUsage()
@@ -81,12 +83,21 @@ func main() {
 		if err != nil {
 			exitf("doctor failed: %v", err)
 		}
+		entry, _ := cfg.LLMBridge.ActiveProvider()
+		if entry.Driver == "codex-bridge" {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			credSource, err = codex.Doctor(ctx, entry, cfg.Runtime)
+			cancel()
+			if err != nil {
+				exitf("doctor failed: %v", err)
+			}
+		}
 		dirs := config.RuntimeDirs(cfg)
 		fmt.Println("doctor ok")
 		fmt.Printf("  config: %s\n", cfgPath)
 		fmt.Printf("  socket: %s\n", dirs.SocketPath)
 		fmt.Printf("  vault:  %s/vault/tool-calls.jsonl\n", dirs.DataDir)
-		fmt.Printf("  cursor: %s\n", credSource)
+		fmt.Printf("  bridge: %s\n", credSource)
 	case "chat":
 		message := "halo"
 		if len(cmdArgs) > 0 {

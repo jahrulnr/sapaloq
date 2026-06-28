@@ -12,7 +12,7 @@ Related: [VISION.md](./VISION.md) · [RUNTIME.md](./RUNTIME.md) · [LIMITATIONS.
 ```
 ┌─────────────────────────────────────────────────┐
 │  sapaloq-core (portable)                        │
-│  orchestrator · bus · SQLite · widget IPC       │
+│  orchestrator · bus · JSON store · widget IPC       │
 ├─────────────────────────────────────────────────┤
 │  internal/platform.Desktop (interface)          │
 ├──────────┬──────────┬──────────┬──────────────┤
@@ -24,7 +24,7 @@ Related: [VISION.md](./VISION.md) · [RUNTIME.md](./RUNTIME.md) · [LIMITATIONS.
 | Layer | GNOME-specific? |
 |-------|-----------------|
 | Orchestrator, task stack, sub-agents | ❌ |
-| Event bus, jsonl, SQLite | ❌ |
+| Event bus, jsonl, JSON store | ❌ |
 | Config, skills, memory SOP | ❌ |
 | Widget shell (GTK/Layer Shell) | ⚠️ Linux-first; abstract later - see [UI-DECISION.md](./UI-DECISION.md) |
 | **Desktop automation** | ✅ per adapter |
@@ -205,7 +205,7 @@ One **sapaloq-core** binary per GOOS (linux/amd64, linux/arm64, windows/amd64).
 
 ## What stays universal (your vision intact)
 
-- Single binary, in-proc bus, SQLite, jsonl
+- Single binary, in-proc bus, JSON store, jsonl
 - Orchestrator + sub-agents + config-by-agent
 - Isolation from cursor-agent
 - LIMITATIONS.md constraints (offline, boot gap) apply **all** platforms

@@ -1,7 +1,7 @@
 # SapaLOQ - Development Blueprint (Proposal)
 
 > **Unified synthesis** of all SapaLOQ architecture docs. Single book for implementers, reviewers, and future contributors.
-> Last updated: 2026-06-22 (runtime telemetry UI, config/data split, persistent workspace) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
+> Last updated: 2026-06-28 (Codex app-server socket bridge + in-turn dynamic tools) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
 
 ---
 
@@ -34,7 +34,7 @@ When this blueprint and a modular doc disagree, **modular doc wins** until expli
 | ------------------------------------------------------------ | ----------------------------------------- |
 | [VISION.md](./VISION.md)                                     | Visi, misi, non-goals, product surface    |
 | [ORCHESTRATOR.md](./ORCHESTRATOR.md)                         | Ask/Plan/Agent, spawn, control, progress  |
-| [CONTEXT-SOP.md](./CONTEXT-SOP.md)                           | Anti-forget, SQLite, ingress pipeline     |
+| [CONTEXT-SOP.md](./CONTEXT-SOP.md)                           | Anti-forget, JSON index, ingress pipeline     |
 | [PROMPT-BUILDER-SOP.md](./PROMPT-BUILDER-SOP.md)             | Pre/post spawn prompts, skills builder    |
 | [FEEDBACK-SOP.md](./FEEDBACK-SOP.md)                         | RL-inspired behavioral shaping            |
 | [RUNTIME.md](./RUNTIME.md)                                   | Single binary, concurrency, systemd       |
@@ -54,7 +54,7 @@ When this blueprint and a modular doc disagree, **modular doc wins** until expli
 
 ### Elevator pitch
 
-> **SapaLOQ** - portable desktop companion (HUD + memory + platform adapter), GNOME first - dengan handoff opsional ke coding agent. Satu binary Go, SQLite + jsonl, zero Redis. Widget agent = orchestrator saja; pekerjaan berat ke sub-agent.
+> **SapaLOQ** - portable desktop companion (HUD + memory + platform adapter), GNOME first - dengan handoff opsional ke coding agent. Satu binary Go, JSON store + jsonl, zero Redis. Widget agent = orchestrator saja; pekerjaan berat ke sub-agent.
 
 User merasakan *presence* agent di desktop (ring animasi, thinking, tool feedback) tanpa membuka IDE - sambil tetap bisa **handoff** ke worker (`cursor-agent`, GoClaw) kalau butuh coding berat.
 
@@ -78,14 +78,14 @@ SapaLOQ = **dua produk terpisah** + optional bridge:
 |         | **SapaLOQ (Companion)**                          | **Worker (Agent CLI)**       |
 | ------- | ------------------------------------------------ | ---------------------------- |
 | Feel    | Ambient HUD, ngobrol santai                      | Task execution, coding       |
-| Brain   | LLM bridge driver (`cursor-bridge`, compat APIs) | `cursor-agent` / GoClaw      |
+| Brain   | LLM bridge driver (`cursor-bridge`, provider APIs, `codex-bridge`) | Cursor/provider/Codex app-server |
 | Config  | `~/.config/sapaloq/config.json`                  | Runtime data |
 | Runtime data | `~/SapaLOQ/`                                | `~/.cursor/`, agent sessions |
 | MCP     | Desktop adapter (`desktop_`*)                    | git, fs, terminal, repo      |
 | Default | Always-on widget                                 | Explicit handoff only        |
 
 
-Core runtime: **orchestrator-only widget** → spawn sub-agents dengan context packet minimal → progress streaming tanpa blocking → SQLite index anti-lupa.
+Core runtime: **orchestrator-only widget** → spawn sub-agents dengan context packet minimal → progress streaming tanpa blocking → JSON index anti-lupa.
 
 ### Key differentiators
 
@@ -93,7 +93,7 @@ Core runtime: **orchestrator-only widget** → spawn sub-agents dengan context p
 2. **Orchestrator + sub-agent** - widget koordinasi; workers agresif & parallel.
 3. **Context SOP** - index-first prefetch, dynamic system-prompt, anti-deep-check.
 4. **Config-by-agent** - `/settings ...` → sub-agent patch `config.json`; **no settings UI**.
-5. **Single binary** - goroutine + in-proc bus + SQLite; no Redis/Rabbit/MQTT.
+5. **Single binary** - goroutine + in-proc bus + JSON store; no Redis/Rabbit/MQTT.
 6. **Platform abstraction** - GNOME first adapter; portable `desktop_`* tools.
 7. **LLM bridge layer** - built-in parsers (tools/thinking); cursor-bridge coercion; **NOT** 9router dep.
 8. **Remote nodes** - sub-agent on VPS/Docker; **no shared memory** to outer machines.
@@ -111,7 +111,7 @@ Core runtime: **orchestrator-only widget** → spawn sub-agents dengan context p
 - External message broker / Redis as runtime dependency.
 - Require 9router as third-party dependency.
 - Derive Cursor thinking behavior from 9router transport.
-- Shared SQLite memory bus across remote nodes.
+- Shared JSON memory index across remote nodes (not recommended).
 
 See [LIMITATIONS.md](./LIMITATIONS.md) for hard limits with no engineering solution.
 
@@ -167,7 +167,7 @@ flowchart LR
     W[Widget HUD]
     O[Orchestrator Ask]
     SA[Sub-agents]
-    DB[(companion.db)]
+    DB[(facts.json)]
     W --> O --> SA --> DB
   end
 
@@ -185,7 +185,7 @@ flowchart LR
 **Hard boundaries:**
 
 1. Widget **tidak** spawn `cursor-agent` di main loop.
-2. **Tidak** shared sqlite/jsonl antara companion dan worker.
+2. **Tidak** shared memory store/jsonl antara companion dan worker.
 3. **Tidak** shared MCP config file.
 4. Handoff = **aksi eksplisit** user ("Open in Agent").
 5. `cursor-agent-toolcall-spec` = referensi visual + mirror UI only.
@@ -238,7 +238,7 @@ Fifteen numbered principles dengan rationale - anchor untuk semua design decisio
 | 1   | **Single binary runtime**           | Less deps, one systemd unit, no broker SPOF cascade                |
 | 2   | **Orchestrator-only widget**        | Keeps HUD responsive; heavy work delegated                         |
 | 3   | **Never block on sub-agents**       | Fire-and-forget spawn + progress watch + event completion          |
-| 4   | **Index-first context**             | SQLite FTS prefetch <2s; grep/fs only on low confidence            |
+| 4   | **Index-first context**             | JSON fact prefetch <2s; grep/fs only on low confidence            |
 | 5   | **Task-scoped context packets**     | Anti context poisoning; no silent task blend                       |
 | 6   | **Compaction-safe memory**          | Durable state in index + files; transcript not source of truth     |
 | 7   | **Config-by-agent, no settings UI** | Agent-native config; schema-validated mutations                    |
@@ -248,7 +248,7 @@ Fifteen numbered principles dengan rationale - anchor untuk semua design decisio
 | 11  | **Per-provider parsers**            | Tool/thinking formats differ; wrong parser = silent tool loss      |
 | 12  | **Local shared memory only**        | Remote nodes get context packet in, progress out - no live DB sync |
 | 13  | **In-proc event bus**               | Wake <5ms; jsonl WAL for audit; no Redis                           |
-| 14  | **RL-inspired not weight training** | Prompt slices + SQLite facts + bandit - auditable, local           |
+| 14  | **RL-inspired not weight training** | Prompt slices + JSON facts + bandit - auditable, local           |
 | 15  | **Honest UX contract**              | Document hard limits; proactive only while running                 |
 | 16  | **Actor loops never execute tools** | Tool syscalls live in scheduler workers; actors consume lifecycle events |
 
@@ -280,7 +280,7 @@ flowchart TB
     ORCH[Orchestrator loop - Ask mode]
     BUS[Event bus internal/bus]
     WAL[jsonl WAL goroutine]
-    SQL[(SQLite companion.db)]
+    SQL[(JSON store)]
     POOL[Sub-agent workers]
     PLAT[platform.Desktop adapter]
     BRG[bridge.Completion LLM]
@@ -321,10 +321,10 @@ flowchart TB
 | **Sub-agent pool**  | `internal/core/subagent/`          | Spawn, lifecycle, progress emit                 |
 | **Event bus**       | `internal/bus/`                    | Publish, route watchers, dedupe                 |
 | **WAL appender**    | `internal/bus/wal/`                | Async jsonl append                              |
-| **SQLite store**    | `internal/store/`                  | Facts, FTS, nodes, prefetch_rules               |
+| **JSON store**    | `internal/store/`                  | Facts, nodes, prefetch_rules (JSON files)               |
 | **Platform driver** | `internal/drivers/`*               | GNOME, KDE, freedesktop, windows, headless      |
 | **OS detect**       | `internal/detect/`                 | Probe, fingerprint, os.json                     |
-| **LLM bridge**      | `internal/bridges/`*               | cursor-bridge, openai-compat, local-llama       |
+| **LLM bridge**      | `internal/bridges/`*               | cursor-bridge, provider-bridge, codex-bridge, local-llama |
 | **Parsers**         | `internal/parse/tools`, `thinking` | Wire format → canonical model                   |
 | **Node client**     | `internal/nodes/`                  | Remote spawn WS/HTTP                            |
 | **Learning hook**   | `internal/learning/`               | Post-task queue, janitor drain                  |
@@ -338,7 +338,7 @@ sequenceDiagram
   participant W as Widget
   participant O as Orchestrator Ask
   participant IR as intent-router
-  participant IX as SQLite index
+  participant IX as JSON index
   participant CS as context-scaler
   participant P as planner Plan
   participant A as task-runner Agent
@@ -618,7 +618,7 @@ Sub-agent **tidak nebak** saat unclear - emit `clarification_request`, pause (`a
 
 **Path 1 - Orchestrator auto-answer** (confidence ≥ `clarification.autoAnswerMinConfidence`, default 0.75):
 
-Sources: `config.json` snapshot, SQLite facts, active task mode, pre-resolved context packet.
+Sources: `config.json` snapshot, JSON facts (`memory/facts.json`), active task mode, pre-resolved context packet.
 
 **Path 2 - Forward to user:** Widget shows question + quick reply buttons.
 
@@ -689,7 +689,7 @@ SapaLOQ target: **prefetch context tepat dalam <2 detik** sebelum sub-agent jala
 flowchart LR
   IN[User prompt]
   IR[intent-router]
-  IX[(SQLite)]
+  IX[(JSON index)]
   DP[dynamic prompt assembler]
   CS[context-scaler]
   ORCH[orchestrator]
@@ -750,9 +750,9 @@ Prefetch packet example:
 Orchestrator **reject** unbounded grep/glob/read unless context-scaler escalates.
 Log overrides → learning_queue → prefetch rule tuning.
 
-### SQLite schema summary
+### JSON persistence summary
 
-Path: `~/SapaLOQ/memory/companion.db` - **only** persistence engine. Full DDL: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [NODES.md](./NODES.md).
+Paths under `~/SapaLOQ/state/` and `~/SapaLOQ/memory/`. Legacy `companion.db` exported once on boot if present. Full layout: [RUNTIME.md](./RUNTIME.md) · [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [NODES.md](./NODES.md).
 
 
 | Table                 | Purpose                                 | Key columns                                           |
@@ -1015,7 +1015,7 @@ flowchart TB
     FB --> LQ
   end
   subgraph tune [Periodic]
-    LQ --> IX[(SQLite)]
+    LQ --> IX[(JSON index)]
     PL[prefetch_log]
     PL --> IX
   end
@@ -1118,7 +1118,7 @@ Config: `feedback.banditTunePrefetch` default true.
 
 ```
 sapaloq-core (portable)
-├── orchestrator · bus · SQLite · widget IPC
+├── orchestrator · bus · JSON store · widget IPC
 ├── internal/platform.Desktop (interface)
 ├── drivers/gnome (MVP)
 ├── drivers/kde, freedesktop, windows, headless (later)
@@ -1128,7 +1128,7 @@ sapaloq-core (portable)
 
 | Layer                     | GNOME-specific? |
 | ------------------------- | --------------- |
-| Orchestrator, bus, SQLite | ❌               |
+| Orchestrator, bus, JSON store | ❌               |
 | Desktop automation        | ✅ per adapter   |
 | Notification watch        | ✅ per adapter   |
 
@@ -1256,7 +1256,7 @@ Legacy alias `sapaloq.v1.gnome.`* deprecated but supported.
 ```
 sapaloq-core
 ├── bridge/          LLM registry
-├── bridges/         cursor-bridge, openai-compat, claude-compat, local-llama
+├── bridges/         cursor-bridge, provider-bridge, codex-bridge/appserver, local-llama
 └── parse/
     ├── tools/       openai, claude, cursor, kimi
     └── thinking/    cursor, claude, kimi, openai
@@ -1279,10 +1279,17 @@ Unified interface:
 ```go
 type Bridge interface {
     ID() string
-    Capabilities() BridgeCaps
-    Complete(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, error)
+    Caps() BridgeCaps
+    Complete(ctx context.Context, req Request) (<-chan StreamEvent, error)
 }
 ```
+
+`Request` carries messages, images, request-scoped `DeclaredTools`, and an
+optional non-serialized `ToolExecutor`. HTTP/provider bridges emit tool calls
+for post-turn orchestration. Codex app-server uses `ToolExecutor` for
+`item/tool/call`, allowing the model to receive a SapaLOQ tool result inside the
+same Codex turn. Every Codex-origin telemetry call is stamped
+`Source:"codex"` and must not enter orchestrator `pendingTools`.
 
 ### Tool poisoning matrix
 
@@ -1344,7 +1351,7 @@ Default policy:
 
 | Output                | Policy                                          |
 | --------------------- | ----------------------------------------------- |
-| Pre-redacted thinking | Stream → ring `thinking`; **strip** from SQLite |
+| Pre-redacted thinking | Stream → ring `thinking`; **strip** from persisted turns |
 | Post-redacted         | User-visible content                            |
 | Kimi tool tail        | → tools/kimi parser                             |
 
@@ -1383,6 +1390,7 @@ Remote node: credentials stay on orchestrator machine unless comm spec declares 
 | `openai-compat` | OpenAI HTTP        | Low        |
 | `claude-compat` | Anthropic Messages | Low–medium |
 | `cursor-bridge` | api2.cursor.sh     | **High**   |
+| `codex-bridge` | Codex app-server WebSocket JSON-RPC | Native tools are telemetry; SapaLOQ tools use dynamic callbacks |
 
 
 Community bridges: compile-time registry; template for IDE-like backends.
@@ -1408,7 +1416,7 @@ Core orchestrator **always** on user machine (widget). Node = **where sub-agent 
 
 |                      | Same machine       | Outer machine             |
 | -------------------- | ------------------ | ------------------------- |
-| Shared companion.db? | ✅ Local sub-agents | ❌ **Not recommended**     |
+| Shared memory index? | ✅ Local sub-agents | ❌ **Not recommended**     |
 | What remote gets     | Full memory bus    | **Context packet only**   |
 | What remote returns  | -                  | Progress + result summary |
 | Learning promotion   | Local janitor      | Local after completed     |
@@ -1435,7 +1443,7 @@ Remote contract:
 
 Same-host Docker: `share_memory: 0` default; explicit opt-in dev only.
 
-### nodes table (SQLite)
+### nodes registry (`state/config/nodes.json`)
 
 See Part VII schema. Key columns:
 
@@ -1476,7 +1484,7 @@ Remote WS → sapaloq-core → `bus.Publish(sapaloq.v1.subagent.progress.{id})`
 
 Clarification + control frames same as local - orchestrator routes to WS not unix socket.
 
-Security: TLS required (`nodes.requireTlsRemote`), token via env not SQLite, path escape blocked by boundary-guard.
+Security: TLS required (`nodes.requireTlsRemote`), token via env not node registry files, path escape blocked by boundary-guard.
 
 Config: `nodes.allowRemoteRoles`, `nodes.fallbackToLocalOnRemoteFail`.
 
@@ -1492,7 +1500,7 @@ sapaloq-core (one binary)
 ├── Orchestrator loop
 ├── Event bus (route watchers)     ← bukan Redis
 ├── Sub-agent workers
-├── SQLite (companion.db)
+├── JSON store (`state/` + `memory/`)
 ├── jsonl WAL (events, progress, learning)
 └── Platform + LLM bridge adapters
 ```
@@ -1504,7 +1512,7 @@ sapaloq-core (one binary)
 
 | Store     | Path                               | Role                           |
 | --------- | ---------------------------------- | ------------------------------ |
-| SQLite    | `memory/companion.db`              | Facts, FTS, nodes, rules       |
+| JSON store | `state/` + `memory/`              | Sessions, facts, nodes, rules       |
 | jsonl     | `events.jsonl`, `progress/*.jsonl` | WAL, audit, replay             |
 | Files     | config, skills, prompt             | Agent-editable                 |
 | In-memory | goroutine LRU                      | Hot cache - lost on restart OK |
@@ -1641,7 +1649,7 @@ One service. One binary. One socket.
 | ------------------ | ----------------------------------------------- |
 | sapaloq-core crash | systemd restart; replay jsonl tail              |
 | LLM API down       | Degrade chat; queue tasks; fallback local-llama |
-| SQLite locked      | WAL mode + short retry                          |
+| Store write race   | Per-file flock + atomic rename                          |
 | Slow watcher       | Drop + log                                      |
 
 
@@ -1654,7 +1662,7 @@ No "Redis failed so events broken" cascade.
 | ----- | ------------------------------------------------------------------- |
 | Core  | Go 1.22+                                                            |
 | UI    | Wails v2 + web (`sapaloq-widget`); Ubuntu 24.04: `-tags webkit2_41` |
-| DB    | modernc.org/sqlite or mattn/go-sqlite3                              |
+| Persistence | JSON + JSONL (`internal/store/chat`)                              |
 | IPC   | unix socket                                                         |
 | GNOME | godbus                                                              |
 | LLM   | HTTP client direct                                                  |
@@ -1681,7 +1689,7 @@ Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 | Section                                                          | Purpose                                                                                         |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `runtime`, `platform`                                            | Data directory + active env-driven desktop adapter                                              |
-| `llmBridge`                                                      | Active provider registry; secrets via env only                                                   |
+| `llmBridge`                                                      | Active provider registry; secrets via env only. `codex-bridge` lifecycle endpoint/mode are environment-only (`auto`, UDS default) |
 | `orchestrator`                                                   | Continuation, compaction, completion notification                                                |
 | `skills`, `prompts`, `feedback`                                  | Bounded skill injection, replaceable role prompts, explicit negative guidance                    |
 | `events.bus`                                                     | Socket path, JSONL WAL path, replay flag                                                         |
@@ -1762,7 +1770,7 @@ Complete target tree under `~/.config/sapaloq/`:
 ├── config.json, os.json, cache/, run/sapaloq.sock
 ├── prompt/{core.md, roles/*, roles.d/, modes/, positive/, negative/, slices/}
 ├── skills/*.md
-├── memory/{companion.db, files/{namespace}/, learning-queue.jsonl,
+├── memory/{facts.json, files/{namespace}/, learning_queue.json,
 │          tasks/{stack.md,taskId/plan.md}, context-packets/,
 │          progress/{subAgentId}.jsonl, control/, events.jsonl, archive/}
 ├── rules/{companion.md, automation.md}
@@ -1782,7 +1790,7 @@ Complete target tree under `~/.config/sapaloq/`:
 | ---------------- | -------------------------------------- | --------------------------------------- |
 | config.json      | sub-agent:settings, validator          | orchestrator (RO), all roles (snapshot) |
 | os.json          | sapaloq-core detect only               | agent read-only capability check        |
-| companion.db     | memory-janitor, learning, scribe facts | intent-router, context-scaler           |
+| facts.json       | memory-janitor, learning, scribe facts | intent-router, context-scaler           |
 | progress/*.jsonl | sub-agents append                      | orchestrator tail, widget mirror        |
 | events.jsonl     | bus WAL goroutine                      | replay on boot                          |
 | roles.d/*        | learning-agent                         | context-scaler assemble                 |
@@ -1851,8 +1859,8 @@ sequenceDiagram
 
 ### Isolation guarantees
 
-1. Worker **does not** read `companion.db`.
-2. SapaLOQ **does not** ingest worker transcript into SQLite (mirror visual optional only).
+1. Worker **does not** read orchestrator memory files.
+2. SapaLOQ **does not** ingest worker transcript into the chat store (mirror visual optional only).
 3. MCP configs **separate** - `mcp/servers.json` vs Cursor MCP.
 4. Handoff is **user-initiated** - never implicit on task-runner local exec.
 
@@ -1875,7 +1883,7 @@ Full detail: [LIMITATIONS.md](./LIMITATIONS.md).
 | **Downtime**              | Missed events while core off; boot delay 5–60s; sleep orphans tasks                                                |
 | **Isolation (by design)** | Handoff ≠ shared memory; two products two truths; no settings UI recovery without doctor                           |
 | **Platform**              | Incomplete notification bodies; Wayland HUD variance; portal prompts; Flatpak sandbox                              |
-| **Architecture**          | Anti-poisoning vs fast task switch friction; orchestrator slim awareness; single binary SPOF; SQLite single-writer |
+| **Architecture**          | Anti-poisoning vs fast task switch friction; orchestrator slim awareness; single binary SPOF; JSON single-writer |
 | **Remote nodes**          | No shared memory outer machines; network partition; stale context packet risk                                      |
 | **Intelligence**          | Auto-learning can be wrong; web research untrusted; bandit cold start; parser/wire drift                           |
 
@@ -1894,7 +1902,7 @@ Full detail: [LIMITATIONS.md](./LIMITATIONS.md).
 | Phase  | Name                                      | Depends on |
 | ------ | ----------------------------------------- | ---------- |
 | **M0** | Architecture docs                         | - ✅        |
-| **M1** | SQLite + nodes bootstrap                  | M0         |
+| **M1** | JSON store + nodes bootstrap                  | M0         |
 | **M2** | Orchestrator task stack + progress        | M1         |
 | **M3** | Completion + event bus + platform watcher | M2         |
 | **M4** | Scribe + storage mapping                  | M2         |
@@ -1911,7 +1919,7 @@ Full detail: [LIMITATIONS.md](./LIMITATIONS.md).
 | Phase    | Deliverables                                                                            | Acceptance criteria (must pass)                                                         |
 | -------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | **M0** ✅ | All modular docs + config.schema + BLUEPRINT                                            | Cross-linked docs; schema validates example; non-goals explicit                         |
-| **M1**   | companion.db migrations; boot indexer; local-default node; doctor CLI                   | DB+indexes <3s; FTS hit on seed data; `catat`→path without LLM; migration idempotent    |
+| **M1**   | JSON memory index; boot indexer; local-default node; doctor CLI                   | Index load <3s; fact hit on seed data; `catat`→path without LLM; legacy DB export idempotent    |
 | **M2**   | Task stack; anti-poisoning; progress jsonl; spawn routing stub; control + clarification | Block 2nd task without park; snapshot <100ms; lifecycle commands work; spawnPath logged |
 | **M3**   | internal/bus + WAL + sapaloq.sock; GNOME notify watch; reminder scheduler               | Bus wake <5ms; jsonl replay on boot; test toast→event; rate limit non-blocking          |
 | **M4**   | scribe spawn; storage mapping; boundary-guard; natural-language notes; `/settings`      | Append correct notes; cross-mode blocked; settings patch + reject bad paths             |
@@ -2166,6 +2174,6 @@ Config: `orchestrator.completion.requireTerminalEvent` default **true**.
 
 ## One-liner (closing)
 
-> **SapaLOQ** - portable desktop companion (HUD + memory + platform adapter), GNOME first - orchestrator-only widget, sub-agent workers, SQLite anti-forget, single Go binary, optional handoff to coding agent. Config-by-agent. No Redis. No shared worker memory. No 9router dependency. Honest about limits.
+> **SapaLOQ** - portable desktop companion (HUD + memory + platform adapter), GNOME first - orchestrator-only widget, sub-agent workers, JSON anti-forget, single Go binary, optional handoff to coding agent. Config-by-agent. No Redis. No shared worker memory. No 9router dependency. Honest about limits.
 
 *End of SapaLOQ Development Blueprint.*

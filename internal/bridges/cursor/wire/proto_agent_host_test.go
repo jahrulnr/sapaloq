@@ -2,12 +2,11 @@ package wire
 
 import "testing"
 
-// TestAgentHostRespectsGhostMode confirms that the privacy-vs-nonprivacy
-// Agent host switch returns the expected hostname for each ghostMode value.
-// Mirrors 9router/src/lib/oauth/constants/oauth.js.
-func TestAgentHostRespectsGhostMode(t *testing.T) {
-	if got := AgentHost(true); got != AgentPrivacyHost {
-		t.Fatalf("AgentHost(true) = %q, want %q", got, AgentPrivacyHost)
+// TestAgentHostMatchesCursorAgent confirms we always use the non-privacy host
+// like 9router/open-sse/executors/cursorAgent.js (ghost mode is header-only).
+func TestAgentHostMatchesCursorAgent(t *testing.T) {
+	if got := AgentHost(true); got != AgentNonPrivacyHost {
+		t.Fatalf("AgentHost(true) = %q, want %q", got, AgentNonPrivacyHost)
 	}
 	if got := AgentHost(false); got != AgentNonPrivacyHost {
 		t.Fatalf("AgentHost(false) = %q, want %q", got, AgentNonPrivacyHost)

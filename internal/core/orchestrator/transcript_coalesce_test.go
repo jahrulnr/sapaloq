@@ -55,6 +55,33 @@ func TestCoalesceEventsSkipsTaskUpdateCards(t *testing.T) {
 	}
 }
 
+func TestCoalesceEventsStreamingToolOutput(t *testing.T) {
+	now := time.Now().UTC()
+	events := []bridge.StreamEvent{
+		{Kind: bridge.EventToolCall, ToolCall: &parse.ToolCall{ID: "c1", Name: "commandExecution", Arguments: []byte(`{"command":"ls"}`)}, At: now},
+		{Kind: bridge.EventToolUpdate, ToolCall: &parse.ToolCall{ID: "c1"}, ToolResult: "foo", Status: "running", At: now},
+		{Kind: bridge.EventToolUpdate, ToolCall: &parse.ToolCall{ID: "c1"}, ToolResult: "bar", Status: "running", At: now},
+		{Kind: bridge.EventToolUpdate, ToolCall: &parse.ToolCall{ID: "c1"}, ToolResult: "foobar", Status: "completed", At: now},
+	}
+	out := CoalesceEvents("1", events)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 tool row, got %d: %+v", len(out), out)
+	}
+	if out[0].ToolResult != "foobar" || out[0].ToolStatus != "completed" {
+		t.Fatalf("unexpected merged tool entry: %+v", out[0])
+	}
+}
+
+func TestCoalesceEventsCodexProgressStatus(t *testing.T) {
+	now := time.Now().UTC()
+	out := CoalesceEvents("1", []bridge.StreamEvent{
+		{Kind: bridge.EventStatus, Status: "Codex sedang bekerja…", At: now},
+	})
+	if len(out) != 1 || out[0].Kind != bridge.TranscriptProgress {
+		t.Fatalf("codex progress = %+v", out)
+	}
+}
+
 func TestEntriesWithPendingStreamsPartialText(t *testing.T) {
 	c := NewTranscriptCoalescer("42")
 	c.Apply(bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "Hel"})

@@ -23,6 +23,7 @@ export function mountTranscriptPane(
   emptyMessage: string,
   mode: ToolActivityMode = 'monitor',
   emptyExtraClass = '',
+  restore = false,
 ) {
   body.querySelector('.transcript-pane')?.remove();
   body.querySelectorAll('.transcript-empty').forEach((node) => node.remove());
@@ -34,8 +35,9 @@ export function mountTranscriptPane(
     return;
   }
   const pane = createTranscriptPane();
+  const renderOpts = restore ? { restore: true as const } : undefined;
   for (const entry of visible) {
-    const el = renderTranscriptEntry(entry, mode);
+    const el = renderTranscriptEntry(entry, mode, renderOpts);
     if (!el.classList.contains('is-empty')) pane.append(el);
   }
   body.append(pane);

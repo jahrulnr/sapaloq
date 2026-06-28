@@ -1,9 +1,9 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-28 (foreground steering compose mode with dedicated Steer + Stop actions)
+> Last updated: 2026-06-28 (reader-aware chat auto-scroll during live updates)
 
-**Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, SQLite, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
+**Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, JSON store, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
 
 Related: [PLATFORM.md](./PLATFORM.md) · [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md)
 
@@ -47,7 +47,7 @@ Additionally, GTK4 removed `gtk_window_set_keep_above`. GNOME maintainers confir
                          │ unix socket
 ┌────────────────────────▼─────────────────────────────────┐
 │  sapaloq-core (single binary)                              │
-│  orchestrator · bus · SQLite · sub-agents                │
+│  orchestrator · bus · JSON store · sub-agents                │
 └──────────────────────────────────────────────────────────┘
 
 GNOME Wayland (optional, M5c):
@@ -97,6 +97,16 @@ failed enqueue keeps the draft and marks the bubble failed. These bubbles are
 UI-only and are not restored from chat history because steering is actor
 control input, not a persisted user turn. Background actor targeting and
 mid-stream `priority: interrupt` remain follow-ups.
+
+### Reader-aware transcript scrolling
+
+Live transcript patches, direct message/tool appends, and same-session history
+refreshes follow the newest content only while the reader is already at the
+bottom of the chat. Moving upward disables auto-follow immediately and keeps
+the current `scrollTop`; returning to the end enables it again on the next
+update. The end check uses a 2px tolerance solely for browser layout rounding.
+Initial hydration, a deliberate session switch, and a new/reset chat open at
+the newest transcript entry.
 
 ### Visual language
 

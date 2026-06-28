@@ -62,6 +62,10 @@ export function ReadDroppedFile(arg1) {
   return window['go']['main']['App']['ReadDroppedFile'](arg1);
 }
 
+export function ResumeTask(arg1, arg2) {
+  return window['go']['main']['App']['ResumeTask'](arg1, arg2);
+}
+
 export function RetryChatTurn(arg1, arg2) {
   return window['go']['main']['App']['RetryChatTurn'](arg1, arg2);
 }

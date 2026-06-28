@@ -92,6 +92,10 @@ type turnConfig struct {
 	// recordToolTurns persists tool-result turns to the chat store for context
 	// accounting. Chat-only.
 	recordToolTurns bool
+	// foregroundAsk enables ask-chat finish policy: a clean tool-less reply ends
+	// the run without an autopilot continuation (sub-agents and test harnesses
+	// leave this false and keep looping until an explicit terminal tool).
+	foregroundAsk bool
 	// generationID links persisted turns to the active chat run (runSeq).
 	generationID string
 	// maxInferenceTurns overrides the continuation budget's turn cap when > 0
@@ -103,6 +107,8 @@ type turnConfig struct {
 	suppressHeadroomCompaction bool
 	// compactCtx enables in-memory LLM checkpoint compaction for sub-agents.
 	compactCtx *subAgentCompactCtx
+	// taskAnchor is the actor's task text; used to drop cross-session thinking bleed.
+	taskAnchor string
 }
 
 // chatSink streams events to the live chat channel. beat is a no-op because the

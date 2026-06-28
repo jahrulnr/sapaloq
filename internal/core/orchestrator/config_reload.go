@@ -57,6 +57,7 @@ func (o *Orchestrator) applyConfig(next config.Config) error {
 		}
 	}
 	o.mu.Lock()
+	oldBridge := o.bridge
 	oldChat := o.chat
 	o.cfg = next
 	o.entry = entry
@@ -77,6 +78,11 @@ func (o *Orchestrator) applyConfig(next config.Config) error {
 		o.memoryDir = dirs.MemoryDir
 	}
 	o.mu.Unlock()
+	if oldBridge != br {
+		if closer, ok := oldBridge.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}
 	if nextChat != nil && oldChat != nil {
 		_ = oldChat.Close()
 	}
@@ -277,8 +283,8 @@ func (o *Orchestrator) handleThinking(ctx context.Context, out chan<- bridge.Str
 		shown = "default (provider decides)"
 	}
 	msg := fmt.Sprintf("Thinking level set to %s for %s.", shown, entry.Key)
-	if entry.Driver != "provider-bridge" && level != "" {
-		msg += " Note: reasoning effort currently applies only to provider-bridge models; the active driver is " + entry.Driver + "."
+	if level != "" && entry.Driver != "provider-bridge" && entry.Driver != "codex-bridge" {
+		msg += " Note: reasoning effort currently applies only to provider-bridge and codex-bridge models; the active driver is " + entry.Driver + "."
 	}
 	return o.emitSlash(ctx, out, sessionID, responseEvent(sessionID, msg))
 }

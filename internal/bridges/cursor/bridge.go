@@ -2,7 +2,6 @@ package cursor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +16,6 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/parse"
 	thinkingcursor "github.com/jahrulnr/sapaloq/internal/parse/thinking/cursor"
 	toolcursor "github.com/jahrulnr/sapaloq/internal/parse/tools/cursor"
-	"github.com/jahrulnr/sapaloq/internal/parse/tools/kimi"
 	"github.com/jahrulnr/sapaloq/internal/vault"
 )
 
@@ -54,7 +52,7 @@ func New(entry config.LLMBridge, runtime config.RuntimeConfig) (*Bridge, error) 
 func (b *Bridge) ID() string { return "cursor-bridge" }
 
 func (b *Bridge) Caps() bridge.BridgeCaps {
-	creds, err := b.loadCreds()
+	creds, err := b.loadCreds(context.Background())
 	return bridge.BridgeCaps{Thinking: true, Tools: true, LiveAPI: err == nil && creds.AccessToken != ""}
 }
 
@@ -74,17 +72,24 @@ func (b *Bridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridg
 	return out, nil
 }
 
-func (b *Bridge) loadCreds() (credentials.Credentials, error) {
-	return credentials.Load(credentials.Options{TokenEnv: b.entry.CredentialsEnv})
+func (b *Bridge) loadCreds(ctx context.Context) (credentials.Credentials, error) {
+	creds, err := credentials.Load(credentials.Options{TokenEnv: b.entry.CredentialsEnv})
+	if err != nil {
+		return creds, err
+	}
+	if err := credentials.EnsureFresh(ctx, &creds); err != nil {
+		debug.Debugf("cursor-bridge: token refresh skipped/failed: %v", err)
+	}
+	return creds, nil
 }
 
 func (b *Bridge) hasToken() bool {
-	creds, err := b.loadCreds()
+	creds, err := b.loadCreds(context.Background())
 	return err == nil && creds.AccessToken != ""
 }
 
 func (b *Bridge) streamLive(ctx context.Context, req bridge.Request, out chan<- bridge.StreamEvent) {
-	creds, err := b.loadCreds()
+	creds, err := b.loadCreds(ctx)
 	if err != nil || creds.AccessToken == "" {
 		debug.Debugf("cursor-bridge: live stream aborted cred_err=%v", err)
 		errEv := bridge.NewEvent(bridge.EventError)
@@ -100,63 +105,57 @@ func (b *Bridge) streamLive(ctx context.Context, req bridge.Request, out chan<- 
 	debug.Debugf("cursor-bridge: creds source=%s token=%s machine=%s ghost=%v",
 		creds.Source, debug.RedactSecret(creds.AccessToken), debug.RedactSecret(creds.MachineID), creds.GhostMode)
 
-	// Route to Agent API path when vision input is detected OR SAPALOQ_AGENT_PATH is forced.
-	if wantsAgentPath(req) {
+	// Route to Agent API for vision; chat stream uses Node wire when available.
+	if b.wantsAgentPath(req) {
 		b.streamLiveAgent(ctx, req, creds, out)
 		return
 	}
-	messages := make([]wire.ChatMessage, 0, len(req.Messages))
-	for _, msg := range req.Messages {
-		messages = append(messages, wire.ChatMessage{Role: msg.Role, Content: msg.Content})
-	}
-	var responseBuf strings.Builder
+	messages := normalizeCursorWireMessages(req.Messages)
+	model := defaultIfEmpty(req.Model, b.entry.Model)
+	upstreamModel := ResolveCursorUpstreamModel(model)
+	declared := declaredToolsForRequest(req.DeclaredTools, b.entry.DeclaredTools)
+	guard := b.schema.BuildGuardContext(model, declared, req.Messages)
+	userPrompt := guard.UserPrompt
+	wireTools := buildWireMCPTools(declared)
+	kimiTokens := b.schema.KimiTokens()
+	promoteThinking := ShouldPromoteThinkingToContent(model)
+	acc := newLiveTurnBuffer(kimiTokens, promoteThinking)
 	var frameCount int
-	// Driver selection. Default uses the raw HTTP/2 client (mirrors cursor-proto-lab
-	// byte for byte). Set SAPALOQ_WIRE_DRIVER=http2 to fall back to Go's net/http2.
+	// Driver selection. Default uses Node (cursor-proto-lab) when available because
+	// Go raw/http2 drivers are rejected by api2 with valid vscdb tokens.
+	// Override: SAPALOQ_WIRE_DRIVER=raw|http2|node
 	driver := strings.ToLower(strings.TrimSpace(os.Getenv("SAPALOQ_WIRE_DRIVER")))
 	streamFn := wire.StreamChatRaw
-	if driver == "http2" {
+	switch driver {
+	case "http2":
 		streamFn = wire.StreamChat
+	case "node":
+		streamFn = wire.StreamChatNode
+	case "raw":
+		streamFn = wire.StreamChatRaw
+	default:
+		if wire.NodeStreamAvailable() {
+			streamFn = wire.StreamChatNode
+		}
 	}
 	err = streamFn(ctx, wire.StreamOptions{
-		Endpoint:    b.entry.Endpoint,
-		Token:       creds.AccessToken,
-		MachineID:   creds.MachineID,
-		Model:       defaultIfEmpty(req.Model, b.entry.Model),
-		Messages:    messages,
-		GhostMode:   creds.GhostMode,
-		InsecureTLS: os.Getenv("SAPALOQ_WIRE_INSECURE_TLS") == "1",
-		Timeout:     b.timeout,
+		Endpoint:        b.entry.Endpoint,
+		Token:           creds.AccessToken,
+		MachineID:       creds.MachineID,
+		Model:           upstreamModel,
+		Messages:        messages,
+		Tools:           wireTools,
+		Instruction:     guard.Instruction,
+		ForceAgentMode:  guard.ForceAgentMode,
+		ReasoningEffort: b.entry.ReasoningEffort,
+		GhostMode:       creds.GhostMode,
+		InsecureTLS:     os.Getenv("SAPALOQ_WIRE_INSECURE_TLS") == "1",
+		Timeout:         b.timeout,
 	}, func(part wire.ExtractedPart) {
 		frameCount++
 		debug.Verbosef("cursor-bridge: frame=%d thinking=%d text=%d tool=%v decode_err=%q",
 			frameCount, len(part.Thinking), len(part.Text), part.ToolCall != nil, part.DecodeErr)
-		if part.Thinking != "" {
-			ev := bridge.NewEvent(bridge.EventThinkingDelta)
-			ev.SessionID = req.SessionID
-			ev.Delta = part.Thinking
-			send(ctx, out, ev)
-		}
-		if part.Text != "" {
-			responseBuf.WriteString(part.Text)
-			ev := bridge.NewEvent(bridge.EventResponseDelta)
-			ev.SessionID = req.SessionID
-			ev.Delta = part.Text
-			send(ctx, out, ev)
-			for _, call := range kimi.ParseInlineWithTokens(part.Text, b.schema.KimiTokens()) {
-				b.emitToolCall(ctx, out, req.SessionID, call)
-			}
-		}
-		if part.ToolCall != nil {
-			raw, _ := json.Marshal(map[string]any{
-				"id":        part.ToolCall.ID,
-				"name":      part.ToolCall.Name,
-				"arguments": json.RawMessage(part.ToolCall.Arguments),
-			})
-			if call, ok := toolcursor.ParseClientSideToolV2Call(raw); ok {
-				b.emitToolCall(ctx, out, req.SessionID, call)
-			}
-		}
+		acc.ingest(part)
 	})
 	if err != nil {
 		debug.Debugf("cursor-bridge: stream error: %v", err)
@@ -166,7 +165,11 @@ func (b *Bridge) streamLive(ctx context.Context, req bridge.Request, out chan<- 
 		send(ctx, out, errEv)
 		return
 	}
-	debug.Debugf("cursor-bridge: stream done frames=%d response_bytes=%d", frameCount, responseBuf.Len())
+	responseBytes, noiseDropped := b.finalizeBufferedTurn(ctx, out, req.SessionID, declared, guard, userPrompt, acc)
+	debug.Debugf("cursor-bridge: stream done frames=%d response_bytes=%d noise_dropped=%v", frameCount, responseBytes, noiseDropped)
+	if frameCount == 0 && responseBytes == 0 && !noiseDropped {
+		debug.Debugf("cursor-bridge: empty turn (no frames) - emitting done for orchestrator nudge")
+	}
 	done := bridge.NewEvent(bridge.EventDone)
 	done.SessionID = req.SessionID
 	send(ctx, out, done)
@@ -197,9 +200,28 @@ func (b *Bridge) streamMock(ctx context.Context, req bridge.Request, out chan<- 
 	thinking.Delta = "No SAPALOQ_CURSOR_TOKEN - using offline mock stream."
 	send(ctx, out, thinking)
 
-	if strings.Contains(message, "glob") || strings.Contains(message, "tool") {
-		if call, ok := toolcursor.ParseClientSideToolV2Call([]byte(`{"id":"mock-1","name":"glob","arguments":{"pattern":"*.go"}}`)); ok {
+	// Autopilot continuations ask for sapaloq_stop; honor them so the
+	// orchestrator does not burn the inference-turn budget when mock mode is
+	// active (e.g. tests or missing credentials).
+	if strings.Contains(message, "<sapaloq:autopilot>") {
+		if call, ok := toolcursor.ParseClientSideToolV2Call([]byte(`{"id":"mock-stop","name":"sapaloq_stop","arguments":{"reason":"offline mock stop"}}`)); ok {
 			b.emitToolCall(ctx, out, req.SessionID, call)
+		}
+		done := bridge.NewEvent(bridge.EventDone)
+		done.SessionID = req.SessionID
+		send(ctx, out, done)
+		return
+	}
+
+	if strings.Contains(message, "undeclared_probe") {
+		call := parse.ToolCall{Name: "glob_file_search", Source: "kimi_inline"}
+		b.tryEmitToolCall(ctx, out, req.SessionID, declaredToolsForRequest(req.DeclaredTools, b.entry.DeclaredTools), call)
+	}
+
+	if strings.Contains(message, "glob") || strings.Contains(message, "tool") {
+		if call, ok := toolcursor.ParseClientSideToolV2Call([]byte(`{"id":"mock-1","name":"glob","arguments":{"glob_pattern":"*.go"}}`)); ok {
+			declared := declaredToolsForRequest(req.DeclaredTools, b.entry.DeclaredTools)
+			b.tryEmitToolCall(ctx, out, req.SessionID, declared, call)
 		}
 	}
 
@@ -213,24 +235,41 @@ func (b *Bridge) streamMock(ctx context.Context, req bridge.Request, out chan<- 
 	send(ctx, out, done)
 }
 
-func (b *Bridge) emitToolCall(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, call parse.ToolCall) {
+func (b *Bridge) tryEmitToolCall(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, declared []string, call parse.ToolCall) {
 	rawName := call.Name
-	coerced := CoerceToolCall(b.schema, call)
-	if reason := VaultReason(b.schema, b.entry.DeclaredTools, rawName, coerced); reason != "" {
-		debug.Debugf("cursor-bridge: vault %s raw=%s resolved=%s", reason, rawName, coerced.Name)
+	origSource := call.Source
+	call = ResolveToolCall(b.schema, call)
+	if reason := VaultReason(b.schema, declared, rawName, call); reason != "" {
+		debug.Debugf("cursor-bridge: drop tool %s (%s) raw=%s resolved=%s", reason, origSource, rawName, call.Name)
 		_ = b.vault.Append(vault.Entry{
 			SessionID:    sessionID,
 			Provider:     b.ID(),
 			RawName:      rawName,
-			ResolvedName: coerced.Name,
-			Arguments:    coerced.Arguments,
-			Source:       coerced.Source,
+			ResolvedName: call.Name,
+			Arguments:    call.Arguments,
+			Source:       origSource,
 			Reason:       reason,
 		})
+		// Surface undeclared upstream tools in the widget transcript (telemetry
+		// only — orchestrator skips Source:"cursor" for dispatch).
+		telemetry := call
+		telemetry.Source = "cursor"
+		b.emitToolCall(ctx, out, sessionID, telemetry)
+		update := bridge.NewEvent(bridge.EventToolUpdate)
+		update.SessionID = sessionID
+		update.ToolCall = &telemetry
+		update.ToolResult = fmt.Sprintf("not on declared surface (%s): raw=%s", reason, rawName)
+		update.Status = "failed"
+		send(ctx, out, update)
+		return
 	}
+	b.emitToolCall(ctx, out, sessionID, call)
+}
+
+func (b *Bridge) emitToolCall(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, call parse.ToolCall) {
 	ev := bridge.NewEvent(bridge.EventToolCall)
 	ev.SessionID = sessionID
-	ev.ToolCall = &coerced
+	ev.ToolCall = &call
 	send(ctx, out, ev)
 }
 

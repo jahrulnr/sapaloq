@@ -118,7 +118,7 @@ func TestBridgeScenarios(t *testing.T) {
 					bridge.EventResponseDelta,
 					bridge.EventDone,
 				},
-				toolName: "glob_file_search",
+				toolName: "glob",
 			},
 		},
 		{
@@ -149,16 +149,14 @@ func TestBridgeScenarios(t *testing.T) {
 						t.Errorf("reason = %q", entries[len(entries)-1].Reason)
 					}
 				})
-				return b, "use glob tool"
+				return b, "undeclared_probe"
 			},
 			want: scenarioExpect{
 				kinds: []bridge.EventKind{
 					bridge.EventThinkingDelta,
-					bridge.EventToolCall,
 					bridge.EventResponseDelta,
 					bridge.EventDone,
 				},
-				toolName: "glob_file_search",
 			},
 		},
 		{
@@ -183,6 +181,7 @@ func TestBridgeScenarios(t *testing.T) {
 				t.Setenv("CURSOR_MACHINE_ID", "scenario-machine")
 				t.Setenv("CURSOR_STATE_VSCDB", filepath.Join(t.TempDir(), "missing.vscdb"))
 				t.Setenv("SAPALOQ_WIRE_INSECURE_TLS", "1")
+				t.Setenv("SAPALOQ_WIRE_DRIVER", "raw")
 
 				entry, _ := defaultTestEntry()
 				entry.Endpoint = server.URL

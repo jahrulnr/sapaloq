@@ -69,7 +69,7 @@ func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) 
 		if record.Role == "planner" && record.Status == "done" {
 			persisted = fmt.Sprintf("<!--sapaloq-planner-summary:%s-->\n%s", record.ID, text)
 		}
-		_ = o.chat.AppendTurn(context.Background(), sessionID, "assistant", persisted, estimateTextTokens(persisted))
+		_ = o.chat.AppendTurn(context.Background(), sessionID, "assistant", persisted, estimateContentTokens(persisted))
 	}
 
 	// Republish as a streamed response so a connected widget hears it live via

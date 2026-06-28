@@ -2,7 +2,7 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop - bukan repo coding.
-> Last updated: 2026-06-28 (sub-agent resume via `sapaloq_resume_task`; task dirs purged on chat delete)
+> Last updated: 2026-06-28 (JSON store primary; legacy SQLite section archived)
 
 ---
 
@@ -12,6 +12,13 @@ When a background actor **failed** or was **stopped** but has durable turns in `
 
 - **Boot:** `recoverOrphanedTasks` still resumes `in_progress`; additionally auto-resumes `failed` tasks with turns when the error looks transient (provider/connection/timeout).
 - **Lifecycle:** all task artifacts (`status.json`, turns, progress JSONL, workspace, actor inbox) are removed when the parent chat session is deleted (`DeleteSession` → `purgeSessionTasks`).
+
+Codex continuity is an additional provider-side cache, not the authoritative
+SapaLOQ transcript. `vault/codex-threads.jsonl` maps actor/session IDs to Codex
+thread IDs for bounded resume prompts. Only records marked
+`transport:"app-server"` are resumed; old CLI records force a fresh thread and
+full bounded transcript. If app-server rejects a stored thread, the bridge does
+the same fresh-thread fallback and overwrites the mapping.
 
 ---
 
@@ -47,7 +54,7 @@ SapaLOQ harus **prefetch context yang tepat dalam <2 detik** sebelum sub-agent j
 
 ## Prinsip
 
-1. **Index-first, search-second** - SQLite FTS + tag index → prefetch packet; grep/fs hanya kalau confidence rendah.
+1. **Index-first, search-second** - JSON fact index + tag/prefetch rules → prefetch packet; grep/fs hanya kalau confidence rendah.
 2. **Dynamic system-prompt** - assemble slice by intent/mode/task; never dump full skills catalog.
 3. **SOP terstruktur** - system-prompt, skills, memory punya lifecycle seperti automation-learning (read → work → promote → obsolete).
 4. **Anti-deep-check** - bounded exploration; default = skip explore jika prefetch hit.
@@ -76,7 +83,7 @@ SapaLOQ harus **prefetch context yang tepat dalam <2 detik** sebelum sub-agent j
 flowchart LR
   IN[User prompt]
   IR[intent-router]
-  IX[(SQLite index)]
+  IX[(JSON index)]
   DP[dynamic prompt assembler]
   CS[context-scaler]
   ORCH[orchestrator]
@@ -98,7 +105,7 @@ flowchart LR
 | Parse mode | orchestrator | `personal` / `hobby` / `work` / `auto` |
 | Classify intent | intent-router (heuristic + optional tiny LLM) | `settings`, `catat`, `notify`, `task`, `chat`, … |
 | Match task stack | orchestrator | `activeTaskId`, poison check |
-| Lookup prefetch rules | SQLite `prefetch_rules` | kinds, skills, config keys |
+| Lookup prefetch rules | `state/config/prefetch_rules.json` | kinds, skills, config keys |
 
 ### Fase 1 - Index prefetch (<500ms)
 
@@ -153,7 +160,7 @@ Layers for **orchestrator** (inject **only what applies**):
 
 **Sub-agent spawn** must include assembled **`systemPrompt`** field - not reuse orchestrator prompt.
 
-Template storage: `~/.config/sapaloq/prompt/roles/` + `roles.d/` + slices/ + SQLite `prompt_slices`.
+Template storage: `~/.config/sapaloq/prompt/roles/` + `roles.d/` + slices/ + `state/config/prompt_slices.json`.
 
 ### Fase 3 - Context packet → sub-agent
 
@@ -197,7 +204,7 @@ Adaptasi dari automation-learning - namespace = mode (`personal`, `hobby`, `work
 | `obsolete` | Stale facts | obsolete_since, replacement |
 | `maintenance` | Compaction/health notes | - |
 
-File layout (optional mirror to SQLite):
+File layout (optional mirror to `facts.json`):
 
 ```text
 ~/SapaLOQ/memory/files/
@@ -205,7 +212,7 @@ File layout (optional mirror to SQLite):
     YYYY-MM-DD-{slug}-{kind}.md
 ```
 
-SQLite = **authoritative index**; markdown = human-readable source + agent append.
+`facts.json` = **authoritative index**; markdown = human-readable source + agent append.
 
 ---
 
@@ -215,9 +222,9 @@ Path: `~/SapaLOQ/memory/facts.json` (durable) + transient rollout/session JSON u
 
 ---
 
-## SQLite index (legacy — migrated on first boot)
+## SQLite index (legacy — archived; not used at runtime)
 
-Path: `~/SapaLOQ/memory/companion.db` - **only** persistence engine. Hot cache = in-memory in same binary; optional `hot_cache` SQLite table for restart warm-up.
+> **Historical DDL only.** Runtime persistence moved to JSON (see section above). If `~/SapaLOQ/memory/companion.db` exists on disk from an older install, it is exported once on first boot and not opened thereafter.
 
 ### Core tables
 
@@ -346,20 +353,17 @@ On `sapaloq-core` start:
 2. Scan `~/SapaLOQ/skills/*.md` → `skills_index`
 3. Scan `memory/files/**/*.md` → upsert `facts` + FTS
 4. Load `prompt/slices/` → `prompt_slices`
-5. Ensure `nodes` table has bootstrap row `local-default` - see [NODES.md](./NODES.md)
+5. Ensure `nodes.json` has bootstrap row `local-default` - see [NODES.md](./NODES.md)
 
 Incremental: inotify on skills + memory files.
 
-### SQLite write concurrency (implementation note)
+### JSON write concurrency (implementation note)
 
-Single-writer queue in `sapaloq-core/internal/store/writer.go`:
+Single-writer mutex + per-file `flock` in `internal/store/chat/fsutil.go`:
 
 ```go
-// All mutations: facts, skills_index, prefetch_rules, nodes, feedback_events
-type WriteQueue struct {
-    ch chan func(*sql.Tx) error  // buffer 256
-}
-// Readers: any goroutine (WAL mode). Writers: one goroutine drains ch.
+// All mutations: facts.json, nodes.json, session turns, checkpoints
+// Writers: orchestrator holds store.mu; readers: concurrent with atomic file reads
 ```
 
 See [LIMITATIONS.md](./LIMITATIONS.md) - mitigates partial; not infinite scale.
@@ -487,7 +491,7 @@ flowchart TB
   LQ[learning_queue]
   MJ[memory-janitor]
   RES[research]
-  IX[(SQLite)]
+  IX[(JSON index)]
   PR[prefetch_rules tune]
 
   DONE --> LA
@@ -571,7 +575,7 @@ After task:
 On compaction / session resume:
 
 1. Read active task from `tasks/` stack.
-2. Re-prefetch from SQLite - **not** transcript replay.
+2. Re-prefetch from JSON index - **not** transcript replay.
 3. Re-assemble dynamic prompt.
 
 ---
@@ -583,7 +587,7 @@ Status legend: ✅ implemented · 🟡 partial · ❌ not yet. Verify against
 
 | Step | Deliverable | Status |
 |------|-------------|--------|
-| 1 | `companion.db` schema + boot indexer | 🟡 schema done (all 9 tables incl. typed `facts`, `prefetch_rules`, `prompt_slices`, `skills_index`, `learning_queue`, `hot_cache`, `prefetch_log`); boot file→index sync (slices/skills) not yet |
+| 1 | JSON memory index + boot indexer | 🟡 | `facts.json` + `state/config/*.json` live (`store.go`); boot file→index sync (slices/skills) not yet |
 | 2 | intent-router + prefetch_rules seed | 🟡 no-LLM heuristic router live (`orchestrator/intent.go`); rule lookup live; no seeded rules / no router sub-agent |
 | 3 | dynamic prompt assembler + slices | ❌ `prompt_slices` table + DAO exist; assembler still uses the static role prompt + bounded blocks |
 | 4 | context ingress hook in orchestrator | ✅ prefetch runs each Ask turn (`session.go` → `prefetchBlock` → `orchestrator/prefetch.go`), assembled from the index not the transcript |

@@ -81,3 +81,60 @@ func TestActorWorkspacePersistsFinalCWDWhenLaterCommandFails(t *testing.T) {
 		t.Fatalf("final cwd after failure = %q, want %q", cwd, project)
 	}
 }
+
+func TestLastWorkspaceUsedForNewChatSession(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	project := filepath.Join(root, "project")
+	for _, dir := range []string{workspace, project} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
+	o.persistActorCWD("chat-old", project)
+	if got := o.actorCWD("chat-new"); got != project {
+		t.Fatalf("new chat cwd = %q, want %q", got, project)
+	}
+	if got := o.actorCWD("task-fresh"); got != workspace {
+		t.Fatalf("task cwd = %q, want install default %q", got, workspace)
+	}
+}
+
+func TestChatSessionWithDefaultCWDInheritsLastWorkspace(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	project := filepath.Join(root, "project")
+	for _, dir := range []string{workspace, project} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
+	// Session seeded with install default before user picked a real folder elsewhere.
+	o.persistActorCWD("chat-old", workspace)
+	o.persistLastWorkspace(project)
+
+	if got := o.actorCWD("chat-old"); got != project {
+		t.Fatalf("chat with default file cwd = %q, want last %q", got, project)
+	}
+}
+
+func TestChatSessionExplicitCWDNotOverriddenByLast(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	project := filepath.Join(root, "project")
+	other := filepath.Join(root, "other")
+	for _, dir := range []string{workspace, project, other} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
+	o.persistLastWorkspace(project)
+	o.persistActorCWD("chat-explicit", other)
+
+	if got := o.actorCWD("chat-explicit"); got != other {
+		t.Fatalf("explicit chat cwd = %q, want %q", got, other)
+	}
+}

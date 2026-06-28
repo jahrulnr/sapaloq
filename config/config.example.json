@@ -25,7 +25,9 @@
         "model": "default",
         "credentialsEnv": "SAPALOQ_CURSOR_TOKEN",
         "requestTimeoutSec": 600,
-        "declaredTools": []
+        "declaredTools": [],
+        "maxTokens": 64000,
+        "contextWindow": 200000
       },
       {
         "key": "openai",
@@ -64,6 +66,7 @@
         "key": "codex",
         "driver": "codex-bridge",
         "model": "gpt-5.5",
+        "credentialsEnv": "OPENAI_API_KEY",
         "reasoningEffort": "high",
         "requestTimeoutSec": 600
       }

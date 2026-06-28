@@ -10,15 +10,22 @@ import (
 )
 
 // threadRecord maps a SapaLOQ SessionID to the Codex thread_id used for
-// `codex exec resume`. cwd/codexHome are recorded so a resume targets the same
-// on-disk session directory the original turn created (resume is bound to
-// CODEX_HOME + the session files there; see CODEX_CLI_CONTRACT.md §2.1).
+// `thread/resume`. cwd/codexHome document the runtime identity used when the
+// app-server thread was created. Transport prevents legacy records from being
+// resumed without the current dynamic-tools contract.
 type threadRecord struct {
 	SessionID string    `json:"session_id"`
 	ThreadID  string    `json:"thread_id"`
+	Transport string    `json:"transport,omitempty"`
 	Cwd       string    `json:"cwd,omitempty"`
 	CodexHome string    `json:"codex_home,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+const appServerTransport = "app-server"
+
+func (r threadRecord) appServerCompatible() bool {
+	return r.ThreadID != "" && r.Transport == appServerTransport
 }
 
 // threadStore is an append-only, last-write-wins SessionID->thread_id store

@@ -1,14 +1,6 @@
-// Package codex implements the `codex-bridge` LLM bridge: a thin wrapper around
-// the public Codex CLI (`codex exec --json` + `codex exec resume`). It spawns a
-// `codex` process per chat turn and translates the CLI's JSONL event stream
-// into bridge.StreamEvent. It binds only to the documented CLI contract (see
-// CODEX_CLI_CONTRACT.md) — there is no reverse engineering of an internal wire
-// protocol.
-//
-// Lifecycle is spawn-per-turn: one process per Complete call, with continuity
-// across turns via `codex exec resume <thread_id>`. Codex persists sessions on
-// disk under CODEX_HOME, so a fresh process can rehydrate prior context. See
-// BRIDGE_DESIGN.md for the full design rationale.
+// Package codex implements the socket-only Codex app-server bridge. A managed
+// app-server child is shared across turns; each Complete call opens a JSON-RPC
+// WebSocket connection and maps one thread turn into bridge.StreamEvent.
 package codex
 
 import (
@@ -22,6 +14,8 @@ import (
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/bridges/codex/appserver"
+	provider "github.com/jahrulnr/sapaloq/internal/bridges/provider"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/debug"
 )
@@ -43,6 +37,8 @@ const (
 	envSandbox = "SAPALOQ_CODEX_SANDBOX" // override the -s sandbox mode
 	envCwd     = "SAPALOQ_CODEX_CWD"     // override the -C working root
 	envHome    = "CODEX_HOME"            // Codex state root (auth/config/sessions)
+	envMode    = "SAPALOQ_CODEX_APP_SERVER_MODE"
+	envListen  = "SAPALOQ_CODEX_APP_SERVER_LISTEN"
 )
 
 // Bridge is the codex-bridge driver. It holds the resolved binary, the
@@ -55,6 +51,8 @@ type Bridge struct {
 	cwd     string
 	store   *threadStore
 	timeout time.Duration
+	manager *appserver.Manager
+	listen  string
 }
 
 // New constructs the bridge: it resolves the codex binary via PATH (never a
@@ -97,8 +95,21 @@ func New(entry config.LLMBridge, runtime config.RuntimeConfig) (*Bridge, error) 
 		store:   store,
 		timeout: entry.RequestTimeout(),
 	}
-	debug.Debugf("codex-bridge: binary=%s version=%q sandbox=%s cwd=%s codex_home=%s",
-		bin, b.version(), sandbox, cwd, b.codexHome())
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv(envMode)))
+	if mode == "" {
+		mode = appserver.ModeAuto
+	}
+	if mode != appserver.ModeAuto && mode != appserver.ModeExternal && mode != appserver.ModeManaged {
+		return nil, fmt.Errorf("codex-bridge: invalid %s=%q (want auto, external, or managed)", envMode, mode)
+	}
+	listen, err := b.resolveListen(mode, dirs.RunDir)
+	if err != nil {
+		return nil, err
+	}
+	b.listen = listen
+	b.manager = &appserver.Manager{Binary: bin, Endpoint: listen, Mode: mode, Env: b.childEnv()}
+	debug.Debugf("codex-bridge: binary=%s version=%q mode=%s listen=%s sandbox=%s cwd=%s codex_home=%s",
+		bin, b.version(), mode, listen, sandbox, cwd, b.codexHome())
 	return b, nil
 }
 
@@ -124,70 +135,115 @@ func (b *Bridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridg
 	return out, nil
 }
 
-// runTurn drives a single spawn-per-turn invocation with resume continuity and
-// graceful self-heal when a resume target is gone (design §5–§9).
+// Close reaps only an app-server process spawned by this bridge. External and
+// managed daemon modes never take ownership of the server process.
+func (b *Bridge) Close() error {
+	if b == nil || b.manager == nil {
+		return nil
+	}
+	return b.manager.Close()
+}
+
+// Doctor verifies the binary, lifecycle endpoint, initialize handshake, and
+// app-server auth view without running a model turn.
+func Doctor(ctx context.Context, entry config.LLMBridge, runtime config.RuntimeConfig) (string, error) {
+	b, err := New(entry, runtime)
+	if err != nil {
+		return "", err
+	}
+	defer b.Close()
+	if err := b.manager.EnsureRunning(ctx); err != nil {
+		return "", err
+	}
+	status, err := appserver.ProbeAuth(ctx, b.listen)
+	if err != nil {
+		return "", fmt.Errorf("codex-bridge auth probe: %w", err)
+	}
+	if !b.authOK() && (status.AuthMethod == nil || strings.TrimSpace(*status.AuthMethod) == "") {
+		return "", fmt.Errorf("codex-bridge: app-server reachable but Codex is not authenticated; run `codex login`")
+	}
+	auth := "configured"
+	if status.AuthMethod != nil && strings.TrimSpace(*status.AuthMethod) != "" {
+		auth = *status.AuthMethod
+	}
+	return fmt.Sprintf("%s (%s, %s)", auth, b.manager.Mode, b.listen), nil
+}
+
+// runTurn drives one app-server turn. A stale resume mapping falls back to a
+// fresh thread on the same connection and is overwritten after success.
 func (b *Bridge) runTurn(ctx context.Context, req bridge.Request, out chan<- bridge.StreamEvent) {
-	// Per-turn deadline owned by Go (Codex has no --timeout); same source the
-	// cursor bridge uses (CONTRACT §8).
 	ctx, cancel := context.WithTimeout(ctx, b.timeout)
 	defer cancel()
-
-	images, cleanup, err := decodeImagesToTempFiles(req.Images)
-	if err != nil {
-		debug.Debugf("codex-bridge: image decode failed: %v", err)
-		send(ctx, out, errorEvent(req.SessionID, "codex-bridge: failed to prepare image attachments: "+err.Error()))
+	if err := b.manager.EnsureRunning(ctx); err != nil {
+		send(ctx, out, errorEvent(req.SessionID, err.Error()))
 		return
 	}
-	defer cleanup()
 
 	rec, hasResume := b.store.Lookup(req.SessionID)
-	prompt := composePrompt(req, hasResume)
-	opts := runOptions{
-		binary:    b.binary,
-		prompt:    prompt,
-		cwd:       b.cwd,
-		model:     firstNonEmpty(req.Model, b.entry.Model),
-		sandbox:   b.sandbox,
-		reasoning: b.safeReasoning(req),
-		images:    images,
-		env:       b.childEnv(),
-	}
+	hasResume = hasResume && rec.appServerCompatible()
+	resumeID := ""
 	if hasResume {
-		opts.resumeThreadID = rec.ThreadID
+		resumeID = rec.ThreadID
 	}
-
-	res, err := runCodex(ctx, opts, req.SessionID, out)
+	res, err := appserver.RunTurn(ctx, b.listen, appserver.TurnRequest{
+		SessionID:    req.SessionID,
+		ResumeThread: resumeID,
+		FreshPrompt:  composePrompt(req, false),
+		ResumePrompt: composePrompt(req, true),
+		Model:        firstNonEmpty(req.Model, b.entry.Model),
+		Reasoning:    b.safeReasoning(req),
+		Cwd:          b.cwd,
+		Sandbox:      b.sandbox,
+		Images:       req.Images,
+		DynamicTools: dynamicTools(req.DeclaredTools),
+		ToolExecutor: req.ToolExecutor,
+	}, out)
 	if err != nil {
-		debug.Debugf("codex-bridge: spawn error: %v", err)
+		debug.Debugf("codex-bridge: app-server turn error: %v", err)
 		send(ctx, out, errorEvent(req.SessionID, "codex-bridge: "+err.Error()))
 		return
 	}
-
-	// Self-heal: a resume that failed because its session is gone retries once
-	// as a fresh exec and overwrites the mapping (design §7).
-	if hasResume && res.resumeError {
-		debug.Debugf("codex-bridge: resume %s failed; retrying with a fresh session", rec.ThreadID)
-		opts.resumeThreadID = ""
-		opts.prompt = composePrompt(req, false) // fresh turn carries history again
-		res, err = runCodex(ctx, opts, req.SessionID, out)
-		if err != nil {
-			send(ctx, out, errorEvent(req.SessionID, "codex-bridge: "+err.Error()))
-			return
-		}
-	}
-
-	// Persist the captured thread_id so the next turn can resume. thread.started
-	// echoes the same id on a resume (CONTRACT §2.1), so this is idempotent.
-	if res.threadID != "" {
+	if res.ThreadID != "" {
 		if serr := b.store.Save(threadRecord{
 			SessionID: req.SessionID,
-			ThreadID:  res.threadID,
+			ThreadID:  res.ThreadID,
+			Transport: appServerTransport,
 			Cwd:       b.cwd,
 			CodexHome: b.codexHome(),
 		}); serr != nil {
 			debug.Debugf("codex-bridge: persist thread mapping failed: %v", serr)
 		}
 	}
+}
+
+func dynamicTools(names []string) []appserver.DynamicToolNamespace {
+	if len(names) == 0 {
+		return nil
+	}
+	tools := make([]appserver.DynamicToolFunction, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		tools = append(tools, appserver.DynamicToolFunction{
+			Type: "function", Name: name,
+			Description: provider.RegisteredToolDescription(name),
+			InputSchema: provider.RegisteredToolSchema(name),
+		})
+	}
+	if len(tools) == 0 {
+		return nil
+	}
+	return []appserver.DynamicToolNamespace{{
+		Type: "namespace", Name: "sapaloq",
+		Description: "SapaLOQ orchestrator tools", Tools: tools,
+	}}
 }
 
 // composePrompt builds the stdin prompt. On a resume turn Codex already holds
@@ -307,6 +363,39 @@ func (b *Bridge) codexHome() string {
 		return filepath.Join(home, ".codex")
 	}
 	return "~/.codex"
+}
+
+func (b *Bridge) resolveListen(mode, runDir string) (string, error) {
+	raw := strings.TrimSpace(os.Getenv(envListen))
+	if raw == "" {
+		if mode == appserver.ModeManaged {
+			raw = "unix://" + filepath.Join(b.codexHome(), "app-server-control", "app-server-control.sock")
+		} else {
+			raw = "unix://" + filepath.Join(runDir, "codex-app-server.sock")
+		}
+	}
+	if strings.HasPrefix(raw, "unix://") {
+		path := strings.TrimPrefix(raw, "unix://")
+		if strings.HasPrefix(path, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", fmt.Errorf("codex-bridge: expand app-server listen path: %w", err)
+			}
+			path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("codex-bridge: resolve app-server listen path: %w", err)
+			}
+			path = abs
+		}
+		return "unix://" + filepath.Clean(path), nil
+	}
+	if strings.HasPrefix(raw, "ws://") || strings.HasPrefix(raw, "wss://") {
+		return raw, nil
+	}
+	return "", fmt.Errorf("codex-bridge: unsupported %s=%q (want unix://, ws://, or wss://)", envListen, raw)
 }
 
 // authOK reports whether Codex is authenticated, mirroring how cursor.Caps()

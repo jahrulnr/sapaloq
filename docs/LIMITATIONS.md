@@ -2,7 +2,7 @@
 
 > Hal-hal yang **tidak bisa diselesaikan** hanya dengan arsitektur - tradeoff produk, batas OS, atau fisika network.
 > Untuk yang **bisa** dimitigasi (boot FSM, offline queue, doctor CLI), lihat [RUNTIME.md](./RUNTIME.md) - **bukan** file ini.
-> Last updated: 2026-06-19
+> Last updated: 2026-06-28 (Codex app-server operational limits)
 
 Related: [VISION.md](./VISION.md) · [RUNTIME.md](./RUNTIME.md)
 
@@ -35,7 +35,7 @@ Tanpa LLM (cloud atau local):
 - Clarification auto-answer butuh index saja - **terbatas**
 - Research sub-agent **mati total**
 
-Yang masih jalan offline: tulis file (scribe), GNOME tools lokal, baca SQLite - **bukan** companion pintar.
+Yang masih jalan offline: tulis file (scribe), GNOME tools lokal, baca JSON memory index - **bukan** companion pintar.
 
 Local LLM fallback = **partial**, bukan parity penuh (quality, RAM, battery).
 
@@ -69,7 +69,7 @@ Lid close / suspend: in-memory state hilang; D-Bus reconnect quirks. Wake resume
 
 ### Hard power loss (Hard limit · partial)
 
-Crash mid-write: SQLite WAL usually survives; jsonl line bisa corrupt **satu event**. Tidak ada exactly-once semantics tanpa distributed consensus - **overkill** untuk SapaLOQ.
+Crash mid-write: atomic rename + flock usually survives; jsonl line bisa corrupt **satu event**. Tidak ada exactly-once semantics tanpa distributed consensus - **overkill** untuk SapaLOQ.
 
 ---
 
@@ -155,7 +155,7 @@ Orchestrator sengaja tidak pegang full history. User tanya "detail thinking sub-
 
 Satu crash = widget + bus + orchestrator mati. systemd restart mitigates **partial**; **tidak** zero-downtime.
 
-### SQLite write concurrency (Hard limit · partial)
+### JSON store write concurrency (Hard limit · partial)
 
 Many sub-agents writing facts concurrently → single-writer bottleneck. Queue writer mitigates **partial**; **bukan** infinite scale.
 
@@ -165,7 +165,7 @@ Node di VPS/EC2 = network partition, latency, trust boundary. Progress/clarifica
 
 ### Shared memory across outer-machine nodes (Hard limit · **not recommended**)
 
-**Tidak rekomendasikan** sync `companion.db` / memory bus ke node di **mesin lain** dari orchestrator.
+**Tidak rekomendasikan** sync orchestrator memory files ke node di **mesin lain** dari orchestrator.
 
 | Problem | Why no simple fix |
 |---------|-------------------|
@@ -176,7 +176,7 @@ Node di VPS/EC2 = network partition, latency, trust boundary. Progress/clarifica
 
 **Policy:** shared memory bus = **same machine only** (`wrapper: local`, same-host Docker optional with shared volume - still risky, default off).
 
-Remote nodes receive **scoped context packet only** at spawn + return **results/progress** - tidak live query ke SQLite orchestrator. Learning promotion happens **local** after task done.
+Remote nodes receive **scoped context packet only** at spawn + return **results/progress** - tidak live query ke JSON index orchestrator. Learning promotion happens **local** after task done.
 
 See [NODES.md](./NODES.md#memory-policy-local-vs-remote).
 
@@ -206,6 +206,16 @@ Needs samples; cold start = bad routing. **Tidak instant optimal** dari hari per
 
 Tool/thinking wire formats differ per provider ([BRIDGE.md](./BRIDGE.md)). Cursor L0 truth: [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md). Wrong parser = lost or hallucinated tool calls.
 
+### Codex app-server availability (External / platform)
+
+`codex-bridge` requires a compatible `codex` binary, valid Codex auth, and the
+experimental app-server protocol. There is deliberately no CLI transport
+fallback. Linux/macOS use WebSocket over Unix sockets; Windows requires an
+explicit supported WebSocket endpoint until equivalent UDS/process lifecycle
+behavior is proven. Upstream notification or experimental dynamic-tools schema
+drift can require a bridge update; offline mock tests reduce but cannot remove
+that external compatibility limit.
+
 ### Tool poisoning (Backend-dependent)
 
 Cursor-like backends may emit **fake tool names** - requires coercion layer. OpenAI/Claude direct APIs usually clean. Gemini/Copilot paths **may** need cursor-like sanitizer - probe at connect, not assume.
@@ -218,7 +228,7 @@ Cursor-like backends may emit **fake tool names** - requires coercion layer. Ope
 |------|--------|
 | Redis/Rabbit for reliability | User chose single binary - different failure profile, not elimination of network/offline limits |
 | Sync companion memory to cursor-agent | Violates isolation mission |
-| Shared SQLite memory bus across remote nodes | Stale memory + sync complexity - use context packet instead |
+| Shared JSON memory bus across remote nodes | Stale memory + sync complexity - use context packet instead |
 | Replay all missed OS notifications after boot | OS/API does not provide |
 | Zero LLM latency | Physics |
 | Settings UI "just in case" | Violates config-by-agent mission unless scope change |

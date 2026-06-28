@@ -206,3 +206,14 @@ func actorEventsPrompt(events []actorControlEvent) string {
 	b.WriteString("Apply relevant steering before continuing. If it conflicts with completed work, explain the conflict through `sapaloq_send_steering`.")
 	return strings.TrimSpace(b.String())
 }
+
+// appendActorEvents drains pending steering/decision inbox events for runID and
+// appends them as a single user-side control block when present. The bool is
+// true when any event was consumed.
+func (o *Orchestrator) appendActorEvents(messages []bridge.Message, runID string) ([]bridge.Message, bool) {
+	events := o.drainActorEvents(runID)
+	if control := actorEventsPrompt(events); control != "" {
+		return append(messages, bridge.Message{Role: "user", Content: control}), true
+	}
+	return messages, false
+}

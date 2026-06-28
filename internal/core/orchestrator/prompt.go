@@ -40,6 +40,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/parse/artifacts"
 	"github.com/jahrulnr/sapaloq/internal/prompts"
 	"github.com/jahrulnr/sapaloq/internal/skills"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
@@ -106,6 +107,41 @@ func estimateTextTokens(text string) int {
 	return (len(text) + 3) / 4
 }
 
+// visionImageTokenBudget is the rough per-image context cost after
+// extractImages strips inline data URIs. Base64 payload length is not text
+// tokens; counting it as len/4 inflated the widget pill to 400k+ on paste.
+const visionImageTokenBudget = 1024
+
+// stripAttachmentPayloads removes attachment metadata and replaces inline
+// data-URI images with short placeholders (mirrors extractImages accounting).
+func stripAttachmentPayloads(content string) (stripped string, imageCount int) {
+	stripped = attachmentMetaRE.ReplaceAllString(content, "")
+	stripped = inlineImageRE.ReplaceAllStringFunc(stripped, func(match string) string {
+		parts := inlineImageRE.FindStringSubmatch(match)
+		if len(parts) < 3 || !validDataImage(parts[2]) {
+			return match
+		}
+		imageCount++
+		name := strings.TrimSpace(parts[1])
+		if name == "" {
+			name = "attached image"
+		}
+		return "[Image attachment: " + name + "]"
+	})
+	return stripped, imageCount
+}
+
+// estimateContentTokens sizes a persisted or in-flight message body for context
+// usage. Inline image base64 is excluded; each valid data-URI image adds a
+// fixed vision budget instead.
+func estimateContentTokens(content string) int {
+	if content == "" {
+		return 0
+	}
+	stripped, images := stripAttachmentPayloads(content)
+	return estimateTextTokens(stripped) + images*visionImageTokenBudget
+}
+
 // estimateMessagesTokens sums the rough token estimate across a slice of
 // messages. It mirrors conversationTokenRatio's accounting but returns the raw
 // token count so callers (e.g. the autopilot context-percent signal) can reuse
@@ -113,7 +149,7 @@ func estimateTextTokens(text string) int {
 func estimateMessagesTokens(messages []bridge.Message) int {
 	total := 0
 	for _, m := range messages {
-		total += estimateTextTokens(m.Content)
+		total += estimateContentTokens(m.Content)
 	}
 	return total
 }
@@ -645,6 +681,13 @@ func actorTurnsToMessages(turns []chatstore.Turn) []bridge.Message {
 		content := turn.Content
 		if role == "assistant" {
 			content = stripPlannerSummaryMarker(content)
+			if artifacts.IsAutopilotEcho(content) {
+				continue
+			}
+			content = artifacts.StripModelResponseArtifact(content)
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
 		}
 		if role != "assistant" && role != "user" && role != "system" && role != "tool" && role != "error" {
 			role = "user"

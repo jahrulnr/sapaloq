@@ -2,9 +2,11 @@
 
 > **Brain bridge drivers** - connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-06-26 (**codex-bridge** driver: wraps the public Codex CLI `codex exec --json` + `codex exec resume` as a spawn-per-turn bridge; resume argv drops fresh-only `-s`/`-C`/`--add-dir`, verified codex v0.141.0)
+> Last updated: 2026-06-28 (**tool mapping** — `ResolveToolCall` upstream→declared; see `TOOL-MAPPING.md`)
+>
+> Prior: 2026-06-28 (**cursor-bridge** vscdb credential autoload + offline mock `sapaloq_stop` on autopilot)
 
-Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
+Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [TOOL-MAPPING.md](./TOOL-MAPPING.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
 > **Thinking/tools wire truth:** [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) (L0 only). Jangan derive thinking behavior dari 9router - adapter itu skip/collapse channel thinking Cursor.
 
@@ -70,8 +72,35 @@ Platform driver = desktop automation. LLM bridge driver = **companion brain** + 
 | Role               | Runtime driver di `sapaloq-core` | Source of truth schema + test vectors    | Legacy proxy pattern (referensi transport) |
 | Dependency         | Embed/sync schema at build       | Dev reference                            | **Tidak** third-party dep                  |
 | Unknown tool calls | **Vault** JSONL review log       | Schema aliases + test vectors            | Partial (transport only)                   |
-| Thinking text      | Stream as-is; no leak filter     | `leakMarkers` in schema (reference only) | Collapses pre-tag thinking                 |
+| Thinking text      | Kimi suppress + leak sanitizer (`guard.go`) | `leakMarkers` in schema (reference only) | Collapses pre-tag thinking                 |
 
+
+### api2 message framing (live chat)
+
+Before `wire.StreamChat*` / Node `cursor-proto-lab`, `normalizeCursorWireMessages`
+(`internal/bridges/cursor/messages.go`) maps roles like 9router
+`openai-to-cursor.js`:
+
+- `system` → `user` with prefix `[System Instructions]\n` (ask.md, runtime context, skills, etc.)
+- `tool` → `user` with a `<tool_result>...</tool_result>` XML block (avoids protobuf `tool_results` loop bugs)
+- `user` / `assistant` unchanged
+
+**9router wire parity** (same session, `guard.go` + `wire/proto.go`):
+
+- **INSTRUCTION guard** — protobuf field populated for `default`/`auto` models (`OpenAI bridge: callable tools are …` or no-tools variant); skipped when declared tools **or prompt-embedded** native Agent-session triggers (`run_terminal_cmd`, etc.) are detected.
+- **forceAgentMode** — `default`/`auto` → Agent wire (`IS_AGENTIC=1`, `UNIFIED_MODE=Agent`, tools enabled).
+- **MCP tools[]** — declared SapaLOQ tools encoded on the wire (schemas from `provider.RegisteredToolSchema`).
+- **Response hygiene** — accumulate one api2 turn in `stream_buffer.go`, then finalize (9router `transformProtobufToSSE` parity): defer Kimi inline tool extraction until stream end; `cleanKimiAssistantContent` + `finalizeAssistantContentWithToolCalls`; end-of-turn sanitizer (skip when tools present); drop undeclared structured tool calls (vault only); **drop all tools + visible text when thinking is unanchored confabulation** vs the user prompt; normalize `web_search.search_term` → executor `query`.
+- **Thinking promote** — `default`/`auto`/`composer*`/` *-thinking` models promote post-`</think>` tail to visible assistant text (9router `visibleContentFromThinking`).
+- **Prompt agent detect** — scan messages for embedded native tool schemas (`"name": "…"`, markdown headers) to skip guard on real Agent sessions.
+
+Disable guard: `SAPALOQ_CURSOR_TOOL_GUARD=0` (also honors `NINEROUTER_CURSOR_TOOL_GUARD`).
+
+**Why message roles still matter:**
+Passing orchestrator `system` turns through unchanged made multi-kilobyte ask.md
+look like prior assistant speech, which triggered agent-task confabulation on
+short greetings (`hey hey` → invented website/21st.dev tasks). OpenClaw +
+9router never had this bug because the translator runs before encode.
 
 Reference artifacts (dev / regen):
 
@@ -82,138 +111,49 @@ Orchestrator & sub-agents call unified interface `bridge.Complete()` - driver ha
 
 ---
 
-## codex-bridge (wraps the public Codex CLI)
+## codex-bridge (app-server socket only)
 
-**codex-bridge** (`internal/bridges/codex`) is a thin wrapper around the
-**public** Codex CLI contract - `codex exec --json` + `codex exec resume` -
-spawning a `codex` process per chat turn and translating its JSONL event stream
-into `bridge.StreamEvent`. It binds only to the documented CLI surface; there is
-**no reverse engineering** of an internal wire protocol (unlike the cursor path).
-Maintenance cost is "track the CLI's JSONL contract across versions", which is
-far smaller and more stable than tracking an internal RPC.
+`internal/bridges/codex` connects to `codex app-server`; there is no
+`codex exec` fallback. Both UDS and TCP endpoints carry WebSocket JSON-RPC.
+The default `auto` lifecycle probes `~/SapaLOQ/run/codex-app-server.sock`,
+spawns a shared app-server child when absent, and reaps only that owned child on
+shutdown or provider reload. `external` and `managed` modes connect without
+taking process ownership.
 
-### Lifecycle: spawn-per-turn + resume continuity
+One `Complete` call maps to one `turn/start` … `turn/completed`. The bridge
+starts or resumes a Codex thread and persists the SapaLOQ session mapping under
+`vault/codex-threads.jsonl`. Legacy CLI records are deliberately incompatible,
+so the first turn after upgrade starts cleanly instead of resuming a thread
+without dynamic tool definitions.
 
-One `codex exec --json` process per `Complete` call. Continuity across turns is
-external: Codex persists sessions on disk under `CODEX_HOME`, so a fresh process
-rehydrates prior context via `codex exec resume <thread_id>`.
+Request-scoped `DeclaredTools` become the `sapaloq` dynamic-tools namespace on
+`thread/start`, using the same descriptions and JSON schemas as provider-bridge.
+Inbound `item/tool/call` requests execute through `bridge.Request.ToolExecutor`
+inside the Codex turn and return a `DynamicToolCallResponse`. Codex-native tool
+items and dynamic callbacks emit `Source:"codex"` telemetry; the orchestrator
+forwards that telemetry to the UI but never enqueues it for a second dispatch.
 
-- **First turn** for a `SessionID`: `codex exec --json …`; capture `thread_id`
-  from the `thread.started` event; persist `SessionID → thread_id` to
-  `~/SapaLOQ/vault/codex-threads.jsonl` (append-only, last-write-wins, fronted
-  by an in-memory map - `session.go`).
-- **Subsequent turns**: look up the `thread_id` → `codex exec resume <thread_id>
-  --json …`. On the first turn we send a compact transcript (system + prior
-  turns) as the prompt; on a resume Codex already owns the history, so we send
-  only the new user turn (`composePrompt`).
-- **Self-heal**: if a resume target's session is gone (detected from stderr),
-  the turn retries once as a fresh `exec`, re-sends history, and overwrites the
-  mapping (`runTurn`).
+Cancellation sends `turn/interrupt`. Terminal success/failure comes from the
+matching `turn/completed`; a closed socket without a terminal is an error.
+Unknown notification/item kinds are skipped, and streamed item IDs suppress
+duplicate completed-item text.
 
-### Invocation (contract-pinned, `CODEX_CLI_CONTRACT.md`)
+Runtime settings are environment-only:
 
-The `exec` and `exec resume` subcommands accept **different** flag sets, so
-`buildArgv` emits two distinct shapes:
-
-```
-# FRESH turn — carries the session-establishing knobs -s and -C:
-codex exec --json --skip-git-repo-check -s <sandbox> -C <cwd> \
-     [-m <model>] [-c model_reasoning_effort=<low|medium|high>] [-i <img>…] -
-
-# RESUME turn — drops -s/-C/--add-dir (inherited from the original session;
-# verified codex v0.141.0 rejects them with exit 2 "unexpected argument"):
-codex exec --json resume <thread_id> --skip-git-repo-check \
-     [-m <model>] [-c model_reasoning_effort=<low|medium|high>] [-i <img>…] -
-# prompt fed via STDIN (arg "-"); argv is a typed []string (no shell injection)
-```
-
-- **No `-a/--ask-for-approval`.** `codex exec` rejects it (exit 2,
-  "unexpected argument '-a' found"); `exec` is already non-interactive. The only
-  safety knob is the sandbox (`-s`).
-- **`--json` precedes `resume`** (it is an `exec` flag, not a `resume` flag).
-- **`-s`/`-C`/`--add-dir` are fresh-`exec`-only.** The `resume` subcommand
-  rejects each one (exit 2 "unexpected argument", verified codex v0.141.0) — it
-  inherits the sandbox and working directory from the original session, so they
-  must never be restated on resume. The resume path keeps only resume-valid
-  flags (`--skip-git-repo-check`, `-m`, `-c model_reasoning_effort=`, `-i`) plus
-  the stdin prompt.
-- **Sandbox default** = `workspace-write` + `--skip-git-repo-check`
-  (conservative; never `danger-full-access` by default). Override via
-  `SAPALOQ_CODEX_SANDBOX`.
-- **Reasoning-effort guard**: `model_reasoning_effort=minimal` is incompatible
-  with the built-in tools (`web_search`/`image_gen`, on by default) → HTTP 400
-  `turn.failed`. The bridge downgrades a configured `minimal` to `low` rather
-  than emitting an invocation it knows will 400 (`safeReasoning`).
-
-### Event mapping (`stream.go`)
-
-stdout is pure JSONL (one event/line) and is scanned tolerantly - malformed
-lines and unknown `type`/`item.type` are skipped without crashing. stderr is
-noise (tracing, "Reading additional input…") and goes to the **debug log only**,
-never the JSONL scanner.
-
-| Codex JSONL event | → `bridge.StreamEvent` |
+| Variable | Default |
 |---|---|
-| `thread.started` | capture `thread_id`; `EventStatus{Status:"session"}` |
-| `turn.started` | `EventStatus{Status:"working"}` |
-| `item:reasoning` | `EventThinkingDelta` (tolerant: absent on 0.141.0) |
-| `item:agent_message` | `EventResponseDelta` (the visible answer) |
-| `item:command_execution` in_progress | `EventToolCall{Name:"command_execution", Arguments:{command}, Source:"codex"}` |
-| `item:command_execution` completed | `EventStatus{Status:"tool_done:exit=N"}` (output logged truncated, not dumped) |
-| `item.type` unknown | skip + debug log |
-| `turn.completed` | `EventDone` (usage logged) |
-| `error` / `turn.failed` / `item:error` | `EventError` via `explainCodexError` (actionable) |
+| `SAPALOQ_CODEX_APP_SERVER_MODE` | `auto` (`external`, `managed`) |
+| `SAPALOQ_CODEX_APP_SERVER_LISTEN` | `unix://~/SapaLOQ/run/codex-app-server.sock` |
+| `SAPALOQ_CODEX_BINARY` | `codex` from `PATH` |
+| `SAPALOQ_CODEX_SANDBOX` | `workspace-write` |
+| `SAPALOQ_CODEX_CWD` | SapaLOQ workspace |
+| `CODEX_HOME` | `~/.codex` |
 
-### Error handling is event-authoritative (`CONTRACT §4`)
-
-Success/failure is decided from the **event stream**, not the process exit code
-(Codex can exit `0` while emitting `turn.failed`). `scanStream` tracks
-`turnFailed`/`sawCompleted`; `finalizeTerminal` emits exactly one terminal:
-`turnFailed → EventError`; else `sawCompleted → EventDone`; else (no terminal,
-killed/crashed) → `EventError` with the exit code + last stderr lines.
-`explainCodexError` mirrors `cursor.explainStreamError` (e.g. it turns the raw
-400 blob into "model_reasoning_effort=minimal is incompatible with built-in
-tools…").
-
-### Cancellation
-
-`exec.CommandContext(ctx,…)` + `SysProcAttr{Setpgid:true}` (Unix); on `ctx.Done()`
-the whole **process group** is killed (`killpg`, negative PID) so child shells
-spawned by `command_execution` die too - no goroutine/process leak (`proc_unix.go`;
-a portable no-op stub in `proc_other.go`). The per-turn deadline comes from
-`entry.RequestTimeout()` (Codex has no `--timeout`).
-
-### Config & auth
-
-Reuses the existing `config.LLMBridge` fields - **no new config field**:
-`Model` (`-m`), `ReasoningEffort` (`-c model_reasoning_effort`, minimal-guarded),
-`CredentialsEnv` (injected as `OPENAI_API_KEY` for API-key auth),
-`RequestTimeout()` (per-turn deadline), `DeclaredTools` (informational). The few
-runtime knobs that are not in that struct default safely and are overridable via
-env: `SAPALOQ_CODEX_BINARY` (else resolved via `exec.LookPath("codex")` - the
-release symlink is **never** hardcoded), `SAPALOQ_CODEX_SANDBOX`,
-`SAPALOQ_CODEX_CWD` (default the SapaLOQ workspace), `CODEX_HOME` (default
-`~/.codex`). `Caps().LiveAPI` reflects real auth: an API key in env or
-`codex login status` exit 0; `codex --version` is logged at `New()` so the
-event-schema assumption (0.141.0) is auditable.
-
-### Example config entry
-
-```json
-{
-  "key": "codex",
-  "driver": "codex-bridge",
-  "model": "gpt-5.5",
-  "reasoningEffort": "high",
-  "requestTimeoutSec": 600
-}
-```
-
-Selected in `cmd/sapaloq-core/main.go` `newBridge()` when `driver ==
-"codex-bridge"` (mirrors the cursor/provider branches). Try it offline with the
-golden-fixture tests (`go test ./internal/bridges/codex/`); against the real CLI
-with `go test -tags=e2e ./internal/bridges/codex/ -run TestE2E -v` (auto-skips
-when `codex` is not on PATH) and regenerate fixtures with `-update`.
+`sapaloq-core doctor` checks binary resolution, lifecycle/probe, `initialize`,
+and `getAuthStatus`. Exact framing, methods, notification mapping, approvals,
+and tests are documented in
+[CODEX_APP_SERVER_CONTRACT.md](./CODEX_APP_SERVER_CONTRACT.md); ownership and
+tool-flow rationale are in [BRIDGE_DESIGN.md](./BRIDGE_DESIGN.md).
 
 ---
 
@@ -264,6 +204,7 @@ Empty `declaredTools` → vault only `unknown_upstream` calls.
 | `provider-bridge` (openai) | OpenAI `/v1/chat/completions`         | **Low** - usually clean    | `tools:openai`, `thinking:openai` |
 | `provider-bridge` (claude) | Anthropic `/v1/messages`              | **Low**                    | `tools:claude`, `thinking:claude` |
 | `provider-bridge` (kimi)   | OpenAI-compatible + `thinking` flag   | **Low**                    | `tools:openai`, `thinking:openai` |
+| `codex-bridge`             | App-server WebSocket JSON-RPC (UDS/WS) | Native telemetry only; dynamic callback for SapaLOQ tools | App-server notification mapper |
 | `local-llama`              | llama.cpp / sidecar                   | N/A (local schema)         | configurable                      |
 
 
@@ -371,7 +312,7 @@ type BridgeCaps struct {
 `**NativeTools` semantics:** names Cursor/Kimi may **hallucinate** in thinking/content. Used by:
 
 1. **Leak detection** (`analyzeLeak`) - content + thinking scan
-2. **Coercion mapping** - fake name → declared bridge tool via `cursor-bridge.schema.json` aliases
+2. **Coercion mapping** - fake/upstream name → SapaLOQ declared tool via `ResolveToolCall` (`declared_map.go`); catalog in `docs/TOOL-MAPPING.md`
 3. **Not** exposed to sub-agent as callable tools - sub-agent tools come from `subAgents.roles[].allowedTools` only
 
 Wrong interpretation (exposing NativeTools to task-runner) = double tool namespace bug.
@@ -438,13 +379,13 @@ Credentials **never** in config.json - env, `.env`, or IDE `state.vscdb` only.
 Autoload priority (ported from `@cursor-bridge/credential-loader`):
 
 1. `SAPALOQ_CURSOR_TOKEN` or `CURSOR_ACCESS_TOKEN` + optional `CURSOR_MACHINE_ID` in process env
-2. **Shell rc** - at boot `sapaloq-core` sources `~/.bashrc` then `~/.zshrc` (Linux only) and folds the relevant, not-already-set vars (`SAPALOQ_*`, `CURSOR_*`, `BLACKBOX_*`, `OPENAI_*`, `ANTHROPIC_*`, `KIMI_*`, `MOONSHOT_*`, `OPENROUTER_*`) into the process env. This matters under systemd `--user`/XDG autostart, where there is no login shell so rc exports would otherwise be invisible. The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) on purpose: the stock Debian/Ubuntu `~/.bashrc` begins with `case $- in *i*) ;; *) return;; esac`, which would `return` before any exports under a non-interactive shell. Best-effort, silent on any failure, stdin detached and stderr discarded so the interactive shell can't prompt/block, never overrides an already-set var, short timeout so a hanging rc can't freeze startup (`internal/shellenv`).
+2. **Shell rc** - at boot `sapaloq-core` sources `~/.bashrc` then `~/.zshrc` (Linux only) and folds **all** not-already-set vars from the sourced environment into the process env (tokens, `PATH`, custom `credentialsEnv` names, etc.). This matters under systemd `--user`/XDG autostart, where there is no login shell so rc exports would otherwise be invisible. The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) on purpose: the stock Debian/Ubuntu `~/.bashrc` begins with `case $- in *i*) ;; *) return;; esac`, which would `return` before any exports under a non-interactive shell. Best-effort, silent on any failure, stdin detached and stderr discarded so the interactive shell can't prompt/block, never overrides an already-set var, short timeout so a hanging rc can't freeze startup (`internal/shellenv`).
 3. `.env` in cwd, then `~/.config/sapaloq/.env`
 4. `~/.config/Cursor/User/globalStorage/state.vscdb` (`cursorAuth/accessToken`, `storage.serviceMachineId`)
 
-Override vscdb path: `CURSOR_STATE_VSCDB`. Ghost mode default on unless `CURSOR_GHOST_MODE=false`.
+Override vscdb path: `CURSOR_STATE_VSCDB` (when set, **only** that path is consulted — default IDE locations are skipped). Ghost mode default on unless `CURSOR_GHOST_MODE=false`.
 
-`sapaloq-core doctor` prints credential source. Mock stream when autoload finds no token.
+`sapaloq-core doctor` prints credential source. Mock stream when autoload finds no token; offline mock emits `sapaloq_stop` on `<sapaloq:autopilot>` continuations so the orchestrator does not burn the inference-turn budget.
 
 Agent may `/settings set llmBridge.driver openai-compat` - no settings UI.
 
@@ -488,20 +429,20 @@ encoder and response decoder:
 
 | Driver (Agent API) | Implementation                                                                    | Default                                                                               |
 | ------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `raw`              | `wire.StreamAgentRawWithRaw` - raw frames; mirrors `cursorAgent.js` byte-for-byte | Production                                                                            |
-| `http2`            | `wire.StreamAgentHTTP2` - stdlib `http.Client` + `http2.Transport`                | Set via `SAPALOQ_AGENT_WIRE_DRIVER=http2` (used by unit tests against httptest mocks) |
+| `node`             | `wire.StreamAgentNode` — thin Node H2 gateway (`scripts/cursor-agent-h2-gateway.mjs`); Go owns headers, protobuf, exec/MCP | **Production** when `node` + script available |
+| `raw`              | `wire.StreamAgentRawWithRaw` — raw HTTP/2 framer; full exec loop + MCP in Go    | `SAPALOQ_AGENT_WIRE_DRIVER=raw` (api5 still auth-fingerprints; use for wire parity) |
+| `http2`            | `wire.StreamAgentHTTP2` — `net/http` http2 + `agentUploadBody`; same exec loop  | `SAPALOQ_AGENT_WIRE_DRIVER=http2`                                                     |
 
 
-Override the host with `CURSOR_AGENT_HOST` and the path with `CURSOR_AGENT_PATH`
+Enable for all text turns: `"useAgentPath": true` on the cursor provider entry, or
+`SAPALOQ_AGENT_PATH=1`. Vision requests always route through api5.
 (defaults: `agentn.global.api5.cursor.sh` + `/agent.v1.AgentService/Run`). Use
 `SAPALOQ_WIRE_INSECURE_TLS=1` to skip certificate verification when targeting
 self-signed test servers.
 
 Live E2E: `make e2e-live SAPALOQ_AGENT_PATH=1` exercises the Agent API path
-end-to-end against `api5.cursor.sh`. Currently surfaces `rst_stream code=1`
-from the real server - same byte-level frame alignment work as the chat
-path; vision encoder/decoder contract is independently verified by the
-unit tests.
+end-to-end against `api5.cursor.sh`. See [CURSOR_AGENT_CONTRACT.md](./CURSOR_AGENT_CONTRACT.md)
+for the exec/MCP ownership model (mirrors codex-bridge `ToolExecutor`, not CLI subprocess).
 
 #### Privacy vs non-privacy Agent host
 
@@ -559,11 +500,11 @@ SapaLOQ widget = **parallel independent session** via `cursor-bridge` (or compat
 
 | Path                   | When                                                                                 |
 | ---------------------- | ------------------------------------------------------------------------------------ |
-| **Parallel** (default) | Orchestrator + sub-agents use SapaLOQ's own bridge session; memory in `companion.db` |
+| **Parallel** (default) | Orchestrator + sub-agents use SapaLOQ's own bridge session; memory in JSON index (`facts.json`) |
 | **Handoff** (explicit) | User or orchestrator writes `bridge/handoff/<uuid>.json` → worker consumes once      |
 
 
-Implication for milestones: M1–M3 need bridge session + SQLite only; deep cursor-agent mirror UI is M8–M9 polish, not M1 blocker.
+Implication for milestones: M1–M3 need bridge session + JSON store only; deep cursor-agent mirror UI is M8–M9 polish, not M1 blocker.
 
 ---
 

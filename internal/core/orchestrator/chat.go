@@ -82,6 +82,10 @@ type activeRun struct {
 	cancel         context.CancelFunc
 	coalescer      *TranscriptCoalescer
 	transcriptBase []bridge.TranscriptEntry
+	// Delta widget patches carry the full merged transcript; on long sessions
+	// that JSON is huge. Throttle streaming patches so IPC + webview stay live.
+	lastDeltaPatch      time.Time
+	deltaFlushScheduled bool
 }
 
 func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) (*Orchestrator, error) {
@@ -222,6 +226,9 @@ func (o *Orchestrator) Close() {
 	if o.bus != nil {
 		o.bus.Close()
 	}
+	if closer, ok := o.bridge.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
 }
 
 func (o *Orchestrator) toolJobs() *toolJobScheduler {
@@ -359,7 +366,7 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 			return
 		}
 		genStr := fmt.Sprintf("%d", runID)
-		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "user", message, estimateTextTokens(message), genStr)
+		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "user", message, estimateContentTokens(message), genStr)
 		o.refreshActiveTranscriptBase(ctx, sessionID)
 		o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{
 			Kind:         bridge.EventTurnBoundary,
@@ -379,25 +386,24 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 			o.emitChatTerminalError(runCtx, out, sessionID, err)
 			return
 		}
-		// Persist reasoning as a show-only "thinking" turn before the answer so
-		// it survives a restart (excluded from the LLM context window).
-		if strings.TrimSpace(thinking.String()) != "" {
-			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
-		}
-		// Assistant turns are persisted per inference round inside runTurnLoop.
-		// Only append a final blob when the run produced visible text that was not
-		// already recorded (e.g. a single tool-less answer).
-		if strings.TrimSpace(assistant.String()) != "" {
-			turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)
+		// Thinking turns are persisted per inference round inside runTurnLoop
+		// (before the assistant turn for that round). Only append a final blob
+		// when the run produced visible text that was not already recorded.
+		if trimmed := strings.TrimSpace(assistant.String()); trimmed != "" {
 			needsFinal := true
-			for i := len(turns) - 1; i >= 0; i-- {
-				if turns[i].Role == "assistant" && turns[i].GenerationID == genStr {
-					needsFinal = false
-					break
+			if turns, terr := o.chat.ActiveTurns(ctx, sessionID, false); terr == nil {
+				for i := len(turns) - 1; i >= 0; i-- {
+					t := turns[i]
+					if t.Role == "assistant" && t.GenerationID == genStr {
+						if strings.TrimSpace(t.Content) == trimmed {
+							needsFinal = false
+						}
+						break
+					}
 				}
 			}
 			if needsFinal {
-				_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+				_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", trimmed, estimateContentTokens(trimmed), genStr)
 			}
 		}
 		usage, _ := o.ContextUsage(ctx, sessionID)
@@ -452,6 +458,8 @@ func (o *Orchestrator) RetryChat(ctx context.Context, sessionID string, turnID i
 	out := make(chan bridge.StreamEvent, 32)
 	runCtx, cancel := context.WithCancel(ctx)
 	runID := o.setActiveGeneration(sessionID, cancel)
+	genStr := fmt.Sprintf("%d", runID)
+	_ = o.chat.SetTurnGenerationID(ctx, sessionID, turnID, genStr)
 	o.refreshActiveTranscriptBase(ctx, sessionID)
 	go o.completeExistingTurn(runCtx, cancel, runID, snap, out, sessionID, turn.Content)
 	return out, nil
@@ -473,9 +481,6 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
 	}
-	if strings.TrimSpace(thinking.String()) != "" {
-		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "thinking", thinking.String(), 0, genStr)
-	}
 	if strings.TrimSpace(assistant.String()) != "" {
 		turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)
 		needsFinal := true
@@ -486,7 +491,7 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 			}
 		}
 		if needsFinal {
-			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateTextTokens(assistant.String()), genStr)
+			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateContentTokens(assistant.String()), genStr)
 		}
 	}
 	usage, _ := o.ContextUsage(ctx, sessionID)
@@ -735,10 +740,16 @@ func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamE
 	if !widgetPatchKind(ev.Kind) {
 		return true
 	}
+	if (ev.Kind == bridge.EventResponseDelta || ev.Kind == bridge.EventThinkingDelta) &&
+		o.throttleDeltaWidgetPatch(sessionID) {
+		o.scheduleDeltaPatchFlush(ctx, out, sessionID, genID)
+		return true
+	}
 	var entries []bridge.TranscriptEntry
 	if coalescer != nil {
 		switch ev.Kind {
 		case bridge.EventResponseDelta, bridge.EventThinkingDelta:
+			o.markDeltaWidgetPatch(sessionID)
 			base := o.activeTranscriptBase(sessionID)
 			if base == nil {
 				base, _ = o.SessionTranscript(ctx, sessionID)
@@ -785,6 +796,79 @@ func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamE
 		At:           time.Now().UTC(),
 	}
 	return o.sendOut(ctx, out, patchEv)
+}
+
+const deltaWidgetPatchMinInterval = 50 * time.Millisecond
+
+func (o *Orchestrator) throttleDeltaWidgetPatch(sessionID string) bool {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	run := o.active[sessionID]
+	if run == nil {
+		return false
+	}
+	now := time.Now()
+	if run.lastDeltaPatch.IsZero() || now.Sub(run.lastDeltaPatch) >= deltaWidgetPatchMinInterval {
+		return false
+	}
+	return true
+}
+
+func (o *Orchestrator) markDeltaWidgetPatch(sessionID string) {
+	o.activeMu.Lock()
+	if run := o.active[sessionID]; run != nil {
+		run.lastDeltaPatch = time.Now()
+		run.deltaFlushScheduled = false
+	}
+	o.activeMu.Unlock()
+}
+
+func (o *Orchestrator) scheduleDeltaPatchFlush(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, genID string) {
+	o.activeMu.Lock()
+	run := o.active[sessionID]
+	if run == nil || run.deltaFlushScheduled {
+		o.activeMu.Unlock()
+		return
+	}
+	run.deltaFlushScheduled = true
+	o.activeMu.Unlock()
+	time.AfterFunc(deltaWidgetPatchMinInterval, func() {
+		o.flushDeltaTranscriptPatch(ctx, out, sessionID, genID)
+	})
+}
+
+func (o *Orchestrator) flushDeltaTranscriptPatch(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, genID string) {
+	o.activeMu.Lock()
+	run := o.active[sessionID]
+	if run == nil {
+		o.activeMu.Unlock()
+		return
+	}
+	run.deltaFlushScheduled = false
+	coalescer := run.coalescer
+	o.activeMu.Unlock()
+	if coalescer == nil {
+		return
+	}
+	base := o.activeTranscriptBase(sessionID)
+	if base == nil {
+		base, _ = o.SessionTranscript(ctx, sessionID)
+	}
+	entries := mergeLiveTranscript(base, coalescer.EntriesWithPending())
+	o.markDeltaWidgetPatch(sessionID)
+	patch := bridge.TranscriptPatch{
+		SessionID:    sessionID,
+		GenerationID: genID,
+		Entries:      entries,
+	}
+	patchEv := bridge.StreamEvent{
+		Kind:         bridge.EventTranscript,
+		SessionID:    sessionID,
+		GenerationID: genID,
+		Transcript:   &patch,
+		At:           time.Now().UTC(),
+	}
+	_ = o.sendOut(ctx, out, patchEv)
 }
 
 func (o *Orchestrator) sendOut(ctx context.Context, out chan<- bridge.StreamEvent, ev bridge.StreamEvent) bool {

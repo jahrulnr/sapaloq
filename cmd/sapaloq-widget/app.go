@@ -42,18 +42,18 @@ func (a *App) startup(ctx context.Context) {
 	//     card and the conversation looks stalled ("saya tunggu…" with no
 	//     follow-up). Forwarding it lets the failure/success auto-follow into
 	//     the chat as a real assistant bubble.
-	// Live chat deltas for an in-flight turn still arrive via the
-	// chat_send/chat_retry request streams; the frontend de-dupes by only
-	// treating these as new bubbles when idle.
+	// Live foreground transcript patches are published on the bus and delivered
+	// through this watch socket on a separate goroutine. The per-request
+	// SendMessage stream can block the Wails binding long enough that EventsEmit
+	// from its callback is not painted until Stop/unblock; forwarding transcript
+	// patches here keeps tools/thinking/text live during long Cursor runs.
 	a.stopWatch = make(chan struct{})
 	go watchEvents(a.socketPath, a.stopWatch, func(event bridge.StreamEvent) {
 		switch event.Kind {
 		case bridge.EventTaskUpdate:
 			runtime.EventsEmit(a.ctx, "sapaloq:stream", event)
 		case bridge.EventTranscript:
-			if event.ActorID != "" {
-				runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
-			}
+			runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
 		case bridge.EventResponseDelta:
 			// CRITICAL: only forward SPOKEN-COMPLETION deltas (those stamped
 			// with a TaskID) from the watch stream. A live chat turn's
@@ -93,9 +93,17 @@ func (a *App) PingCore() (pingResult, error) {
 	return pingCore(a.socketPath)
 }
 
+func (a *App) emitTranscriptPatch(event bridge.StreamEvent) {
+	runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
+}
+
 func (a *App) SendMessage(sessionID string, text string) (chatResult, error) {
 	return sendChatWithStatus(a.socketPath, sessionID, text, func(event bridge.StreamEvent) {
-		runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
+		if event.Kind == bridge.EventTranscript {
+			go a.emitTranscriptPatch(event)
+			return
+		}
+		a.emitTranscriptPatch(event)
 	})
 }
 
@@ -132,12 +140,21 @@ func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 
 func (a *App) RetryChatTurn(sessionID string, turnID int64) (chatResult, error) {
 	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, func(event bridge.StreamEvent) {
-		runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
+		if event.Kind == bridge.EventTranscript {
+			go a.emitTranscriptPatch(event)
+			return
+		}
+		a.emitTranscriptPatch(event)
 	})
 }
 
 func (a *App) StopChat(sessionID string) error {
 	return stopChat(a.socketPath, sessionID)
+}
+
+// ResumeTask continues a failed or stopped background task from persisted turns.
+func (a *App) ResumeTask(sessionID, taskID string) error {
+	return resumeTask(a.socketPath, sessionID, taskID)
 }
 
 // SteerChat queues text guidance for the next safe point of the active Ask run.
