@@ -3,12 +3,25 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 func TestDispatchToolResolvesCursorGlobWithGlobPatternArgs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# agents\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]string{
+		"glob_pattern":     "**/AGENTS.md",
+		"target_directory": dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	o := &Orchestrator{}
 	got := o.dispatchTool(context.Background(), providerSnapshot{}, ActorRun{
 		Foreground:      true,
@@ -17,7 +30,7 @@ func TestDispatchToolResolvesCursorGlobWithGlobPatternArgs(t *testing.T) {
 		Tools:           askTools,
 	}, parse.ToolCall{
 		Name:      "glob",
-		Arguments: json.RawMessage(`{"glob_pattern":"**/AGENTS.md","target_directory":"/tmp"}`),
+		Arguments: args,
 		Source:    "openai_inline",
 	})
 	if !got.handled {
@@ -29,6 +42,17 @@ func TestDispatchToolResolvesCursorGlobWithGlobPatternArgs(t *testing.T) {
 }
 
 func TestDispatchToolResolvesCursorGrepToSearch(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("TODO fixme\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]string{
+		"pattern": "TODO",
+		"path":    dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	o := &Orchestrator{}
 	got := o.dispatchTool(context.Background(), providerSnapshot{}, ActorRun{
 		Foreground:      true,
@@ -37,7 +61,7 @@ func TestDispatchToolResolvesCursorGrepToSearch(t *testing.T) {
 		Tools:           askTools,
 	}, parse.ToolCall{
 		Name:      "grep",
-		Arguments: json.RawMessage(`{"pattern":"TODO","path":"/tmp"}`),
+		Arguments: args,
 		Source:    "openai_inline",
 	})
 	if !got.handled {
