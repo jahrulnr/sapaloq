@@ -9,7 +9,7 @@ import { renderUsage, setConnection, setRingState, runPing } from './connection'
 import { appendMessage, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
 import { applyChatResetFromBE } from './apply-session-reset';
-import { syncChatTranscript, syncChatTranscriptStateFromDOM, scheduleSyncChatTranscript, flushScheduledChatTranscript } from './transcript-pane';
+import { syncChatTranscript, syncChatTranscriptStateFromDOM, scheduleSyncChatTranscript, flushScheduledChatTranscript, applyDeltaChatTranscript } from './transcript-pane';
 import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory, scheduleRestoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus } from './runtime-status';
@@ -96,6 +96,16 @@ function applyTranscriptPatch(patch: TranscriptPatch) {
     if (patch.finished) releaseInFlightTurn();
     if (patch.usage) renderUsage(patch.usage as ChatUsage);
     void loadSessionList();
+    return;
+  }
+  if (patch.mode === 'delta' && patch.ops?.length) {
+    if (activeGeneration && patch.generation_id && patch.generation_id !== activeGeneration) return;
+    applyDeltaChatTranscript(patch.ops);
+    if (patch.usage) renderUsage(patch.usage as ChatUsage);
+    if (patch.finished) {
+      flushScheduledChatTranscript();
+      releaseInFlightTurn();
+    }
     return;
   }
   if (!patch.entries?.length) return;

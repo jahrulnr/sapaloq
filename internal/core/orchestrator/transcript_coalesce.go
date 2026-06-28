@@ -61,6 +61,15 @@ func (c *TranscriptCoalescer) pendingID(kind string) string {
 	return c.generationID + "-pending-" + kind
 }
 
+// PendingTextID is the stable row id for in-flight assistant text.
+func (c *TranscriptCoalescer) PendingTextID() string { return c.pendingID("text") }
+
+// PendingThinkingID is the stable row id for in-flight thinking text.
+func (c *TranscriptCoalescer) PendingThinkingID() string { return c.pendingID("thinking") }
+
+// GenerationID returns the coalescer's active generation id.
+func (c *TranscriptCoalescer) GenerationID() string { return c.generationID }
+
 func (c *TranscriptCoalescer) Apply(ev bridge.StreamEvent) bool {
 	c.changed = false
 	if ev.GenerationID != "" {

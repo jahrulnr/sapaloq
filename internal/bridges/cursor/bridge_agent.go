@@ -69,10 +69,11 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 	agentTools := buildAgentTools(declared)
 	debug.Debugf("cursor-bridge: agent path host=%s ghost=%v tools=%d", host, creds.GhostMode, len(agentTools))
 
+	convID := agentConversationID(req)
 	body := wire.BuildAgentRequestBody(wire.AgentRunOptions{
-		UserText:       flattenMessages(req.Messages),
+		UserText:       bridge.ComposeAgentUserText(req.Messages, req.ProviderContinuation),
 		ModelID:        defaultIfEmpty(req.Model, b.entry.Model),
-		ConversationID: req.SessionID,
+		ConversationID: convID,
 		Tools:          agentTools,
 		Images:         encodeImages(req.Images),
 	})
@@ -146,15 +147,15 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 	send(ctx, out, done)
 }
 
-func flattenMessages(messages []bridge.Message) string {
-	var parts []string
-	for _, m := range messages {
-		if m.Role == "system" {
-			continue
-		}
-		parts = append(parts, m.Content)
+func agentConversationID(req bridge.Request) string {
+	scope := strings.TrimSpace(req.ConversationScope)
+	if scope == "" {
+		return req.SessionID
 	}
-	return strings.Join(parts, "\n\n")
+	if sid := strings.TrimSpace(req.SessionID); sid != "" {
+		return sid + ":" + scope
+	}
+	return scope
 }
 
 func encodeImages(images []bridge.Image) []wire.AgentImage {

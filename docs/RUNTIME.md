@@ -3,7 +3,7 @@
 > **Satu binary Go** - goroutine + channel + persistence lokal. No mandatory
 > broker/cache daemon; optional LLM drivers may manage an external provider
 > process such as `codex app-server`.
-> Last updated: 2026-06-28 (persistence: JSON store under `~/SapaLOQ/state` + `memory/`; no runtime SQLite)
+> Last updated: 2026-06-28 (widget transcript patch modes: snapshot vs delta ops on watch bus)
 
 Related: [EVENT-BUS.md](./EVENT-BUS.md) · [VISION.md](./VISION.md)
 
@@ -44,7 +44,7 @@ sapaloq-core (one binary)
 | Task turns | `~/SapaLOQ/state/tasks/{id}/turns.json` | Sub-agent durable context |
 | Facts / feedback | `~/SapaLOQ/memory/facts.json`, `feedback.jsonl` | Memory index + 👍👎 audit |
 | Aux config | `~/SapaLOQ/state/config/*.json` | `nodes.json`, `prefetch_rules.json`, `prompt_slices.json`, `skills_index.json` |
-| Workspace cwd | `~/SapaLOQ/state/workspaces/*.json` | Per-actor/session cwd + `_last.json` |
+| Workspace cwd | `~/SapaLOQ/state/workspaces/chat-{id}.json` | Per-chat WORKSPACE picker only; install default = no file |
 | Workspace default | `~/SapaLOQ/workspace/` | Install default CWD when nothing persisted |
 | Rollout / audit | `~/SapaLOQ/state/rollout/*.jsonl` | Stream replay, tool/event audit |
 | Runtime state | `~/SapaLOQ/state/` | Actor inboxes, tool jobs, workers, vault paths |
@@ -261,6 +261,17 @@ Server write deadline per frame: **5 s** (`internal/ipc/server.go`).
 | `read unix …/sapaloq.sock: i/o timeout` | Core did not finish a **non-chat** IPC handler within **3 s** |
 
 Chat streaming itself uses the 35-minute deadline — a slow model reply does **not** hit the 3 s cap. The 3 s timeout shows up on **side calls** while core is busy: ping (every 4 s), context usage (every 15 s), opening sub-agent monitor (`actor_inspect`), loading a large `chat_history`, or JSON compaction writes.
+
+### Transcript patch streaming (widget)
+
+| Field | Meaning |
+|-------|---------|
+| `TranscriptPatch.mode` | `snapshot` (default) or `delta` |
+| `TranscriptPatch.entries` | Full row array — history, boundaries, terminal |
+| `TranscriptPatch.ops` | Incremental mutations — `append_text` ~tens of bytes per token |
+| `TranscriptPatch.finished` | Terminal generation; snapshot usually includes usage |
+
+Core publishes `EventTranscript` on the event bus; the widget `watch` handler emits `sapaloq:transcript` to the webview. Foreground `chat_send` still blocks until `EventDone` but does **not** re-emit transcript frames (deduped).
 
 ### What to do
 

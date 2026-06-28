@@ -47,7 +47,6 @@ func (o *Orchestrator) handleSlash(ctx context.Context, out chan<- bridge.Stream
 			o.emitSlash(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventError, SessionID: sessionID, Error: err.Error(), At: time.Now().UTC()})
 			return ""
 		}
-		o.inheritWorkspace(sessionID, newID)
 		if o.progress != nil {
 			o.progress.Close(sessionID)
 		}
@@ -130,13 +129,11 @@ func (o *Orchestrator) SwitchSession(ctx context.Context, sessionID string) (str
 // NewSession starts a fresh active chat session (same path as the /reset slash
 // command) and returns the new session id.
 func (o *Orchestrator) NewSession(ctx context.Context) (string, error) {
-	oldID, _ := o.ActiveSession(ctx)
 	snap := o.snapshot()
 	newID, err := o.chat.Reset(ctx, snap.entry.Key, snap.entry.Model)
 	if err != nil {
 		return "", err
 	}
-	o.inheritWorkspace(oldID, newID)
 	return newID, nil
 }
 

@@ -46,6 +46,9 @@ func TestPerSessionWorkspaceIsolatedAcrossSwitchAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got := o.actorCWD(sessionB); got != workspace {
+		t.Fatalf("new session should start at install default, got %q want %q", got, workspace)
+	}
 	if _, err := o.SetSessionWorkspace(ctx, sessionB, projectB); err != nil {
 		t.Fatal(err)
 	}

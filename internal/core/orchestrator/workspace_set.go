@@ -39,6 +39,6 @@ func (o *Orchestrator) SetSessionWorkspace(ctx context.Context, sessionID, path 
 	if !info.IsDir() {
 		return "", fmt.Errorf("path is not a directory")
 	}
-	o.persistActorCWD(sessionID, cleaned)
+	o.persistChatSessionWorkspace(sessionID, cleaned)
 	return cleaned, nil
 }

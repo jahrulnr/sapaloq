@@ -8,8 +8,11 @@ import {
   coerceTranscriptEntries,
   mountTranscriptPane,
   syncTranscriptPane,
+  applyDeltaOps,
+  flushDeltaMarkdownInPane,
   type TranscriptEntry,
   type TranscriptEntryInput,
+  type TranscriptPatchOp,
   type TranscriptPaneState,
 } from '../ui/transcript';
 
@@ -91,4 +94,21 @@ export function scheduleSyncChatTranscript(entries: ReadonlyArray<TranscriptEntr
 
 export function flushScheduledChatTranscript() {
   flushPendingSync();
+  const list = getMessageList();
+  if (list) flushDeltaMarkdownInPane(list);
+}
+
+export function applyDeltaChatTranscript(ops: ReadonlyArray<TranscriptPatchOp>) {
+  const list = getMessageList();
+  if (!list || !ops.length) return;
+  const thinkingOnly = ops.every(
+    (op) => op.op === 'append_text' && !!op.entry_id && op.entry_id.includes('thinking'),
+  );
+  if (thinkingOnly) {
+    applyDeltaOps(list, paneState, ops, 'chat');
+    return;
+  }
+  const scroll = captureMessageScroll(list);
+  applyDeltaOps(list, paneState, ops, 'chat');
+  restoreMessageScroll(scroll, list);
 }

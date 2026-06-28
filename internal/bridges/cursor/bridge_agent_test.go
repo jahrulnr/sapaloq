@@ -9,6 +9,19 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 )
 
+func TestAgentConversationIDScopesByGeneration(t *testing.T) {
+	id := agentConversationID(bridge.Request{
+		SessionID:         "chat-1",
+		ConversationScope: "42",
+	})
+	if id != "chat-1:42" {
+		t.Fatalf("id = %q", id)
+	}
+	if agentConversationID(bridge.Request{SessionID: "chat-1"}) != "chat-1" {
+		t.Fatal("expected session fallback")
+	}
+}
+
 func TestEmitMCPToolUpdateCompleted(t *testing.T) {
 	out := make(chan bridge.StreamEvent, 1)
 	emitMCPToolUpdate(

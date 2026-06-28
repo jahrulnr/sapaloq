@@ -30,6 +30,12 @@ type Request struct {
 	Messages      []Message `json:"messages"`
 	Model         string    `json:"model,omitempty"`
 	DeclaredTools []string  `json:"declared_tools,omitempty"`
+	// ConversationScope isolates provider-side conversation state per chat
+	// generation (typically the active run id). When empty, SessionID is used.
+	ConversationScope string `json:"conversation_scope,omitempty"`
+	// ProviderContinuation is true on tool-continuation inference rounds after
+	// the first Complete call in a generation.
+	ProviderContinuation bool `json:"provider_continuation,omitempty"`
 	// Images carries inline image attachments for vision-capable bridges.
 	// Empty for text-only requests.
 	Images []Image `json:"images,omitempty"`

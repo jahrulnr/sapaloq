@@ -26,8 +26,6 @@ type workspaceState struct {
 	CWD string `json:"cwd"`
 }
 
-const lastWorkspaceFile = "_last.json"
-
 func (o *Orchestrator) workspacesDir() string {
 	root := o.stateDir
 	if root == "" {
@@ -47,58 +45,6 @@ func isChatSessionID(runID string) bool {
 	return strings.HasPrefix(runID, "chat-")
 }
 
-func (o *Orchestrator) lastWorkspace() string {
-	raw, err := os.ReadFile(filepath.Join(o.workspacesDir(), lastWorkspaceFile))
-	if err != nil {
-		return ""
-	}
-	var state workspaceState
-	if json.Unmarshal(raw, &state) != nil || strings.TrimSpace(state.CWD) == "" {
-		return ""
-	}
-	if info, err := os.Stat(state.CWD); err != nil || !info.IsDir() {
-		return ""
-	}
-	return state.CWD
-}
-
-func (o *Orchestrator) persistLastWorkspace(cwd string) {
-	if strings.TrimSpace(cwd) == "" {
-		return
-	}
-	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
-		return
-	}
-	raw, err := json.MarshalIndent(workspaceState{CWD: filepath.Clean(cwd)}, "", "  ")
-	if err != nil {
-		return
-	}
-	path := filepath.Join(o.workspacesDir(), lastWorkspaceFile)
-	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
-		return
-	}
-	_ = writeFileAtomic(path, raw, 0o600)
-}
-
-func (o *Orchestrator) fallbackWorkspace(defaultDir, runID string) string {
-	if isChatSessionID(runID) {
-		if last := o.lastWorkspace(); last != "" {
-			return last
-		}
-	}
-	return defaultDir
-}
-
-// inheritWorkspace copies the persisted cwd from one actor/session to another.
-// Used when /reset or "new chat" mints a fresh session id.
-func (o *Orchestrator) inheritWorkspace(fromID, toID string) {
-	if fromID == "" || toID == "" || fromID == toID {
-		return
-	}
-	cwd := o.actorCWD(fromID)
-	o.persistActorCWD(toID, cwd)
-}
-
 func configDataRootFallback() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -111,35 +57,63 @@ func (o *Orchestrator) workspaceStatePath(runID string) string {
 	return filepath.Join(o.workspacesDir(), safeActorID(runID)+".json")
 }
 
+// actorCWD returns the persisted cwd for an actor/session id, or the install
+// default when no chat-specific file exists. Chat rooms never inherit another
+// room's path and never read _last.json.
 func (o *Orchestrator) actorCWD(runID string) string {
-	defaultDir := o.defaultWorkspace()
+	defaultDir := filepath.Clean(o.defaultWorkspace())
 	if runID == "" {
-		return o.fallbackWorkspace(defaultDir, runID)
+		return defaultDir
 	}
 	raw, err := os.ReadFile(o.workspaceStatePath(runID))
 	if err != nil {
-		return o.fallbackWorkspace(defaultDir, runID)
+		return defaultDir
 	}
 	var state workspaceState
 	if json.Unmarshal(raw, &state) != nil || strings.TrimSpace(state.CWD) == "" {
-		return o.fallbackWorkspace(defaultDir, runID)
-	}
-	if info, err := os.Stat(state.CWD); err != nil || !info.IsDir() {
-		return o.fallbackWorkspace(defaultDir, runID)
+		return defaultDir
 	}
 	cwd := filepath.Clean(state.CWD)
-	// Chat rooms seeded with the install default before the user picked a folder
-	// via WORKSPACE (or inherited from a task) should follow _last.json.
-	if isChatSessionID(runID) && cwd == filepath.Clean(defaultDir) {
-		if last := o.lastWorkspace(); last != "" && last != cwd {
-			return last
-		}
+	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+		return defaultDir
+	}
+	// Legacy chat files that only recorded the install default are treated as unset.
+	if isChatSessionID(runID) && cwd == defaultDir {
+		return defaultDir
 	}
 	return cwd
 }
 
+// persistChatSessionWorkspace records an explicit WORKSPACE picker choice for one
+// chat room. The install default is represented by absence of a file.
+func (o *Orchestrator) persistChatSessionWorkspace(sessionID, cwd string) {
+	if !isChatSessionID(sessionID) || strings.TrimSpace(cwd) == "" {
+		return
+	}
+	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+		return
+	}
+	cleaned := filepath.Clean(cwd)
+	defaultDir := filepath.Clean(o.defaultWorkspace())
+	path := o.workspaceStatePath(sessionID)
+	if cleaned == defaultDir {
+		_ = os.Remove(path)
+		return
+	}
+	raw, err := json.MarshalIndent(workspaceState{CWD: cleaned}, "", "  ")
+	if err != nil {
+		return
+	}
+	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
+		return
+	}
+	_ = writeFileAtomic(path, raw, 0o600)
+}
+
+// persistActorCWD updates cwd for background actors (task-*, agent runs). Foreground
+// chat sessions use persistChatSessionWorkspace from the WORKSPACE picker only.
 func (o *Orchestrator) persistActorCWD(runID, cwd string) {
-	if runID == "" || strings.TrimSpace(cwd) == "" {
+	if runID == "" || strings.TrimSpace(cwd) == "" || isChatSessionID(runID) {
 		return
 	}
 	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
@@ -154,7 +128,6 @@ func (o *Orchestrator) persistActorCWD(runID, cwd string) {
 		return
 	}
 	_ = writeFileAtomic(path, raw, 0o600)
-	o.persistLastWorkspace(cwd)
 }
 
 func (o *Orchestrator) resolveActorArgs(ctx context.Context, args toolArgs) toolArgs {

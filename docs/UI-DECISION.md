@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-28 (reader-aware chat auto-scroll during live updates)
+> Last updated: 2026-06-28 (incremental transcript patch IPC: snapshot vs delta ops)
 
 **Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, JSON store, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
 
@@ -76,8 +76,9 @@ The header includes a compact telemetry rail showing the active model/provider,
 live Planner and Agent slots with their current phase, and the effective Ask
 session workspace (`session_workspace`). Clicking the WORKSPACE tile opens the
 OS-native directory chooser (GTK/Nautilus-style on GNOME; hidden dot-directories
-visible); the choice persists per chat session via `workspace_set` IPC. It
-refreshes every three seconds and immediately after task
+visible); the choice persists **only for that chat id** via `workspace_set` IPC
+(no global `_last.json`; new chat rooms start at `~/SapaLOQ/workspace` until
+picked). It refreshes every three seconds and immediately after task
 events; the existing task cards remain the detailed lifecycle history.
 
 ### Foreground steering while Ask is running
@@ -107,6 +108,21 @@ the current `scrollTop`; returning to the end enables it again on the next
 update. The end check uses a 2px tolerance solely for browser layout rounding.
 Initial hydration, a deliberate session switch, and a new/reset chat open at
 the newest transcript entry.
+
+### Incremental transcript patches (Codex-style IPC)
+
+`EventTranscript` carries a `TranscriptPatch` with dual mode (backward compatible):
+
+| `mode` | Payload | When |
+|--------|---------|------|
+| `""` / `snapshot` | full `entries[]` | session reset, history restore, tool/status rows, terminal `finished` |
+| `delta` | `ops[]` | streaming `response_delta` / `thinking_delta` |
+
+Delta ops: `upsert` (one `TranscriptEntry`), `append_text` (`entry_id` + `delta`), `remove` (`entry_id`). Entry ids match the coalescer (`{generation}-pending-text`, tool rows, etc.).
+
+The widget applies deltas by `data-entry-id` (`applyDeltaOps`): plain text appends immediately; markdown re-render is debounced (~48ms). Full-array `syncTranscriptPane` remains the snapshot path.
+
+Live foreground patches arrive on the `watch` bus subscription only (`sapaloq:transcript`); `chat_send` / `chat_retry` IPC streams no longer duplicate them to the webview.
 
 ### Visual language
 

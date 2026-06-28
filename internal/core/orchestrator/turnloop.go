@@ -158,11 +158,9 @@ func (s *subagentSink) emit(_ context.Context, ev bridge.StreamEvent) {
 	if !s.coalescer.Apply(ev) {
 		return
 	}
-	patch := bridge.TranscriptPatch{
-		SessionID: s.parentSessionID, ActorID: s.taskID,
-		ParentSessionID: s.parentSessionID, GenerationID: s.taskID,
-		Entries: s.coalescer.EntriesWithPending(),
-	}
+	patch := bridge.SnapshotPatch(s.parentSessionID, s.taskID, s.coalescer.EntriesWithPending(), false)
+	patch.ActorID = s.taskID
+	patch.ParentSessionID = s.parentSessionID
 	s.o.bus.Publish(topicFor(bridge.EventTranscript), bridge.StreamEvent{
 		Kind: bridge.EventTranscript, SessionID: s.parentSessionID,
 		ActorID: s.taskID, ParentSessionID: s.parentSessionID,

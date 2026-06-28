@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,7 +83,7 @@ func TestActorWorkspacePersistsFinalCWDWhenLaterCommandFails(t *testing.T) {
 	}
 }
 
-func TestLastWorkspaceUsedForNewChatSession(t *testing.T) {
+func TestNewChatSessionUsesInstallDefaultWithoutPicker(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	project := filepath.Join(root, "project")
@@ -92,16 +93,16 @@ func TestLastWorkspaceUsedForNewChatSession(t *testing.T) {
 		}
 	}
 	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
-	o.persistActorCWD("chat-old", project)
-	if got := o.actorCWD("chat-new"); got != project {
-		t.Fatalf("new chat cwd = %q, want %q", got, project)
+	o.persistChatSessionWorkspace("chat-old", project)
+	if got := o.actorCWD("chat-new"); got != workspace {
+		t.Fatalf("new chat cwd = %q, want install default %q", got, workspace)
 	}
 	if got := o.actorCWD("task-fresh"); got != workspace {
 		t.Fatalf("task cwd = %q, want install default %q", got, workspace)
 	}
 }
 
-func TestChatSessionWithDefaultCWDInheritsLastWorkspace(t *testing.T) {
+func TestChatSessionLegacyDefaultFileTreatedAsUnset(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	project := filepath.Join(root, "project")
@@ -111,30 +112,48 @@ func TestChatSessionWithDefaultCWDInheritsLastWorkspace(t *testing.T) {
 		}
 	}
 	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
-	// Session seeded with install default before user picked a real folder elsewhere.
-	o.persistActorCWD("chat-old", workspace)
-	o.persistLastWorkspace(project)
-
-	if got := o.actorCWD("chat-old"); got != project {
-		t.Fatalf("chat with default file cwd = %q, want last %q", got, project)
+	// Legacy pollution: per-chat file pointing at install default.
+	if err := os.MkdirAll(o.workspacesDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(workspaceState{CWD: workspace})
+	if err := os.WriteFile(o.workspaceStatePath("chat-legacy"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := o.actorCWD("chat-legacy"); got != workspace {
+		t.Fatalf("legacy default file cwd = %q, want install default", got)
 	}
 }
 
-func TestChatSessionExplicitCWDNotOverriddenByLast(t *testing.T) {
+func TestChatSessionExplicitPickerPathPersists(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
-	project := filepath.Join(root, "project")
 	other := filepath.Join(root, "other")
-	for _, dir := range []string{workspace, project, other} {
+	for _, dir := range []string{workspace, other} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
-	o.persistLastWorkspace(project)
-	o.persistActorCWD("chat-explicit", other)
-
+	o.persistChatSessionWorkspace("chat-explicit", other)
 	if got := o.actorCWD("chat-explicit"); got != other {
 		t.Fatalf("explicit chat cwd = %q, want %q", got, other)
+	}
+}
+
+func TestChatSessionPickerToDefaultRemovesFile(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	project := filepath.Join(root, "project")
+	for _, dir := range []string{workspace, project} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
+	o.persistChatSessionWorkspace("chat-a", project)
+	o.persistChatSessionWorkspace("chat-a", workspace)
+	if _, err := os.Stat(o.workspaceStatePath("chat-a")); !os.IsNotExist(err) {
+		t.Fatalf("default picker should remove chat workspace file, stat err=%v", err)
 	}
 }
