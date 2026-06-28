@@ -30,7 +30,11 @@ export function renderUsage(usage?: ChatUsage | null) {
   if (!el || !usage) return;
   const text = `${formatTokens(usage.used_tokens)}/${formatTokens(usage.context_window)}`;
   el.textContent = text;
-  el.title = `${usage.percent}% context used · ${usage.provider || 'provider'} ${usage.model || ''}`.trim();
+  let title = `${usage.percent}% context used · ${usage.provider || 'provider'} ${usage.model || ''}`.trim();
+  if (usage.compacted_turns && usage.compacted_turns > 0) {
+    title += ` · ${usage.active_turns ?? 0} active turns (${usage.compacted_turns} compacted)`;
+  }
+  el.title = title;
   el.dataset.level = usage.percent >= 80 ? 'danger' : usage.percent >= 70 ? 'warn' : 'normal';
 }
 

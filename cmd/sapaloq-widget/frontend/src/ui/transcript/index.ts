@@ -3,6 +3,7 @@ export type {
   TranscriptEntryInput,
   TranscriptEntryKind,
   TranscriptPatch,
+  TranscriptPatchOp,
   TranscriptPaneState,
   ActivityEntry,
 } from './types';
@@ -20,7 +21,7 @@ export {
   getToolActivityHeader,
   toolPayloadSection,
 } from './tool-activity';
-export { renderTranscriptEntry, patchTranscriptEntry, renderActivityEntry, patchActivityEntry } from './render';
+export { renderTranscriptEntry, patchTranscriptEntry, renderActivityEntry, patchActivityEntry, appendTextDelta, flushTextDeltaMarkdown } from './render';
 export { renderTaskCardElement, patchTaskCardElement } from './task-card';
 export { wireTranscriptEntry, wireTranscriptPane } from './wire';
 export {
@@ -29,3 +30,4 @@ export {
   mountTranscriptPane,
   syncTranscriptPane,
 } from './sync-pane';
+export { applyDeltaOps, flushDeltaMarkdownInPane } from './apply-transcript-delta';

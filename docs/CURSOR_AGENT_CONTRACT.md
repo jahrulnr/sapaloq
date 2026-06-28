@@ -24,6 +24,8 @@ Enable on a provider entry: `"useAgentPath": true` or `SAPALOQ_AGENT_PATH=1`.
 2. Server streams `AgentServerMessage` frames until `turn_ended`.
 3. Client must answer exec/KV sub-channels on the **same** upload half:
 
+`conversation_id` is scoped per chat **generation** (`sessionID:runSeq`), not the bare session id, so each user send starts a fresh provider conversation aligned with SapaLOQ's active (possibly compacted) turns. `user_text` is built by `bridge.ComposeAgentUserText`: first inference includes `[system]` + `[conversation]` + `[user]`; tool continuations send only the tail since the last assistant turn (no duplicate flatten of full history).
+
 | Server frame | Client reply |
 |--------------|--------------|
 | `exec_request_context` | `request_context_result` + declared MCP tools |

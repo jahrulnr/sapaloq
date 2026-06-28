@@ -2,7 +2,11 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**delta transcript throttle** — long sessions no longer serialize full history on every token)
+> Last updated: 2026-06-28 (**cursor agent conversation scope** — per-generation `conversation_id`, `ComposeAgentUserText` system+continuation; thinking stream UI skip markdown/scroll)
+
+> Prior: 2026-06-28 (**Codex-style delta transcript IPC** — `TranscriptPatch` `mode=delta` + `ops[]`; watch-only live stream; FE `applyDeltaOps`)
+
+> Prior: 2026-06-28 (**delta transcript throttle** — long sessions no longer serialize full history on every token)
 
 > Prior: 2026-06-28 (**live transcript + stop persistence** — watch-stream foreground patches, cancel flush to turns.json)
 
@@ -140,6 +144,27 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-28) - cursor agent conversation scope + thinking UI
+
+- **Root cause (context pill ~7k):** after checkpoint compaction, only ~24 `included_in_context` turns count toward the pill (480 older turns compacted). Tooltip now shows active vs compacted turn counts.
+- **Root cause (Cursor “mulai dari 0”):** agent path sent empty `ConversationState` + full `flattenMessages` every `Complete`, duplicating/misaligning server history; system prompts were dropped. Fix: `conversation_id = sessionID:generationID`, `ComposeAgentUserText` (system + conversation on first inference; assistant-tail only on tool continuation).
+- **UI freeze during reasoning:** thinking deltas skip markdown re-parse and scroll capture/restore on every patch.
+
+## Implemented this session (2026-06-28) - per-chat workspace only
+
+- **Model:** Install default `~/SapaLOQ/workspace` needs no file. Only chat rooms the user sets via WORKSPACE picker get `state/workspaces/chat-{id}.json`. Removed `_last.json` and cross-room inheritance on new chat/reset.
+- **Chat exec:** `exec` cd no longer writes chat workspace files (background task actors unchanged).
+- **Legacy:** Chat files that only store the install default are treated as unset.
+- **Tests:** `workspace_test.go`, `workspace_session_test.go`.
+
+## Implemented this session (2026-06-28) - Codex-style delta transcript IPC
+
+- **Problem:** Throttling reduced patch frequency but each frame still carried O(n) `entries[]` JSON on long sessions.
+- **Protocol:** `bridge.TranscriptPatch` gains `mode` (`snapshot`|`delta`) and `ops[]` (`upsert`, `append_text`, `remove`). Empty `mode` = legacy snapshot.
+- **Emitter:** `emitWidget` sends delta ops for streaming text/thinking; snapshots on tool/status/boundary/done. Patches publish on the event bus (`emitTranscriptPatch`).
+- **Widget:** `applyDeltaOps` patches DOM by `data-entry-id`; debounced markdown refresh on `append_text`. `SendMessage`/`RetryChatTurn` no longer duplicate transcript EventsEmit (watch-only).
+- **Tests:** `transcript_patch_test.go`, `apply-transcript-delta.test.ts`; `go test ./internal/core/orchestrator/...` + `npm test`.
 
 ## Implemented this session (2026-06-28) - delta transcript throttle
 

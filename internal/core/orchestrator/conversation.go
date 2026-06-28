@@ -296,11 +296,13 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		var dynamicStop atomic.Bool
 		var dynamicProgress atomic.Bool
 		stream, err := snap.br.Complete(attemptCtx, bridge.Request{
-			SessionID:     sessionID,
-			Messages:      attemptMessages,
-			Model:         snap.entry.Model,
-			DeclaredTools: cfg.tools,
-			Images:        images,
+			SessionID:            sessionID,
+			ConversationScope:    cfg.generationID,
+			ProviderContinuation: inferenceTurn > 1,
+			Messages:             attemptMessages,
+			Model:                snap.entry.Model,
+			DeclaredTools:        cfg.tools,
+			Images:               images,
 			ToolExecutor: func(callCtx context.Context, call parse.ToolCall) (string, error) {
 				outcome := cfg.dispatch(withActorRunID(callCtx, runID), call)
 				if !outcome.handled {

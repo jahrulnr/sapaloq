@@ -47,11 +47,21 @@ export type TranscriptPaneState = {
   renderedEntryCount: number;
 };
 
+export type TranscriptPatchOp = {
+  op: 'upsert' | 'append_text' | 'remove';
+  entry?: TranscriptEntry;
+  entry_id?: string;
+  delta?: string;
+};
+
 export type TranscriptPatch = {
   session_id?: string;
 	actor_id?: string;
 	parent_session_id?: string;
   generation_id?: string;
+  /** "" | snapshot | delta — empty means snapshot (legacy). */
+  mode?: '' | 'snapshot' | 'delta';
+  ops?: TranscriptPatchOp[];
   entries?: TranscriptEntry[];
   finished?: boolean;
   turn_id?: number;
