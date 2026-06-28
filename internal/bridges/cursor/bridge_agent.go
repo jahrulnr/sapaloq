@@ -3,6 +3,7 @@ package cursor
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"regexp"
 	"strings"
@@ -10,18 +11,20 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	cursoragent "github.com/jahrulnr/sapaloq/internal/bridges/cursor/agent"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/credentials"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/wire"
 	"github.com/jahrulnr/sapaloq/internal/debug"
+	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 // wantsAgentPath decides whether this request should go through the
 // agent.v1.AgentService/Run RPC (api5) instead of the legacy chat stream
 // (api2 StreamUnifiedChatWithTools).
-//
-// Agent path is used for vision (images in messages). Chat stream uses the
-// Node wire driver when available (see bridge.go streamLive).
-func wantsAgentPath(req bridge.Request) bool {
+func (b *Bridge) wantsAgentPath(req bridge.Request) bool {
+	if b.entry.UseAgentPath {
+		return true
+	}
 	if len(req.Images) > 0 {
 		return true
 	}
@@ -48,16 +51,10 @@ func messageHasVisionSignal(messages []bridge.Message) bool {
 
 var imageURLRe = regexp.MustCompile(`https?://[^\s"']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s"']*)?`)
 
-// streamLiveAgent routes the request through the Agent API path. It encodes
-// the OpenAI-style messages into an AgentClientMessage.RunRequest protobuf and
-// streams the AgentServerMessage response back as bridge events.
-//
-// The Agent host is selected by creds.GhostMode - privacy mode routes
-// through `agent.global.api5.cursor.sh`, non-privacy through
-// `agentn.global.api5.cursor.sh` (mirrors 9router's
-// src/lib/oauth/constants/oauth.js). Operators can override either with the
-// CURSOR_AGENT_HOST env var (for testing against mocks or alternate
-// deployments).
+// streamLiveAgent routes the request through the Agent API path (cursor-agent
+// wire port). It encodes messages into agent.v1.RunRequest, drives the
+// bidirectional exec/KV handshake, and maps InteractionUpdate events to
+// bridge.StreamEvent.
 func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds credentials.Credentials, out chan<- bridge.StreamEvent) {
 	host := strings.TrimSpace(os.Getenv("CURSOR_AGENT_HOST"))
 	if host == "" {
@@ -67,45 +64,68 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 	if path == "" {
 		path = wire.AgentAgentPath
 	}
-	debug.Debugf("cursor-bridge: using agent API path (host=%s path=%s ghost=%v)", host, path, creds.GhostMode)
+	declared := declaredToolsForRequest(req.DeclaredTools, b.entry.DeclaredTools)
+	agentTools := buildAgentTools(declared)
+	debug.Debugf("cursor-bridge: agent path host=%s ghost=%v tools=%d", host, creds.GhostMode, len(agentTools))
 
 	body := wire.BuildAgentRequestBody(wire.AgentRunOptions{
 		UserText:       flattenMessages(req.Messages),
 		ModelID:        defaultIfEmpty(req.Model, b.entry.Model),
 		ConversationID: req.SessionID,
+		Tools:          agentTools,
 		Images:         encodeImages(req.Images),
 	})
-	debug.Debugf("cursor-bridge: agent body bytes=%d", len(body))
 
+	mapper := cursoragent.NewMapper(req.SessionID)
 	var frameCount int
-	var responseBuf strings.Builder
 	streamFn := wire.SelectAgentStreamFn()
 	err := streamFn(ctx, wire.AgentStreamOptions{
-		Host:        host,
-		Path:        path,
-		Token:       creds.AccessToken,
-		Body:        body,
+		Host:      host,
+		Path:      path,
+		Token:     creds.AccessToken,
+		MachineID: creds.MachineID,
+		GhostMode: creds.GhostMode,
+		Tools:     agentTools,
+		Body:      body,
+		OnMCPTool: func(toolName, toolCallID string, args map[string]any) {
+			argsJSON, _ := json.Marshal(args)
+			resolved := ResolveToolCall(b.schema, parse.ToolCall{
+				ID:        toolCallID,
+				Name:      toolName,
+				Arguments: argsJSON,
+				Source:    "cursor",
+			})
+			ev := bridge.NewEvent(bridge.EventToolCall)
+			ev.SessionID = req.SessionID
+			ev.ToolCall = &resolved
+			send(ctx, out, ev)
+		},
+		MCPExecutor: func(callCtx context.Context, toolName, toolCallID string, args map[string]any) (string, bool, error) {
+			if req.ToolExecutor == nil {
+				return "", true, nil
+			}
+			argsJSON, err := json.Marshal(args)
+			if err != nil {
+				return "", true, err
+			}
+			resolved := ResolveToolCall(b.schema, parse.ToolCall{
+				ID:        toolCallID,
+				Name:      toolName,
+				Arguments: argsJSON,
+				Source:    "cursor",
+			})
+			text, err := req.ToolExecutor(callCtx, resolved)
+			if err != nil {
+				return err.Error(), true, nil
+			}
+			return text, false, nil
+		},
 		InsecureTLS: os.Getenv("SAPALOQ_WIRE_INSECURE_TLS") == "1",
 		Timeout:     b.timeout,
-	}, func(decoded []wire.AgentDecoded, raw []byte) {
+	}, func(decoded []wire.AgentDecoded, _ []byte) {
 		frameCount++
-		_ = raw // exposed for future exec-handshake use
-		for _, d := range decoded {
-			switch d.Kind {
-			case "text":
-				responseBuf.WriteString(d.Text)
-				ev := bridge.NewEvent(bridge.EventResponseDelta)
-				ev.SessionID = req.SessionID
-				ev.Delta = d.Text
-				send(ctx, out, ev)
-			case "thinking":
-				ev := bridge.NewEvent(bridge.EventThinkingDelta)
-				ev.SessionID = req.SessionID
-				ev.Delta = d.Thinking
-				send(ctx, out, ev)
-			case "turn_ended":
-				return
-			}
+		for _, ev := range mapper.Map(decoded) {
+			send(ctx, out, ev)
 		}
 	})
 	if err != nil {
@@ -116,15 +136,12 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 		send(ctx, out, errEv)
 		return
 	}
-	debug.Debugf("cursor-bridge: agent stream done frames=%d response_bytes=%d", frameCount, responseBuf.Len())
+	debug.Debugf("cursor-bridge: agent stream done frames=%d", frameCount)
 	done := bridge.NewEvent(bridge.EventDone)
 	done.SessionID = req.SessionID
 	send(ctx, out, done)
 }
 
-// flattenMessages is a tiny placeholder - full Phase-6 implementation lives in
-// proto_agent.go's flattenMessages-equivalent. For now we just join user
-// messages with a newline.
 func flattenMessages(messages []bridge.Message) string {
 	var parts []string
 	for _, m := range messages {
@@ -136,14 +153,11 @@ func flattenMessages(messages []bridge.Message) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// encodeImages converts base64 data URIs into wire.AgentImage. Used by the
-// bridge layer when the caller hands us pre-decoded image bytes.
 func encodeImages(images []bridge.Image) []wire.AgentImage {
 	var out []wire.AgentImage
 	for _, img := range images {
 		decoded, mime, ok := decodeDataURI(img.DataURI)
 		if !ok {
-			// Caller passed raw bytes; mime is set explicitly.
 			out = append(out, wire.AgentImage{
 				UUID:     uuid.NewString(),
 				MimeType: img.MimeType,
@@ -167,7 +181,6 @@ func encodeImages(images []bridge.Image) []wire.AgentImage {
 	return out
 }
 
-// decodeDataURI splits a data URI of the form data:image/png;base64,XXX.
 func decodeDataURI(s string) ([]byte, string, bool) {
 	if !strings.HasPrefix(s, "data:") {
 		return nil, "", false
@@ -176,7 +189,7 @@ func decodeDataURI(s string) ([]byte, string, bool) {
 	if comma < 0 {
 		return nil, "", false
 	}
-	header := s[5:comma] // skip "data:"
+	header := s[5:comma]
 	payload := s[comma+1:]
 	mime := header
 	if semi := strings.IndexByte(header, ';'); semi >= 0 {

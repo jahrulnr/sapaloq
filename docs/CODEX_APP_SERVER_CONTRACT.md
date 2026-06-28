@@ -1,7 +1,7 @@
 # Codex App-Server Contract
 
 > Wire contract implemented by `internal/bridges/codex/appserver`.
-> Last updated: 2026-06-28 (socket-only bridge, verified with `codex-cli 0.141.0`)
+> Last updated: 2026-06-28 (native tool output deltas + turn progress in widget transcript)
 
 ## Transport and lifecycle
 
@@ -47,13 +47,16 @@ closing the connection. A transport close without `turn/completed` is an error.
 
 | App-server notification | `bridge.StreamEvent` |
 |---|---|
-| `thread/started`, `turn/started` | status `session`, `working` |
+| `thread/started` | status `session` |
+| `turn/started` | progress label `Codex sedang bekerja…` |
 | `item/agentMessage/delta` | response delta |
 | `item/reasoning/textDelta`, `item/reasoning/summaryTextDelta` | thinking delta |
 | `item/started` for Codex-native tools | tool-call telemetry with `Source:"codex"` |
-| command/file output and patch updates | status telemetry; payload retained in `Delta` |
-| `item/completed` | batch fallback for message/reasoning, or `tool_done` status |
-| `thread/tokenUsage/updated` | `token_usage` status telemetry |
+| `item/commandExecution/outputDelta`, `item/fileChange/outputDelta` | `EventToolUpdate` with `Status:"running"` (streamed output chunks) |
+| `item/fileChange/patchUpdated` | status `file_patch` |
+| `item/completed` for native tools | `EventToolUpdate` with final `aggregatedOutput` |
+| `item/completed` | batch fallback for message/reasoning when not already streamed |
+| `thread/tokenUsage/updated` | `token_usage` status telemetry (skipped in widget transcript) |
 | non-retrying `error` or failed `turn/completed` | one terminal error |
 | successful/interrupted `turn/completed` | one terminal done |
 

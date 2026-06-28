@@ -72,12 +72,12 @@ func TestE2EChatToolCoerce(t *testing.T) {
 			continue
 		}
 		for _, e := range res.Event.Transcript.Entries {
-			if e.Kind == bridge.TranscriptTool && e.ToolName == "glob_file_search" {
+			if e.Kind == bridge.TranscriptTool && e.ToolName == "glob" {
 				return
 			}
 		}
 	}
-	t.Fatal("transcript missing glob_file_search tool")
+	t.Fatal("transcript missing glob tool")
 }
 
 func TestE2ESlashSuggest(t *testing.T) {

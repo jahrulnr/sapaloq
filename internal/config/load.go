@@ -403,6 +403,11 @@ type LLMBridge struct {
 	// turn surfaces as one batch of events followed by done). Ignored by the
 	// cursor-bridge driver, which has its own transport. nil → true.
 	Stream *bool `json:"stream,omitempty"`
+	// UseAgentPath routes all cursor-bridge turns through agent.v1.AgentService/Run
+	// (api5) instead of StreamUnifiedChatWithTools (api2). Vision requests always
+	// use the agent path regardless of this flag. Also overridable via
+	// SAPALOQ_AGENT_PATH=1.
+	UseAgentPath bool `json:"useAgentPath,omitempty"`
 }
 
 // DefaultRequestTimeoutSec is the per-inference-request timeout when a provider

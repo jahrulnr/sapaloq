@@ -52,7 +52,7 @@ func New(entry config.LLMBridge, runtime config.RuntimeConfig) (*Bridge, error) 
 func (b *Bridge) ID() string { return "cursor-bridge" }
 
 func (b *Bridge) Caps() bridge.BridgeCaps {
-	creds, err := b.loadCreds()
+	creds, err := b.loadCreds(context.Background())
 	return bridge.BridgeCaps{Thinking: true, Tools: true, LiveAPI: err == nil && creds.AccessToken != ""}
 }
 
@@ -72,17 +72,24 @@ func (b *Bridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridg
 	return out, nil
 }
 
-func (b *Bridge) loadCreds() (credentials.Credentials, error) {
-	return credentials.Load(credentials.Options{TokenEnv: b.entry.CredentialsEnv})
+func (b *Bridge) loadCreds(ctx context.Context) (credentials.Credentials, error) {
+	creds, err := credentials.Load(credentials.Options{TokenEnv: b.entry.CredentialsEnv})
+	if err != nil {
+		return creds, err
+	}
+	if err := credentials.EnsureFresh(ctx, &creds); err != nil {
+		debug.Debugf("cursor-bridge: token refresh skipped/failed: %v", err)
+	}
+	return creds, nil
 }
 
 func (b *Bridge) hasToken() bool {
-	creds, err := b.loadCreds()
+	creds, err := b.loadCreds(context.Background())
 	return err == nil && creds.AccessToken != ""
 }
 
 func (b *Bridge) streamLive(ctx context.Context, req bridge.Request, out chan<- bridge.StreamEvent) {
-	creds, err := b.loadCreds()
+	creds, err := b.loadCreds(ctx)
 	if err != nil || creds.AccessToken == "" {
 		debug.Debugf("cursor-bridge: live stream aborted cred_err=%v", err)
 		errEv := bridge.NewEvent(bridge.EventError)
@@ -99,7 +106,7 @@ func (b *Bridge) streamLive(ctx context.Context, req bridge.Request, out chan<- 
 		creds.Source, debug.RedactSecret(creds.AccessToken), debug.RedactSecret(creds.MachineID), creds.GhostMode)
 
 	// Route to Agent API for vision; chat stream uses Node wire when available.
-	if wantsAgentPath(req) {
+	if b.wantsAgentPath(req) {
 		b.streamLiveAgent(ctx, req, creds, out)
 		return
 	}
@@ -213,13 +220,8 @@ func (b *Bridge) streamMock(ctx context.Context, req bridge.Request, out chan<- 
 
 	if strings.Contains(message, "glob") || strings.Contains(message, "tool") {
 		if call, ok := toolcursor.ParseClientSideToolV2Call([]byte(`{"id":"mock-1","name":"glob","arguments":{"glob_pattern":"*.go"}}`)); ok {
-			coerced := CoerceToolCall(b.schema, call)
 			declared := declaredToolsForRequest(req.DeclaredTools, b.entry.DeclaredTools)
-			if coerced.Name == "glob_file_search" && foldToolName(call.Name) == "glob" {
-				b.emitToolCall(ctx, out, req.SessionID, coerced)
-			} else {
-				b.tryEmitToolCall(ctx, out, req.SessionID, declared, call)
-			}
+			b.tryEmitToolCall(ctx, out, req.SessionID, declared, call)
 		}
 	}
 
@@ -234,21 +236,34 @@ func (b *Bridge) streamMock(ctx context.Context, req bridge.Request, out chan<- 
 }
 
 func (b *Bridge) tryEmitToolCall(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, declared []string, call parse.ToolCall) {
-	coerced := CoerceToolCall(b.schema, call)
-	if reason := VaultReason(b.schema, declared, call.Name, coerced); reason != "" {
-		debug.Debugf("cursor-bridge: drop tool %s (%s) raw=%s resolved=%s", reason, coerced.Source, call.Name, coerced.Name)
+	rawName := call.Name
+	origSource := call.Source
+	call = ResolveToolCall(b.schema, call)
+	if reason := VaultReason(b.schema, declared, rawName, call); reason != "" {
+		debug.Debugf("cursor-bridge: drop tool %s (%s) raw=%s resolved=%s", reason, origSource, rawName, call.Name)
 		_ = b.vault.Append(vault.Entry{
 			SessionID:    sessionID,
 			Provider:     b.ID(),
-			RawName:      call.Name,
-			ResolvedName: coerced.Name,
-			Arguments:    coerced.Arguments,
-			Source:       coerced.Source,
+			RawName:      rawName,
+			ResolvedName: call.Name,
+			Arguments:    call.Arguments,
+			Source:       origSource,
 			Reason:       reason,
 		})
+		// Surface undeclared upstream tools in the widget transcript (telemetry
+		// only — orchestrator skips Source:"cursor" for dispatch).
+		telemetry := call
+		telemetry.Source = "cursor"
+		b.emitToolCall(ctx, out, sessionID, telemetry)
+		update := bridge.NewEvent(bridge.EventToolUpdate)
+		update.SessionID = sessionID
+		update.ToolCall = &telemetry
+		update.ToolResult = fmt.Sprintf("not on declared surface (%s): raw=%s", reason, rawName)
+		update.Status = "failed"
+		send(ctx, out, update)
 		return
 	}
-	b.emitToolCall(ctx, out, sessionID, coerced)
+	b.emitToolCall(ctx, out, sessionID, call)
 }
 
 func (b *Bridge) emitToolCall(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, call parse.ToolCall) {

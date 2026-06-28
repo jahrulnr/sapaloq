@@ -205,7 +205,7 @@ export function appendCheckpointDivider(index: number, summary: string) {
   list.scrollTop = list.scrollHeight;
 }
 
-function renderMessageAttachments(attachments: PendingAttachment[]) {
+export function renderMessageAttachments(attachments: PendingAttachment[]) {
   const wrap = document.createElement('div');
   wrap.className = 'message-attachments';
   const badge = document.createElement('button');

@@ -2,7 +2,6 @@ package appserver
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
@@ -30,7 +29,7 @@ func (m *Mapper) Map(n Notification) []bridge.StreamEvent {
 	case "thread/started":
 		return []bridge.StreamEvent{m.status(StatusSession, "")}
 	case "turn/started":
-		return []bridge.StreamEvent{m.status(StatusWorking, "")}
+		return []bridge.StreamEvent{m.status("Codex sedang bekerja…", "")}
 	case "thread/tokenUsage/updated":
 		return []bridge.StreamEvent{m.status("token_usage", string(n.Params))}
 	case "item/agentMessage/delta":
@@ -47,18 +46,12 @@ func (m *Mapper) Map(n Notification) []bridge.StreamEvent {
 		}
 		m.streamed[id] = true
 		return []bridge.StreamEvent{m.delta(bridge.EventThinkingDelta, delta)}
-	case "item/commandExecution/outputDelta":
-		_, delta := deltaFields(n.Params)
+	case "item/commandExecution/outputDelta", "item/fileChange/outputDelta":
+		id, delta := deltaFields(n.Params)
 		if delta == "" {
 			return nil
 		}
-		return []bridge.StreamEvent{m.status("tool_output", delta)}
-	case "item/fileChange/outputDelta":
-		_, delta := deltaFields(n.Params)
-		if delta == "" {
-			return nil
-		}
-		return []bridge.StreamEvent{m.status("file_output", delta)}
+		return []bridge.StreamEvent{m.toolOutput(id, delta)}
 	case "item/fileChange/patchUpdated":
 		return []bridge.StreamEvent{m.status("file_patch", string(n.Params))}
 	case "item/started":
@@ -117,15 +110,57 @@ func (m *Mapper) mapItem(raw json.RawMessage, completed bool) []bridge.StreamEve
 		return nil
 	case "commandExecution", "fileChange", "mcpToolCall", "webSearch", "imageGeneration", "imageView", "collabAgentToolCall":
 		if !completed {
-			return []bridge.StreamEvent{m.nativeToolCall(item.ID, item.Type, payload.Item)}
+			args := codexNativeArgs(item.Type, item.Command, item.Path, item.Query, item.Arguments, payload.Item)
+			return []bridge.StreamEvent{m.nativeToolCall(item.ID, item.Type, args)}
 		}
-		exit := "?"
-		if item.ExitCode != nil {
-			exit = fmt.Sprintf("%d", *item.ExitCode)
+		status := "completed"
+		if item.ExitCode != nil && *item.ExitCode != 0 {
+			status = "failed"
 		}
-		return []bridge.StreamEvent{m.status(fmt.Sprintf("%s:%s:exit=%s", StatusToolDone, item.Type, exit), item.AggregatedOutput)}
+		return []bridge.StreamEvent{m.toolComplete(item.ID, item.AggregatedOutput, status)}
 	}
 	return nil
+}
+
+func (m *Mapper) toolOutput(itemID, chunk string) bridge.StreamEvent {
+	ev := bridge.NewEvent(bridge.EventToolUpdate)
+	ev.SessionID = m.sessionID
+	ev.ToolCall = &parse.ToolCall{ID: itemID, Source: "codex"}
+	ev.ToolResult = chunk
+	ev.Status = "running"
+	return ev
+}
+
+func (m *Mapper) toolComplete(itemID, result, status string) bridge.StreamEvent {
+	ev := bridge.NewEvent(bridge.EventToolUpdate)
+	ev.SessionID = m.sessionID
+	ev.ToolCall = &parse.ToolCall{ID: itemID, Source: "codex"}
+	ev.ToolResult = result
+	ev.Status = status
+	return ev
+}
+
+func codexNativeArgs(itemType, command, path, query string, args json.RawMessage, rawItem json.RawMessage) json.RawMessage {
+	switch itemType {
+	case "commandExecution":
+		b, _ := json.Marshal(map[string]string{"command": strings.TrimSpace(command)})
+		return b
+	case "fileChange":
+		b, _ := json.Marshal(map[string]string{"path": strings.TrimSpace(path)})
+		return b
+	case "webSearch":
+		b, _ := json.Marshal(map[string]string{"query": strings.TrimSpace(query)})
+		return b
+	default:
+		if len(args) > 0 {
+			return args
+		}
+		if len(rawItem) > 0 && len(rawItem) <= 4096 {
+			return rawItem
+		}
+		b, _ := json.Marshal(map[string]string{"type": itemType})
+		return b
+	}
 }
 
 func (m *Mapper) nativeToolCall(id, name string, args json.RawMessage) bridge.StreamEvent {

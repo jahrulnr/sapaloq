@@ -118,7 +118,7 @@ func TestBridgeScenarios(t *testing.T) {
 					bridge.EventResponseDelta,
 					bridge.EventDone,
 				},
-				toolName: "glob_file_search",
+				toolName: "glob",
 			},
 		},
 		{

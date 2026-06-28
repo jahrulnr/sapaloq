@@ -21,7 +21,7 @@ func TestLoadFromVSCDB(t *testing.T) {
 	prevAccess := os.Getenv("CURSOR_ACCESS_TOKEN")
 	prevMachine := os.Getenv("CURSOR_MACHINE_ID")
 	prevVSCDB := os.Getenv(envCursorStateVSCDB)
-	os.Unsetenv("SAPALOQ_CURSOR_TOKEN")
+	os.Setenv("SAPALOQ_CURSOR_TOKEN", "stale-env-token")
 	os.Unsetenv("CURSOR_ACCESS_TOKEN")
 	os.Unsetenv("CURSOR_MACHINE_ID")
 	os.Setenv(envCursorStateVSCDB, dbPath)

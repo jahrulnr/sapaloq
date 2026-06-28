@@ -2,7 +2,23 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**ask noise auto-retry** — 3 retries before FallbackAskNoiseRetry; default provider → cursor-9router)
+> Last updated: 2026-06-28 (**cursor_tool spam removed** — undeclared upstream tools surface as failed tool rows)
+
+> Prior: 2026-06-28 (**orchestrator upstream tool normalize** — glob/grep/openai_inline map before dispatch)
+
+> Prior: 2026-06-28 (**codex native tool visibility** — output deltas + turn progress surface in widget transcript)
+
+> Prior: 2026-06-28 (**tool mapping table** — `ResolveToolCall` maps Cursor upstream/product names to SapaLOQ declared tools)
+
+> Prior: 2026-06-28 (**widget user bubble image attachments** — pasted screenshots persist in transcript after send)
+
+> Prior: 2026-06-28 (**api5 thin H2 gateway** — Node transport only; Go owns exec/MCP; checksum ms fix)
+
+> Prior: 2026-06-28 (**cursor agent exec loop port** — full decode/reject/MCP ToolExecutor; mapper; not CLI wrapper)
+>
+> Prior: 2026-06-28 (**foreground ask loop parity** — visible tool-less reply no longer auto-stops; ask/agent/planner share explicit-stop loop; thinking-only ping/noise fallback kept)
+>
+> Prior: 2026-06-28 (**ask noise auto-retry** — 3 retries before FallbackAskNoiseRetry; default provider → cursor-9router)
 >
 > Prior: 2026-06-28 (**ask thinking-only task fallback** — real (non-ping) foreground ask gets `FallbackAskNoiseRetry()` when cursor returns no visible text; thinking confab reset before finish policy)
 >
@@ -83,7 +99,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 10 | Vault audit log | ✅ | `internal/vault`, wired via `Orchestrator.auditTool` (`chat.go`) at Ask + sub-agent chokepoints; cursor-bridge logs undeclared calls |
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema + **wire description** via `toolschema.go` + `internal/tooldocs/defaults/*.md` (frontmatter `description` → OpenAI/Claude tool list). **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
-| 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor`; api2 wire normalizes `system`→`user` + tool XML; **9router parity guard** (`guard.go`: INSTRUCTION, forceAgentMode default/auto, MCP tools, Kimi suppress, leak sanitizer, undeclared emit gate) |
+| 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor`; api2 path + **agent api5 port** (`wire/proto_agent_exec.go`: full exec loop, MCP `ToolExecutor`, built-in rejections; `agent/mapper.go`); enable via `useAgentPath` / `SAPALOQ_AGENT_PATH=1`. See `CURSOR_AGENT_CONTRACT.md` |
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
 | 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering is applied before the next inference after the current tool batch, does not create a chat turn, and its optimistic bubble is UI-only. V1 is normal-priority, foreground-target, text-only |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
@@ -101,9 +117,30 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` - schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` - the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
-| 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
+| 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-28) - Glob/Grep openai_inline dispatch
+
+- **Root cause:** 9router/OpenAI function calls emit upstream names `glob` / `grep` (`source:"openai_inline"`). `glob` often used Cursor arg keys (`glob_pattern`, `target_directory`) that SapaLOQ expects as `pattern`/`path`; `grep` is not a declared tool (orchestrator uses `search`). cursor-bridge `ResolveToolCall` ran only inside the bridge, not at orchestrator dispatch.
+- **Fix:** `normalizeUpstreamToolCall` in `tool_normalize.go` (reuses `cursor.ResolveToolCall`) at `dispatchTool` + before pending-tool enqueue; api5 `MCPExecutor` also resolves before `ToolExecutor`.
+- **Tests:** `tool_normalize_test.go`; `go test ./internal/core/orchestrator/...`.
+
+## Implemented this session (2026-06-28) - codex native tool visibility
+
+- **Problem:** Codex app-server sent `commandExecution/outputDelta` and native tool lifecycle notifications, but the mapper dropped output into opaque `tool_output` status rows and `working` was coalescer-skipped — widget looked idle until turn completed.
+- **Mapper** (`appserver/mapper.go`): `outputDelta` → `EventToolUpdate` (`Status:"running"`); native `item/completed` → `EventToolUpdate` with `aggregatedOutput`; `turn/started` → progress label `Codex sedang bekerja…`; readable args for shell/edit/search.
+- **Coalescer** (`transcript_coalesce.go`): append streaming chunks onto the matching tool row by `ToolID`; skip noisy `session`/`token_usage`/`working` statuses; treat `Codex …` labels as progress.
+- **Widget** (`tool-activity.ts`): `running` status keeps tool row open with live response text; friendly names (`commandExecution` → `shell`).
+- **Tests:** `mapper_test.go`, `transcript_coalesce_test.go`; `go test ./...` + widget vitest green.
+
+## Implemented this session (2026-06-28) - cursor agent unauthenticated fix
+
+- **Root cause:** `SAPALOQ_CURSOR_TOKEN` in process env (stale 415-char JWT) overrode the live Cursor IDE token in `state.vscdb` (392 chars) — api5 returned `unauthenticated` even though `cursor agent --print` worked.
+- **Credentials** (`credentials/credentials.go`): prefer vscdb when available; full `process.env` override only when **both** token and `CURSOR_MACHINE_ID` are set. OAuth refresh helper (`credentials/refresh.go`) + `EnsureFresh` in bridge load path.
+- **Wire** (`wire/proto_agent.go`): empty `mcp_tools` placeholder matches 9router byte-for-byte (97 B reference body); `AgentHost` always `agentn.global.api5.cursor.sh` (ghost via header only).
+- **Ops:** unset stale `SAPALOQ_CURSOR_TOKEN` or export a fresh token **and** machine id; restart widget/core after IDE login.
 
 ## Implemented this session (2026-06-28) - sub-agent halu / echo loop fix
 
@@ -119,6 +156,26 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 - **Bridge** (`bridge.go`): removed the second guard that turned zero-frame streams into `EventError`; emits `EventDone` instead.
 - **Transport retry** (`conversation.go`): `empty response` / `returned no data` classified transient (bounded retry before fail).
 - **Widget:** history restore passes `restore: true` so failed task cards show **Lanjutkan task** without side-effect ring updates; `.message--task` flex column for the button.
+
+## Implemented this session (2026-06-28) - api5 thin H2 gateway + checksum fix
+
+- **Architecture** (`scripts/cursor-agent-h2-gateway.mjs` + `wire/agent_node.go`): Node is **transport-only** (http2 connect, opaque DATA in/out via newline JSON). Go builds headers/body, runs full `agentStreamState` exec/MCP/KV loop, creds stay in Go.
+- **Checksum bug** (`wire/proto.go`): `x-cursor-checksum` used `Unix()/1e6` (seconds) instead of `UnixMilli()/1e6` (matches 9router `Date.now()/1e6`) — caused api5 `unauthenticated` even on Node gateway with Go headers.
+- **Live smoke** (`TestLiveAgentStreamSmoke`): **PASS** `response="pong"` with thin gateway + Go logic.
+
+## Implemented this session (2026-06-28) - api5 agent Node driver + checksum fix
+
+- **Root cause:** api5 auth-fingerprints pure Go http2/raw clients (heartbeat then `unauthenticated`, no `exec_request_context`) even with byte-identical headers/body vs Node; same class of issue as api2.
+- **Default driver** (`wire/SelectAgentStreamFn`): `StreamAgentNode` via `scripts/cursor-agent-stream.mjs` (9router http2 + exec/KV loop) when `node` + script available; override `SAPALOQ_AGENT_WIRE_DRIVER=raw|http2|node`.
+- **Go raw H2** (`wire/raw.go`): HPACK pseudo-headers encoded before regular headers (fixes api5 `PROTOCOL_ERROR`); `agentUploadBody` test fixed.
+- **Live smoke** (`TestLiveAgentStreamSmoke`): **PASS** — `response="pong"` with default Node driver.
+
+## Implemented this session (2026-06-28) - api5 agent wire stable
+
+- **Bidirectional Agent API driver** (`wire/agent_stream.go`): `http2.Transport` + `io.Pipe` keeps upload half open for exec request-context ack + KV blob replies (matches 9router `driveH2`).
+- **KV + exec decode/encode** (`wire/proto_agent.go`): `DecodeKvServerEvent`, `BuildKvGetBlobResult`, `BuildKvSetBlobResult`, `BuildAgentHeaders`.
+- **Config** (`useAgentPath` on cursor provider): routes all text turns through api5; vision still auto-routes.
+- **Live smoke** (`TestLiveAgentStreamSmoke`): Go `raw`/`http2` still skip on `unauthenticated`; default Node driver passes.
 
 ## Implemented this session (2026-06-28) - cursor-bridge 9router wire parity
 
@@ -162,19 +219,46 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 - Added doctor coverage, `CODEX_APP_SERVER_CONTRACT.md`, `BRIDGE_DESIGN.md`, and
   `scripts/codex-bridge-poc.sh`; synchronized bridge/runtime/orchestrator docs.
 
+## Implemented this session (2026-06-28) - cursor agent exec loop port
+
+- **`wire/proto_agent_exec.go`.** Full `ExecServerMessage` decode (request context,
+  built-ins, MCP) + rejection encoders + `BuildExecMCPResult/Error` — ports
+  `cursorAgent.js` Phase 1–2 without subprocess CLI.
+- **`wire/agent_exec.go`.** In-stream exec handler: context ack, MCP via
+  `ToolExecutor`, built-in rejections so api5 turns do not stall.
+- **`agent/mapper.go`.** Maps Agent API decoded events → `bridge.StreamEvent`.
+- **`bridge_agent.go`.** Wires declared tools, MCP telemetry (`Source:"cursor"`),
+  and orchestrator `ToolExecutor` callback.
+- **`conversation.go`.** `Source:"cursor"` tool calls are telemetry-only (parity
+  with codex-bridge).
+- **Docs/tests.** `CURSOR_AGENT_CONTRACT.md`; `proto_agent_exec_test.go`,
+  `agent/mapper_test.go`.
+
+## Implemented this session (2026-06-28) - foreground ask loop parity
+
+- **`conversation.go`.** Removed `foregroundAsk` auto-stop when the model emits a
+  visible tool-less reply. Foreground chat now matches agent/planner: only
+  `sapaloq_stop` (or structural budgets) ends the run. Fixes "nyangkut" after
+  tool turns + narration (e.g. user follow-up `"error wkwk"` getting one
+  diagnostic paragraph then idle). Thinking-only ping greeting / noise retry
+  unchanged.
+- **Tests.** `TestForegroundAskDoesNotAutoStopOnVisibleReply` replaces
+  `TestForegroundAskAutoStopsAfterCleanToolLessReply`; narration-after-tools test
+  kept.
+
 ## Implemented this session (2026-06-28) - ask noise filter + auto-stop
 
 - **`internal/parse/artifacts/noise.go`.** Detects confabulated edit artifacts
   (`### Final file content`, patch headers, large unrelated source dumps) that
   Cursor/api2 sometimes emits on innocent chat turns like `"heyy"`.
-- **Foreground ask finish policy.** `turnConfig.foregroundAsk` (set from
-  `actor.go` for foreground role `ask`) ends the run after one clean tool-less
-  reply when no background tasks or clarifications are pending — no autopilot
-  continuation loop. Sub-agents and harness loops keep the explicit-stop model.
+- **Foreground ask finish policy (superseded).** Earlier `foregroundAsk` auto-stop
+  on the first visible tool-less reply was removed — foreground chat now uses the
+  same explicit-stop loop as agent/planner (`sapaloq_stop` + structural budgets).
+  `foregroundAsk` still applies thinking-only ping greeting / noise retry only.
 - **Defense in depth.** Orchestrator drops artifact text before persist/emit;
   cursor-bridge withholds response deltas once accumulated text matches artifact
   heuristics. Tests: `artifacts/noise_test.go`,
-  `conversation_test.go` (`TestForegroundAskAutoStopsAfterCleanToolLessReply`,
+  `conversation_test.go` (`TestForegroundAskDoesNotAutoStopOnVisibleReply`,
   `TestForegroundAskDropsConfabulatedArtifact`).
 - **Empty-reply follow-up.** When Cursor returns thinking-only confabulation and
   no visible text, foreground ask stops after one turn (no autopilot spam), drops
@@ -233,6 +317,23 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 - **Frontend:** `applySpokenTaskCompletion` handles task-stamped
   `response_delta` from `sapaloq:stream` (deduped via `spokenTaskIDs`).
 - **Tests:** `completion_test.go`, `chat-completion.test.ts`.
+
+## Implemented this session (2026-06-28) - cursor tool mapping (upstream → declared)
+
+- **Consolidated mapping** for tools Cursor emits but SapaLOQ names differently (`Glob`→`glob`,
+  `Shell`→`exec`, `grep`/`Grep`→`search`, `glob_file_search`→`glob`, `WebFetch`→`web_fetch`, …).
+  `ResolveToolCall` in `declared_map.go` runs at every bridge ingress before vault/dispatch.
+- **Docs:** `docs/TOOL-MAPPING.md` (full table + vault triage workflow).
+- **Tests:** `declared_map_test.go`, updated bridge/stream_buffer vectors.
+
+## Implemented this session (2026-06-28) - pasted images persist in user bubble
+
+- **Pasted screenshots no longer vanish after Enter.** Compose cleared the attachment
+  pill on send (expected), but user bubbles only rendered markdown text — `parseTurnContent`
+  extracted `data:image/...` URIs into `attachments[]` yet never called
+  `renderMessageAttachments`. `mountUserTranscriptContent` in `ui/transcript/render.ts`
+  now renders body + thumbnail/badge for both initial render and live patch.
+- **Tests:** `render-user.test.ts` (image attachment case).
 
 ## Implemented this session (2026-06-28) - folder drop renders as link in bubble
 

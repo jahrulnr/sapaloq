@@ -201,6 +201,8 @@ install:
 	mkdir -p "$(DATA_HOME)/sapaloq"; \
 	install -m 0755 scripts/cursor-node-stream.mjs "$(DATA_HOME)/sapaloq/cursor-node-stream.mjs"; \
 	echo "    installed $(DATA_HOME)/sapaloq/cursor-node-stream.mjs"; \
+	install -m 0755 scripts/cursor-agent-h2-gateway.mjs "$(DATA_HOME)/sapaloq/cursor-agent-h2-gateway.mjs"; \
+	echo "    installed $(DATA_HOME)/sapaloq/cursor-agent-h2-gateway.mjs"; \
 	if command -v wails >/dev/null 2>&1; then \
 		echo "==> Building $(WIDGET_BIN) (wails)"; \
 		if ( cd "$(WIDGET_DIR)" && wails build -tags "$(GO_TAGS)" ); then \

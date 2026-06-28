@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -184,15 +185,38 @@ type AgentStreamFn func(ctx context.Context, opts AgentStreamOptions, onFrame fu
 
 func (c *h2Conn) Close() error { return c.tlsConn.Close() }
 
+func writeHPACKHeaders(enc *hpack.Encoder, headers map[string]string) error {
+	pseudoOrder := []string{":method", ":authority", ":scheme", ":path"}
+	for _, k := range pseudoOrder {
+		if v, ok := headers[k]; ok {
+			if err := enc.WriteField(hpack.HeaderField{Name: k, Value: v}); err != nil {
+				return fmt.Errorf("hpack %s: %w", k, err)
+			}
+		}
+	}
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		if len(k) > 0 && k[0] == ':' {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if err := enc.WriteField(hpack.HeaderField{Name: k, Value: headers[k]}); err != nil {
+			return fmt.Errorf("hpack %s: %w", k, err)
+		}
+	}
+	return nil
+}
+
 func (c *h2Conn) sendAndRecv(ctx context.Context, headers map[string]string, body []byte, onFrame FrameHandler) error {
 	const streamID = 1
 
 	c.hbuf.Reset()
 	enc := hpack.NewEncoder(&c.hbuf)
-	for k, v := range headers {
-		if err := enc.WriteField(hpack.HeaderField{Name: k, Value: v}); err != nil {
-			return fmt.Errorf("hpack %s: %w", k, err)
-		}
+	if err := writeHPACKHeaders(enc, headers); err != nil {
+		return err
 	}
 	if err := c.framer.WriteHeaders(http2.HeadersFrameParam{
 		StreamID:      streamID,
@@ -286,6 +310,105 @@ func (c *h2Conn) sendAndRecv(ctx context.Context, headers map[string]string, bod
 		return nil
 	}
 	return fmt.Errorf("cursor stream closed without response data (status %s)", defaultIfEmpty(statusCode, "unknown"))
+}
+
+// sendAgentStream drives the bidirectional agent.v1.AgentService/Run RPC using
+// the raw HTTP/2 framer. Go's net/http http2 client is rejected by api5 with
+// "unauthenticated" even when headers and body match Node; this mirrors Node's
+// http2.connect() the same way StreamChatRaw does for api2.
+func (c *h2Conn) sendAgentStream(ctx context.Context, headers map[string]string, body []byte, state *agentStreamState) error {
+	const streamID = 1
+
+	c.hbuf.Reset()
+	enc := hpack.NewEncoder(&c.hbuf)
+	if err := writeHPACKHeaders(enc, headers); err != nil {
+		return err
+	}
+	if err := c.framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      streamID,
+		BlockFragment: c.hbuf.Bytes(),
+		EndHeaders:    true,
+		EndStream:     false,
+	}); err != nil {
+		return fmt.Errorf("write headers: %w", err)
+	}
+	if err := c.framer.WriteWindowUpdate(streamID, 1<<24); err != nil {
+		return fmt.Errorf("write window update: %w", err)
+	}
+	if len(body) > 0 {
+		if err := c.framer.WriteData(streamID, false, body); err != nil {
+			return fmt.Errorf("write data: %w", err)
+		}
+	}
+
+	var dataBuf bytes.Buffer
+	var statusCode string
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		f, err := c.framer.ReadFrame()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("read frame: %w", err)
+		}
+		switch fr := f.(type) {
+		case *http2.MetaHeadersFrame:
+			for _, hf := range fr.Fields {
+				if hf.Name == ":status" {
+					statusCode = hf.Value
+				}
+			}
+			if fr.StreamEnded() {
+				if err := dispatchAgentFrames(&dataBuf, state); err != nil {
+					return err
+				}
+				if statusCode != "" && statusCode != "200" {
+					return fmt.Errorf("cursor api status %s", statusCode)
+				}
+				return nil
+			}
+		case *http2.DataFrame:
+			if fr.StreamID != streamID {
+				continue
+			}
+			if n := len(fr.Data()); n > 0 {
+				dataBuf.Write(fr.Data())
+				if err := dispatchAgentFrames(&dataBuf, state); err != nil {
+					return err
+				}
+				if state.turnEnded {
+					return nil
+				}
+			}
+			if fr.StreamEnded() {
+				if err := dispatchAgentFrames(&dataBuf, state); err != nil {
+					return err
+				}
+				return nil
+			}
+		case *http2.WindowUpdateFrame, *http2.PingFrame, *http2.SettingsFrame:
+		case *http2.RSTStreamFrame:
+			if dataBuf.Len() > 0 {
+				_ = dispatchAgentFrames(&dataBuf, state)
+			}
+			if state.turnEnded {
+				return nil
+			}
+			return fmt.Errorf("cursor api reset stream %d: %s (rx_bytes=%d)", fr.StreamID, fr.ErrCode, dataBuf.Len())
+		case *http2.GoAwayFrame:
+			return fmt.Errorf("cursor api goaway: %s", fr.ErrCode)
+		}
+	}
+	if dataBuf.Len() > 0 {
+		return dispatchAgentFrames(&dataBuf, state)
+	}
+	if statusCode != "" && statusCode != "200" {
+		return fmt.Errorf("cursor api status %s", statusCode)
+	}
+	return nil
 }
 
 func defaultIfEmpty(value, fallback string) string {

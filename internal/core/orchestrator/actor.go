@@ -98,6 +98,7 @@ func (o *Orchestrator) runActor(ctx context.Context, snap providerSnapshot, acto
 // role-specific helpers below it own product semantics, while parsing/audit,
 // policy gating and result normalization converge here.
 func (o *Orchestrator) dispatchTool(ctx context.Context, snap providerSnapshot, actor ActorRun, call parse.ToolCall) turnOutcome {
+	call = normalizeUpstreamToolCall(call)
 	args := o.resolveActorArgs(ctx, parseToolArgs(call.Arguments))
 	if !actorAllowsTool(actor, call.Name) {
 		if _, known := knownToolSet()[call.Name]; !known {

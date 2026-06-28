@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -39,7 +40,20 @@ func TestClientKeyMatchesCursorBridge(t *testing.T) {
 	}
 }
 
-// TestChecksumShapeMatchesCursorBridge verifies the encoded prefix uses the
+// TestChecksumTimestampUnit verifies the checksum uses millisecond epoch / 1e6
+// (cursor IDE / 9router), not Unix seconds / 1e6.
+func TestChecksumTimestampUnit(t *testing.T) {
+	fixed := time.Unix(1_729_789_702, 500_000_000) // 500ms into second
+	want := uint64(fixed.UnixMilli() / 1_000_000)
+	got := checksumTimestamp(fixed)
+	if got != want {
+		t.Fatalf("checksum timestamp = %d, want %d (ms/1e6)", got, want)
+	}
+	if got == uint64(fixed.Unix()/1_000_000) {
+		t.Fatal("checksum must not use Unix seconds / 1e6")
+	}
+}
+
 // cursor URL-safe alphabet (alphabet length, no padding) and appends machine id.
 func TestChecksumShapeMatchesCursorBridge(t *testing.T) {
 	checksum := cursorChecksum("test-machine-id")

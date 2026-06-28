@@ -2,11 +2,11 @@
 
 > **Brain bridge drivers** - connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-06-28 (**cursor-bridge** buffer-per-turn finalize — 9router-style accumulate-then-hygiene; defer Kimi tools; drop unanchored noise tools)
+> Last updated: 2026-06-28 (**tool mapping** — `ResolveToolCall` upstream→declared; see `TOOL-MAPPING.md`)
 >
 > Prior: 2026-06-28 (**cursor-bridge** vscdb credential autoload + offline mock `sapaloq_stop` on autopilot)
 
-Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
+Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [TOOL-MAPPING.md](./TOOL-MAPPING.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
 
 > **Thinking/tools wire truth:** [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) (L0 only). Jangan derive thinking behavior dari 9router - adapter itu skip/collapse channel thinking Cursor.
 
@@ -312,7 +312,7 @@ type BridgeCaps struct {
 `**NativeTools` semantics:** names Cursor/Kimi may **hallucinate** in thinking/content. Used by:
 
 1. **Leak detection** (`analyzeLeak`) - content + thinking scan
-2. **Coercion mapping** - fake name → declared bridge tool via `cursor-bridge.schema.json` aliases
+2. **Coercion mapping** - fake/upstream name → SapaLOQ declared tool via `ResolveToolCall` (`declared_map.go`); catalog in `docs/TOOL-MAPPING.md`
 3. **Not** exposed to sub-agent as callable tools - sub-agent tools come from `subAgents.roles[].allowedTools` only
 
 Wrong interpretation (exposing NativeTools to task-runner) = double tool namespace bug.
@@ -429,20 +429,20 @@ encoder and response decoder:
 
 | Driver (Agent API) | Implementation                                                                    | Default                                                                               |
 | ------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `raw`              | `wire.StreamAgentRawWithRaw` - raw frames; mirrors `cursorAgent.js` byte-for-byte | Production                                                                            |
-| `http2`            | `wire.StreamAgentHTTP2` - stdlib `http.Client` + `http2.Transport`                | Set via `SAPALOQ_AGENT_WIRE_DRIVER=http2` (used by unit tests against httptest mocks) |
+| `node`             | `wire.StreamAgentNode` — thin Node H2 gateway (`scripts/cursor-agent-h2-gateway.mjs`); Go owns headers, protobuf, exec/MCP | **Production** when `node` + script available |
+| `raw`              | `wire.StreamAgentRawWithRaw` — raw HTTP/2 framer; full exec loop + MCP in Go    | `SAPALOQ_AGENT_WIRE_DRIVER=raw` (api5 still auth-fingerprints; use for wire parity) |
+| `http2`            | `wire.StreamAgentHTTP2` — `net/http` http2 + `agentUploadBody`; same exec loop  | `SAPALOQ_AGENT_WIRE_DRIVER=http2`                                                     |
 
 
-Override the host with `CURSOR_AGENT_HOST` and the path with `CURSOR_AGENT_PATH`
+Enable for all text turns: `"useAgentPath": true` on the cursor provider entry, or
+`SAPALOQ_AGENT_PATH=1`. Vision requests always route through api5.
 (defaults: `agentn.global.api5.cursor.sh` + `/agent.v1.AgentService/Run`). Use
 `SAPALOQ_WIRE_INSECURE_TLS=1` to skip certificate verification when targeting
 self-signed test servers.
 
 Live E2E: `make e2e-live SAPALOQ_AGENT_PATH=1` exercises the Agent API path
-end-to-end against `api5.cursor.sh`. Currently surfaces `rst_stream code=1`
-from the real server - same byte-level frame alignment work as the chat
-path; vision encoder/decoder contract is independently verified by the
-unit tests.
+end-to-end against `api5.cursor.sh`. See [CURSOR_AGENT_CONTRACT.md](./CURSOR_AGENT_CONTRACT.md)
+for the exec/MCP ownership model (mirrors codex-bridge `ToolExecutor`, not CLI subprocess).
 
 #### Privacy vs non-privacy Agent host
 

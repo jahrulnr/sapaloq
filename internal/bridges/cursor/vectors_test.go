@@ -63,7 +63,7 @@ func TestM9ProtoToolCall(t *testing.T) {
 	if len(events) != 1 || events[0].Kind != bridge.EventToolCall {
 		t.Fatalf("events = %#v", events)
 	}
-	if events[0].ToolCall.Name != "glob_file_search" {
+	if events[0].ToolCall.Name != "glob" {
 		t.Fatalf("name = %q", events[0].ToolCall.Name)
 	}
 }
@@ -100,11 +100,9 @@ func TestVaultReasonDeclaredSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	declared := []string{"read_file"}
-	if got := VaultReason(schema, declared, "glob", parse.ToolCall{Name: "glob_file_search"}); got != "undeclared" {
-		t.Fatalf("got = %q", got)
-	}
-	if got := VaultReason(schema, declared, "read", parse.ToolCall{Name: "read_file"}); got != "" {
+	declared := []string{"glob"}
+	call := ResolveToolCall(schema, parse.ToolCall{Name: "glob"})
+	if got := VaultReason(schema, declared, "glob", call); got != "" {
 		t.Fatalf("got = %q", got)
 	}
 }

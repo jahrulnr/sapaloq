@@ -31,6 +31,29 @@ func TestMapperCompletedFallbackAndNativeToolTelemetry(t *testing.T) {
 	}
 }
 
+func TestMapperOutputDeltaStreamsToolUpdate(t *testing.T) {
+	m := NewMapper("session-1")
+	events := m.Map(Notification{Method: "item/started", Params: json.RawMessage(`{"item":{"id":"c1","type":"commandExecution","command":"ls","status":"inProgress"}}`)})
+	if len(events) != 1 || events[0].Kind != bridge.EventToolCall {
+		t.Fatalf("tool start = %+v", events)
+	}
+	events = m.Map(Notification{Method: "item/commandExecution/outputDelta", Params: json.RawMessage(`{"itemId":"c1","delta":"foo"}`)})
+	if len(events) != 1 || events[0].Kind != bridge.EventToolUpdate || events[0].Status != "running" || events[0].ToolResult != "foo" {
+		t.Fatalf("output delta = %+v", events)
+	}
+	events = m.Map(Notification{Method: "item/completed", Params: json.RawMessage(`{"item":{"id":"c1","type":"commandExecution","command":"ls","aggregatedOutput":"foobar","exitCode":0}}`)})
+	if len(events) != 1 || events[0].Kind != bridge.EventToolUpdate || events[0].Status != "completed" || events[0].ToolResult != "foobar" {
+		t.Fatalf("tool complete = %+v", events)
+	}
+}
+
+func TestMapperTurnStartedShowsProgressStatus(t *testing.T) {
+	events := NewMapper("s").Map(Notification{Method: "turn/started", Params: json.RawMessage(`{}`)})
+	if len(events) != 1 || events[0].Kind != bridge.EventStatus || events[0].Status != "Codex sedang bekerja…" {
+		t.Fatalf("turn started = %+v", events)
+	}
+}
+
 func TestMapperUnknownNotificationIsTolerated(t *testing.T) {
 	if got := NewMapper("s").Map(Notification{Method: "future/event", Params: json.RawMessage(`{}`)}); got != nil {
 		t.Fatalf("unknown notification = %+v", got)

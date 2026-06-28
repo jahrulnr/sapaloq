@@ -135,3 +135,20 @@ func TestGlob(t *testing.T) {
 		t.Fatalf("glob should not match readme.md:\n%s", out)
 	}
 }
+
+func TestGlobDoubleStarMidPath(t *testing.T) {
+	chdirTemp(t)
+	dir := "web/themes/custom/banguninfo_devlog/templates"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	twig := filepath.Join(dir, "page.html.twig")
+	if err := os.WriteFile(twig, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := toolGlob(toolArgs{Pattern: "**/banguninfo_devlog/**/*.twig"})
+	if !strings.Contains(out, twig) {
+		t.Fatalf("glob missing nested twig:\n%s", out)
+	}
+}

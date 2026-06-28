@@ -573,8 +573,17 @@ func sessionIDFromToken(token string) string {
 	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(token)).String()
 }
 
+func checksumTimestamp(t time.Time) uint64 {
+	return uint64(t.UnixMilli() / 1_000_000)
+}
+
 func cursorChecksum(machineID string) string {
-	timestamp := time.Now().Unix() / 1_000_000
+	return cursorChecksumAt(time.Now(), machineID)
+}
+
+func cursorChecksumAt(now time.Time, machineID string) string {
+	// Match 9router/cursor IDE: Math.floor(Date.now() / 1e6), not Unix seconds.
+	timestamp := checksumTimestamp(now)
 	bytes := []byte{
 		byte(timestamp >> 40),
 		byte(timestamp >> 32),
@@ -612,6 +621,15 @@ func cursorChecksum(machineID string) string {
 	return encoded.String() + machineID
 }
 
+// BuildAgentHeaders returns Cursor headers for agent.v1.AgentService/Run.
+// Client type/version match cursor-agent CLI (9router cursorAgent.js).
+func BuildAgentHeaders(accessToken, machineID string, ghostMode bool) map[string]string {
+	h := BuildHeaders(accessToken, machineID, ghostMode)
+	h["x-cursor-client-type"] = "cli"
+	h["x-cursor-client-version"] = "cli-3.1.0"
+	return h
+}
+
 func BuildHeaders(accessToken, machineID string, ghostMode bool) map[string]string {
 	clean := accessToken
 	if idx := strings.Index(accessToken, "::"); idx >= 0 {
@@ -643,7 +661,7 @@ func BuildHeaders(accessToken, machineID string, ghostMode bool) map[string]stri
 		"x-cursor-client-arch":        arch,
 		"x-cursor-client-device-type": "desktop",
 		"x-cursor-config-version":     uuid.NewString(),
-		"x-cursor-timezone":           "UTC",
+		"x-cursor-timezone":           cursorTimezone(),
 		"x-ghost-mode":                ghost,
 		"x-request-id":                uuid.NewString(),
 		"x-session-id":                sessionIDFromToken(clean),
@@ -654,4 +672,16 @@ func RandomTraceID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return uuid.NewString()
+}
+
+func cursorTimezone() string {
+	if tz := strings.TrimSpace(os.Getenv("TZ")); tz != "" {
+		return tz
+	}
+	if b, err := os.ReadFile("/etc/timezone"); err == nil {
+		if s := strings.TrimSpace(string(b)); s != "" {
+			return s
+		}
+	}
+	return "UTC"
 }

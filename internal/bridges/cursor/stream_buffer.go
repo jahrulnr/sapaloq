@@ -120,12 +120,21 @@ func (b *Bridge) finalizeBufferedTurn(
 
 	thinking := acc.thinkingText()
 	content := acc.contentText()
-	noiseTurn := thinking != "" && artifacts.IsUnanchoredThinkingConfabulation(thinking, userPrompt)
+	noiseTurn := false
+	if thinking != "" {
+		if guard.ForceAgentMode {
+			// Agent: drop only hard cross-session bleed; keep task narration so tools can follow.
+			noiseTurn = artifacts.IsThinkingConfabulation(thinking)
+		} else {
+			noiseTurn = artifacts.IsUnanchoredThinkingConfabulation(thinking, userPrompt)
+		}
+	}
 	if noiseTurn {
 		thinking = ""
 		content = ""
-		allCalls = nil
-		noiseDropped = true
+		if len(allCalls) == 0 {
+			noiseDropped = true
+		}
 	}
 
 	if thinking != "" {

@@ -77,6 +77,11 @@
           "type": "boolean",
           "default": true,
           "description": "provider-bridge only. true (or omitted) streams token deltas as Server-Sent Events; false sends a single non-stream request and parses one complete response. Use false for gateways/endpoints that buffer or don't support SSE. Wire framing only - the bridge emits the same StreamEvent sequence either way (a non-stream turn surfaces as one batch of events + done). Ignored by cursor-bridge."
+        },
+        "useAgentPath": {
+          "type": "boolean",
+          "default": false,
+          "description": "cursor-bridge only. Route all turns through agent.v1.AgentService/Run (api5) instead of StreamUnifiedChatWithTools (api2). Vision always uses api5 regardless. Overridable via SAPALOQ_AGENT_PATH=1."
         }
       }
     }

@@ -1,7 +1,7 @@
 import { renderMarkdown } from '../markdown';
 import { hasVisibleText } from '../dom';
 import type { TranscriptEntry } from './types';
-import { parseTurnContent } from '../../features/messages';
+import { parseTurnContent, renderMessageAttachments } from '../../features/messages';
 import {
   createToolActivityElement,
   patchToolActivityElement,
@@ -23,6 +23,19 @@ function toolEntryFromTranscript(entry: TranscriptEntry) {
 }
 
 export type TranscriptRenderOptions = { restore?: boolean };
+
+function mountUserTranscriptContent(wrap: HTMLElement, rawText: string) {
+  const parsed = parseTurnContent(rawText);
+  const displayText = parsed.text || rawText || '';
+  const body = wrap.querySelector('.transcript-entry-body');
+  if (body instanceof HTMLElement) {
+    body.replaceChildren(renderMarkdown(displayText));
+  }
+  wrap.querySelector('.message-attachments')?.remove();
+  if (parsed.attachments.length) {
+    wrap.append(renderMessageAttachments(parsed.attachments));
+  }
+}
 
 export function renderTranscriptEntry(
   entry: TranscriptEntry,
@@ -70,7 +83,6 @@ export function renderTranscriptEntry(
     }
     el = wrap;
   } else if (entry.kind === 'user') {
-    const displayText = parseTurnContent(entry.text || '').text || entry.text || '';
     const wrap = document.createElement('div');
     wrap.className = `transcript-entry transcript-user message message--user${entry.archived ? ' message--archived' : ''}`;
     wrap.dataset.entryKind = 'user';
@@ -78,8 +90,8 @@ export function renderTranscriptEntry(
     if (entry.id) wrap.dataset.entryId = entry.id;
     const body = document.createElement('div');
     body.className = 'transcript-entry-body';
-    body.append(renderMarkdown(displayText));
     wrap.append(body);
+    mountUserTranscriptContent(wrap, entry.text || '');
     el = wrap;
   } else if (entry.kind === 'tool') {
     el = createToolActivityElement(toolEntryFromTranscript(entry), {
@@ -185,12 +197,15 @@ export function patchTranscriptEntry(
     return;
   }
   if (entry.kind === 'text' || entry.kind === 'thinking' || entry.kind === 'user' || entry.kind === 'error') {
+    if (entry.kind === 'user' && entry.text !== undefined) {
+      el.dataset.rawText = entry.text;
+      mountUserTranscriptContent(el, entry.text);
+      return;
+    }
     const body = el.querySelector('.transcript-entry-body') || el;
     if (body instanceof HTMLElement && entry.text !== undefined) {
       const target = body.classList.contains('transcript-entry-body') ? body : el;
-      const displayText = entry.kind === 'user'
-        ? (parseTurnContent(entry.text).text || entry.text)
-        : entry.text;
+      const displayText = entry.text;
       target.replaceChildren(renderMarkdown(displayText));
       if (entry.kind === 'error') wireErrorMessage(el);
     }

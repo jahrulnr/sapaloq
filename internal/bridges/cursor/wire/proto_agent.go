@@ -148,10 +148,28 @@ const (
 
 // KvServerMessage envelope fields.
 const (
-	ksmID          = 1
-	ksmGetBlobArgs = 2
-	ksmSetBlobArgs = 3
+	ksmID                = 1
+	ksmGetBlobArgs       = 2
+	ksmSetBlobArgs       = 3
+	ksmRequestMetadata   = 4
+	kcmID                = 1
+	kcmGetBlobResult     = 2
+	kcmSetBlobResult     = 3
+	kcmRequestMetadata   = 4
+	gbaBlobID            = 1
+	sbaBlobID            = 1
+	sbaBlobData          = 2
+	gbrBlobData          = 1
 )
+
+// KvServerEvent is one KV channel message from the Agent API stream.
+type KvServerEvent struct {
+	Kind             string
+	KvID             int
+	BlobID           []byte
+	BlobData         []byte
+	RequestMetadata  []byte
+}
 
 // AgentImage is a decoded image ready to inline-encode in the request.
 type AgentImage struct {
@@ -260,8 +278,8 @@ func encodeSelectedImageBody(img AgentImage) []byte {
 
 func encodeMCPTools(tools []AgentTool) []byte {
 	if len(tools) == 0 {
-		// Empty placeholder required.
-		return encodeFieldLen(arrMCPToolsInner, nil)
+		// Empty McpTools envelope (field 4, length 0). Do not emit inner field 1.
+		return nil
 	}
 	var parts []byte
 	for _, t := range tools {
@@ -385,8 +403,8 @@ type AgentDecoded struct {
 }
 
 // DecodeAgentServerMessage parses one Connect-RPC payload (post-decompress)
-// into AgentDecoded events. Only text/thinking/turn_end/kv markers are
-// surfaced - exec channel is out of scope for the MVP driver.
+// into AgentDecoded events. Exec channel handling lives in agent_stream.go;
+// interaction updates (text/thinking/tool markers) are surfaced here.
 func DecodeAgentServerMessage(payload []byte) []AgentDecoded {
 	var out []AgentDecoded
 	top := decodeMessage(payload)
@@ -508,6 +526,97 @@ func readVarintField(buf []byte, fieldNum int) int {
 	return 0
 }
 
+// DecodeKvServerEvent parses KvServerMessage get/set blob requests.
+func DecodeKvServerEvent(payload []byte) (KvServerEvent, bool) {
+	for _, f := range decodeMessage(payload)[asmKvServerMessage] {
+		if f.wireType != wireLen {
+			continue
+		}
+		body, _ := f.value.([]byte)
+		inner := decodeMessage(body)
+		ev := KvServerEvent{}
+		for _, x := range inner[ksmID] {
+			if x.wireType == wireVarint {
+				if v, ok := x.value.(uint64); ok {
+					ev.KvID = int(v)
+				}
+			}
+		}
+		for _, x := range inner[ksmRequestMetadata] {
+			if x.wireType == wireLen {
+				if b, ok := x.value.([]byte); ok {
+					ev.RequestMetadata = b
+				}
+			}
+		}
+		for _, x := range inner[ksmGetBlobArgs] {
+			if x.wireType != wireLen {
+				continue
+			}
+			args, _ := x.value.([]byte)
+			for _, y := range decodeMessage(args)[gbaBlobID] {
+				if y.wireType == wireLen {
+					if b, ok := y.value.([]byte); ok {
+						ev.BlobID = b
+					}
+				}
+			}
+			ev.Kind = "kv_get_blob"
+			return ev, true
+		}
+		for _, x := range inner[ksmSetBlobArgs] {
+			if x.wireType != wireLen {
+				continue
+			}
+			args, _ := x.value.([]byte)
+			for _, y := range decodeMessage(args)[sbaBlobID] {
+				if y.wireType == wireLen {
+					if b, ok := y.value.([]byte); ok {
+						ev.BlobID = b
+					}
+				}
+			}
+			for _, y := range decodeMessage(args)[sbaBlobData] {
+				if y.wireType == wireLen {
+					if b, ok := y.value.([]byte); ok {
+						ev.BlobData = b
+					}
+				}
+			}
+			ev.Kind = "kv_set_blob"
+			return ev, true
+		}
+	}
+	return KvServerEvent{}, false
+}
+
+// BuildKvGetBlobResult replies to KvServerMessage.GetBlobArgs.
+func BuildKvGetBlobResult(kvID int, blobData, requestMetadata []byte) []byte {
+	getResult := encodeField(gbrBlobData, wireLen, blobData)
+	parts := encodeFieldLen(kcmGetBlobResult, getResult)
+	if kvID != 0 {
+		parts = concat(encodeField(kcmID, wireVarint, uint64(kvID)), parts)
+	}
+	if len(requestMetadata) > 0 {
+		parts = concat(parts, encodeField(kcmRequestMetadata, wireLen, requestMetadata))
+	}
+	kcm := encodeFieldLen(acmKvClientMessage, parts)
+	return WrapConnectFrame(kcm, false)
+}
+
+// BuildKvSetBlobResult acks KvServerMessage.SetBlobArgs.
+func BuildKvSetBlobResult(kvID int, requestMetadata []byte) []byte {
+	parts := encodeFieldLen(kcmSetBlobResult, nil)
+	if kvID != 0 {
+		parts = concat(encodeField(kcmID, wireVarint, uint64(kvID)), parts)
+	}
+	if len(requestMetadata) > 0 {
+		parts = concat(parts, encodeField(kcmRequestMetadata, wireLen, requestMetadata))
+	}
+	kcm := encodeFieldLen(acmKvClientMessage, parts)
+	return WrapConnectFrame(kcm, false)
+}
+
 // BuildRequestContextResponse acks the request-context with the declared MCP
 // tools (matches cursor-agent's expected shape).
 func BuildRequestContextResponse(execMsgID int, execID string, tools []AgentTool) []byte {
@@ -533,18 +642,9 @@ const AgentNonPrivacyHost = "agentn.global.api5.cursor.sh"
 // (ghostMode on) sessions. No telemetry is sent to cursor.
 const AgentPrivacyHost = "agent.global.api5.cursor.sh"
 
-// AgentHost returns the appropriate Agent API hostname for the given
-// ghostMode flag. Privacy mode (ghostMode=true) routes through
-// `agent.global.api5.cursor.sh`; non-privacy through
-// `agentn.global.api5.cursor.sh`.
-//
-// Mirrors 9router/src/lib/oauth/constants/oauth.js which defines both
-// `agentEndpoint` and `agentNonPrivacyEndpoint` and picks based on the
-// user's privacy setting.
-func AgentHost(ghostMode bool) string {
-	if ghostMode {
-		return AgentPrivacyHost
-	}
+// AgentHost returns the Agent API hostname. cursor-agent and 9router always
+// target agentn.global.api5.cursor.sh; privacy is expressed via x-ghost-mode.
+func AgentHost(_ bool) string {
 	return AgentNonPrivacyHost
 }
 

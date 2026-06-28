@@ -34,7 +34,7 @@ func TestFinalizeBufferedTurnDropsUnanchoredNoise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guard := schema.BuildGuardContext("default", entry.DeclaredTools, nil)
+	guard := schema.BuildGuardContext("claude-4.5-sonnet", entry.DeclaredTools, nil)
 	acc := newLiveTurnBuffer(schema.KimiTokens(), false)
 	acc.totalThinking.WriteString(`The user is encountering an error in a Terraform AWS configuration. The error is:
 
@@ -43,8 +43,6 @@ Error: Invalid Parameter Combination
 ` + "```" + `
 
 Let me search for relevant files in the workspace.`)
-	acc.totalContent.WriteString(`<｜tool▁call▁begin｜>web_search<|tool_sep|>search_term
-amadna.com checkout<｜tool▁call▁end｜>`)
 
 	out := make(chan bridge.StreamEvent, 16)
 	responseBytes, noiseDropped := b.finalizeBufferedTurn(context.Background(), out, "s-noise", entry.DeclaredTools, guard, "buat web keren di /tmp/profile", acc)
@@ -82,7 +80,7 @@ amadna.com checkout<｜tool▁call▁end｜>`)
 func TestFinalizeDefersKimiToolsUntilEnd(t *testing.T) {
 	dir := t.TempDir()
 	entry, _ := defaultTestEntry()
-	entry.DeclaredTools = []string{"glob_file_search"}
+	entry.DeclaredTools = []string{"glob"}
 	b, err := New(entry, config.RuntimeConfig{DataDir: dir, BinaryName: "sapaloq-core"})
 	if err != nil {
 		t.Fatal(err)
@@ -106,15 +104,15 @@ func TestFinalizeDefersKimiToolsUntilEnd(t *testing.T) {
 			toolName = ev.ToolCall.Name
 		}
 	}
-	if toolName != "glob_file_search" {
-		t.Fatalf("tool = %q want glob_file_search", toolName)
+	if toolName != "glob" {
+		t.Fatalf("tool = %q want glob", toolName)
 	}
 }
 
 func TestFinalizeDropsShortPreToolNarration(t *testing.T) {
 	dir := t.TempDir()
 	entry, _ := defaultTestEntry()
-	entry.DeclaredTools = []string{"glob_file_search"}
+	entry.DeclaredTools = []string{"glob"}
 	b, err := New(entry, config.RuntimeConfig{DataDir: dir, BinaryName: "sapaloq-core"})
 	if err != nil {
 		t.Fatal(err)
@@ -140,6 +138,72 @@ func TestFinalizeDropsShortPreToolNarration(t *testing.T) {
 	}
 	if response != "" {
 		t.Fatalf("short pre-tool narration should be dropped, got %q", response)
+	}
+}
+
+func TestFinalizeBufferedTurnPreservesToolsOnNoiseWhenPresent(t *testing.T) {
+	dir := t.TempDir()
+	entry, _ := defaultTestEntry()
+	entry.DeclaredTools = []string{"web_search"}
+	b, err := New(entry, config.RuntimeConfig{DataDir: dir, BinaryName: "sapaloq-core"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := LoadSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := schema.BuildGuardContext("claude-4.5-sonnet", entry.DeclaredTools, nil)
+	acc := newLiveTurnBuffer(schema.KimiTokens(), false)
+	acc.totalThinking.WriteString(`The user is encountering an error in a Terraform AWS configuration.`)
+	acc.totalContent.WriteString(`<｜tool▁call▁begin｜>web_search<|tool_sep|>search_term
+amadna.com checkout<｜tool▁call▁end｜>`)
+
+	out := make(chan bridge.StreamEvent, 16)
+	_, noiseDropped := b.finalizeBufferedTurn(context.Background(), out, "s-noise", entry.DeclaredTools, guard, "buat web keren di /tmp/profile", acc)
+	close(out)
+
+	var toolCount int
+	for ev := range out {
+		if ev.Kind == bridge.EventToolCall {
+			toolCount++
+		}
+	}
+	if toolCount != 1 {
+		t.Fatalf("tool calls = %d want 1 preserved despite noise thinking", toolCount)
+	}
+	if noiseDropped {
+		t.Fatal("noiseDropped should be false when tools are present")
+	}
+}
+
+func TestFinalizeAgentModeKeepsTaskNarrationThinking(t *testing.T) {
+	dir := t.TempDir()
+	entry, _ := defaultTestEntry()
+	b, err := New(entry, config.RuntimeConfig{DataDir: dir, BinaryName: "sapaloq-core"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := LoadSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := schema.BuildGuardContext("default", nil, nil)
+	acc := newLiveTurnBuffer(schema.KimiTokens(), true)
+	acc.totalThinking.WriteString(`The user wants to fix devlog_front_widgets on the front page. Found the root cause in preprocess_page.`)
+
+	out := make(chan bridge.StreamEvent, 8)
+	b.finalizeBufferedTurn(context.Background(), out, "s-agent", entry.DeclaredTools, guard, "fix devlog front page widgets", acc)
+	close(out)
+
+	var thinking string
+	for ev := range out {
+		if ev.Kind == bridge.EventThinkingDelta {
+			thinking += ev.Delta
+		}
+	}
+	if thinking == "" {
+		t.Fatal("agent mode should keep anchored task narration in thinking")
 	}
 }
 

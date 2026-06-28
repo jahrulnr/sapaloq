@@ -1017,9 +1017,10 @@ func TestToolLessTurnNeverFinishesOnAbsenceOfTool(t *testing.T) {
 	}
 }
 
-// TestForegroundAskAutoStopsAfterCleanToolLessReply proves foreground ask chat
-// finishes after one sane tool-less reply instead of burning the autopilot loop.
-func TestForegroundAskAutoStopsAfterCleanToolLessReply(t *testing.T) {
+// TestForegroundAskDoesNotAutoStopOnVisibleReply proves foreground ask uses the
+// same explicit-stop loop as agent/planner: a visible tool-less reply continues
+// until sapaloq_stop or the toolless-turn budget — not after one narration.
+func TestForegroundAskDoesNotAutoStopOnVisibleReply(t *testing.T) {
 	fake := &repeatingTextBridge{}
 	o := &Orchestrator{
 		memoryDir: t.TempDir(),
@@ -1039,16 +1040,92 @@ func TestForegroundAskAutoStopsAfterCleanToolLessReply(t *testing.T) {
 		sink:          chatSink{o: o, out: out},
 		foregroundAsk: true,
 	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.runTurnLoop(context.Background(), providerSnapshot{
+			cfg:   o.cfg,
+			entry: config.LLMBridge{Key: "test", Model: "model"},
+			br:    fake,
+		}, "task", []bridge.Message{{Role: "user", Content: "heyy"}}, cfg)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("foreground ask should finish cleanly via toolless budget: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("foreground ask did not finish - must be bounded by toolless-turn budget")
+	}
+	if fake.calls < 2 {
+		t.Fatalf("calls = %d, want foreground ask to continue past first visible reply", fake.calls)
+	}
+}
+
+type toolThenNarrationBridge struct {
+	calls int
+}
+
+func (b *toolThenNarrationBridge) ID() string              { return "tool-then-narration" }
+func (b *toolThenNarrationBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *toolThenNarrationBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	out := make(chan bridge.StreamEvent, 8)
+	go func() {
+		defer close(out)
+		switch b.calls {
+		case 1:
+			call := parse.ToolCall{Name: "read_file", Arguments: []byte(`{"path":"x"}`), Source: "test"}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &call}
+		case 2:
+			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "Memperbaiki preprocess dan memeriksa region content."}
+		default:
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
+		}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+// TestForegroundAskContinuesAfterToolSessionNarration proves cursor-style agent
+// work (tool turn then narration-only beat) does not auto-stop foreground chat.
+func TestForegroundAskContinuesAfterToolSessionNarration(t *testing.T) {
+	fake := &toolThenNarrationBridge{}
+	o := &Orchestrator{
+		memoryDir: t.TempDir(),
+		cfg:       config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	out := make(chan bridge.StreamEvent, 128)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID:     "s-tool-narration",
+		runID:         "actor-ask",
+		tools:         []string{"read_file", "sapaloq_stop"},
+		sink:          chatSink{o: o, out: out},
+		foregroundAsk: true,
+		dispatch: func(_ context.Context, call parse.ToolCall) turnOutcome {
+			if call.Name == "sapaloq_stop" {
+				return turnOutcome{handled: true, stop: true}
+			}
+			return turnOutcome{text: "ok", handled: true}
+		},
+	}
 	_, err := o.runTurnLoop(context.Background(), providerSnapshot{
 		cfg:   o.cfg,
 		entry: config.LLMBridge{Key: "test", Model: "model"},
 		br:    fake,
-	}, "task", []bridge.Message{{Role: "user", Content: "heyy"}}, cfg)
+	}, "fix devlog front page", []bridge.Message{{Role: "user", Content: "fix devlog front page"}}, cfg)
 	if err != nil {
-		t.Fatalf("foreground ask should finish cleanly: %v", err)
+		t.Fatalf("run: %v", err)
 	}
-	if fake.calls != 1 {
-		t.Fatalf("calls = %d, want 1 clean tool-less reply to end the run", fake.calls)
+	if fake.calls < 3 {
+		t.Fatalf("calls = %d, want narration turn to continue until sapaloq_stop", fake.calls)
 	}
 }
 

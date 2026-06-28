@@ -1,6 +1,8 @@
 package cursor
 
 import (
+	"encoding/json"
+
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/wire"
 	"github.com/jahrulnr/sapaloq/internal/bridges/provider"
 )
@@ -51,4 +53,21 @@ func declaredToolsForRequest(reqDeclared, entryDeclared []string) []string {
 		src = entryDeclared
 	}
 	return append([]string(nil), src...)
+}
+
+func buildAgentTools(declared []string) []wire.AgentTool {
+	mcp := buildWireMCPTools(declared)
+	out := make([]wire.AgentTool, 0, len(mcp))
+	for _, t := range mcp {
+		var params map[string]any
+		if t.ParametersJSON != "" {
+			_ = json.Unmarshal([]byte(t.ParametersJSON), &params)
+		}
+		out = append(out, wire.AgentTool{
+			Name:        t.Name,
+			Description: t.Description,
+			Parameters:  params,
+		})
+	}
+	return out
 }

@@ -34,7 +34,7 @@ func DecodeFrame(schema Schema, b []byte) []bridge.StreamEvent {
 				events = append(events, ev)
 			}
 			for _, call := range extracted.Calls {
-				coerced := CoerceToolCall(schema, call)
+				coerced := ResolveToolCall(schema, call)
 				ev := bridge.NewEvent(bridge.EventToolCall)
 				ev.ToolCall = &coerced
 				events = append(events, ev)
@@ -43,7 +43,7 @@ func DecodeFrame(schema Schema, b []byte) []bridge.StreamEvent {
 		return events
 	case "tool_call":
 		if call, ok := toolcursor.ParseClientSideToolV2Call(frame.Tool); ok {
-			coerced := CoerceToolCall(schema, call)
+			coerced := ResolveToolCall(schema, call)
 			ev := bridge.NewEvent(bridge.EventToolCall)
 			ev.ToolCall = &coerced
 			return []bridge.StreamEvent{ev}

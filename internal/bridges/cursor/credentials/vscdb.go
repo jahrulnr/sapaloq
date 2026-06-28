@@ -12,8 +12,8 @@ import (
 const envCursorStateVSCDB = "CURSOR_STATE_VSCDB"
 
 var (
-	accessTokenKeys = []string{"cursorAuth/accessToken", "cursorAuth/refreshToken"}
-	machineIDKeys   = []string{"storage.serviceMachineId", "telemetry.machineId"}
+	accessTokenKey = "cursorAuth/accessToken"
+	machineIDKeys  = []string{"storage.serviceMachineId", "telemetry.machineId"}
 )
 
 func vscdbCandidates() []string {
@@ -30,10 +30,10 @@ func vscdbCandidates() []string {
 	return paths
 }
 
-func loadVSCDB(path string) (accessToken, machineID string, ok bool) {
+func loadVSCDB(path string) (accessToken, refreshToken, machineID string, ok bool) {
 	db, err := sql.Open("sqlite", path+"?mode=ro")
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	defer db.Close()
 
@@ -46,20 +46,23 @@ func loadVSCDB(path string) (accessToken, machineID string, ok bool) {
 		return stripVSCDBQuotes(value)
 	}
 
-	for _, key := range accessTokenKeys {
+	for _, key := range []string{accessTokenKey} {
 		if accessToken = get(key); accessToken != "" {
 			break
 		}
 	}
+	if rt := get("cursorAuth/refreshToken"); rt != "" {
+		refreshToken = rt
+	}
 	if accessToken == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	for _, key := range machineIDKeys {
 		if machineID = get(key); machineID != "" {
 			break
 		}
 	}
-	return accessToken, machineID, true
+	return accessToken, refreshToken, machineID, true
 }
 
 func stripVSCDBQuotes(value string) string {

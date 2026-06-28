@@ -380,11 +380,11 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				resetIdle()
 				if ev.ToolCall != nil {
 					// Codex app-server native and dynamic tools execute inside its
-					// own turn loop. Surface them as UI telemetry, but never enqueue
-					// them for SapaLOQ dispatch a second time.
-					if ev.ToolCall.Source == "codex" {
+					// own turn loop. Cursor agent api5 MCP exec runs in-bridge.
+					// Surface both as UI telemetry; never enqueue for double dispatch.
+					if ev.ToolCall.Source == "codex" || ev.ToolCall.Source == "cursor" {
 						out.emit(runCtx, ev)
-						out.beat("codex tool: " + ev.ToolCall.Name)
+						out.beat(ev.ToolCall.Source + " tool: " + ev.ToolCall.Name)
 						continue
 					}
 					// Some inline/non-native providers do not assign tool-call IDs.
@@ -393,6 +393,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 					if ev.ToolCall.ID == "" {
 						ev.ToolCall.ID = fmt.Sprintf("%s:%d:%d", runID, inferenceTurn, len(pendingTools))
 					}
+					*ev.ToolCall = normalizeUpstreamToolCall(*ev.ToolCall)
 					out.emit(runCtx, ev)
 					out.beat("tool: " + ev.ToolCall.Name)
 					toolCalls++
@@ -705,17 +706,15 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			thinkingOut.Reset()
 			turnThinking.Reset()
 		}
-		// Foreground ask chat: a clean tool-less reply finishes the run without
-		// an autopilot continuation. When no tools have been used yet and the
-		// provider returns thinking-only noise, stop immediately (with a small
-		// fallback for casual pings like "heyy", or a noise-retry hint for real tasks).
+		// Foreground ask chat: same loop as agent/planner — visible tool-less
+		// text is never a stop signal (only sapaloq_stop or structural budgets).
+		// When Cursor returns thinking-only with no visible text, still apply
+		// ping greeting / noise retry so innocent turns are not blank.
 		if !stop && cfg.foregroundAsk && toolCallsThisTurn == 0 && len(toolResults) == 0 {
 			sig := o.sessionSignals(sessionID)
 			if sig.runningTasks == 0 && !sig.awaitingClarification {
 				visible := strings.TrimSpace(StripCalledToolsMarkers(response.String()))
-				if visible != "" {
-					stop = true
-				} else if toolCalls == 0 {
+				if visible == "" && toolCalls == 0 {
 					if artifacts.IsConversationalPing(fallbackTask) {
 						msg := artifacts.FallbackAskGreeting()
 						response.WriteString(msg)
@@ -804,6 +803,12 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			if !(attemptedStop && !stop) {
 				toollessBudget++
 			}
+		} else if isAgentNarrationTurn(toolCalls, response.String()) {
+			// Cursor often narrates ("Found the root cause…") one turn before the
+			// next tool call. Do not burn the tool-less budget on that healthy beat.
+			if toollessBudget < budget.MaxNoProgressTurns {
+				toollessBudget++
+			}
 		} else {
 			// A tool-less turn burns the budget.
 			toollessBudget--
@@ -821,6 +826,8 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			} else {
 				toollessStreak = 0
 			}
+		} else if isAgentNarrationTurn(toolCalls, response.String()) {
+			// Narration-only turn: do not escalate autopilot toward sapaloq_stop.
 		} else {
 			toollessStreak++
 		}
@@ -962,6 +969,22 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 	}
 	return all, fmt.Errorf("inference-turn budget exhausted after %d turns", maxInferenceTurns)
+}
+
+// isAgentNarrationTurn reports a tool-less turn that already produced substantive
+// task narration (typical Cursor beat before the next read/edit/exec call).
+func isAgentNarrationTurn(toolCallsSoFar int, response string) bool {
+	if toolCallsSoFar == 0 {
+		return false
+	}
+	body := strings.TrimSpace(StripCalledToolsMarkers(response))
+	if len(body) < 40 {
+		return false
+	}
+	if artifacts.IsModelResponseArtifact(body) || artifacts.IsAutopilotEcho(body) {
+		return false
+	}
+	return true
 }
 
 func toolCallSignature(call parse.ToolCall) string {
