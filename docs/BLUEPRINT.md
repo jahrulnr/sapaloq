@@ -1,7 +1,7 @@
 # SapaLOQ - Development Blueprint (Proposal)
 
 > **Unified synthesis** of all SapaLOQ architecture docs. Single book for implementers, reviewers, and future contributors.
-> Last updated: 2026-06-22 (runtime telemetry UI, config/data split, persistent workspace) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
+> Last updated: 2026-06-28 (Codex app-server socket bridge + in-turn dynamic tools) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
 
 ---
 
@@ -78,7 +78,7 @@ SapaLOQ = **dua produk terpisah** + optional bridge:
 |         | **SapaLOQ (Companion)**                          | **Worker (Agent CLI)**       |
 | ------- | ------------------------------------------------ | ---------------------------- |
 | Feel    | Ambient HUD, ngobrol santai                      | Task execution, coding       |
-| Brain   | LLM bridge driver (`cursor-bridge`, compat APIs) | `cursor-agent` / GoClaw      |
+| Brain   | LLM bridge driver (`cursor-bridge`, provider APIs, `codex-bridge`) | Cursor/provider/Codex app-server |
 | Config  | `~/.config/sapaloq/config.json`                  | Runtime data |
 | Runtime data | `~/SapaLOQ/`                                | `~/.cursor/`, agent sessions |
 | MCP     | Desktop adapter (`desktop_`*)                    | git, fs, terminal, repo      |
@@ -324,7 +324,7 @@ flowchart TB
 | **SQLite store**    | `internal/store/`                  | Facts, FTS, nodes, prefetch_rules               |
 | **Platform driver** | `internal/drivers/`*               | GNOME, KDE, freedesktop, windows, headless      |
 | **OS detect**       | `internal/detect/`                 | Probe, fingerprint, os.json                     |
-| **LLM bridge**      | `internal/bridges/`*               | cursor-bridge, openai-compat, local-llama       |
+| **LLM bridge**      | `internal/bridges/`*               | cursor-bridge, provider-bridge, codex-bridge, local-llama |
 | **Parsers**         | `internal/parse/tools`, `thinking` | Wire format → canonical model                   |
 | **Node client**     | `internal/nodes/`                  | Remote spawn WS/HTTP                            |
 | **Learning hook**   | `internal/learning/`               | Post-task queue, janitor drain                  |
@@ -1256,7 +1256,7 @@ Legacy alias `sapaloq.v1.gnome.`* deprecated but supported.
 ```
 sapaloq-core
 ├── bridge/          LLM registry
-├── bridges/         cursor-bridge, openai-compat, claude-compat, local-llama
+├── bridges/         cursor-bridge, provider-bridge, codex-bridge/appserver, local-llama
 └── parse/
     ├── tools/       openai, claude, cursor, kimi
     └── thinking/    cursor, claude, kimi, openai
@@ -1279,10 +1279,17 @@ Unified interface:
 ```go
 type Bridge interface {
     ID() string
-    Capabilities() BridgeCaps
-    Complete(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, error)
+    Caps() BridgeCaps
+    Complete(ctx context.Context, req Request) (<-chan StreamEvent, error)
 }
 ```
+
+`Request` carries messages, images, request-scoped `DeclaredTools`, and an
+optional non-serialized `ToolExecutor`. HTTP/provider bridges emit tool calls
+for post-turn orchestration. Codex app-server uses `ToolExecutor` for
+`item/tool/call`, allowing the model to receive a SapaLOQ tool result inside the
+same Codex turn. Every Codex-origin telemetry call is stamped
+`Source:"codex"` and must not enter orchestrator `pendingTools`.
 
 ### Tool poisoning matrix
 
@@ -1383,6 +1390,7 @@ Remote node: credentials stay on orchestrator machine unless comm spec declares 
 | `openai-compat` | OpenAI HTTP        | Low        |
 | `claude-compat` | Anthropic Messages | Low–medium |
 | `cursor-bridge` | api2.cursor.sh     | **High**   |
+| `codex-bridge` | Codex app-server WebSocket JSON-RPC | Native tools are telemetry; SapaLOQ tools use dynamic callbacks |
 
 
 Community bridges: compile-time registry; template for IDE-like backends.
@@ -1681,7 +1689,7 @@ Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 | Section                                                          | Purpose                                                                                         |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `runtime`, `platform`                                            | Data directory + active env-driven desktop adapter                                              |
-| `llmBridge`                                                      | Active provider registry; secrets via env only                                                   |
+| `llmBridge`                                                      | Active provider registry; secrets via env only. `codex-bridge` lifecycle endpoint/mode are environment-only (`auto`, UDS default) |
 | `orchestrator`                                                   | Continuation, compaction, completion notification                                                |
 | `skills`, `prompts`, `feedback`                                  | Bounded skill injection, replaceable role prompts, explicit negative guidance                    |
 | `events.bus`                                                     | Socket path, JSONL WAL path, replay flag                                                         |

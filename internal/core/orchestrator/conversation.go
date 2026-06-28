@@ -8,6 +8,7 @@ import (
 	"math"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
@@ -283,12 +284,25 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// slice often ends on assistant — inject a synthetic user continuation.
 		attemptMessages := ensureConversationEndsWithUser(cleanMessages)
 		attemptCtx, cancelAttempt := context.WithCancel(runCtx)
+		var dynamicStop atomic.Bool
+		var dynamicProgress atomic.Bool
 		stream, err := snap.br.Complete(attemptCtx, bridge.Request{
 			SessionID:     sessionID,
 			Messages:      attemptMessages,
 			Model:         snap.entry.Model,
 			DeclaredTools: cfg.tools,
 			Images:        images,
+			ToolExecutor: func(callCtx context.Context, call parse.ToolCall) (string, error) {
+				outcome := cfg.dispatch(withActorRunID(callCtx, runID), call)
+				if !outcome.handled {
+					return "", fmt.Errorf("tool %q was not handled", call.Name)
+				}
+				dynamicProgress.Store(true)
+				if outcome.stop {
+					dynamicStop.Store(true)
+				}
+				return outcome.text, nil
+			},
 		})
 		if err != nil {
 			cancelAttempt()
@@ -357,6 +371,14 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			case bridge.EventToolCall:
 				resetIdle()
 				if ev.ToolCall != nil {
+					// Codex app-server native and dynamic tools execute inside its
+					// own turn loop. Surface them as UI telemetry, but never enqueue
+					// them for SapaLOQ dispatch a second time.
+					if ev.ToolCall.Source == "codex" {
+						out.emit(runCtx, ev)
+						out.beat("codex tool: " + ev.ToolCall.Name)
+						continue
+					}
 					// Some inline/non-native providers do not assign tool-call IDs.
 					// Give every call a stable per-run identity so its later result can
 					// update the correct expandable UI block.
@@ -525,6 +547,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				}
 			}
 		}
+		stop = stop || dynamicStop.Load()
 		if retryTextOnly {
 			// Strip the images and re-run this inference turn text-only. The
 			// per-attempt context above has already cancelled the broken stream;
@@ -686,7 +709,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			// Proven productive: accept every turn and top the budget up so a
 			// long working session is never cut off mid-flow.
 			toollessBudget++
-		} else if len(toolResults) > 0 {
+		} else if len(toolResults) > 0 || dynamicProgress.Load() {
 			attemptedStop := false
 			for _, item := range pendingTools {
 				if item.call.Name == "sapaloq_stop" {
@@ -704,7 +727,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			// A tool-less turn burns the budget.
 			toollessBudget--
 		}
-		if len(toolResults) > 0 {
+		if len(toolResults) > 0 || dynamicProgress.Load() {
 			attemptedStop := false
 			for _, item := range pendingTools {
 				if item.call.Name == "sapaloq_stop" {

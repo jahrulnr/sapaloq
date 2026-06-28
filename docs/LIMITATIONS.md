@@ -2,7 +2,7 @@
 
 > Hal-hal yang **tidak bisa diselesaikan** hanya dengan arsitektur - tradeoff produk, batas OS, atau fisika network.
 > Untuk yang **bisa** dimitigasi (boot FSM, offline queue, doctor CLI), lihat [RUNTIME.md](./RUNTIME.md) - **bukan** file ini.
-> Last updated: 2026-06-19
+> Last updated: 2026-06-28 (Codex app-server operational limits)
 
 Related: [VISION.md](./VISION.md) · [RUNTIME.md](./RUNTIME.md)
 
@@ -205,6 +205,16 @@ Needs samples; cold start = bad routing. **Tidak instant optimal** dari hari per
 ### LLM bridge format drift (Hard limit · partial)
 
 Tool/thinking wire formats differ per provider ([BRIDGE.md](./BRIDGE.md)). Cursor L0 truth: [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md). Wrong parser = lost or hallucinated tool calls.
+
+### Codex app-server availability (External / platform)
+
+`codex-bridge` requires a compatible `codex` binary, valid Codex auth, and the
+experimental app-server protocol. There is deliberately no CLI transport
+fallback. Linux/macOS use WebSocket over Unix sockets; Windows requires an
+explicit supported WebSocket endpoint until equivalent UDS/process lifecycle
+behavior is proven. Upstream notification or experimental dynamic-tools schema
+drift can require a bridge update; offline mock tests reduce but cannot remove
+that external compatibility limit.
 
 ### Tool poisoning (Backend-dependent)
 

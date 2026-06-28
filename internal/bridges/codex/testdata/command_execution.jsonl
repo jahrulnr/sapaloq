@@ -1,6 +1,0 @@
-{"type":"thread.started","thread_id":"019f02bc-6de6-7f13-98e0-a9e46b31d4d1"}
-{"type":"turn.started"}
-{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"/bin/bash -lc 'echo hello-codex'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
-{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"/bin/bash -lc 'echo hello-codex'","aggregated_output":"hello-codex\n","exit_code":0,"status":"completed"}}
-{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Output:\n\n```text\nhello-codex\n```\n\nBriefly: `echo` prints its arguments to standard output, so it printed `hello-codex`."}}
-{"type":"turn.completed","usage":{"input_tokens":32604,"cached_input_tokens":19200,"output_tokens":74,"reasoning_output_tokens":0}}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/bridges/codex"
@@ -81,12 +82,21 @@ func main() {
 		if err != nil {
 			exitf("doctor failed: %v", err)
 		}
+		entry, _ := cfg.LLMBridge.ActiveProvider()
+		if entry.Driver == "codex-bridge" {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			credSource, err = codex.Doctor(ctx, entry, cfg.Runtime)
+			cancel()
+			if err != nil {
+				exitf("doctor failed: %v", err)
+			}
+		}
 		dirs := config.RuntimeDirs(cfg)
 		fmt.Println("doctor ok")
 		fmt.Printf("  config: %s\n", cfgPath)
 		fmt.Printf("  socket: %s\n", dirs.SocketPath)
 		fmt.Printf("  vault:  %s/vault/tool-calls.jsonl\n", dirs.DataDir)
-		fmt.Printf("  cursor: %s\n", credSource)
+		fmt.Printf("  bridge: %s\n", credSource)
 	case "chat":
 		message := "halo"
 		if len(cmdArgs) > 0 {

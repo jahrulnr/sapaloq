@@ -92,17 +92,12 @@ func TestSafeReasoning(t *testing.T) {
 	}
 }
 
-// TestSafeReasoningNeverMinimalInArgv is the end-to-end guard: building the
-// argv for a minimal-effort entry must never emit `model_reasoning_effort=minimal`.
-func TestSafeReasoningNeverMinimalInArgv(t *testing.T) {
+// TestSafeReasoningNeverMinimalOnTurn is the app-server guard: the effort sent
+// on turn/start must never be minimal while Codex tools are active.
+func TestSafeReasoningNeverMinimalOnTurn(t *testing.T) {
 	b := &Bridge{entry: config.LLMBridge{ReasoningEffort: "minimal"}}
-	argv := buildArgv(runOptions{sandbox: "workspace-write", reasoning: b.safeReasoning(bridge.Request{})})
-	joined := strings.Join(argv, " ")
-	if strings.Contains(joined, "minimal") {
-		t.Fatalf("argv must never carry minimal reasoning effort: %s", joined)
-	}
-	if !strings.Contains(joined, "model_reasoning_effort=low") {
-		t.Fatalf("expected downgraded effort=low in argv: %s", joined)
+	if got := b.safeReasoning(bridge.Request{}); got != "low" {
+		t.Fatalf("turn effort = %q, want low", got)
 	}
 }
 
@@ -196,5 +191,16 @@ func TestAuthOKFromEnvKey(t *testing.T) {
 	}
 	if !b.Caps().Thinking || !b.Caps().Tools {
 		t.Fatal("Thinking and Tools must always be true for codex-bridge")
+	}
+}
+
+func TestLegacyCLIThreadRecordIsNotResumed(t *testing.T) {
+	legacy := threadRecord{SessionID: "s", ThreadID: "old-cli-thread"}
+	if legacy.appServerCompatible() {
+		t.Fatal("legacy record without transport marker must start a fresh app-server thread")
+	}
+	current := threadRecord{SessionID: "s", ThreadID: "thread", Transport: appServerTransport}
+	if !current.appServerCompatible() {
+		t.Fatal("app-server record should be resumable across restarts")
 	}
 }

@@ -1,136 +1,124 @@
 //go:build e2e
 
-// E2E tests for the codex-bridge spawn the REAL codex CLI. They are gated
-// behind the `e2e` build tag so a plain `go test ./...` never runs them (CI
-// stays green offline). Even with the tag set, each test skips automatically if
-// the codex binary cannot be resolved on PATH, so the suite is safe on hosts
-// without the CLI.
-//
-// Run them with:
-//
-//	go test -tags=e2e ./internal/bridges/codex/ -run TestE2E -v
-//	go test -tags=e2e ./internal/bridges/codex/ -run TestGenerate -update -v   # regenerate fixtures
 package codex
 
 import (
-	"bytes"
 	"context"
-	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/bridges/codex/appserver"
+	"github.com/jahrulnr/sapaloq/internal/config"
 )
 
-// update, when set, makes TestGenerateFixtures overwrite the golden fixture
-// files in testdata/ with the raw JSONL captured from the real CLI.
-var update = flag.Bool("update", false, "regenerate golden fixtures from a real codex run")
-
-// requireCodex skips the test unless the codex binary is resolvable on PATH.
 func requireCodex(t *testing.T) string {
 	t.Helper()
 	bin, err := resolveBinary()
 	if err != nil {
-		t.Skipf("codex binary not found on PATH; skipping e2e: %v", err)
+		t.Skipf("codex binary not found: %v", err)
 	}
 	return bin
 }
 
-// TestE2EPong runs a real, read-only turn and asserts the visible answer comes
-// back as a response delta followed by a done terminal — the live counterpart
-// of the PONG fixture test.
-func TestE2EPong(t *testing.T) {
+func TestE2EAppServerLifecycle(t *testing.T) {
 	bin := requireCodex(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	endpoint := "unix://" + filepath.Join(t.TempDir(), "codex.sock")
+	m := &appserver.Manager{Binary: bin, Endpoint: endpoint, Mode: appserver.ModeAuto, Env: os.Environ()}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-
-	// runCodex blocks until the stream drains and writes events synchronously,
-	// so drain in a goroutine to avoid backpressure on the channel.
-	out := make(chan bridge.StreamEvent, 64)
-	type collected struct {
-		response string
-		sawErr   string
+	if err := m.EnsureRunning(ctx); err != nil {
+		t.Fatalf("start/probe: %v", err)
 	}
-	done := make(chan collected, 1)
-	go func() {
-		var c collected
-		for ev := range out {
-			switch ev.Kind {
-			case bridge.EventResponseDelta:
-				c.response += ev.Delta
-			case bridge.EventError:
-				c.sawErr = ev.Error
-			}
-		}
-		done <- c
-	}()
-
-	res, err := runCodex(ctx, runOptions{
-		binary:  bin,
-		prompt:  "Reply with exactly the word PONG and nothing else.",
-		sandbox: "read-only",
-		env:     os.Environ(),
-	}, "e2e-pong", out)
-	close(out)
-	c := <-done
-	response, sawErr := c.response, c.sawErr
-	if err != nil {
-		t.Fatalf("runCodex: %v", err)
+	if !m.SpawnedByUs() {
+		t.Fatal("expected lifecycle manager to own the child")
 	}
-	if sawErr != "" {
-		t.Fatalf("real turn errored: %s", sawErr)
+	if err := m.Close(); err != nil {
+		t.Fatalf("reap: %v", err)
 	}
-	if response == "" {
-		t.Fatalf("expected a non-empty agent response")
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer probeCancel()
+	if err := appserver.Probe(probeCtx, endpoint); err == nil {
+		t.Fatal("app-server remained reachable after Close")
 	}
-	if res.threadID == "" {
-		t.Fatalf("expected a captured thread_id from thread.started")
-	}
-	t.Logf("real PONG response: %q (thread=%s)", response, res.threadID)
 }
 
-// TestGenerateFixtures captures the raw JSONL of a real read-only turn and,
-// with -update, writes it to testdata/pong.jsonl. This is the "real run ->
-// capture -> golden file" half; the offline tests replay the same golden file.
-func TestGenerateFixtures(t *testing.T) {
-	if !*update {
-		t.Skip("pass -update to regenerate golden fixtures from a real codex run")
+func TestE2EAppServerTurn(t *testing.T) {
+	if os.Getenv("SAPALOQ_CODEX_E2E") != "1" {
+		t.Skip("set SAPALOQ_CODEX_E2E=1 to run a live model turn")
 	}
 	bin := requireCodex(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	var raw bytes.Buffer
-	out := make(chan bridge.StreamEvent, 64)
-	drained := make(chan struct{})
-	go func() {
-		for range out {
-		}
-		close(drained)
-	}()
-	_, err := runCodex(ctx, runOptions{
-		binary:  bin,
-		prompt:  "Reply with exactly the word PONG and nothing else.",
-		sandbox: "read-only",
-		env:     os.Environ(),
-		rawSink: &raw,
-	}, "e2e-gen", out)
-	close(out)
-	<-drained
+	t.Setenv(envBinary, bin)
+	t.Setenv(envMode, appserver.ModeAuto)
+	t.Setenv(envListen, "unix://"+filepath.Join(t.TempDir(), "codex.sock"))
+	b, err := New(config.LLMBridge{Driver: "codex-bridge", Model: "gpt-5.5", RequestTimeoutSec: 120}, config.RuntimeConfig{DataDir: t.TempDir()})
 	if err != nil {
-		t.Fatalf("runCodex: %v", err)
+		t.Fatal(err)
 	}
-	if raw.Len() == 0 {
-		t.Fatalf("captured no JSONL from the real run")
+	defer b.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	stream, err := b.Complete(ctx, bridge.Request{SessionID: "e2e-pong", Messages: []bridge.Message{{Role: "user", Content: "Reply with exactly PONG."}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response, streamErr string
+	var done bool
+	for ev := range stream {
+		switch ev.Kind {
+		case bridge.EventResponseDelta:
+			response += ev.Delta
+		case bridge.EventError:
+			streamErr = ev.Error
+		case bridge.EventDone:
+			done = true
+		}
+	}
+	if streamErr != "" {
+		if isCodexUsageLimitError(streamErr) {
+			t.Skipf("codex usage limit: %s", streamErr)
+		}
+		t.Fatalf("turn error: %s", streamErr)
+	}
+	if !done || !strings.Contains(strings.ToUpper(response), "PONG") {
+		t.Fatalf("response=%q done=%v", response, done)
 	}
 
-	path := filepath.Join("testdata", "pong.jsonl")
-	if err := os.WriteFile(path, raw.Bytes(), 0o644); err != nil {
-		t.Fatalf("write fixture %q: %v", path, err)
+	stream, err = b.Complete(ctx, bridge.Request{SessionID: "e2e-pong", Messages: []bridge.Message{
+		{Role: "user", Content: "Reply with exactly PONG."},
+		{Role: "assistant", Content: response},
+		{Role: "user", Content: "Reply with exactly SECOND."},
+	}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Logf("regenerated %s (%d bytes):\n%s", path, raw.Len(), raw.String())
+	response, streamErr, done = "", "", false
+	for ev := range stream {
+		switch ev.Kind {
+		case bridge.EventResponseDelta:
+			response += ev.Delta
+		case bridge.EventError:
+			streamErr = ev.Error
+		case bridge.EventDone:
+			done = true
+		}
+	}
+	if streamErr != "" {
+		if isCodexUsageLimitError(streamErr) {
+			t.Skipf("codex usage limit on resume turn: %s", streamErr)
+		}
+	}
+	if streamErr != "" || !done || !strings.Contains(strings.ToUpper(response), "SECOND") {
+		t.Fatalf("resume response=%q error=%q done=%v", response, streamErr, done)
+	}
+}
+
+func isCodexUsageLimitError(msg string) bool {
+	l := strings.ToLower(msg)
+	return strings.Contains(l, "usage limit") ||
+		strings.Contains(l, "rate limit") ||
+		strings.Contains(l, "try again at")
 }

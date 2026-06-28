@@ -222,6 +222,9 @@ func (o *Orchestrator) Close() {
 	if o.bus != nil {
 		o.bus.Close()
 	}
+	if closer, ok := o.bridge.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
 }
 
 func (o *Orchestrator) toolJobs() *toolJobScheduler {

@@ -1,7 +1,7 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-28 (sub-agent resume: `sapaloq_resume_task`, session delete purges task artifacts)
+> Last updated: 2026-06-28 (Codex app-server dynamic tools execute in-turn without telemetry re-dispatch)
 
 ---
 
@@ -16,6 +16,24 @@ Foreground **Ask** and background **planner / task-runner / scribe** share one i
 | Tools | `dispatchTool` → `dispatchAskTool` (orchestrator) or `runBackgroundTool` (lifecycle) |
 | Policy | `policyForRole` / `resolveActorOutcome` (`actor_policy.go`) |
 | Persist | `turns.json` + `checkpoints.json` beside `status.json` for `task-*` actors |
+
+## Codex in-turn tool callbacks (2026-06-28)
+
+`runTurnLoop` supplies `bridge.Request.ToolExecutor` as a wrapper around the
+actor's existing `cfg.dispatch`. Codex app-server can therefore execute a
+declared SapaLOQ tool during one native Codex turn and return the result through
+`DynamicToolCallResponse`. The wrapper preserves actor identity and captures a
+terminal `turnOutcome.stop`; the outer actor exits after the Codex turn drains.
+
+`EventToolCall` with `ToolCall.Source == "codex"` is UI/heartbeat telemetry
+only. It is emitted but never added to `pendingTools`, preventing duplicate
+execution of both Codex-native tools and SapaLOQ dynamic callbacks. Other bridge
+tool calls keep the existing batch scheduler path.
+
+Bridges may optionally implement `Close() error`. Orchestrator shutdown and a
+provider-changing config reload close the replaced bridge after actor shutdown,
+which reaps an app-server child owned by `codex-bridge` without touching an
+external/managed daemon.
 | Resume | `recoverOrphanedTasks` auto-resumes `in_progress` tasks when turns exist; Ask calls `sapaloq_resume_task` for `failed`/`stopped` tasks with turns; `DeleteSession` purges `state/tasks/{id}/` for that chat |
 
 Roles differ only by **system prompt**, **tool profile** (`tools.go`), and **terminal policy**.

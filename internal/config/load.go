@@ -323,10 +323,10 @@ type RuntimeConfig struct {
 }
 
 // LLMBridge is one provider entry - the smallest unit of bridge configuration.
-// Each entry is self-contained: which driver, which endpoint, which
-// credentials, and (for provider-bridge entries) which wire format + auth
-// scheme + API version. Key is required when the entry is part of a
-// providers array; it is unused at the top level.
+// Each entry is self-contained. HTTP/IDE drivers use Endpoint and
+// CredentialsEnv; codex-bridge resolves its app-server endpoint/lifecycle from
+// environment variables and may use CODEX_HOME login instead. Key is required
+// when the entry is part of a providers array; it is unused at the top level.
 type LLMBridge struct {
 	Key            string   `json:"key,omitempty"`
 	Driver         string   `json:"driver"`
@@ -971,11 +971,14 @@ func Doctor(cfg Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	creds, err := credentials.Load(credentials.Options{TokenEnv: entry.CredentialsEnv})
-	if err != nil {
-		return "", err
+	credSource := "codex app-server auth"
+	if entry.Driver != "codex-bridge" {
+		creds, err := credentials.Load(credentials.Options{TokenEnv: entry.CredentialsEnv})
+		if err != nil {
+			return "", err
+		}
+		credSource = creds.Source
 	}
-	credSource := creds.Source
 	probe := filepath.Join(dirs.RunDir, ".sapaloq-write-test")
 	if err := os.WriteFile(probe, []byte("ok"), 0o600); err != nil {
 		return "", fmt.Errorf("socket directory is not writable: %w", err)

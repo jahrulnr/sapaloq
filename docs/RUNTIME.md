@@ -1,7 +1,9 @@
 # SapaLOQ - Runtime: Single Binary
 
-> **Satu binary Go** - goroutine + channel + persistence lokal. Zero external daemons.
-> Last updated: 2026-06-28 (sapaloq.sock IPC timeout troubleshooting; sapaloq_stop scope docs for agents)
+> **Satu binary Go** - goroutine + channel + persistence lokal. No mandatory
+> broker/cache daemon; optional LLM drivers may manage an external provider
+> process such as `codex app-server`.
+> Last updated: 2026-06-28 (Codex app-server lifecycle and doctor checks)
 
 Related: [EVENT-BUS.md](./EVENT-BUS.md) · [VISION.md](./VISION.md)
 
@@ -277,7 +279,14 @@ sapaloq-core doctor --json       # machine-readable exit payload
 | `config.json` | Loads; commands registry valid |
 | Runtime dirs | `run/`, `memory/`, `state/`, `vault/` writable |
 | Socket | `sapaloq.sock` path writable |
-| LLM bridge | Cursor credentials via autoload (`process.env` → `.env` → `state.vscdb`) |
+| LLM bridge | Cursor/provider credentials; for codex-bridge: binary, app-server socket lifecycle, `initialize`, and `getAuthStatus` |
+
+When the active driver is `codex-bridge`, doctor uses the same
+`auto|external|managed` endpoint resolution as runtime. In `auto`, it may start
+a temporary owned app-server child for the probe and reaps it before returning.
+The default endpoint is `~/SapaLOQ/run/codex-app-server.sock`; managed mode uses
+`$CODEX_HOME/app-server-control/app-server-control.sock` unless explicitly
+overridden.
 
 Config **schema migration** is implemented: `Load` decodes to a raw map, runs
 an ordered upgrade chain (`internal/config/migrate.go`,

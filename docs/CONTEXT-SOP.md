@@ -2,7 +2,7 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop - bukan repo coding.
-> Last updated: 2026-06-28 (sub-agent resume via `sapaloq_resume_task`; task dirs purged on chat delete)
+> Last updated: 2026-06-28 (Codex app-server thread continuity and legacy transport boundary)
 
 ---
 
@@ -12,6 +12,13 @@ When a background actor **failed** or was **stopped** but has durable turns in `
 
 - **Boot:** `recoverOrphanedTasks` still resumes `in_progress`; additionally auto-resumes `failed` tasks with turns when the error looks transient (provider/connection/timeout).
 - **Lifecycle:** all task artifacts (`status.json`, turns, progress JSONL, workspace, actor inbox) are removed when the parent chat session is deleted (`DeleteSession` → `purgeSessionTasks`).
+
+Codex continuity is an additional provider-side cache, not the authoritative
+SapaLOQ transcript. `vault/codex-threads.jsonl` maps actor/session IDs to Codex
+thread IDs for bounded resume prompts. Only records marked
+`transport:"app-server"` are resumed; old CLI records force a fresh thread and
+full bounded transcript. If app-server rejects a stored thread, the bridge does
+the same fresh-thread fallback and overwrites the mapping.
 
 ---
 

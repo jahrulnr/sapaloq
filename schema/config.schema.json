@@ -10,7 +10,7 @@
       "type": "object",
       "description": "One provider entry in the llmBridge.providers array. Self-contained: which driver, endpoint, model, credentials, and (for provider-bridge) which wire format + auth scheme + API version.",
       "additionalProperties": false,
-      "required": ["key", "driver", "endpoint", "model", "credentialsEnv"],
+      "required": ["key", "driver", "model"],
       "properties": {
         "key": {
           "type": "string",
@@ -19,9 +19,12 @@
         "driver": {
           "type": "string",
           "enum": ["cursor-bridge", "provider-bridge", "codex-bridge", "local-llama"],
-          "description": "Which bridge implementation to use. cursor-bridge = Cursor RE proxy; provider-bridge = direct OpenAI/Claude/Kimi API; codex-bridge = wraps the public Codex CLI (codex exec --json + resume)."
+          "description": "Which bridge implementation to use. cursor-bridge = Cursor RE proxy; provider-bridge = direct OpenAI/Claude/Kimi API; codex-bridge = Codex app-server WebSocket JSON-RPC over UDS/WS (no codex exec fallback)."
         },
-        "endpoint": { "type": "string" },
+        "endpoint": {
+          "type": "string",
+          "description": "HTTP/IDE endpoint for cursor/provider/local drivers. codex-bridge ignores this field and resolves app-server from SAPALOQ_CODEX_APP_SERVER_* environment variables."
+        },
         "model": { "type": "string" },
         "credentialsEnv": {
           "type": "string",

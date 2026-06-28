@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
 type Message struct {
@@ -31,6 +33,9 @@ type Request struct {
 	// Images carries inline image attachments for vision-capable bridges.
 	// Empty for text-only requests.
 	Images []Image `json:"images,omitempty"`
+	// ToolExecutor lets a bridge with a native tool-callback protocol execute
+	// declared SapaLOQ tools inside the provider's own turn loop.
+	ToolExecutor func(context.Context, parse.ToolCall) (string, error) `json:"-"`
 }
 
 type Bridge interface {
