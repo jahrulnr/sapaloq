@@ -6,7 +6,7 @@
 >
 > Prior: 2026-06-28 (**cursor-bridge** vscdb credential autoload + offline mock `sapaloq_stop` on autopilot)
 
-Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [TOOL-MAPPING.md](./TOOL-MAPPING.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md)
+Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [TOOL-MAPPING.md](./TOOL-MAPPING.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) · [BOUNDARIES.md](./BOUNDARIES.md)
 
 > **Thinking/tools wire truth:** [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) (L0 only). Jangan derive thinking behavior dari 9router - adapter itu skip/collapse channel thinking Cursor.
 
@@ -26,13 +26,17 @@ SapaLOQ punya **dua registry driver** terpisah - jangan dicampur:
 
 Each provider entry bounds a single inference request via
 `llmBridge.providers[].requestTimeoutSec` (default **600s**, resolved by
-`config.LLMBridge.RequestTimeout()`). It applies to **both** bridge families:
-the provider-bridge (`WireOptions.Timeout` → `buildHTTPRequest`
-`context.WithTimeout`) used by tokenrouter/OpenAI/Claude/Kimi, and the
-cursor-bridge (`StreamOptions`/`AgentStreamOptions`). The old hardcoded 120s
-wire default truncated long sub-agent steps (large file generation) into a bare
-"context deadline exceeded"; **both** bridges now rewrite that error to name the
-timeout and the knob to raise it (`explainStreamError`).
+`config.LLMBridge.RequestTimeout()`). It applies to the **provider-bridge**
+(`WireOptions.Timeout` → `buildHTTPRequest` `context.WithTimeout`) and the
+cursor-bridge **api2** chat stream (`StreamOptions`). The **api5 agent path**
+(api5 / `useAgentPath` / vision) does **not** use that wall clock — one agent
+turn can run long MCP/exec loops. Stream lifetime uses a **refilling idle**
+cap (`streamIdleTimeoutSec`, default **60s** — reset on each api5 frame or
+uplink write; paused during local MCP/exec) plus the orchestrator run idle
+cancel (`orchestrator.continuation.maxWallTimeMinutes`, default 30m silence).
+The old hardcoded 120s wire default truncated long sub-agent steps into a bare
+"context deadline exceeded"; bridges rewrite deadline errors to name the timeout
+and the knob (`explainStreamError`).
 
 ### Pre-stream retry
 

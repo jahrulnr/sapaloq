@@ -3,7 +3,7 @@ import { ChatHistory, ContextUsage, DeleteSession, ListSessions, NewSession, Swi
 import type { ChatUsage, SessionSummary } from '../core/types';
 import { applyChatResetFromBE } from './apply-session-reset';
 import { clearToolActivityCache } from './messages';
-import { refreshRuntimeStatus } from './runtime-status';
+import { applyWorkspacePath, refreshRuntimeStatus } from './runtime-status';
 import { clearMessages } from './messages';
 import { renderUsage } from './connection';
 import { mountChatTranscript, resetChatTranscriptState } from './transcript-pane';
@@ -15,15 +15,23 @@ import {
 } from '../core/state';
 
 export async function restoreChatHistory(forceBottom = false) {
+  // sapaloq:boundary ipc→widget — full remount from ChatHistory; danger: overwrites live finished patch.
   try {
     const history = await ChatHistory();
     const scroll = forceBottom
       ? { atBottom: true, scrollTop: 0 }
       : captureMessageScroll(getMessageList());
     setSessionID(history.session_id || getSessionID());
+    if (history.session_workspace) {
+      applyWorkspacePath(history.session_workspace, history.session_id);
+    }
     clearMessages();
     resetChatTranscriptState();
-    mountChatTranscript(history.transcript || [], scroll);
+    mountChatTranscript(
+      history.transcript || [],
+      scroll,
+      { has_older: history.has_older, older_checkpoint: history.older_checkpoint },
+    );
     renderUsage(history.usage as ChatUsage | undefined);
     void refreshRuntimeStatus();
     return true;

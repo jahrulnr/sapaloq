@@ -2,7 +2,15 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**steering interrupt** — mid-stream actor signal cancels bridge; skip stale inbox on stop/cancel)
+> Last updated: 2026-06-28 (**unified transcript emit** — sub-agent monitor shares emitCoalescedTranscript + delta IPC with foreground chat)
+
+> Prior: 2026-06-28 (**in-bridge tool persist** — cursor/codex MCP writes assistant+tool to turns.json on each ToolUpdate)
+
+> Prior: 2026-06-28 (**SessionContextLedger** — unified turns.json + orch JSONL context accounting)
+
+> Prior: 2026-06-28 (**BOUNDARIES.md** — layer ownership, markers, simplification sequence Phase 0–4)
+
+> Prior: 2026-06-28 (**steering interrupt** — mid-stream actor signal cancels bridge; skip stale inbox on stop/cancel)
 
 > Prior: 2026-06-28 (**stop preserves tool bubbles** — finished remount + LiveSessionTranscript)
 
@@ -146,6 +154,50 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-28) - task card patch without full restore
+
+- **Bug:** Opening/closing Planner popup (or any background `task_update` while Ask idle) triggered `scheduleRestoreChatHistory`, remounting chat from `ChatHistory` and dropping foreground tool bubbles.
+- **Fix:** `patchForegroundTaskCards` updates task lifecycle cards in-place; removed restore on idle `task_update`, task transcript patches, `patch.finished`, and Stop. Aligns with BOUNDARIES Phase 1.
+- **Test:** `task-card-patch.test.ts`.
+
+## Implemented this session (2026-06-28) - layer boundaries doc
+
+- **Decision:** stop top-level symptom patches; simplify cursor-bridge ↔ orchestrator ↔ widget boundaries first.
+- **Doc:** `docs/BOUNDARIES.md` — ownership table, ambiguity hotspots (image loop, stop tools, context pill, workspace), Phase 0–4 sequence, manual regression matrix.
+- **Markers:** `sapaloq:boundary <from>→<to>` comments at 10 crossing sites; `debug.TraceBoundary` when `SAPALOQ_TRACE_BOUNDARIES=1`.
+- **Cross-links:** `BRIDGE.md`, `ORCHESTRATOR.md`, `UI-DECISION.md`, `CURSOR_AGENT_CONTRACT.md` updated.
+- **Next:** Phase 0 trace capture, then Phase 1 single transcript contract (no restore-after-finished).
+
+## Implemented this session (2026-06-28) - workspace persistence fix
+
+- **Problem:** WORKSPACE card flashed `~/SapaLOQ/workspace` on open/restart; new chat rooms lost picker path; `session_workspace` raced behind `workspace_path` in the 3s poll loop.
+- **Fix:** `_last.json` + inherit for chat rooms without a file; `NewSession` seeds workspace from previous active room; `chat_history_segment` returns `session_workspace`; `restoreChatHistory` applies it immediately; runtime-status skips install-default fallback when a chat session is active.
+- **Tests:** `workspace_test.go`, `workspace_session_test.go`.
+
+## Implemented this session (2026-06-28) - unified transcript emit (sub-agent monitor)
+
+- **Bug:** Sub-agent monitor UI froze mid-run (A→B→C visible only after close/reopen). `subagentSink` sent full snapshot on every token; task monitor re-parsed markdown synchronously — foreground chat already had delta + throttle.
+- **Fix:** Extract `emitCoalescedTranscript` + `widgetPatchState` (`widget_transcript_emit.go`); `subagentSink` delegates to the same path as `emitWidget`. FE task monitor uses shared `applyTranscriptPatchToTarget` (delta ops + rAF batch).
+- **Tests:** `subagent_transcript_emit_test.go`; existing `chat_widget_patch_test.go` + task-monitor vitest pass.
+
+## Implemented this session (2026-06-28) - in-bridge tool persistence
+
+- **Bug (fatal):** Long Cursor api5 runs (agent-browser loops) showed assistant narration and tool rows in the UI/progress JSONL but **`turns.json` stayed empty until Stop**. On stream retry or re-plan, `ComposeAgentUserText` / `cleanMessages` replay lacked mid-generation work → model repeated the same steps (“mulai dari awal”).
+- **Fix:** `persistInBridgeToolUpdate` (`in_bridge_persist.go`) runs on each `EventToolUpdate` for `Source:cursor|codex`: writes assistant (`[Called tools: …]` + narration) + `role=tool`, updates `cleanMessages`, resets response/thinking buffers. In-bridge `EventToolCall` now counts toward tool budgets and identical-tool loop guard.
+- **Tests:** `in_bridge_persist_test.go`; `go test ./internal/core/orchestrator/...` + `make test`.
+
+## Implemented this session (2026-06-28) - compaction segment transcript (FE + BE)
+
+- **Problem:** Cold open remounted full transcript (turns + orch JSONL) — slow on long sessions.
+- **Fix:** `SessionTranscriptSegment` + IPC `chat_history_segment`; `ChatHistory` returns latest compaction tail only. Widget scroll-up sentinel loads older segments via `ChatHistorySegment` + `prependTranscriptPane`.
+- **Tests:** `session_transcript_segment_test.go`; widget `npm run build`.
+
+## Implemented this session (2026-06-28) - SessionContextLedger
+
+- **Problem:** Context pill, compaction triggers, and model replay read fragmented stores (`turns.json` vs `orch-*.jsonl`) with different formulas — cursor in-bridge tools inflated UI but not usage, overhead double-counted mid-run.
+- **Fix:** `SessionContextLedger` (`session_context_ledger.go`) is the single budget: replay-shaped active turns + orphan stream tool results + per-turn overhead; `ContextUsage` and `effectiveContextPercent` delegate here. Live `cleanMessages` overlay takes max(live, persisted) without adding overhead twice.
+- **Tests:** `session_context_ledger_test.go` (orphan tools, autopilot exclusion, no double overhead); `go test ./internal/core/orchestrator/...`.
 
 ## Implemented this session (2026-06-28) - steering interrupt
 

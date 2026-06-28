@@ -1,11 +1,9 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-28 (steering interrupt + pending bubble lifecycle)
+> Last updated: 2026-06-28 (transcript boundary contract; see BOUNDARIES.md Phase 1)
 
-**Single binary principle:** `runtime.singleBinary` means **no external broker/daemon** - orchestrator, bus, JSON store, and socket server live in **`sapaloq-core` only**. M5a may build a separate `sapaloq-widget` artifact for spike speed; **production target** is one user-facing install (subcommand `sapaloq-core ui`, embedded Wails in same binary, or launcher script) - not two independent products long-term.
-
-Related: [PLATFORM.md](./PLATFORM.md) · [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md)
+Related: [PLATFORM.md](./PLATFORM.md) · [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [BOUNDARIES.md](./BOUNDARIES.md)
 
 ---
 
@@ -80,6 +78,20 @@ visible); the choice persists **only for that chat id** via `workspace_set` IPC
 (no global `_last.json`; new chat rooms start at `~/SapaLOQ/workspace` until
 picked). It refreshes every three seconds and immediately after task
 events; the existing task cards remain the detailed lifecycle history.
+
+### Transcript boundary (widget ↔ orchestrator)
+
+The widget **renders** `TranscriptPatch` only; it does not own persistence or tool
+coalesce logic. See [BOUNDARIES.md](./BOUNDARIES.md).
+
+| Path | Use when | Do not use when |
+|------|----------|-----------------|
+| `applyTranscriptPatch` (delta + `finished`) | Live Ask run | Session switch (use restore) |
+| `restoreChatHistory` / `ChatHistory` IPC | Session switch, cold open, task card refresh | Immediately after `patch.finished` or Stop (overwrites live tools) |
+| `mountChatTranscript` | `finished` snapshot, session reset | Mid-stream unless `finished` |
+
+Code markers: `sapaloq:boundary` in `chat-controller.ts` and `history.ts`.
+Trace: parent process `SAPALOQ_TRACE_BOUNDARIES=1` (Go crossings only today).
 
 ### Foreground steering while Ask is running
 

@@ -6,7 +6,7 @@
  * Protocol (newline-delimited JSON on stdin/stdout):
  *
  * stdin line 1 (config):
- *   { host, path, headers, bodyB64, timeoutMs? }
+ *   { host, path, headers, bodyB64, timeoutMs?, idleTimeoutMs? }
  * stdin lines 2+ (uplink, optional):
  *   { t: "write", b64: "..." }  — DATA on request stream
  *   { t: "close" }              — half-close upload
@@ -49,7 +49,11 @@ const path = String(config.path || "/").trim();
 const headers = config.headers && typeof config.headers === "object" ? config.headers : {};
 const body = config.bodyB64 ? Buffer.from(config.bodyB64, "base64") : Buffer.alloc(0);
 const timeoutMs =
-  Number.isInteger(config.timeoutMs) && config.timeoutMs > 0 ? config.timeoutMs : 120_000;
+  Number.isInteger(config.timeoutMs) && config.timeoutMs > 0 ? config.timeoutMs : 0;
+const idleTimeoutMs =
+  Number.isInteger(config.idleTimeoutMs) && config.idleTimeoutMs > 0
+    ? config.idleTimeoutMs
+    : 0;
 
 if (!host) {
   emit({ t: "err", msg: "gateway: host required" });
@@ -57,10 +61,23 @@ if (!host) {
 }
 
 let settled = false;
+let wallTimer = null;
+let idleTimer = null;
+
+const armIdle = () => {
+  if (!idleTimeoutMs || settled) return;
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(
+    () => shutdown(new Error("gateway: idle timed out")),
+    idleTimeoutMs,
+  );
+};
+
 const shutdown = (err) => {
   if (settled) return;
   settled = true;
-  clearTimeout(timer);
+  if (wallTimer) clearTimeout(wallTimer);
+  if (idleTimer) clearTimeout(idleTimer);
   try {
     rl.close();
   } catch {}
@@ -72,7 +89,10 @@ const shutdown = (err) => {
   process.exit(0);
 };
 
-const timer = setTimeout(() => shutdown(new Error("gateway: stream timed out")), timeoutMs);
+if (timeoutMs > 0) {
+  wallTimer = setTimeout(() => shutdown(new Error("gateway: stream timed out")), timeoutMs);
+}
+armIdle();
 
 await new Promise((resolve) => {
   const client = http2.connect(`https://${host}`);
@@ -87,10 +107,12 @@ await new Promise((resolve) => {
 
   req.on("response", (h) => {
     emit({ t: "status", code: Number(h[":status"] || 0) });
+    armIdle();
   });
 
   req.on("data", (chunk) => {
     emit({ t: "data", b64: Buffer.from(chunk).toString("base64") });
+    armIdle();
   });
 
   req.on("end", () => {
@@ -124,6 +146,7 @@ await new Promise((resolve) => {
     if (msg?.t === "write" && msg.b64) {
       try {
         req.write(Buffer.from(msg.b64, "base64"));
+        armIdle();
       } catch (err) {
         shutdown(err);
         resolve();
@@ -137,6 +160,7 @@ await new Promise((resolve) => {
 
   try {
     if (body.length > 0) req.write(body);
+    armIdle();
   } catch (err) {
     shutdown(err);
     resolve();

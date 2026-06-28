@@ -30,6 +30,14 @@ func (s *agentStreamState) handleExecEvent(ctx context.Context, ev ExecServerEve
 }
 
 func (s *agentStreamState) handleExecMCP(ctx context.Context, ev ExecServerEvent) error {
+	if s.pauseIdle != nil {
+		s.pauseIdle()
+		defer func() {
+			if s.resumeIdle != nil {
+				s.resumeIdle()
+			}
+		}()
+	}
 	if s.onMCPTool != nil {
 		s.onMCPTool(ev.ToolName, ev.ToolCallID, ev.Args)
 	}

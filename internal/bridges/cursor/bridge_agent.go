@@ -90,6 +90,8 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 		Tools:     agentTools,
 		Body:      body,
 		OnMCPTool: func(toolName, toolCallID string, args map[string]any) {
+			// sapaloq:boundary cursor-bridge→orchestrator — telemetry only; exec happens in MCPExecutor below.
+			debug.TraceBoundary("cursor-bridge", "orchestrator", "mcp_tool_call:"+toolName)
 			argsJSON, _ := json.Marshal(args)
 			resolved := ResolveToolCall(b.schema, parse.ToolCall{
 				ID:        toolCallID,
@@ -103,6 +105,8 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 			send(ctx, out, ev)
 		},
 		MCPExecutor: func(callCtx context.Context, toolName, toolCallID string, args map[string]any) (string, bool, error) {
+			// sapaloq:boundary cursor-bridge→orchestrator — in-bridge MCP; ToolExecutor is orchestrator dispatch.
+			debug.TraceBoundary("cursor-bridge", "orchestrator", "mcp_exec:"+toolName)
 			argsJSON, err := json.Marshal(args)
 			if err != nil {
 				emitMCPToolUpdate(ctx, out, req.SessionID, b.schema, toolName, toolCallID, argsJSON, "", err)
@@ -126,7 +130,10 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 			return text, false, nil
 		},
 		InsecureTLS: os.Getenv("SAPALOQ_WIRE_INSECURE_TLS") == "1",
-		Timeout:     b.timeout,
+		// Agent api5 turns are long-lived MCP/exec loops; orchestrator runCtx
+		// (idle cancel) owns lifetime — not requestTimeoutSec wall clock.
+		Timeout:     0,
+		IdleTimeout: b.entry.StreamIdleTimeout(),
 	}, func(decoded []wire.AgentDecoded, _ []byte) {
 		frameCount++
 		for _, ev := range mapper.Map(decoded) {

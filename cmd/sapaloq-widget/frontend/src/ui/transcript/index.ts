@@ -28,6 +28,11 @@ export {
   emptyTranscriptState,
   createTranscriptPane,
   mountTranscriptPane,
+  prependTranscriptPane,
+  ensureSegmentSentinel,
+  setSegmentLoader,
   syncTranscriptPane,
 } from './sync-pane';
+export { applyTranscriptPatchToTarget, flushTranscriptPatchMarkdown } from './apply-transcript-patch';
+export type { TranscriptPatchTarget } from './apply-transcript-patch';
 export { applyDeltaOps, flushDeltaMarkdownInPane } from './apply-transcript-delta';

@@ -10,6 +10,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -127,12 +128,21 @@ func (o *Orchestrator) SwitchSession(ctx context.Context, sessionID string) (str
 }
 
 // NewSession starts a fresh active chat session (same path as the /reset slash
-// command) and returns the new session id.
+// command) and returns the new session id. The new room inherits the previous
+// active session's workspace when that cwd is not the install default.
 func (o *Orchestrator) NewSession(ctx context.Context) (string, error) {
 	snap := o.snapshot()
+	prevID, _ := o.ActiveSession(ctx)
+	prevCWD := o.actorCWD(prevID)
 	newID, err := o.chat.Reset(ctx, snap.entry.Key, snap.entry.Model)
 	if err != nil {
 		return "", err
+	}
+	defaultDir := filepath.Clean(o.defaultWorkspace())
+	if prevCWD != "" && prevCWD != defaultDir {
+		o.persistChatSessionWorkspace(newID, prevCWD)
+	} else if last := o.readLastWorkspace(); last != "" {
+		o.persistChatSessionWorkspace(newID, last)
 	}
 	return newID, nil
 }
@@ -248,56 +258,22 @@ func (o *Orchestrator) SubmitFeedback(ctx context.Context, sessionID string, tur
 }
 
 func (o *Orchestrator) ContextUsage(ctx context.Context, sessionID string) (chatstore.Usage, error) {
-	if sessionID == "" {
-		var err error
-		sessionID, err = o.ActiveSession(ctx)
-		if err != nil {
-			return chatstore.Usage{}, err
-		}
-	}
 	snap := o.snapshot()
-	contextWindow := o.contextWindow()
-	usage, err := o.chat.Usage(ctx, sessionID, snap.entry.Key, snap.entry.Model, contextWindow)
+	ledger, err := o.SessionContextLedger(ctx, sessionID, LedgerOptions{})
+	usage := ledger.Usage(snap.entry.Key, snap.entry.Model)
 	if err != nil {
 		// Persist the real context window even when the turn scan fails so the
-		// UI's context pill never degrades to "0/0" (a zero Usage looked like an
-		// uninitialised counter on widget open). The used-token count is
-		// unknown here, but the window itself is independent of the chat store.
-		usage.ContextWindow = contextWindow
-		usage.SessionID = sessionID
-		usage.Provider = snap.entry.Key
-		usage.Model = snap.entry.Model
+		// UI's context pill never degrades to "0/0".
+		if usage.ContextWindow <= 0 {
+			usage.ContextWindow = o.contextWindow()
+		}
+		if usage.SessionID == "" {
+			usage.SessionID = sessionID
+		}
 		return usage, err
 	}
-	// Defence in depth: if the store returned a zero window for any reason
-	// (e.g. a future code path forgets to pass it through), fall back to the
-	// orchestrator's resolved window so the UI pill is never 0/0.
 	if usage.ContextWindow <= 0 {
-		usage.ContextWindow = contextWindow
-	}
-	// Recompute from turn bodies: TokenEstimate on paste may have counted raw
-	// base64 as text tokens before strip-aware accounting existed.
-	if turns, turnErr := o.chat.ActiveTurns(ctx, sessionID, false); turnErr == nil {
-		used := 0
-		for _, t := range turns {
-			if t.IncludedInContext {
-				used += estimateContentTokens(t.Content)
-			}
-		}
-		usage.UsedTokens = used
-	}
-	// Add the fixed per-request prompt overhead that the chat-turn sum ignores:
-	// the Ask system prompt, runtime context block, negative guidance, prefetch
-	// and skills blocks are sent on every turn but never stored as chat_turns.
-	// Without this, usage (and the compaction thresholds that read it) understate
-	// how full the context window actually is, so the 5% headroom force-trigger
-	// can fire too late (after a provider 400). The latest user message is needed
-	// to size the prefetch/skills blocks accurately; best-effort (empty when no
-	// user turn is found).
-	userMsg := o.latestUserMessageContent(ctx, sessionID)
-	usage.UsedTokens += o.estimatePerTurnOverhead(ctx, sessionID, userMsg)
-	if usage.ContextWindow > 0 {
-		usage.Percent = (usage.UsedTokens * 100) / usage.ContextWindow
+		usage.ContextWindow = o.contextWindow()
 	}
 	return usage, nil
 }

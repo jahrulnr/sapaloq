@@ -47,7 +47,7 @@ func (b *countingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan b
 func newClarifyOrchestrator(t *testing.T, br bridge.Bridge) *Orchestrator {
 	t.Helper()
 	dir := t.TempDir()
-	return &Orchestrator{
+	o := &Orchestrator{
 		memoryDir: dir,
 		cfg:       config.Config{},
 		bridge:    br,
@@ -55,6 +55,15 @@ func newClarifyOrchestrator(t *testing.T, br bridge.Bridge) *Orchestrator {
 		workers:   newWorkerRegistry(filepath.Join(dir, "workers")),
 		progress:  newAsyncProgressWriter(ProgressWriter{Dir: filepath.Join(dir, "progress")}),
 	}
+	// resolveClarification runs async and may still be writing progress JSONL
+	// when the test returns; shut down the writer before t.TempDir cleanup.
+	t.Cleanup(func() {
+		time.Sleep(150 * time.Millisecond)
+		if o.progress != nil {
+			o.progress.CloseAll()
+		}
+	})
+	return o
 }
 
 // waitForCalls polls until the async resolver has invoked the bridge at least n

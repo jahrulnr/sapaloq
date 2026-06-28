@@ -154,8 +154,13 @@ export namespace main {
 	export class chatHistoryResult {
 	    ok: boolean;
 	    session_id: string;
+	    session_workspace?: string;
 	    transcript?: bridge.TranscriptEntry[];
 	    usage?: chatUsage;
+	    segment_checkpoint?: number;
+	    has_older?: boolean;
+	    older_checkpoint?: number;
+	    is_latest_segment?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new chatHistoryResult(source);
@@ -165,8 +170,13 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ok = source["ok"];
 	        this.session_id = source["session_id"];
+	        this.session_workspace = source["session_workspace"];
 	        this.transcript = this.convertValues(source["transcript"], bridge.TranscriptEntry);
 	        this.usage = this.convertValues(source["usage"], chatUsage);
+	        this.segment_checkpoint = source["segment_checkpoint"];
+	        this.has_older = source["has_older"];
+	        this.older_checkpoint = source["older_checkpoint"];
+	        this.is_latest_segment = source["is_latest_segment"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

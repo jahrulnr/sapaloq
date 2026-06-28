@@ -9,7 +9,7 @@ import { renderUsage, setConnection, setRingState, runPing } from './connection'
 import { appendMessage, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
 import { applyChatResetFromBE } from './apply-session-reset';
-import { syncChatTranscript, syncChatTranscriptStateFromDOM, scheduleSyncChatTranscript, flushScheduledChatTranscript, applyDeltaChatTranscript, mountChatTranscript, resetChatTranscriptState } from './transcript-pane';
+import { syncChatTranscript, syncChatTranscriptStateFromDOM, scheduleSyncChatTranscript, flushScheduledChatTranscript, applyDeltaChatTranscript, mountChatTranscript, resetChatTranscriptState, patchForegroundTaskCards } from './transcript-pane';
 import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory, scheduleRestoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus } from './runtime-status';
@@ -66,7 +66,8 @@ export function markSteeringApplied() {
 }
 
 export function markSteeringSkipped() {
-  document.querySelectorAll('.message--steering.is-pending').forEach((el) => {
+  document.querySelectorAll('.message--steering.is-pending').forEach((node) => {
+    const el = node as HTMLElement;
     el.classList.remove('is-pending');
     el.classList.add('is-failed');
     el.title = 'Run berakhir sebelum steering diterapkan.';
@@ -100,6 +101,7 @@ function clearProgressFromTranscript() {
 }
 
 function applyTranscriptPatch(patch: TranscriptPatch) {
+  // sapaloq:boundary ipc→widget — TranscriptPatch only; never merge provider bytes here.
   if (patch.reset) {
     applyChatResetFromBE(patch);
     if (patch.finished) releaseInFlightTurn();
@@ -116,7 +118,6 @@ function applyTranscriptPatch(patch: TranscriptPatch) {
       resetChatTranscriptState();
       mountChatTranscript(patch.entries, captureMessageScroll(list));
     }
-    scheduleRestoreChatHistory(150);
     return;
   }
   if (patch.mode === 'delta' && patch.ops?.length) {
@@ -271,7 +272,6 @@ export async function stopActiveResponse() {
   try {
     await StopChat(getSessionID());
     flushScheduledChatTranscript();
-    scheduleRestoreChatHistory(200);
   } catch (err) {
     appendMessage('message--error', errorText(err), getUserGroup());
   }
@@ -308,9 +308,9 @@ export function initChatController() {
         }
         return;
       }
-      // Background task cards: refresh when idle; live foreground runs patch incrementally.
+      // Background task cards: patch in place; never full ChatHistory restore (drops tool rows).
       if (patch.entries?.some((e) => e.kind === 'task')) {
-        scheduleRestoreChatHistory();
+        patchForegroundTaskCards(patch.entries.filter((e) => e.kind === 'task'));
         void refreshRuntimeStatus();
       }
     });
@@ -320,7 +320,17 @@ export function initChatController() {
         return;
       }
       if (event.kind === 'task_update') {
-        if (!isSubmitting()) scheduleRestoreChatHistory();
+        if (event.task_id) {
+          patchForegroundTaskCards([{
+            kind: 'task',
+            id: `task-${event.task_id}`,
+            task_id: event.task_id,
+            task_role: event.task_role,
+            task_status: event.task_status,
+            summary: event.summary,
+          }]);
+        }
+        void refreshRuntimeStatus();
         maybeNotifyTaskCompletion(event);
       }
     });

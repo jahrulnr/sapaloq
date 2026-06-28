@@ -57,6 +57,7 @@ func (b *Bridge) Caps() bridge.BridgeCaps {
 }
 
 func (b *Bridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
+	// sapaloq:boundary orchestrator→cursor-bridge — one inference attempt; returns StreamEvent channel.
 	out := make(chan bridge.StreamEvent, 32)
 	go func() {
 		defer close(out)
@@ -189,6 +190,16 @@ func (b *Bridge) explainStreamError(err error) string {
 			secs = config.DefaultRequestTimeoutSec
 		}
 		return fmt.Sprintf("inference request timed out after %ds (set llmBridge.providers[].requestTimeoutSec higher for long sub-agent steps): %s", secs, msg)
+	}
+	if strings.Contains(msg, "signal: killed") && strings.Contains(msg, "h2 gateway") {
+		return "cursor agent HTTP/2 gateway stopped mid-turn (was requestTimeoutSec wall clock on long tool loops; rebuild sapaloq-core — agent path now uses orchestrator idle timeout). Original: " + msg
+	}
+	if strings.Contains(msg, "agent stream idle") {
+		secs := int(b.entry.StreamIdleTimeout() / time.Second)
+		if secs <= 0 {
+			secs = config.DefaultStreamIdleTimeoutSec
+		}
+		return fmt.Sprintf("cursor agent stream went silent for %ds (raise llmBridge.providers[].streamIdleTimeoutSec if the model is still working): %s", secs, msg)
 	}
 	return msg
 }

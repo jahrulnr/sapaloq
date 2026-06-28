@@ -82,14 +82,7 @@ type activeRun struct {
 	cancel         context.CancelFunc
 	coalescer      *TranscriptCoalescer
 	transcriptBase []bridge.TranscriptEntry
-	// Delta widget patches for streaming text/thinking; throttle batches
-	// append_text ops so IPC stays smooth on fast token streams.
-	lastDeltaPatch        time.Time
-	deltaFlushScheduled   bool
-	pendingTextUpsert     bool
-	pendingThinkingUpsert bool
-	pendingTextFlush      strings.Builder
-	pendingThinkFlush     strings.Builder
+	widgetPatchState
 }
 
 func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) (*Orchestrator, error) {
@@ -722,10 +715,12 @@ func (o *Orchestrator) emit(ctx context.Context, out chan<- bridge.StreamEvent, 
 // emitWidget logs the raw event, updates the live coalescer, and forwards
 // transcript patches to the widget (delta ops for streaming text/thinking,
 // full snapshots on boundaries and terminal events).
+// sapaloq:boundary orchestrator→ipc/widget — TranscriptPatch is the only live UI contract.
 func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, ev bridge.StreamEvent) bool {
 	if sessionID != "" {
 		ev.SessionID = sessionID
 	}
+	debug.TraceBoundary("orchestrator", "widget", string(ev.Kind))
 	genID := o.activeGenerationString(sessionID)
 	if genID != "" {
 		ev.GenerationID = genID
@@ -742,277 +737,38 @@ func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamE
 	if scratch != nil && widgetCoalesceKind(ev.Kind) {
 		scratch.Apply(ev)
 	}
-	if !widgetPatchKind(ev.Kind) {
-		return true
+	o.activeMu.Lock()
+	run := o.active[sessionID]
+	var patchState *widgetPatchState
+	if run != nil {
+		patchState = &run.widgetPatchState
 	}
-	if ev.Kind == bridge.EventResponseDelta || ev.Kind == bridge.EventThinkingDelta {
-		return o.emitWidgetTextDelta(ctx, out, sessionID, genID, coalescer, ev)
+	o.activeMu.Unlock()
+	opts := transcriptEmitOpts{
+		sessionID:          sessionID,
+		generationID:       genID,
+		coalescer:          coalescer,
+		patchState:         patchState,
+		patchMu:            &o.activeMu,
+		out:                out,
+		mergePersistedBase: true,
+		usageSessionID:     sessionID,
 	}
-	o.resetPendingDeltaUpsert(sessionID, ev.Kind)
-	finished := ev.Kind == bridge.EventError || ev.Kind == bridge.EventDone
-	var entries []bridge.TranscriptEntry
-	if coalescer != nil {
-		if finished || ev.Kind == bridge.EventTurnBoundary || ev.Kind == bridge.EventCheckpoint ||
-			ev.Kind == bridge.EventToolUpdate || ev.Kind == bridge.EventToolCall {
-			o.refreshActiveTranscriptBase(ctx, sessionID)
-		}
-		if finished {
-			if live, err := o.LiveSessionTranscript(ctx, sessionID, coalescer); err == nil && len(live) > 0 {
-				entries = live
-			} else {
-				base := o.activeTranscriptBase(sessionID)
-				if base == nil {
-					entries = coalescer.EntriesWithPending()
-				} else {
-					entries = mergeLiveTranscript(base, coalescer.EntriesWithPending())
-				}
-			}
-		} else {
-			base := o.activeTranscriptBase(sessionID)
-			if base == nil {
-				entries, _ = o.LiveSessionTranscript(ctx, sessionID, coalescer)
-			} else {
-				entries = mergeLiveTranscript(base, coalescer.EntriesWithPending())
-			}
-		}
-	} else if scratch != nil {
-		if finished && o.chat != nil {
-			entries, _ = o.SessionTranscript(ctx, sessionID)
-		} else {
-			entries = scratch.Entries()
-		}
-	}
-	patch := bridge.SnapshotPatch(sessionID, genID, entries, finished)
-	if ev.Kind != bridge.EventResponseDelta && ev.Kind != bridge.EventThinkingDelta && o.chat != nil {
-		if u, err := o.ContextUsage(ctx, sessionID); err == nil {
-			patch.Usage = &bridge.TranscriptUsage{
-				UsedTokens:    u.UsedTokens,
-				ContextWindow: u.ContextWindow,
-				Percent:       u.Percent,
-				Provider:      u.Provider,
-				Model:         u.Model,
-			}
-		}
-	}
-	patchEv := bridge.StreamEvent{
-		Kind:         bridge.EventTranscript,
-		SessionID:    sessionID,
-		GenerationID: genID,
-		Transcript:   &patch,
-		At:           time.Now().UTC(),
-	}
-	return o.emitTranscriptPatch(ctx, out, patchEv)
-}
-
-func (o *Orchestrator) emitWidgetTextDelta(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, genID string, coalescer *TranscriptCoalescer, ev bridge.StreamEvent) bool {
 	if coalescer == nil {
-		return true
+		opts.coalescer = scratch
 	}
-	if o.throttleDeltaWidgetPatch(sessionID) {
-		o.accumulateDeltaFlush(sessionID, ev)
-		o.scheduleDeltaPatchFlush(ctx, out, sessionID, genID)
-		return true
-	}
-	o.activeMu.Lock()
-	run := o.active[sessionID]
-	o.activeMu.Unlock()
-	if run == nil {
-		return true
-	}
-	ops := o.buildTextDeltaOps(run, coalescer, genID, ev.Kind, ev.Delta)
-	o.markDeltaWidgetPatch(sessionID)
-	patch := bridge.DeltaPatch(sessionID, genID, ops)
-	patchEv := bridge.StreamEvent{
-		Kind:         bridge.EventTranscript,
-		SessionID:    sessionID,
-		GenerationID: genID,
-		Transcript:   &patch,
-		At:           time.Now().UTC(),
-	}
-	return o.emitTranscriptPatch(ctx, out, patchEv)
-}
-
-func (o *Orchestrator) buildTextDeltaOps(run *activeRun, coalescer *TranscriptCoalescer, genID string, kind bridge.EventKind, delta string) []bridge.TranscriptPatchOp {
-	var entryID string
-	var entryKind bridge.TranscriptEntryKind
-	var upsertSent *bool
-	switch kind {
-	case bridge.EventThinkingDelta:
-		entryID = coalescer.PendingThinkingID()
-		entryKind = bridge.TranscriptThinking
-		upsertSent = &run.pendingThinkingUpsert
-	default:
-		entryID = coalescer.PendingTextID()
-		entryKind = bridge.TranscriptText
-		upsertSent = &run.pendingTextUpsert
-	}
-	var ops []bridge.TranscriptPatchOp
-	if !*upsertSent {
-		ops = append(ops, bridge.TranscriptPatchOp{
-			Op: "upsert",
-			Entry: bridge.TranscriptEntry{
-				ID:           entryID,
-				Kind:         entryKind,
-				GenerationID: genID,
-				At:           time.Now().UTC(),
-			},
-		})
-		*upsertSent = true
-	}
-	if delta != "" {
-		ops = append(ops, bridge.TranscriptPatchOp{
-			Op:      "append_text",
-			EntryID: entryID,
-			Delta:   delta,
-		})
-	}
-	return ops
-}
-
-func (o *Orchestrator) accumulateDeltaFlush(sessionID string, ev bridge.StreamEvent) {
-	o.activeMu.Lock()
-	defer o.activeMu.Unlock()
-	run := o.active[sessionID]
-	if run == nil {
-		return
-	}
-	switch ev.Kind {
-	case bridge.EventThinkingDelta:
-		run.pendingThinkFlush.WriteString(ev.Delta)
-	default:
-		run.pendingTextFlush.WriteString(ev.Delta)
-	}
-}
-
-func (o *Orchestrator) resetPendingDeltaUpsert(sessionID string, kind bridge.EventKind) {
-	switch kind {
-	case bridge.EventDone, bridge.EventError, bridge.EventTurnBoundary,
-		bridge.EventToolCall, bridge.EventToolUpdate, bridge.EventCheckpoint,
-		bridge.EventStatus, bridge.EventTaskUpdate:
-	default:
-		return
-	}
-	o.activeMu.Lock()
-	if run := o.active[sessionID]; run != nil {
-		run.pendingTextUpsert = false
-		run.pendingThinkingUpsert = false
-		run.pendingTextFlush.Reset()
-		run.pendingThinkFlush.Reset()
-	}
-	o.activeMu.Unlock()
-}
-
-func (o *Orchestrator) emitTranscriptPatch(ctx context.Context, out chan<- bridge.StreamEvent, patchEv bridge.StreamEvent) bool {
-	if o.bus != nil {
-		o.bus.Publish(topicFor(bridge.EventTranscript), patchEv)
-	}
-	return o.sendOut(ctx, out, patchEv)
-}
-
-const deltaWidgetPatchMinInterval = 50 * time.Millisecond
-
-func (o *Orchestrator) throttleDeltaWidgetPatch(sessionID string) bool {
-	o.activeMu.Lock()
-	defer o.activeMu.Unlock()
-	run := o.active[sessionID]
-	if run == nil {
-		return false
-	}
-	now := time.Now()
-	if run.lastDeltaPatch.IsZero() || now.Sub(run.lastDeltaPatch) >= deltaWidgetPatchMinInterval {
-		return false
-	}
-	return true
-}
-
-func (o *Orchestrator) markDeltaWidgetPatch(sessionID string) {
-	o.activeMu.Lock()
-	if run := o.active[sessionID]; run != nil {
-		run.lastDeltaPatch = time.Now()
-		run.deltaFlushScheduled = false
-	}
-	o.activeMu.Unlock()
-}
-
-func (o *Orchestrator) scheduleDeltaPatchFlush(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, genID string) {
-	o.activeMu.Lock()
-	run := o.active[sessionID]
-	if run == nil || run.deltaFlushScheduled {
-		o.activeMu.Unlock()
-		return
-	}
-	run.deltaFlushScheduled = true
-	o.activeMu.Unlock()
-	time.AfterFunc(deltaWidgetPatchMinInterval, func() {
-		o.flushDeltaTranscriptPatch(ctx, out, sessionID, genID)
-	})
-}
-
-func (o *Orchestrator) flushDeltaTranscriptPatch(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, genID string) {
-	o.activeMu.Lock()
-	run := o.active[sessionID]
-	if run == nil {
-		o.activeMu.Unlock()
-		return
-	}
-	run.deltaFlushScheduled = false
-	coalescer := run.coalescer
-	textDelta := run.pendingTextFlush.String()
-	thinkDelta := run.pendingThinkFlush.String()
-	run.pendingTextFlush.Reset()
-	run.pendingThinkFlush.Reset()
-	var ops []bridge.TranscriptPatchOp
-	if textDelta != "" {
-		ops = append(ops, o.buildTextDeltaOps(run, coalescer, genID, bridge.EventResponseDelta, textDelta)...)
-	}
-	if thinkDelta != "" {
-		ops = append(ops, o.buildTextDeltaOps(run, coalescer, genID, bridge.EventThinkingDelta, thinkDelta)...)
-	}
-	o.activeMu.Unlock()
-	if coalescer == nil || len(ops) == 0 {
-		return
-	}
-	o.markDeltaWidgetPatch(sessionID)
-	patch := bridge.DeltaPatch(sessionID, genID, ops)
-	patchEv := bridge.StreamEvent{
-		Kind:         bridge.EventTranscript,
-		SessionID:    sessionID,
-		GenerationID: genID,
-		Transcript:   &patch,
-		At:           time.Now().UTC(),
-	}
-	_ = o.emitTranscriptPatch(ctx, out, patchEv)
+	return o.emitCoalescedTranscript(ctx, opts, ev)
 }
 
 func (o *Orchestrator) sendOut(ctx context.Context, out chan<- bridge.StreamEvent, ev bridge.StreamEvent) bool {
+	if out == nil {
+		return true
+	}
 	select {
 	case <-ctx.Done():
 		return false
 	case out <- ev:
 		return true
-	}
-}
-
-func widgetCoalesceKind(kind bridge.EventKind) bool {
-	switch kind {
-	case bridge.EventThinkingDelta, bridge.EventResponseDelta, bridge.EventToolCall,
-		bridge.EventToolUpdate, bridge.EventStatus, bridge.EventTurnBoundary,
-		bridge.EventTaskUpdate, bridge.EventError, bridge.EventCheckpoint, bridge.EventDone:
-		return true
-	default:
-		return false
-	}
-}
-
-func widgetPatchKind(kind bridge.EventKind) bool {
-	switch kind {
-	case bridge.EventThinkingDelta, bridge.EventResponseDelta, bridge.EventToolCall,
-		bridge.EventToolUpdate, bridge.EventStatus, bridge.EventTurnBoundary,
-		bridge.EventTaskUpdate, bridge.EventError, bridge.EventCheckpoint,
-		bridge.EventDone, bridge.EventTranscript:
-		return true
-	default:
-		return false
 	}
 }
 

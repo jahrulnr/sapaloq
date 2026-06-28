@@ -47,6 +47,16 @@ func Verbosef(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[verbose] "+format+"\n", args...)
 }
 
+// TraceBoundary logs layer crossings when SAPALOQ_TRACE_BOUNDARIES=1.
+// Marker sites use the comment tag: sapaloq:boundary <from>→<to> — …
+// See docs/BOUNDARIES.md.
+func TraceBoundary(from, to, event string) {
+	if !envTruthy("SAPALOQ_TRACE_BOUNDARIES") {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[boundary] %s→%s %s\n", from, to, event)
+}
+
 func RedactSecret(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {

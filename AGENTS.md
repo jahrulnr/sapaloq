@@ -55,7 +55,8 @@ change**, and always update `docs/STATUS.md` (status table row + a short
 | Config schema / new config block / migration (`internal/config/**`) | `docs/RUNTIME.md` (migration status), `docs/BLUEPRINT.md` (config-domain table + defaults), `config/config.example.json`, `schema/config.schema.json` |
 | Role/system prompts (`internal/prompts/**`, `orchestrator.systemPrompt`) | `docs/PROMPT-BUILDER-SOP.md` |
 | Tools / tool surface (`internal/core/orchestrator/tools*.go`, `internal/tooldocs/**`) | `docs/BLUEPRINT.md` (tools/defaults), `docs/ORCHESTRATOR.md` |
-| Provider/bridge wire formats (`internal/bridges/**`, parsers) | `docs/BRIDGE.md`, `docs/PROVIDER-BRIDGE.md`, `docs/RE-CURSOR-THINKING-TOOLS.md` |
+| Provider/bridge wire formats (`internal/bridges/**`, parsers) | `docs/BRIDGE.md`, `docs/PROVIDER-BRIDGE.md`, `docs/RE-CURSOR-THINKING-TOOLS.md`, `docs/BOUNDARIES.md` (if ownership crosses layers) |
+| Layer boundary / transcript contract / cursor MCP ownership | `docs/BOUNDARIES.md`, `docs/CURSOR_AGENT_CONTRACT.md`, `docs/UI-DECISION.md` |
 | Event bus / WAL (`internal/bus/**`) | `docs/EVENT-BUS.md` |
 | Orchestrator behavior (spawn, anti-poisoning, clarification, completion) | `docs/ORCHESTRATOR.md`, `docs/CONTEXT-SOP.md` |
 | Remote/local nodes (`internal/node/**`) | `docs/NODES.md` |

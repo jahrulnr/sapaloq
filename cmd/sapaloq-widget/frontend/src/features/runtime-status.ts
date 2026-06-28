@@ -72,6 +72,8 @@ function actorTile(role: string, actor?: ActorRuntimeStatus) {
   return article;
 }
 
+let workspaceCardSessionId = '';
+
 export function applyWorkspacePath(path: string, sessionID?: string) {
   const cleaned = path.trim();
   if (!cleaned) return;
@@ -86,6 +88,7 @@ export function applyWorkspacePath(path: string, sessionID?: string) {
     workspace.dataset.workspacePath = cleaned;
   }
   if (workspaceText) workspaceText.textContent = shortPath(cleaned);
+  if (sid) workspaceCardSessionId = sid;
 }
 
 function activeWorkspacePath(status: RuntimeStatusData) {
@@ -94,6 +97,8 @@ function activeWorkspacePath(status: RuntimeStatusData) {
   if (fromCore && sid) workspaceBySession.set(sid, fromCore);
   if (fromCore) return fromCore;
   if (sid && workspaceBySession.has(sid)) return workspaceBySession.get(sid)!;
+  // Active chat room: avoid flashing install default while session workspace loads.
+  if (sid) return '';
   return status.workspace_path || '';
 }
 
@@ -119,11 +124,21 @@ export function renderRuntimeStatus(status: RuntimeStatusData) {
   const workspace = document.getElementById('runtime-workspace');
   const workspaceText = workspace?.querySelector('strong');
   const activeWorkspace = activeWorkspacePath(status);
-  if (workspace && activeWorkspace) {
-    workspace.title = activeWorkspace;
-    workspace.dataset.workspacePath = activeWorkspace;
+  const sid = (status.session_id || getSessionID()).trim();
+  if (workspace) {
+    if (activeWorkspace) {
+      workspace.title = activeWorkspace;
+      workspace.dataset.workspacePath = activeWorkspace;
+      if (workspaceText) workspaceText.textContent = shortPath(activeWorkspace);
+      workspaceCardSessionId = sid;
+    } else if (sid && workspaceCardSessionId && workspaceCardSessionId !== sid) {
+      const fallback = (status.workspace_path || '').trim();
+      workspace.title = fallback;
+      workspace.dataset.workspacePath = fallback;
+      if (workspaceText && fallback) workspaceText.textContent = shortPath(fallback);
+      workspaceCardSessionId = sid;
+    }
   }
-  if (workspaceText && activeWorkspace) workspaceText.textContent = shortPath(activeWorkspace);
 }
 
 export async function refreshRuntimeStatus() {

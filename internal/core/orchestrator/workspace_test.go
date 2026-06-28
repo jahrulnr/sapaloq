@@ -83,7 +83,7 @@ func TestActorWorkspacePersistsFinalCWDWhenLaterCommandFails(t *testing.T) {
 	}
 }
 
-func TestNewChatSessionUsesInstallDefaultWithoutPicker(t *testing.T) {
+func TestNewChatSessionInheritsLastWorkspace(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	project := filepath.Join(root, "project")
@@ -94,8 +94,8 @@ func TestNewChatSessionUsesInstallDefaultWithoutPicker(t *testing.T) {
 	}
 	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
 	o.persistChatSessionWorkspace("chat-old", project)
-	if got := o.actorCWD("chat-new"); got != workspace {
-		t.Fatalf("new chat cwd = %q, want install default %q", got, workspace)
+	if got := o.actorCWD("chat-new"); got != project {
+		t.Fatalf("new chat cwd = %q, want inherited last %q", got, project)
 	}
 	if got := o.actorCWD("task-fresh"); got != workspace {
 		t.Fatalf("task cwd = %q, want install default %q", got, workspace)

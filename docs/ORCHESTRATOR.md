@@ -1,9 +1,9 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-28 (Codex app-server dynamic tools execute in-turn without telemetry re-dispatch)
+> Last updated: 2026-06-28 (layer boundaries doc; see BOUNDARIES.md)
 
----
+Related: [BOUNDARIES.md](./BOUNDARIES.md) · [VISION.md](./VISION.md)
 
 ## Actor model (2026-06-27)
 
@@ -1379,7 +1379,7 @@ Orchestrator reads **summaries**, not raw dumps.
 ~/SapaLOQ/memory/        # facts.json, feedback.jsonl (legacy companion.db migrated on boot)
 ```
 
-**Codex alignment (2026):** conversation persistence is JSON-first under `state/`; the orchestrator maintains a single transcript via per-turn assistant persist + rollout JSONL. Compaction rewrites `turns.json` and rebuilds the live `cleanMessages` slice atomically.
+**Codex alignment (2026):** conversation persistence is JSON-first under `state/`; the orchestrator maintains a single transcript via per-turn assistant persist + rollout JSONL. In-bridge cursor/codex MCP tools persist on each `EventToolUpdate` (`in_bridge_persist.go`) so mid-generation replay matches progress JSONL. Compaction rewrites `turns.json` and rebuilds the live `cleanMessages` slice atomically.
 
 ```text
 ~/SapaLOQ/memory/        # pre-migration only

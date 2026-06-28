@@ -1,7 +1,9 @@
 # Cursor Agent API Contract
 
 > Wire contract for the cursor-agent port in `internal/bridges/cursor/wire`.
-> Last updated: 2026-06-28 (Node driver default; Go raw HPACK fix)
+> Last updated: 2026-06-28 (boundary markers; Phase 2 tool ownership TBD)
+
+See [BOUNDARIES.md](./BOUNDARIES.md) for simplification sequence before more orchestrator guards.
 
 ## Transport
 
@@ -54,6 +56,11 @@ request-context handshake. On `exec_mcp`:
 1. Bridge emits `EventToolCall` with `Source:"cursor"` (UI telemetry).
 2. Bridge calls `bridge.Request.ToolExecutor` once inside the api5 turn.
 3. Orchestrator treats `Source:"cursor"` like `Source:"codex"` — no second dispatch.
+
+**Boundary note:** this split is the main source of loop/stop/transcript bugs.
+Phase 2 in [BOUNDARIES.md](./BOUNDARIES.md) must pick design A or B before more
+top-level patches. Code markers: `sapaloq:boundary` in `bridge_agent.go` and
+`conversation.go` streamLoop.
 
 ## Reference sources (L0)
 
