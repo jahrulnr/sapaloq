@@ -32,6 +32,6 @@ func TestMapperSkipsGenericToolCallMarkers(t *testing.T) {
 		{Kind: "heartbeat"},
 	})
 	if len(events) != 0 {
-		t.Fatalf("generic tool markers must not emit cursor_tool status: %+v", events)
+		t.Fatalf("generic tool markers must not emit status rows: %+v", events)
 	}
 }

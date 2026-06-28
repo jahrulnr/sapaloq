@@ -2,7 +2,9 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**live transcript + stop persistence** — watch-stream foreground patches, cancel flush to turns.json)
+> Last updated: 2026-06-28 (**delta transcript throttle** — long sessions no longer serialize full history on every token)
+
+> Prior: 2026-06-28 (**live transcript + stop persistence** — watch-stream foreground patches, cancel flush to turns.json)
 
 > Prior: 2026-06-28 (**reader-aware widget auto-scroll** — live updates follow only while the reader is at chat end)
 
@@ -138,6 +140,12 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-28) - delta transcript throttle
+
+- **Bug:** Long chat sessions (400+ turns) felt frozen during Cursor runs: text/tools appeared only after Stop. Root cause: every `EventResponseDelta` rebuilt and IPC-sent the **entire** merged transcript JSON.
+- **Fix:** Throttle streaming widget patches to ≥50ms with a scheduled flush (long sessions no longer serialize full history on every token).
+- **Tests:** `chat_widget_patch_test.go`, updated `mapper_test.go`.
 
 ## Implemented this session (2026-06-28) - live transcript + stop persistence
 

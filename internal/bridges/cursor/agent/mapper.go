@@ -31,7 +31,7 @@ func (m *Mapper) Map(decoded []wire.AgentDecoded) []bridge.StreamEvent {
 			out = append(out, m.delta(bridge.EventThinkingDelta, d.Thinking))
 		case "tool_call_started", "tool_call_completed":
 			// Generic markers without tool name/id — MCP exec emits real
-			// EventToolCall rows via bridge_agent OnMCPTool; skip cursor_tool spam.
+			// EventToolCall rows via bridge_agent OnMCPTool; skip status spam.
 		case "token_delta":
 			if d.Tokens > 0 {
 				out = append(out, m.status("token_usage", ""))
