@@ -350,7 +350,7 @@ Adaptasi [automation-learning](~/.agents/skills/automation-learning/) - **compan
 ### Safety
 
 - Respect `learning.research.enabled` and mode boundary (no work secrets in personal research)
-- Cache by topic hash in SQLite - avoid re-fetch same topic within TTL
+- Cache by topic hash in JSON index - avoid re-fetch same topic within TTL
 - Store URL + fetched_at; obsolete when user marks stale
 
 ---

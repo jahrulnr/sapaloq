@@ -1,4 +1,9 @@
-import { getMessageList, scrollMessagesToBottom } from '../ui/dom';
+import {
+  captureMessageScroll,
+  getMessageList,
+  restoreMessageScroll,
+  type MessageScrollSnapshot,
+} from '../ui/dom';
 import {
   coerceTranscriptEntries,
   mountTranscriptPane,
@@ -20,16 +25,70 @@ export function syncChatTranscriptStateFromDOM() {
   paneState.renderedEntryCount = pane?.children.length ?? 0;
 }
 
-export function mountChatTranscript(entries: ReadonlyArray<TranscriptEntry | TranscriptEntryInput>) {
+export function mountChatTranscript(
+  entries: ReadonlyArray<TranscriptEntry | TranscriptEntryInput>,
+  scrollSnapshot?: MessageScrollSnapshot,
+) {
   const list = getMessageList();
   if (!list) return;
+  const scroll = scrollSnapshot || captureMessageScroll(list);
   mountTranscriptPane(list, paneState, coerceTranscriptEntries(entries), '', 'chat', '', true);
-  scrollMessagesToBottom();
+  restoreMessageScroll(scroll, list);
 }
 
 export function syncChatTranscript(entries: ReadonlyArray<TranscriptEntry | TranscriptEntryInput>) {
   const list = getMessageList();
   if (!list) return;
+  const scroll = captureMessageScroll(list);
   syncTranscriptPane(list, paneState, coerceTranscriptEntries(entries), '', 'chat');
-  scrollMessagesToBottom();
+  restoreMessageScroll(scroll, list);
+}
+
+let pendingSync: TranscriptEntry[] | null = null;
+let syncRaf = 0;
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushPendingSync() {
+  if (syncRaf) {
+    cancelAnimationFrame(syncRaf);
+    syncRaf = 0;
+  }
+  if (syncTimer) {
+    clearTimeout(syncTimer);
+    syncTimer = null;
+  }
+  const batch = pendingSync;
+  pendingSync = null;
+  if (batch) syncChatTranscript(batch);
+}
+
+function wantsImmediateSync(entries: TranscriptEntry[]): boolean {
+  return entries.some(
+    (e) => e.kind === 'tool' || e.kind === 'thinking' || e.kind === 'status' || e.kind === 'progress',
+  );
+}
+
+/** Batch text deltas; paint tools/thinking immediately; timer fallback when rAF stalls. */
+export function scheduleSyncChatTranscript(entries: ReadonlyArray<TranscriptEntry | TranscriptEntryInput>) {
+  pendingSync = coerceTranscriptEntries(entries);
+  if (wantsImmediateSync(pendingSync)) {
+    flushPendingSync();
+    return;
+  }
+  if (!syncRaf) {
+    syncRaf = requestAnimationFrame(() => {
+      syncRaf = 0;
+      flushPendingSync();
+    });
+  }
+  if (!syncTimer) {
+    syncTimer = setTimeout(() => {
+      syncTimer = null;
+      flushPendingSync();
+    }, 60);
+  }
+}
+
+export function flushScheduledChatTranscript() {
+  flushPendingSync();
 }

@@ -385,17 +385,21 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 		// Thinking turns are persisted per inference round inside runTurnLoop
 		// (before the assistant turn for that round). Only append a final blob
 		// when the run produced visible text that was not already recorded.
-		if strings.TrimSpace(assistant.String()) != "" {
-			turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)
+		if trimmed := strings.TrimSpace(assistant.String()); trimmed != "" {
 			needsFinal := true
-			for i := len(turns) - 1; i >= 0; i-- {
-				if turns[i].Role == "assistant" && turns[i].GenerationID == genStr {
-					needsFinal = false
-					break
+			if turns, terr := o.chat.ActiveTurns(ctx, sessionID, false); terr == nil {
+				for i := len(turns) - 1; i >= 0; i-- {
+					t := turns[i]
+					if t.Role == "assistant" && t.GenerationID == genStr {
+						if strings.TrimSpace(t.Content) == trimmed {
+							needsFinal = false
+						}
+						break
+					}
 				}
 			}
 			if needsFinal {
-				_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateContentTokens(assistant.String()), genStr)
+				_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", trimmed, estimateContentTokens(trimmed), genStr)
 			}
 		}
 		usage, _ := o.ContextUsage(ctx, sessionID)

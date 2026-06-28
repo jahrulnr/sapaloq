@@ -500,11 +500,11 @@ SapaLOQ widget = **parallel independent session** via `cursor-bridge` (or compat
 
 | Path                   | When                                                                                 |
 | ---------------------- | ------------------------------------------------------------------------------------ |
-| **Parallel** (default) | Orchestrator + sub-agents use SapaLOQ's own bridge session; memory in `companion.db` |
+| **Parallel** (default) | Orchestrator + sub-agents use SapaLOQ's own bridge session; memory in JSON index (`facts.json`) |
 | **Handoff** (explicit) | User or orchestrator writes `bridge/handoff/<uuid>.json` → worker consumes once      |
 
 
-Implication for milestones: M1–M3 need bridge session + SQLite only; deep cursor-agent mirror UI is M8–M9 polish, not M1 blocker.
+Implication for milestones: M1–M3 need bridge session + JSON store only; deep cursor-agent mirror UI is M8–M9 polish, not M1 blocker.
 
 ---
 

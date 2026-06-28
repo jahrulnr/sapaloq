@@ -29,9 +29,9 @@ Referensi visual: ilustrasi HUD ring + avatar (astronaut/orbit), neon blue, drag
 8. **Config-by-agent** - tidak ada settings UI; `/settings ...` → sub-agent edit `config.json`.
 9. **Context SOP** - index-first prefetch, dynamic system-prompt, anti-deep-check, auto-learning - tidak "lupa" saat compaction.
 10. **Role prompts & builders** - sub-agent spawn dengan system-prompt per role; post-task learning-agent + optional web research.
-11. **Single binary runtime** - satu `sapaloq-core` Go; goroutine + SQLite + jsonl; zero Redis/Rabbit/MQTT deps.
+11. **Single binary runtime** - satu `sapaloq-core` Go; goroutine + JSON store + jsonl; zero Redis/Rabbit/MQTT deps.
 12. **Less dependency** - modular drivers + cached `os.json` ([DRIVER.md](./DRIVER.md)).
-13. **Sub-agent nodes** - local or remote (Docker/VPS/EC2/SSH); SQLite registry + comm spec ([NODES.md](./NODES.md)).
+13. **Sub-agent nodes** - local or remote (Docker/VPS/EC2/SSH); JSON registry (`nodes.json`) + comm spec ([NODES.md](./NODES.md)).
 
 ---
 
@@ -65,7 +65,7 @@ Widget agent = **orchestrator saja** - assign task → sub-agent dengan **contex
 | **context-scaler** | Minimal context per task - **anti poisoning** |
 | **boundary-guard** | personal / hobby / work boundary |
 | **memory-janitor** | Auto: rapihin memory, dedupe, naik/turun context |
-| **intent-router** | Classify intent → prefetch dari SQLite sebelum spawn |
+| **intent-router** | Classify intent → prefetch dari JSON index sebelum spawn |
 | **learning-agent** | Post-task prompt overlay + skills builder |
 | **research** | Web best practice (async) |
 | **event-watcher** | Platform notification + custom reminder → event bus |
@@ -74,7 +74,7 @@ Detail: [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [PLATFORM.md](./PLATFORM.md) · 
 
 ### Context SOP (anti lupa & anti deep-check)
 
-Saat prompt masuk → **ingress pipeline**: intent-router → SQLite FTS prefetch → dynamic system-prompt → context packet. Tidak grep/skills dump dulu.
+Saat prompt masuk → **ingress pipeline**: intent-router → JSON fact prefetch → dynamic system-prompt → context packet. Tidak grep/skills dump dulu.
 
 Compaction/low context → **reload from index**, bukan replay transcript. memory-janitor + learning queue = auto-learning over time.
 
@@ -122,7 +122,7 @@ Indexed `storage.paths` + `storage.intents` + `apps.entries` - agent tahu **mana
 ### Hard boundaries
 
 1. Widget **tidak** spawn `agent` di main loop.
-2. **Tidak** shared sqlite/jsonl antara companion dan worker.
+2. **Tidak** shared memory store/jsonl antara companion dan worker.
 3. **Tidak** shared MCP config file.
 4. Handoff ke worker = **aksi eksplisit** user (“Open in Agent”), bukan implicit.
 5. `cursor-agent-toolcall-spec` = **referensi visual + mirror**; bukan runtime dependency companion.
@@ -195,7 +195,7 @@ Via config `mcp/servers.json` only when adapter delegates externally - **config 
 | `/apps/workspace/scripts/extract-cursor-agent-toolcall-spec.py` | Regenerator spec dari CLI bundle |
 
 | `docs/ORCHESTRATOR.md` | Orchestrator, sub-agents, anti-poisoning |
-| `docs/CONTEXT-SOP.md` | Anti-forget, dynamic prompt, SQLite index, auto-learning |
+| `docs/CONTEXT-SOP.md` | Anti-forget, dynamic prompt, JSON index, auto-learning |
 | `schema/config.schema.json` | Config contract |
 | `config/config.example.json` | Bootstrap config |
 
@@ -223,7 +223,7 @@ Planned:
     slices/                   # conditional dynamic templates
   skills/                     # sapaloq-local skills (indexed)
   memory/
-    companion.db              # SQLite + FTS5 - authoritative index
+    facts.json                # JSON memory index (legacy companion.db migrated on boot)
     files/                    # optional markdown mirror per namespace
     learning-queue.jsonl      # auto-learning events
     tasks/                    # task stack (anti context poisoning)
@@ -265,7 +265,7 @@ Companion **tidak** merge memory ke agent. Handoff packet:
 }
 ```
 
-Worker dibuka terpisah (terminal `agent`, IDE, GoClaw). Widget boleh **mirror** state visual (ring) tanpa simpan transcript worker ke `companion.db`.
+Worker dibuka terpisah (terminal `agent`, IDE, GoClaw). Widget boleh **mirror** state visual (ring) tanpa simpan transcript worker ke memory index.
 
 ---
 
@@ -276,7 +276,7 @@ Worker dibuka terpisah (terminal `agent`, IDE, GoClaw). Widget boleh **mirror** 
 | UI | Wails v2 + web FAB+popup - [UI-DECISION.md](./UI-DECISION.md); M5a spike ✅ |
 | Core | **sapaloq-core** Go - portable |
 | Platform | [PLATFORM.md](./PLATFORM.md) adapters: gnome → kde → windows |
-| Memory | SQLite |
+| Memory | JSON files |
 | IPC / events | [RUNTIME.md](./RUNTIME.md) · [EVENT-BUS.md](./EVENT-BUS.md) |
 
 Optional on dev machine: `gnome-desktop-mcp` as gnome adapter backend - not global runtime dep.
@@ -288,7 +288,7 @@ Optional on dev machine: `gnome-desktop-mcp` as gnome adapter backend - not glob
 | Phase | Deliverable |
 |-------|-------------|
 | **M0** | VISION + ORCHESTRATOR + CONTEXT-SOP + config.schema ✅ |
-| **M1** | SQLite index + `nodes` table + local-default bootstrap |
+| **M1** | JSON index + `nodes.json` + local-default bootstrap |
 | **M2** | Orchestrator task stack + progress streaming |
 | **M3** | Completion triggers + event bus + platform watcher (gnome) |
 | **M4** | sub-agent:scribe + storage mapping |
@@ -329,4 +329,4 @@ Proyek ini lahir dari reverse engineering Cursor agent tools:
 - User insist: **jangan campur** agent work dengan companion-feel → arsitektur dua produk + bridge.
 - Config **tanpa UI** - agent edit `config.json` via `/settings`.
 - Widget agent = **orchestrator only**; sub-agent agresif, **local** shared memory, remote context packet only, boundary/mode aware, anti context poisoning.
-- **Context SOP** - SQLite index + prefetch + dynamic prompt; anti "lupa" & "deep check" saat compaction.
+- **Context SOP** - JSON index + prefetch + dynamic prompt; anti "lupa" & "deep check" saat compaction.

@@ -9,8 +9,8 @@ import { renderUsage, setConnection, setRingState, runPing } from './connection'
 import { appendMessage, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
 import { applyChatResetFromBE } from './apply-session-reset';
-import { syncChatTranscript, syncChatTranscriptStateFromDOM } from './transcript-pane';
-import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory } from './history';
+import { syncChatTranscript, syncChatTranscriptStateFromDOM, scheduleSyncChatTranscript, flushScheduledChatTranscript } from './transcript-pane';
+import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory, scheduleRestoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus } from './runtime-status';
 import { notifyCompletion, primeNotifications } from './notifications';
@@ -44,7 +44,25 @@ export function setSubmittingUI(active: boolean) {
   input?.closest('.compose-wrap')?.classList.toggle('is-steering', active);
   input?.setAttribute('data-placeholder', active ? 'Steer SapaLOQ…' : 'Ask anything');
   setComposeDisabled(false);
-  showSteeringStatus('Steering diterapkan setelah tool batch selesai.');
+  if (active) {
+    showSteeringStatus('Steering diterapkan setelah tool batch selesai.');
+  } else if (steeringStatusTimer) {
+    clearTimeout(steeringStatusTimer);
+    steeringStatusTimer = null;
+    const hint = document.getElementById('steering-hint');
+    if (hint) {
+      hint.textContent = '';
+      delete hint.dataset.state;
+    }
+  }
+}
+
+export function markSteeringApplied() {
+  document.querySelectorAll('.message--steering.is-pending').forEach((el) => {
+    el.classList.remove('is-pending');
+    el.classList.add('is-applied');
+  });
+  showSteeringStatus('Steering diterapkan.');
 }
 
 function showSteeringStatus(message: string, error = false) {
@@ -81,10 +99,16 @@ function applyTranscriptPatch(patch: TranscriptPatch) {
     return;
   }
   if (!patch.entries?.length) return;
+  if (patch.entries.some((e) => (e.kind === 'status' || e.kind === 'progress') && e.label === 'steering applied')) {
+    markSteeringApplied();
+  }
   if (activeGeneration && patch.generation_id && patch.generation_id !== activeGeneration) return;
-  syncChatTranscript(patch.entries);
+  scheduleSyncChatTranscript(patch.entries);
   if (patch.usage) renderUsage(patch.usage as ChatUsage);
-  if (patch.finished) releaseInFlightTurn();
+  if (patch.finished) {
+    flushScheduledChatTranscript();
+    releaseInFlightTurn();
+  }
 }
 
 async function sendText(text: string, _visibleText = text, _attachments: AttachmentData[] = []) {
@@ -221,6 +245,7 @@ export async function stopActiveResponse() {
   if (!isSubmitting()) return;
   try {
     await StopChat(getSessionID());
+    flushScheduledChatTranscript();
   } catch (err) {
     appendMessage('message--error', errorText(err), getUserGroup());
   }
@@ -249,7 +274,7 @@ export function initChatController() {
 	  // never be merged into the parent chat transcript.
 	  if (patch.actor_id) return;
       if (patch.generation_id && !activeGeneration) activeGeneration = patch.generation_id;
-      if (isSubmitting()) {
+      if (isSubmitting() || patch.finished) {
         applyTranscriptPatch(patch);
         if (patch.finished) {
           void notifyCompletion('orchestrator', patch.entries?.some((e) => e.kind === 'error') ? 'SapaLOQ gagal' : 'SapaLOQ selesai',
@@ -257,9 +282,9 @@ export function initChatController() {
         }
         return;
       }
-      // Background task cards: refresh full transcript when idle.
+      // Background task cards: refresh when idle; live foreground runs patch incrementally.
       if (patch.entries?.some((e) => e.kind === 'task')) {
-        void restoreChatHistory();
+        scheduleRestoreChatHistory();
         void refreshRuntimeStatus();
       }
     });
@@ -269,8 +294,7 @@ export function initChatController() {
         return;
       }
       if (event.kind === 'task_update') {
-        void restoreChatHistory();
-        void refreshRuntimeStatus();
+        if (!isSubmitting()) scheduleRestoreChatHistory();
         maybeNotifyTaskCompletion(event);
       }
     });
@@ -285,7 +309,7 @@ export function applySpokenTaskCompletion(event: StreamEvent): boolean {
   if (event.kind !== 'response_delta' || !event.task_id || !event.delta?.trim()) return false;
   if (spokenTaskIDs.has(event.task_id)) return false;
   spokenTaskIDs.add(event.task_id);
-  void restoreChatHistory();
+  scheduleRestoreChatHistory();
   return true;
 }
 

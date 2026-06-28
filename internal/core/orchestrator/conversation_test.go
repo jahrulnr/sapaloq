@@ -13,6 +13,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/parse"
 	"github.com/jahrulnr/sapaloq/internal/parse/artifacts"
+	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
 // TestLooksLikeTransientTransport4xx pins the regression that motivated this
@@ -161,6 +162,78 @@ func TestRunConversationCancellationDoesNotWaitForBridgeClose(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("cancelled conversation waited for the bridge channel to close")
+	}
+}
+
+type cancelAfterDeltaBridge struct {
+	started chan struct{}
+}
+
+func (b *cancelAfterDeltaBridge) ID() string              { return "cancel-after-delta" }
+func (b *cancelAfterDeltaBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *cancelAfterDeltaBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	out := make(chan bridge.StreamEvent, 4)
+	out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "partial reply"}
+	close(b.started)
+	// Never send EventDone — user stop must cancel without waiting for bridge close.
+	return out, nil
+}
+
+func TestRunConversationCancellationPersistsPartialAssistant(t *testing.T) {
+	fake := &cancelAfterDeltaBridge{started: make(chan struct{})}
+	dir := t.TempDir()
+	store, err := chatstore.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := store.ActiveSession(context.Background(), "test", "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orch := &Orchestrator{
+		memoryDir: dir,
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+		chat:      store,
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
+	out := make(chan bridge.StreamEvent, 16)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := orch.runConversation(ctx, snap, out, sessionID, "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
+		done <- err
+	}()
+
+	select {
+	case <-fake.started:
+	case <-time.After(time.Second):
+		t.Fatal("bridge did not start")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("cancelled conversation returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("cancelled conversation waited for the bridge channel to close")
+	}
+
+	turns, err := store.ActiveTurns(context.Background(), sessionID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, turn := range turns {
+		if turn.Role == "assistant" && strings.Contains(turn.Content, "partial reply") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected partial assistant turn persisted on cancel, got %+v", turns)
 	}
 }
 

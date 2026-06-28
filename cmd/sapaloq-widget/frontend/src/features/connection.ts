@@ -3,6 +3,7 @@
 import { PingCore, ContextUsage } from '../../wailsjs/go/main/App';
 import type { ConnectionState, RingState, ChatUsage } from '../core/types';
 import { formatTokens } from '../ui/dom';
+import { refreshRuntimeStatus } from './runtime-status';
 import {
   getConnection,
   setConnectionState,
@@ -61,7 +62,10 @@ export async function runPing() {
     // On (re)connect after being offline, the context pill may still hold a
     // stale/empty startup value (e.g. "0/0" when core wasn't ready yet). Pull
     // a fresh reading so the pill reflects reality as soon as core is up.
-    if (wasOffline) void refreshUsage();
+    if (wasOffline) {
+      void refreshUsage();
+      void refreshRuntimeStatus();
+    }
   } catch {
     setConnection(getConnection() === 'connected' ? 'reconnecting' : 'disconnected');
   }

@@ -8,9 +8,28 @@ export function getMessageList() {
   return document.getElementById('message-list');
 }
 
-export function scrollMessagesToBottom() {
-  const list = getMessageList();
-  if (list) list.scrollTop = list.scrollHeight;
+export type MessageScrollSnapshot = {
+  atBottom: boolean;
+  scrollTop: number;
+};
+
+// A tiny tolerance absorbs fractional layout rounding without treating a
+// reader who intentionally moved up the transcript as still following it.
+const MESSAGE_BOTTOM_TOLERANCE_PX = 2;
+
+/** Capture before changing transcript DOM; checking after append is too late. */
+export function captureMessageScroll(list = getMessageList()): MessageScrollSnapshot {
+  if (!list) return { atBottom: true, scrollTop: 0 };
+  return {
+    atBottom: list.scrollHeight - list.scrollTop - list.clientHeight <= MESSAGE_BOTTOM_TOLERANCE_PX,
+    scrollTop: list.scrollTop,
+  };
+}
+
+/** Follow new content only when the reader was already at the transcript end. */
+export function restoreMessageScroll(snapshot: MessageScrollSnapshot, list = getMessageList()) {
+  if (!list) return;
+  list.scrollTop = snapshot.atBottom ? list.scrollHeight : snapshot.scrollTop;
 }
 
 // hasVisibleText reports whether an element renders any non-whitespace text.

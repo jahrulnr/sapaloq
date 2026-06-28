@@ -3,7 +3,13 @@
 // turn-content parser used when restoring history.
 import { OpenAttachment, SubmitFeedback } from '../../wailsjs/go/main/App';
 import type { PendingAttachment } from '../core/types';
-import { formatBytes, getMessageList, hasVisibleText } from '../ui/dom';
+import {
+  captureMessageScroll,
+  formatBytes,
+  getMessageList,
+  hasVisibleText,
+  restoreMessageScroll,
+} from '../ui/dom';
 import { renderMarkdown } from '../ui/markdown';
 import { showImagePreview } from '../ui/image-preview';
 import {
@@ -55,6 +61,7 @@ function findToolActivity(call: ToolActivityCall): HTMLElement | undefined {
 export function appendToolActivity(call: ToolActivityCall): HTMLElement | undefined {
   const list = getMessageList();
   if (!list) return;
+  const scroll = captureMessageScroll(list);
   if (call.id) {
     const existing = toolActivityByID.get(call.id);
     if (existing?.isConnected) return existing;
@@ -70,7 +77,7 @@ export function appendToolActivity(call: ToolActivityCall): HTMLElement | undefi
   if (header) paintToolActivityHeader(item, header);
   list.append(item);
   if (call.id) toolActivityByID.set(call.id, item);
-  list.scrollTop = list.scrollHeight;
+  restoreMessageScroll(scroll, list);
   return item;
 }
 
@@ -106,6 +113,7 @@ type SummaryPanelOptions = {
 export function appendSummaryPanel(options: SummaryPanelOptions): HTMLElement | undefined {
   const list = getMessageList();
   if (!list || !options.content.trim()) return;
+  const scroll = captureMessageScroll(list);
   const card = document.createElement('div');
   card.className = `message summary-panel summary-panel--${options.variant || 'checkpoint'}${options.archived ? ' message--archived' : ''}`;
   card.dataset.seq = `${nextMessageSeq()}`;
@@ -143,7 +151,7 @@ export function appendSummaryPanel(options: SummaryPanelOptions): HTMLElement | 
   body.addEventListener('click', (event) => event.stopPropagation());
   card.append(headerText, body);
   list.append(card);
-  list.scrollTop = list.scrollHeight;
+  restoreMessageScroll(scroll, list);
   return card;
 }
 
@@ -156,6 +164,7 @@ export function appendMessage(
 ) {
   const list = getMessageList();
   if (!list || !text) return;
+  const scroll = captureMessageScroll(list);
   const item = document.createElement('div');
   item.className = `message ${className}`;
   item.dataset.seq = `${nextMessageSeq()}`;
@@ -172,7 +181,7 @@ export function appendMessage(
   if (className.includes('message--error')) wireErrorMessage(item);
   if (className.includes('message--assistant')) wireAssistantFeedback(item);
   list.appendChild(item);
-  list.scrollTop = list.scrollHeight;
+  restoreMessageScroll(scroll, list);
   return item;
 }
 
@@ -185,6 +194,7 @@ export function appendMessage(
 export function appendCheckpointDivider(index: number, summary: string) {
   const list = getMessageList();
   if (!list) return;
+  const scroll = captureMessageScroll(list);
   const divider = document.createElement('div');
   divider.className = 'checkpoint-divider';
   const ruleBefore = document.createElement('span');
@@ -202,7 +212,7 @@ export function appendCheckpointDivider(index: number, summary: string) {
     content: summary,
     variant: 'checkpoint',
   });
-  list.scrollTop = list.scrollHeight;
+  restoreMessageScroll(scroll, list);
 }
 
 export function renderMessageAttachments(attachments: PendingAttachment[]) {
@@ -521,6 +531,7 @@ function openCorrectionBox(
 export function appendThinkingBubble(text: string, groupID = getUserGroup()) {
   const list = getMessageList();
   if (!list || !text.trim()) return;
+  const scroll = captureMessageScroll(list);
   const el = document.createElement('div');
   el.className = 'message message--thinking is-collapsed is-done';
   el.dataset.seq = `${nextMessageSeq()}`;
@@ -546,4 +557,5 @@ export function appendThinkingBubble(text: string, groupID = getUserGroup()) {
 
   el.append(header, body);
   list.appendChild(el);
+  restoreMessageScroll(scroll, list);
 }

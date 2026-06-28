@@ -3,7 +3,7 @@
 > **Satu binary Go** - goroutine + channel + persistence lokal. No mandatory
 > broker/cache daemon; optional LLM drivers may manage an external provider
 > process such as `codex app-server`.
-> Last updated: 2026-06-28 (Codex app-server lifecycle and doctor checks)
+> Last updated: 2026-06-28 (persistence: JSON store under `~/SapaLOQ/state` + `memory/`; no runtime SQLite)
 
 Related: [EVENT-BUS.md](./EVENT-BUS.md) · [VISION.md](./VISION.md)
 
@@ -17,8 +17,8 @@ sapaloq-core (one binary)
 ├── Orchestrator loop
 ├── Event bus (route watchers)     ← bukan Redis/Rabbit/MQTT
 ├── Sub-agent workers (goroutine or child proc → same socket)
-├── SQLite (companion.db)
-├── jsonl WAL (events, progress, learning queue)
+├── JSON store (sessions, facts, nodes, checkpoints)
+├── jsonl WAL (rollout, progress, feedback, learning queue)
 └── Platform adapters (swappable per OS/DE)
 ```
 
@@ -26,7 +26,7 @@ sapaloq-core (one binary)
 
 | ❌ Avoid | ✅ SapaLOQ |
 |----------|------------|
-| Redis / Rabbit / MQTT | In-proc bus + SQLite |
+| Redis / Rabbit / MQTT | In-proc bus + JSON files |
 | GNOME Shell extension required | D-Bus + portal; extension/MCP optional |
 | Separate broker container | Same binary |
 | Hardcode one DE | `platform.adapter` swap |
@@ -38,16 +38,23 @@ sapaloq-core (one binary)
 | Store | Path | Role |
 |-------|------|------|
 | Config | `~/.config/sapaloq/config.json` | User-editable runtime configuration |
-| SQLite | `~/SapaLOQ/memory/companion.db` | Facts, FTS, skills index, dedupe |
-| Workspace | `~/SapaLOQ/workspace/` | Default actor CWD; persisted per actor |
-| Runtime state | `~/SapaLOQ/state/` | Tasks, workers, actor inboxes, tool jobs |
-| jsonl | `events.jsonl`, `progress/*.jsonl` | WAL, audit, replay on boot |
+| Chat sessions | `~/SapaLOQ/state/sessions/index.json` | Session list + active room |
+| Chat turns | `~/SapaLOQ/state/sessions/{id}/turns.json` | Per-room transcript turns |
+| Checkpoints | `~/SapaLOQ/state/sessions/{id}/checkpoints.json` | Compaction checkpoints |
+| Task turns | `~/SapaLOQ/state/tasks/{id}/turns.json` | Sub-agent durable context |
+| Facts / feedback | `~/SapaLOQ/memory/facts.json`, `feedback.jsonl` | Memory index + 👍👎 audit |
+| Aux config | `~/SapaLOQ/state/config/*.json` | `nodes.json`, `prefetch_rules.json`, `prompt_slices.json`, `skills_index.json` |
+| Workspace cwd | `~/SapaLOQ/state/workspaces/*.json` | Per-actor/session cwd + `_last.json` |
+| Workspace default | `~/SapaLOQ/workspace/` | Install default CWD when nothing persisted |
+| Rollout / audit | `~/SapaLOQ/state/rollout/*.jsonl` | Stream replay, tool/event audit |
+| Runtime state | `~/SapaLOQ/state/` | Actor inboxes, tool jobs, workers, vault paths |
 | Worker health | `state/workers/<task-id>/health.json` | Live per-worker PID/phase/heartbeat snapshot (observability) |
 | Worker errors | `state/workers/<task-id>/error.log` | Errors-only trail per sub-agent (debugging) |
-| Files | `config.json`, `skills/`, `prompt/` | Agent-editable, git-friendly |
+| Files | `skills/`, `prompts/`, `nodes/*.md` | Agent-editable, git-friendly |
 | In-memory | goroutine LRU | Session hot cache - **lost on restart OK** |
+| Legacy (import only) | `~/SapaLOQ/memory/companion.db` | One-shot export → JSON on first boot if present; not opened at runtime |
 
-Restart = reload SQLite + optional jsonl tail. No external cache warm-up.
+Restart = reload JSON state + optional jsonl tail. No external cache warm-up.
 
 ---
 
@@ -71,7 +78,7 @@ Sub-agent **process** (optional): still talks via `sapaloq.sock` to **same** bin
 |---------|----------|
 | sapaloq-core crash | systemd restart; replay jsonl |
 | LLM API down | Orchestrator chat degrades; queue tasks |
-| SQLite locked | WAL mode + short retry + single-writer queue (see [CONTEXT-SOP.md](./CONTEXT-SOP.md#sqlite-write-concurrency-implementation-note)) |
+| Store write race | Per-file `flock` + atomic rename (`store/chat/fsutil.go`); single-writer mutex in process |
 | Slow watcher | Drop + log; never block publisher |
 
 No cascade: "Redis failed so events broken" - **cannot happen**.
@@ -104,7 +111,7 @@ One service. One binary. One socket path.
 |-------|------|
 | Core | Go 1.22+ |
 | UI | **Wails v2** + web frontend (`sapaloq-widget`); see [UI-DECISION.md](./UI-DECISION.md) |
-| DB | modernc.org/sqlite or mattn/go-sqlite3 |
+| Persistence | JSON + JSONL files (`internal/store/chat`) |
 | IPC | net.Listen("unix", socketPath) |
 | GNOME | godbus |
 | LLM | HTTP client direct |
@@ -117,7 +124,7 @@ No Docker, no compose, no message queue for SapaLOQ itself.
 
 `runtime.singleBinary: true` (always - informational lock in schema).
 
-Memory: `engine: sqlite` only. Event wake: `events.bus` not external broker.
+Memory: JSON files under `~/SapaLOQ/memory/` and `~/SapaLOQ/state/config/`. Event wake: `events.bus` not external broker.
 
 The first-boot public example now contains only configuration read by the
 current runtime: runtime path, platform adapter, providers, command registry,
@@ -253,7 +260,7 @@ Server write deadline per frame: **5 s** (`internal/ipc/server.go`).
 | `dial …/sapaloq.sock: i/o timeout` | Core not accepting within 500 ms (slow boot, stale socket file, overloaded host) |
 | `read unix …/sapaloq.sock: i/o timeout` | Core did not finish a **non-chat** IPC handler within **3 s** |
 
-Chat streaming itself uses the 35-minute deadline — a slow model reply does **not** hit the 3 s cap. The 3 s timeout shows up on **side calls** while core is busy: ping (every 4 s), context usage (every 15 s), opening sub-agent monitor (`actor_inspect`), loading a large `chat_history`, or SQLite work during compaction.
+Chat streaming itself uses the 35-minute deadline — a slow model reply does **not** hit the 3 s cap. The 3 s timeout shows up on **side calls** while core is busy: ping (every 4 s), context usage (every 15 s), opening sub-agent monitor (`actor_inspect`), loading a large `chat_history`, or JSON compaction writes.
 
 ### What to do
 

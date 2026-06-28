@@ -77,6 +77,26 @@ func TestUserSteeringIsAppliedAtNextInferenceSafePoint(t *testing.T) {
 	}
 }
 
+func TestAppendActorEventsDrainsInboxOnce(t *testing.T) {
+	o := &Orchestrator{
+		stateDir: t.TempDir(),
+		active:   map[string]*activeRun{"session-1": {id: 1, cancel: func() {}}},
+	}
+	if err := o.UserSteering(context.Background(), "session-1", "banguninfo ada di /apps/profile/BangunInfo"); err != nil {
+		t.Fatal(err)
+	}
+	msgs, applied := o.appendActorEvents(nil, "session-1")
+	if !applied || len(msgs) != 1 {
+		t.Fatalf("applied=%v messages=%+v", applied, msgs)
+	}
+	if !strings.Contains(msgs[0].Content, "BangunInfo") {
+		t.Fatalf("content = %q", msgs[0].Content)
+	}
+	if again, reapplied := o.appendActorEvents(nil, "session-1"); reapplied || len(again) != 0 {
+		t.Fatalf("expected empty drain, got applied=%v messages=%+v", reapplied, again)
+	}
+}
+
 func TestUserSteeringRejectedWhenIdle(t *testing.T) {
 	o := &Orchestrator{stateDir: t.TempDir(), active: make(map[string]*activeRun)}
 	err := o.UserSteering(context.Background(), "session-1", "change course")

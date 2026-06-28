@@ -7,23 +7,65 @@ import { refreshRuntimeStatus } from './runtime-status';
 import { clearMessages } from './messages';
 import { renderUsage } from './connection';
 import { mountChatTranscript, resetChatTranscriptState } from './transcript-pane';
+import { captureMessageScroll, getMessageList } from '../ui/dom';
 import {
   getUserGroup,
   getSessionID,
   setSessionID,
 } from '../core/state';
 
-export async function restoreChatHistory() {
+export async function restoreChatHistory(forceBottom = false) {
   try {
     const history = await ChatHistory();
+    const scroll = forceBottom
+      ? { atBottom: true, scrollTop: 0 }
+      : captureMessageScroll(getMessageList());
     setSessionID(history.session_id || getSessionID());
     clearMessages();
     resetChatTranscriptState();
-    mountChatTranscript(history.transcript || []);
+    mountChatTranscript(history.transcript || [], scroll);
     renderUsage(history.usage as ChatUsage | undefined);
+    void refreshRuntimeStatus();
     return true;
   } catch {
     return false;
+  }
+}
+
+let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+let restoreInFlight = false;
+let restoreAgain = false;
+
+/** Coalesce bursty task_update / completion events into one IPC round-trip. */
+export function scheduleRestoreChatHistory(delayMs = 250) {
+  if (restoreTimer) clearTimeout(restoreTimer);
+  restoreTimer = setTimeout(() => {
+    restoreTimer = null;
+    void flushScheduledRestoreChatHistory();
+  }, delayMs);
+}
+
+export function cancelScheduledRestoreChatHistory() {
+  if (restoreTimer) {
+    clearTimeout(restoreTimer);
+    restoreTimer = null;
+  }
+}
+
+async function flushScheduledRestoreChatHistory() {
+  if (restoreInFlight) {
+    restoreAgain = true;
+    return;
+  }
+  restoreInFlight = true;
+  try {
+    await restoreChatHistory();
+  } finally {
+    restoreInFlight = false;
+    if (restoreAgain) {
+      restoreAgain = false;
+      void flushScheduledRestoreChatHistory();
+    }
   }
 }
 
@@ -211,7 +253,7 @@ export async function toggleHistoryMenu() {
 }
 
 async function refreshAfterSessionChange() {
-  await restoreChatHistory();
+  await restoreChatHistory(true);
   await loadSessionList();
   void refreshRuntimeStatus();
   try {

@@ -1,8 +1,8 @@
 # SapaLOQ - Sub-agent Nodes
 
 > Sub-agent = **node** - bisa local goroutine **atau** remote (Docker, VPS, EC2, SSH host).
-> Registry di SQLite table `nodes` + **comm spec** (SKILL-like) per node.
-> Last updated: 2026-06-22 (runtime data root moved to ~/SapaLOQ)
+> Registry di `state/config/nodes.json` + **comm spec** (SKILL-like) per node.
+> Last updated: 2026-06-28 (JSON node registry; SQLite retired)
 
 Related: [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [DRIVER.md](./DRIVER.md) · [EVENT-BUS.md](./EVENT-BUS.md)
 
@@ -34,10 +34,10 @@ Core orchestrator **tetap** di mesin user (widget). Node = **where sub-agent run
 
 | | Same machine | Outer machine |
 |--|--------------|---------------|
-| **Shared `companion.db`?** | ✅ Local sub-agents | ❌ **Not recommended** |
+| **Shared memory index?** | ✅ Local sub-agents (`facts.json`) | ❌ **Not recommended** |
 | **What remote gets** | Full memory bus access | **Context packet** at spawn (bounded) |
 | **What remote returns** | - | Progress stream + task result summary |
-| **Learning / facts** | memory-janitor local | Remote **may not** write orchestrator SQLite; local promotes after `completed` |
+| **Learning / facts** | memory-janitor local | Remote **may not** write orchestrator JSON store; local promotes after `completed` |
 
 ### Why no shared memory to remote nodes
 
@@ -61,7 +61,7 @@ Core orchestrator **tetap** di mesin user (widget). Node = **where sub-agent run
 }
 ```
 
-Optional: remote node keeps **its own** local SQLite - **never** mounted as orchestrator memory.
+Optional: remote node keeps **its own** local store - **never** mounted as orchestrator memory.
 
 Same-host Docker: default `shareMemory: false` in node row; explicit opt-in only for dev.
 
@@ -71,40 +71,38 @@ Same-host Docker: default `shareMemory: false` in node row; explicit opt-in only
 |-----|------|
 | **orchestrator** (pre-spawn) | Remote or `share_memory=0` → `contextPacket.noMemoryBus=true`; block memory bus tools on remote |
 | **boundary-guard** | Reject remote `share_memory=1` unless `nodes.allowSharedMemoryRemote` |
-| **Node client** | Must not open orchestrator `companion.db` - packet-only over wire |
+| **Node client** | Must not open orchestrator memory files - packet-only over wire |
 
 `local-default` bootstrap: **`share_memory=1`**. Remote nodes: **always 0**.
 
 ---
 
-## SQLite table: `nodes`
+## Node registry: `state/config/nodes.json`
 
-Path: `~/SapaLOQ/memory/companion.db`
+Path: `~/SapaLOQ/state/config/nodes.json` (array of node records; CRUD in `internal/store/chat/nodes.go`).
+
+```json
+{
+  "name": "local-default",
+  "role": "*",
+  "wrapper": "local",
+  "communicate": "unix",
+  "comm_spec_path": "~/SapaLOQ/nodes/local-default.md",
+  "enabled": true,
+  "priority": 0,
+  "share_memory": true
+}
+```
+
+Legacy DDL (pre-JSON) for reference:
 
 ```sql
-CREATE TABLE nodes (
-  name            TEXT PRIMARY KEY,          -- unique name, e.g. vps-scribe
-  role            TEXT NOT NULL,             -- scribe, task-runner, research, ...
-  wrapper         TEXT NOT NULL,             -- local | machine | docker | vps | ec2 | ssh
-  address         TEXT,                      -- loq@1.2.3.4, unix://..., empty for local
-  communicate     TEXT NOT NULL,             -- unix | http | ws | mcp | grpc | ssh
-  comm_spec_path  TEXT NOT NULL,             -- ~/SapaLOQ/nodes/{name}.md
-  enabled         INTEGER NOT NULL DEFAULT 1,
-  priority        INTEGER NOT NULL DEFAULT 0, -- higher = preferred for role
-  capabilities    TEXT,                      -- JSON array, optional override
-  share_memory    INTEGER NOT NULL DEFAULT 0, -- 1 = same-machine only; 0 for remote
-  last_seen_at    TEXT,
-  last_error      TEXT,
-  created_at      TEXT NOT NULL,
-  updated_at      TEXT NOT NULL
-);
-
 CREATE INDEX idx_nodes_role ON nodes(role, enabled, priority DESC);
 ```
 
-### Column guide
+### Field guide
 
-| Column | Example | Notes |
+| Field | Example | Notes |
 |--------|---------|-------|
 | **name** | `vps-scribe` | Stable id; orchestrator references this |
 | **role** | `scribe` | Must match `subAgents.roles` |
@@ -112,7 +110,7 @@ CREATE INDEX idx_nodes_role ON nodes(role, enabled, priority DESC);
 | **address** | `deploy@103.250.x.x` | SSH target, URL host, container name |
 | **communicate** | `ws` | Transport to node agent |
 | **capabilities** | JSON override | Optional |
-| **share_memory** | `0` / `1` | `1` only same-machine; **always 0 for outer machine** |
+| **share_memory** | `false` / `true` | `true` only same-machine; **always false for outer machine** |
 
 ---
 
@@ -259,7 +257,7 @@ Config: `nodes.allowRemoteRoles`, `nodes.requireTls`.
 
 | Risk | Mitigation |
 |------|------------|
-| Token in comm spec | Reference env var only; never store secret in SQLite |
+| Token in comm spec | Reference env var only; never store secret in node registry |
 | Remote scribe path escape | boundary-guard + allowed paths in comm spec |
 | MITM | TLS required for http/ws (`requireTls: true`) |
 

@@ -2,7 +2,21 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**cursor agent MCP tool completion** — api5 path emits EventToolUpdate after exec)
+> Last updated: 2026-06-28 (**live transcript + stop persistence** — watch-stream foreground patches, cancel flush to turns.json)
+
+> Prior: 2026-06-28 (**reader-aware widget auto-scroll** — live updates follow only while the reader is at chat end)
+
+> Prior: 2026-06-28 (persistence: JSON store; SQLite removed from runtime)
+
+> Prior: 2026-06-28 (**workspace default inherits _last** — chat sessions stuck on install default follow `_last.json` after restart)
+
+> Prior: 2026-06-28 (**widget busy-state responsiveness** — debounced history restore + rAF transcript sync during agent runs)
+
+> Prior: 2026-06-28 (**steering safe-point drain** — user steering applies after bridge/tool batch, not only next turn start)
+
+> Prior: 2026-06-28 (**last workspace persistence** — chat rooms inherit last picked cwd across restart/new chat)
+
+> Prior: 2026-06-28 (**cursor agent MCP tool completion** — api5 path emits EventToolUpdate after exec)
 
 > Prior: 2026-06-28 (**image paste token pill fix** — base64 payloads no longer counted as text tokens in context usage)
 
@@ -104,17 +118,17 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema + **wire description** via `toolschema.go` + `internal/tooldocs/defaults/*.md` (frontmatter `description` → OpenAI/Claude tool list). **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
 | 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor`; api2 path + **agent api5 port** (`wire/proto_agent_exec.go`: full exec loop, MCP `ToolExecutor`, built-in rejections; `agent/mapper.go`); enable via `useAgentPath` / `SAPALOQ_AGENT_PATH=1`. See `CURSOR_AGENT_CONTRACT.md` |
-| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
-| 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering is applied before the next inference after the current tool batch, does not create a chat turn, and its optimistic bubble is UI-only. V1 is normal-priority, foreground-target, text-only |
+| 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. Live transcript updates auto-follow only while the reader is at the chat end; scrolling upward preserves the reading position until the reader returns to the bottom. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
+| 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering drains at inference safe points (turn start, after bridge stream ends, after orchestrator tool batch, before continuation body) and emits `steering applied` so the widget clears the pending bubble; does not create a chat turn. V1 is normal-priority, foreground-target, text-only |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
-| 16 | SQLite chat store (sessions/turns/events/snapshots/compaction) | ✅ | `internal/store/chat/store.go` (inline migrate) |
+| 16 | JSON chat store (sessions/turns/checkpoints/rollout) | ✅ | `internal/store/chat/store.go` — `state/sessions/index.json`, per-session `turns.json` / `checkpoints.json`, `state/rollout/*.jsonl` (no SQLite) |
 | 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
-| 18 | Context-SOP: FTS index / prefetch / anti-deep-check / intent-router | 🟡 | `facts` + `facts_fts` (FTS5-probed, LIKE fallback) live in the chat store; `facts` now carries the typed memory schema (`namespace, key, value, confidence, obsolete_at, updated_at`) via idempotent additive migration with a legacy-DB FTS rebuild (`store.go`), `UpsertFact`/`ObsoleteFact`/`FactsByNamespace` (`facts.go`). Six index tables added: `skills_index`, `prefetch_rules`, `prompt_slices`, `learning_queue`, `hot_cache`, `prefetch_log` (`store.go`, `prefetch.go`, `learning.go`, `slices.go`, `skills_index.go`). Heuristic no-LLM intent-router (`orchestrator/intent.go`) + index-first prefetch packet with confidence-gated anti-deep-check directive (`orchestrator/prefetch.go`), injected as a bounded Ask-prompt block and logged to `prefetch_log` (`session.go`, `config.memory`). Still missing: prompt-slice/skills-index boot sync, full Fase-0 task-stack hook, bandit auto rule-tuning |
-| 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `feedback_events` table + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; bounded negative-guidance slice injected into Ask prompt (`session.go`); widget 👍/👎 + correction box wired (`app.go`, `ipc.go`, `main.ts`). `learning_queue` now live: each feedback enqueues a `feedback` event and a best-effort in-proc janitor (`orchestrator/learning.go`, `drainLearningQueue`) promotes `promote` events into facts (drained at boot + after each feedback). No bandit auto-tuning yet |
+| 18 | Context-SOP: index / prefetch / anti-deep-check / intent-router | 🟡 | `memory/facts.json` + `state/config/{prefetch_rules,prompt_slices,skills_index}.json` (`facts.go`, `prefetch.go`, `slices.go`, `skills_index.go`). Substring fact search (legacy FTS removed with SQLite). Heuristic intent-router (`intent.go`) + index-first prefetch (`prefetch.go`) + `prefetch_log.jsonl`. Still missing: prompt-slice/skills boot sync, full Fase-0 task-stack hook, bandit auto rule-tuning |
+| 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `memory/feedback.jsonl` + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; widget 👍/👎 wired. `memory/learning_queue.json` + in-proc janitor (`learning.go`). No bandit auto-tuning yet |
 | 20 | Named sub-agent roles (scribe, memory-janitor, intent-router, boundary-guard, event-watcher, learning-agent, research) | 🟡 | `scribe` is now spawnable (`sapaloq_spawn_scribe`); the sub-agent tool gate is config-driven (`roleAllows` honors `subAgents.roles[].allowedTools` with `*`-wildcards, default-deny mutation when unconfigured); `toolsForRole` offers only allowed+registered tools. `intent-router` and `memory-janitor` now exist as **in-process orchestrator hooks** (`intent.go` classify, `learning.go` drain) rather than spawnable sub-agents. boundary-guard/event-watcher/learning-agent/research still not spawnable |
 | 21 | Mode-aware scribe storage mapping (personal/work/hobby) | ✅ | `scribe_write_note` resolves a destination via `storage.intents`/explicit id/mode(+kind) and appends a timestamped note, boundary-enforced to declared `storage.paths` only. `internal/config/load.go` (`StorageConfig`/`StoragePath`/`Resolve`), `scribe.go` |
 | 22 | Skills system | 🟡 | Scan + trigger/FTS match + bounded injection done; embedded defaults auto-seeded with upgrade-if-unmodified (`internal/skills/embed.go`). Shipped defaults: `frontend-design`, `skill-creator`, `code-styleguides`, `peek-agents`, and **`xdotool`** (Linux-only X11 UI documentation/testing/diagnostics guidance with read-only `scripts/check-environment.sh`; explicitly rejects non-Linux and native-Wayland automation). learning-agent skill *writing* still deferred |
-| 23 | Nodes (remote sub-agents) | 🟡 | nodes table + local-default bootstrap + role/priority picker + local spawn routing (no behavior change) + remote Transport (ws) behind a connect probe + fake for tests; full remote execution wiring (envelope→runSubAgentLoop bridge) + /settings node CRUD still deferred |
+| 23 | Nodes (remote sub-agents) | 🟡 | `state/config/nodes.json` registry + local-default bootstrap + role/priority picker + local spawn routing + remote Transport (ws) behind connect probe + fake for tests; full remote execution wiring + /settings node CRUD still deferred |
 | 24 | Driver / Platform (GNOME / D-Bus notifications, `desktop_*`) | 🟡 | `internal/platform` abstraction + headless + freedesktop/gnome D-Bus adapter (behind session-bus probe) + `desktop_notify`/`desktop_dnd_status` + notify→bus bridge; window/screenshot/clipboard still deferred |
 | 25 | Replaceable per-mode system prompts (Ask/planner/agent/scribe) | ✅ | `internal/prompts` - embedded defaults materialized to `~/SapaLOQ/prompts` with a sha256 manifest; user edits preserved, unmodified files upgraded when the shipped default changes. Wired via `Orchestrator.systemPrompt` in `session.go` (Ask) + `subagent.go` (planner/agent/scribe). `config.prompts.{enabled,dir}` |
 | 26 | Host command tool (`exec`) | ✅ | Run any command anywhere (any path; optional `cwd`), also reads any host file via cat/sed/head/tail/rg; available in **every** mode via the shared dispatcher. `tools_workspace.go` (`toolExec`), in `askTools`/`planTools`/`agentTools`, dispatched in `tools_dispatch.go`. Merged the former `system_exec` + `terminal_run` into one flat `exec` (2026-06-21) |
@@ -124,6 +138,49 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-28) - live transcript + stop persistence
+
+- **Bug:** During long Cursor runs the widget looked frozen (tools/thinking only appeared in a burst after Stop). `turns.json` lagged the UI — user turns persisted but partial assistant/thinking on cancel did not, so chat history remounts jumped upward.
+- **Fix (UI):** `watch` bus now forwards foreground `EventTranscript` on a separate goroutine; `SendMessage`/`RetryChatTurn` emit transcript patches asynchronously. `scheduleSyncChatTranscript` paints tool/thinking/status immediately and uses a 60ms timer fallback when rAF stalls. `patch.finished` applies even if `isSubmitting` already cleared; Stop flushes pending sync.
+- **Fix (core):** User cancel breaks the inference stream loop and persists partial assistant + thinking before `EventDone`. `SendChat` final assistant append compares content with the last assistant turn in the generation instead of skipping whenever any assistant exists.
+- **Tests:** `TestRunConversationCancellationPersistsPartialAssistant`; `go test ./...` + widget build.
+
+## Implemented this session (2026-06-28) - reader-aware widget auto-scroll
+
+- **Bug:** every live transcript patch and direct message/tool append forced `#message-list` to the bottom, interrupting users who were reading earlier progress. Same-session history remounts had the same effect.
+- **Fix:** capture `{atBottom, scrollTop}` before each transcript DOM mutation. Follow new content only when the reader was already within the 2px end tolerance; otherwise restore the prior reading position. Returning to the bottom re-enables follow automatically. Intentional initial/session/new-chat navigation still opens at the newest entry.
+- **Tests:** `transcript-scroll.test.ts` covers bottom follow, away-position preservation, re-enable, rAF timing, remount, tolerance, non-overflow, and direct bubble append.
+
+## Implemented this session (2026-06-28) - docs: JSON persistence (SQLite retired)
+
+- **Runtime store** is JSON/JSONL under `~/SapaLOQ/state/` and `~/SapaLOQ/memory/` (`internal/store/chat/store.go`). Chat sessions: `state/sessions/index.json` + per-room `turns.json`; rollout audit: `state/rollout/*.jsonl`; aux index: `memory/facts.json`, `state/config/nodes.json`, etc.
+- **Legacy:** `companion.db` / `chat.db` are not opened at runtime; one-shot export `companion.db` → JSON on first boot if the file exists (`CONTEXT-SOP.md`). Only external SQLite read: Cursor IDE `state.vscdb` for bridge credentials.
+- **Docs updated:** `RUNTIME.md`, `CONTEXT-SOP.md`, `NODES.md`, `ORCHESTRATOR.md`, `VISION.md`, `PLATFORM.md`, `UI-DECISION.md`, `LIMITATIONS.md`, `BRIDGE.md`, `FEEDBACK-SOP.md`, `DRIVER.md`, `BLUEPRINT.md` (high-traffic paths), `README.md`, `STATUS.md` table rows 16–19/23.
+
+## Implemented this session (2026-06-28) - widget busy-state responsiveness
+
+- **Bug:** UI felt frozen while Planner/Agent were active (conn busy / orb thinking). Every `task_update` stream event triggered a full `ChatHistory` IPC + transcript remount; every streaming delta re-rendered markdown synchronously on the main thread.
+- **Fix:** `scheduleRestoreChatHistory` debounces bursty restores; skip full restore during foreground `isSubmitting()` (live transcript patches already update task cards). `scheduleSyncChatTranscript` batches streaming patches to one DOM pass per animation frame. `setSubmittingUI(false)` no longer leaves steering hint stuck.
+- **Tests:** `chat-completion.test.ts` updated; vitest + `npm run build` pass.
+
+## Implemented this session (2026-06-28) - steering safe-point drain
+
+- **Bug:** User steering stayed in the pending STEERING bubble after all tools showed complete (Planner/Agent idle). Inbox was only drained at the start of each inference turn; long in-bridge tool batches (cursor api5 MCP) could defer application until the next model turn.
+- **Fix:** `conversation.go` drains the actor inbox at additional safe points: after the bridge stream ends, after orchestrator `executeToolBatch`, and before building the continuation/tool-results body. Each drain emits transcript status `steering applied`. Widget `applyTranscriptPatch` calls `markSteeringApplied()` on that status.
+- **Tests:** existing `user_steering_test.go` + `TestAppendActorEventsDrainsInboxOnce`; `go test ./...` and widget `npm run build` pass.
+
+## Implemented this session (2026-06-28) - workspace default inherits _last
+
+- **Bug:** After restart, WORKSPACE still showed `~/SapaLOQ/workspace` even when `_last.json` held `/apps/profile/BangunInfo`. Per-session files seeded with the install default overrode `_last.json` (only missing files inherited last).
+- **Fix:** `actorCWD` for `chat-*` sessions: when persisted cwd equals install default and `_last.json` differs, use `_last.json`. Explicit picker paths (non-default) unchanged.
+- **Tests:** `TestChatSessionWithDefaultCWDInheritsLastWorkspace`, `TestChatSessionExplicitCWDNotOverriddenByLast` in `workspace_test.go`.
+
+## Implemented this session (2026-06-28) - last workspace persistence
+
+- **Bug:** WORKSPACE card reset to `~/SapaLOQ/workspace` after service/UI restart or "chat baru" even when the user had picked another folder.
+- **Fix:** `state/workspaces/_last.json` records the most recent cwd; new `chat-*` sessions without their own file inherit it. `/reset` and `NewSession` copy cwd from the previous active room. Widget refreshes workspace on core reconnect and after history restore. Chat rooms with only the install-default per-session file also inherit `_last.json` (see above).
+- **Tests:** `TestLastWorkspaceUsedForNewChatSession` in `workspace_test.go`.
 
 ## Implemented this session (2026-06-28) - cursor agent MCP tool completion UI
 
@@ -316,7 +373,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   inbox and enters context before the next inference after the current tool
   batch.
 - **History remains clean.** Steering neither starts a generation nor appends a
-  SQLite chat turn. The optimistic bubble is local to the current widget view;
+  does not create a persisted chat turn. The optimistic bubble is local to the current widget view;
   enqueue failure retains the draft and marks the bubble failed. V1 rejects
   attachments, background targets, and `priority: interrupt`.
 - **Tests:** `user_steering_test.go`, `chat-steering.test.ts`; targeted Go tests,
@@ -363,7 +420,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 - **Chat retry no longer leaves exec/tool bubbles behind.** `RetryChat` now purges
   matching generations from the session progress JSONL (tools were persisted there
-  but not removed with SQLite turns). Refreshes the live transcript base before
+  but not removed with persisted turns). Refreshes the live transcript base before
   regenerating.
 - **Frontend:** `removeRepliesAfterTurn` strips all pane siblings after the user
   turn (including `.tool-activity`) and clears the tool-activity cache.
@@ -945,11 +1002,9 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ## Implemented this session (2026-06-23) - Context-SOP memory subsystem (index-first prefetch + learning queue)
 
-- **`facts` upgraded to the typed memory schema (additive, idempotent).** The
-  original `(kind, content, created_at)` table now also carries
-  `namespace, key, value, confidence, obsolete_at, updated_at`, added per-column
-  via a `PRAGMA table_info`-guarded `ALTER TABLE` pass so an existing
-  `companion.db` is upgraded in place and a re-Open is a no-op. New
+- **`facts` typed memory schema (legacy SQLite era).** Store is now `memory/facts.json`. Original SQLite migration added
+  `namespace, key, value, confidence, obsolete_at, updated_at`; legacy
+  `companion.db` is exported once on boot if still on disk. New
   `UpsertFact` (dedupe on `namespace+kind+key`), `ObsoleteFact` (soft-delete,
   excluded from search/recent), and `FactsByNamespace`. **Bug fixed:** creating
   `facts_fts` on a DB that already held `facts` rows left the inverted index
@@ -973,7 +1028,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   block carries an **anti-deep-check** directive (don't explore the filesystem
   first). Injected in `session.go` `contextMessages` alongside the existing
   skills/negative-guidance blocks; every ingress logs one `prefetch_log` row.
-  The packet is assembled from `companion.db`, never the transcript, so it is
+  The packet is assembled from `memory/facts.json`, never the transcript, so it is
   identical across compaction. New `config.memory` block (`prefetchEnabled`,
   `prefetchConfidenceThreshold`, `hotCacheTtlSeconds`) with `WithDefaults`
   (absent block = enabled), plus `schema/config.schema.json` +
@@ -1643,7 +1698,7 @@ Root cause of sub-agents stalling ("kepentok") with no continuation, plus the mi
 
 ## Implemented earlier this session (2026-06-21)
 
-- **Nodes (roadmap #8 / #7 in this list):** new `nodes` SQLite table (+ `idx_nodes_role`) in the inline migrate, with `internal/store/chat/nodes.go` CRUD (`UpsertNode`/`GetNode`/`ListNodes`/`NodesForRole`/`SetNodeEnabled`/`TouchNode`; created_at preserved across upserts; capabilities JSON; tokens never stored). Orchestrator bootstraps an idempotent `local-default` node in `New` (+ writes a comm-spec template) so spawns always have a routable in-proc target. New `pickNode` (hint → highest-priority enabled role/`*` node → local-default; nil-store safe) and spawns now record the chosen `Node` on `taskRecord` - with only local-default configured, behavior is unchanged (regression-tested). New `internal/node` package: a minimal `Transport` interface + bounded `SpawnEnvelope` (with `EnforceRemoteInvariants` stripping memory-bus keys + forcing `NoMemoryBus`), a `FakeTransport` for network-free unit tests, and a real `WSTransport` (gorilla/websocket, Bearer auth header from ENV, connect-probe → fallback). New `NodesConfig` (`allowRemoteRoles`/`requireTlsRemote`/`allowSharedMemoryRemote`/`fallbackToLocalOnRemoteFail`). Deferred: wiring a remote envelope back into the sub-agent loop + `/settings` node CRUD. `store/chat/{store.go,nodes.go,nodes_test.go}`, `core/orchestrator/{nodes.go,nodes_test.go,tasks.go,chat.go}`, `internal/node/{transport,fake,ws,node_test}.go`, `config/load.go`.
+- **Nodes (roadmap #8 / #7 in this list):** `nodes.json` registry (was SQLite table) with `internal/store/chat/nodes.go` CRUD (`UpsertNode`/`GetNode`/`ListNodes`/`NodesForRole`/`SetNodeEnabled`/`TouchNode`; created_at preserved across upserts; capabilities JSON; tokens never stored). Orchestrator bootstraps an idempotent `local-default` node in `New` (+ writes a comm-spec template) so spawns always have a routable in-proc target. New `pickNode` (hint → highest-priority enabled role/`*` node → local-default; nil-store safe) and spawns now record the chosen `Node` on `taskRecord` - with only local-default configured, behavior is unchanged (regression-tested). New `internal/node` package: a minimal `Transport` interface + bounded `SpawnEnvelope` (with `EnforceRemoteInvariants` stripping memory-bus keys + forcing `NoMemoryBus`), a `FakeTransport` for network-free unit tests, and a real `WSTransport` (gorilla/websocket, Bearer auth header from ENV, connect-probe → fallback). New `NodesConfig` (`allowRemoteRoles`/`requireTlsRemote`/`allowSharedMemoryRemote`/`fallbackToLocalOnRemoteFail`). Deferred: wiring a remote envelope back into the sub-agent loop + `/settings` node CRUD. `store/chat/{store.go,nodes.go,nodes_test.go}`, `core/orchestrator/{nodes.go,nodes_test.go,tasks.go,chat.go}`, `internal/node/{transport,fake,ws,node_test}.go`, `config/load.go`.
 
 - **Platform / desktop driver (roadmap #7 / #6 in this list):** new `internal/platform` package - an OS-agnostic `Desktop` interface (`NotifySend`/`NotifyWatch`/`DNDEnabled`/`Info`/`Capabilities`), a `Capability` set + `Has` helper, and a pure `ResolveAdapterID`/`Detect` (env-driven: `XDG_CURRENT_DESKTOP`/`DESKTOP_SESSION`/GOOS, config `platform.adapter`/`detectOrder`/`allowFallback`, factory registry + headless fallback). Always-available `internal/platform/headless` adapter (no caps, closed watch channel) keeps CI/non-Linux green. `internal/platform/freedesktop` adapter implements the `org.freedesktop.Notifications` D-Bus spec for `NotifySend` (urgency hints) + best-effort eavesdrop `NotifyWatch`, constructed behind a `dbus.SessionBus()` probe (falls back to headless when no bus); the `gnome` adapter reuses it. New `desktop_notify` + `desktop_dnd_status` tools (schemas + Ask + sub-agent dispatch) gated by the active adapter's capabilities. Core wires a notify-watch→bus bridge publishing `sapaloq.v1.platform.notification`. Uses the already-present `godbus/dbus/v5` (no new dependency). `internal/platform/{desktop,capability,detect}.go` + tests, `internal/platform/headless/*`, `internal/platform/freedesktop/notify.go`, `config/load.go` (`PlatformConfig`), `core/orchestrator/{chat.go,tools.go,tools_desktop.go,tasks.go,subagent.go,tools_workspace.go}` + `tools_desktop_test.go`, `cmd/sapaloq-core/main.go`, `config/config.example.json`.
 
@@ -1658,7 +1713,7 @@ Root cause of sub-agents stalling ("kepentok") with no continuation, plus the mi
 - **Tool audit:** every orchestrator-executed tool is appended to `vault/tool-calls.jsonl` (`reason: executed`). `chat.go`, `subagent.go`.
 - **Config consumed:** `subAgents.roles[].maxTurns` is now read (`roleMaxTurns`); `config.example.json` `allowedTools` aligned to real tool names. `internal/config/load.go`, `subagent.go`.
 - **Tool upgrade (cursor-style):** `read_file` gains binary detection + line-range (`offset`/`limit`); new `edit_file` (precise string replace), `delete_file`, `glob_file_search`. Plan made iterable. `tools_workspace.go`, `tools.go`, `subagent.go`.
-- **SQLite facts + FTS (roadmap #1):** activated the dead `001_initial.sql` design inline - `facts` table plus an FTS5-probed `facts_fts` virtual table + sync triggers, with a safe LIKE fallback when FTS5 is unavailable. New `facts.go` (`AddFact`/`SearchFacts`/`RecentFacts`/`DeleteFact`, FTS-query sanitizer). `store/chat/store.go`, `facts.go`, `facts_test.go`.
+- **JSON facts index (roadmap #1; was SQLite FTS):** `memory/facts.json` with substring search (`facts.go`: `AddFact`/`SearchFacts`/`RecentFacts`/`DeleteFact`). Legacy `companion.db` exported on first boot if present.
 - **Clarification resume (roadmap #4):** sub-agents can now be answered and resumed. `taskRecord` keeps a capped `Transcript` + `Answer`; new `sapaloq_answer_clarification` tool finds the awaiting task, sets the answer, flips status back to `in_progress`, and re-spawns the loop (transcript replayed, answer nudge appended). `tasks.go`, `subagent.go`, `tools.go`, `session.go`, `clarification_test.go`.
 - **Feedback loop 👍/👎 (roadmap #2):** new `feedback_events` table + `AddFeedback`/`RecentDoNotRepeat`; a 👎 with a correction also stores a `do_not_repeat` fact. The Ask prompt now injects a short, config-bounded negative-guidance block (`feedback.maxNegativeSlicesPerTurn`). New IPC `submit_feedback` op + orchestrator `SubmitFeedback` (no-op when disabled) + widget 👍/👎 controls with an inline correction box. `store/chat/feedback.go`, `config/load.go` (`FeedbackConfig`), `session.go`, `ipc/{protocol,server}.go`, `cmd/sapaloq-widget/{app,ipc}.go`, `frontend/src/{main.ts,style.css}`, `feedback_test.go`.
 - **Event bus: WAL + replay + topic routing (roadmap #5):** the in-proc bus now supports dot-delimited topic patterns (`*` one segment, `**` the rest) via `SubscribeTopics`/`matchTopic`, a non-blocking JSON-lines WAL (`NewWithWAL`) with seq monotonic across restarts, and `Replay(since, fn)`. Boot wiring in `newEventBus` enables the WAL from `events.bus.walPath` and logs replayable counts when `replayOnBoot` is set. `Subscribe` stays receive-all so the widget `watch` is unaffected. `internal/bus/bus.go`, `bus_test.go`, `config/load.go` (`BusConfig` WAL fields), `cmd/sapaloq-core/main.go`.

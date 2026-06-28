@@ -111,7 +111,7 @@ func ParseCursorThinking(raw string) CursorThinkingParts
 
 | Output | Default policy |
 |--------|----------------|
-| `PreRedacted` | Stream → ring `thinking`; **strip** dari scribe/SQLite |
+| `PreRedacted` | Stream → ring `thinking`; **strip** dari persisted turns |
 | `PostRedacted` | User-visible content |
 | `KimiToolTail` | `extractKimiToolCalls` → canonical `ToolCall[]` |
 

@@ -13,7 +13,7 @@ Related: [CONTEXT-SOP.md](./CONTEXT-SOP.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.
 | Approach | Masuk akal? | Why |
 |----------|-------------|-----|
 | **PPO / RLHF fine-tune** model companion | ❌ MVP | Mahal, butuh infra training, data volume, drift |
-| **Reward signal + index update** | ✅ Core | Cepat, lokal, auditable, fits SQLite |
+| **Reward signal + index update** | ✅ Core | Cepat, lokal, auditable, fits JSON store |
 | **Positive/negative prompt slices** | ✅ Core | Analog t2i negative prompt - **behavioral**, bukan weight |
 | **Good/bad exemplars** (Codex-style) | ✅ Core | Proven di coding agents; cheap at inference |
 | **Contextual bandit** on prefetch rules | ✅ Later | Lightweight "RL" tanpa sentuh weights |
@@ -51,7 +51,7 @@ flowchart TB
   end
 
   subgraph tune [Periodic - memory-janitor]
-    LQ --> IX[(SQLite facts + prefetch_rules)]
+    LQ --> IX[(JSON facts + prefetch_rules)]
     PL[prefetch_log telemetry]
     PL --> IX
   end

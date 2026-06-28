@@ -23,7 +23,7 @@ Platform driver ≠ brain driver. **cursor-bridge** is an LLM bridge driver, not
 
 ```
 sapaloq-core (single Go binary)
-├── core/           orchestrator, bus, sqlite - no OS imports
+├── core/           orchestrator, bus, JSON store - no OS imports
 ├── detect/         OS + distro + DE probe
 ├── driver/         platform registry, os.json cache, fingerprint
 ├── drivers/        gnome, kde, freedesktop, windows, headless
@@ -234,7 +234,7 @@ Config override: `driver.override: gnome` skips scoring.
 sapaloq-core/
   cmd/sapaloq-core/main.go
   internal/
-    core/              orchestrator, bus, sqlite
+    core/              orchestrator, bus, JSON store
     detect/
       probe.go         full scan
       fingerprint.go   hash + quick validate

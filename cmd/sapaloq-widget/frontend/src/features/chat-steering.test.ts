@@ -33,6 +33,7 @@ vi.mock('./history', () => ({
   loadSessionList: vi.fn(async () => undefined),
   removeRepliesAfterTurn: vi.fn(() => 0),
   restoreChatHistory: vi.fn(async () => true),
+  scheduleRestoreChatHistory: vi.fn(),
 }));
 
 import { isSubmitting, setCompose, setSessionID, setSubmitting } from '../core/state';

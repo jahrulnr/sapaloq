@@ -190,6 +190,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		}
 		if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
 			cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
+			out.emit(runCtx, statusEvent(sessionID, "steering applied"))
 		}
 		// Heartbeat at the top of every turn so the health watchdog can tell a
 		// genuinely-working agent (advancing turns) from a wedged goroutine.
@@ -346,11 +347,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			select {
 			case <-runCtx.Done():
 				cancelAttempt()
-				out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
-				if ctx.Err() != nil {
-					return all, nil
-				}
-				return all, fmt.Errorf("run stalled: no activity for %d minutes", budget.MaxWallTimeMinutes)
+				break streamLoop
 			case next, ok := <-stream:
 				if !ok {
 					break streamLoop
@@ -513,6 +510,21 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 		}
 		cancelAttempt()
+		if runCtx.Err() != nil {
+			if cfg.recordToolTurns {
+				body := strings.TrimSpace(artifacts.StripModelResponseArtifact(StripCalledToolsMarkers(response.String())))
+				if body != "" && !artifacts.IsAutopilotEcho(body) {
+					o.persistAssistantTurnWithThinking(ctx, persistID, body, cfg.generationID, cfg, &turnThinking)
+				} else {
+					o.flushTurnThinking(ctx, persistID, cfg.generationID, cfg, &turnThinking)
+				}
+			}
+			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
+			if ctx.Err() != nil {
+				return all, nil
+			}
+			return all, fmt.Errorf("run stalled: no activity for %d minutes", budget.MaxWallTimeMinutes)
+		}
 		// The stream for this attempt has ended (done, channel close, or
 		// cancellation). Release any text the calledToolsFilter was withholding
 		// as a possible "[Called tools: …]" marker that turned out to be
@@ -521,6 +533,10 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			response.WriteString(tail)
 			all.WriteString(tail)
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: tail, At: time.Now().UTC()})
+		}
+		if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
+			cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
+			out.emit(runCtx, statusEvent(sessionID, "steering applied"))
 		}
 		if len(pendingTools) > 0 && !retryTextOnly && !retryCompacted && !retryTransport && !hadError {
 			beforeCheckpoint, _ := o.latestCheckpointIndex(runCtx, sessionID)
@@ -555,6 +571,10 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 					cleanMessages = rebuilt
 					lastCompactedMessageCount = len(cleanMessages)
 				}
+			}
+			if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
+				cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
+				out.emit(runCtx, statusEvent(sessionID, "steering applied"))
 			}
 		}
 		stop = stop || dynamicStop.Load()
@@ -855,6 +875,10 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// pacing) now lives in the persona system prompt, so the tool turn stays
 		// clean - just <untrusted_data>-wrapped results - which models reason
 		// over best.
+		if control := actorEventsPrompt(o.drainActorEvents(runID)); control != "" {
+			cleanMessages = append(cleanMessages, bridge.Message{Role: "user", Content: control})
+			out.emit(runCtx, statusEvent(sessionID, "steering applied"))
+		}
 		toolResultsBody := toolObservationBody(toolResults)
 		if len(toolResults) == 0 {
 			// SapaLOQ's own autopilot continuation, NOT a message from the
