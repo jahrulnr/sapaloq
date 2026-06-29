@@ -256,7 +256,7 @@ async function retryMessage(turnID: number) {
   setComposeDisabled(false);
   activeGeneration = null;
   try {
-    const res = await RetryChatTurn(getSessionID(), turnID);
+    const res = await RetryChatTurn(getSessionID(), turnID, currentSessionWorkspacePath());
     setSessionID(res.session_id || getSessionID());
     if (res.generation_id) activeGeneration = res.generation_id;
     if (res.transcript?.length) syncChatTranscript(res.transcript);

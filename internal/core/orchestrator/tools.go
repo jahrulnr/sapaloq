@@ -351,7 +351,7 @@ func init() {
 		"type":"object",
 		"properties":{
 			"command":{"type":"string","description":"Any shell command to run on the host with full access. Use this to read host files too (e.g. cat/sed -n/head/tail/rg). NOTE: commands run via 'bash -lc', so syntax is POSIX/Unix (Linux & macOS); macOS BSD tools differ slightly from GNU (e.g. sed -i, date), and on Windows hosts a bash shell may be unavailable - prefer portable invocations or check the OS first."},
-			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded). Defaults to the actor's persisted workspace CWD (initially ~/SapaLOQ/workspace). A cd persists for later calls by the same actor."},
+			"cwd":{"type":"string","description":"Optional working directory (any path, ~ expanded). Defaults to the actor's persisted workspace CWD. A cd persists for later calls by the same actor."},
 			"timeout_seconds":{"type":"integer","description":"Optional timeout (default 60, max 600)."}
 		},
 		"required":["command"]

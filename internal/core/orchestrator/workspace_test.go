@@ -179,6 +179,11 @@ func TestCoalesceInstallDefaultToolPathUsesSessionCWD(t *testing.T) {
 	if args.Path != project {
 		t.Fatalf("explicit session path must be preserved: %q", args.Path)
 	}
+	args = o.resolveActorArgs(ctx, toolArgs{Path: filepath.Join(workspace, "profile.html")})
+	want := filepath.Join(project, "profile.html")
+	if args.Path != want {
+		t.Fatalf("child of install default = %q, want %q", args.Path, want)
+	}
 }
 
 func TestSyncActorWorkspaceFromHostContext(t *testing.T) {

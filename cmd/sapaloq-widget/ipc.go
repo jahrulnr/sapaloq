@@ -343,9 +343,9 @@ func deleteChatTurn(socketPath, sessionID string, turnID int64) error {
 	return nil
 }
 
-func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, onEvent func(bridge.StreamEvent)) (chatResult, error) {
+func retryChatTurnWithStatus(socketPath, sessionID string, turnID int64, hostContext json.RawMessage, onEvent func(bridge.StreamEvent)) (chatResult, error) {
 	var result chatResult
-	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_retry", SessionID: sessionID, TurnID: turnID}, func(res ipcResponse) {
+	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_retry", SessionID: sessionID, TurnID: turnID, HostContext: hostContext}, func(res ipcResponse) {
 		if onEvent != nil && res.Event != nil {
 			onEvent(*res.Event)
 		}

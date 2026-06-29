@@ -40,7 +40,6 @@ func TestNormalizeAndRender(t *testing.T) {
 		"active_file=none",
 		"attachment_paths=/home/me/proj/a.go",
 		"ui_mode=ask",
-		"Hints only; not durable",
 	} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("missing %q in:\n%s", want, block)

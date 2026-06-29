@@ -97,11 +97,15 @@ func (a *App) emitTranscriptPatch(event bridge.StreamEvent) {
 	runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
 }
 
-func (a *App) SendMessage(sessionID string, text string, attachments []ComposeAttachment, sessionWorkspace string) (chatResult, error) {
-	// sapaloq:boundary widget→ipc — persist WORKSPACE card cwd before chat_send so tools match the UI.
+func (a *App) persistSessionWorkspace(sessionID, sessionWorkspace string) {
 	if ws := strings.TrimSpace(sessionWorkspace); ws != "" && strings.TrimSpace(sessionID) != "" {
 		_, _ = setWorkspace(a.socketPath, sessionID, ws)
 	}
+}
+
+func (a *App) SendMessage(sessionID string, text string, attachments []ComposeAttachment, sessionWorkspace string) (chatResult, error) {
+	// sapaloq:boundary widget→ipc — persist WORKSPACE card cwd before chat_send so tools match the UI.
+	a.persistSessionWorkspace(sessionID, sessionWorkspace)
 	hostCtx := buildHostContextJSON(sessionWorkspace, attachments)
 	return sendChatWithStatus(a.socketPath, sessionID, text, hostCtx, nil)
 }
@@ -142,8 +146,10 @@ func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 	return deleteChatTurn(a.socketPath, sessionID, turnID)
 }
 
-func (a *App) RetryChatTurn(sessionID string, turnID int64) (chatResult, error) {
-	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, nil)
+func (a *App) RetryChatTurn(sessionID string, turnID int64, sessionWorkspace string) (chatResult, error) {
+	a.persistSessionWorkspace(sessionID, sessionWorkspace)
+	hostCtx := buildHostContextJSON(sessionWorkspace, nil)
+	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, hostCtx, nil)
 }
 
 func (a *App) StopChat(sessionID string) error {

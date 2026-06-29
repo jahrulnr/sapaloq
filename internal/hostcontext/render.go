@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-const contractLine = "Hints only; not durable. Tool cwd follows workspace contract above. Read file bodies via tools unless attached in the user message."
+const contractLine = "Authoritative cwd: session_workspace above, else workspace= in runtime variables. Hints only; not durable. Read file bodies via tools unless attached in the user message."
 
 // Render builds the comprehension-first system block for a normalized snapshot.
 func Render(s *Snapshot) string {

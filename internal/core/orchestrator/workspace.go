@@ -218,9 +218,9 @@ func (o *Orchestrator) syncActorWorkspaceFromHostContext(sessionID string, raw j
 	o.persistChatSessionWorkspace(sessionID, cleaned)
 }
 
-// coalesceInstallDefaultToolPath rewrites tool paths that name the install-default
+// coalesceInstallDefaultToolPath rewrites tool paths under the install-default
 // workspace while the actor cwd is a different persisted session folder. Models
-// often hard-code ~/SapaLOQ/workspace even when the WORKSPACE card differs.
+// often hard-code ~/SapaLOQ/workspace/... even when the WORKSPACE card differs.
 func (o *Orchestrator) coalesceInstallDefaultToolPath(runID, path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" || runID == "" {
@@ -228,14 +228,18 @@ func (o *Orchestrator) coalesceInstallDefaultToolPath(runID, path string) string
 	}
 	expanded := filepath.Clean(configExpandHome(path))
 	defaultDir := filepath.Clean(o.defaultWorkspace())
-	if expanded != defaultDir {
-		return path
-	}
 	actorDir := filepath.Clean(o.actorCWD(runID))
 	if actorDir == defaultDir {
 		return path
 	}
-	return actorDir
+	if expanded == defaultDir {
+		return actorDir
+	}
+	rel, err := filepath.Rel(defaultDir, expanded)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return filepath.Join(actorDir, rel)
 }
 
 func (o *Orchestrator) resolveActorArgs(ctx context.Context, args toolArgs) toolArgs {

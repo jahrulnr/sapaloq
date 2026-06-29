@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-29 (**workspace UI↔AI sync**: chat_send persists host_context cwd; SendMessage pre-flight workspace_set; install-default tool path coalesce)
+> Last updated: 2026-06-29 (**workspace prompt alignment**: ask.md + runtime/host-context contract)
 
 > Prior: 2026-06-29 (**cold transcript round ordering**: later autopilot thinking no longer rises above an earlier answer)
 
@@ -202,11 +202,17 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   one generation, hidden autopilot input, exact/count-suffixed tool markers,
   and tool-card placement after second-round thinking.
 
+## Implemented this session (2026-06-29) - workspace prompt alignment
+
+- **Bug:** `ask.md` hardcoded `initially ~/SapaLOQ/workspace`, contradicting `workspace=` / WORKSPACE card (`/tmp/profile`); model thinking echoed install default.
+- **Fix:** `ask.md` points to `workspace=` + `session_workspace=`; stronger contract in `runtimeContextMessage` and `hostcontext.Render`.
+- **Note:** On-disk `~/SapaLOQ/prompts/ask.md` auto-upgrades on core restart if still unmodified (manifest hash).
+
 ## Implemented this session (2026-06-29) - workspace UI ↔ AI sync
 
 - **Bug:** WORKSPACE card showed `/tmp/profile` while Ask tools ran against `~/SapaLOQ/workspace` (model hard-coded install default; widget host_context did not persist cwd on send).
-- **Core:** `syncActorWorkspaceFromHostContext` on `chat_send`; `coalesceInstallDefaultToolPath` in `resolveActorArgs` when session cwd ≠ install default.
-- **Widget:** `SendMessage` calls `workspace_set` before `chat_send`; `currentSessionWorkspacePath` falls back to per-session cache.
+- **Core:** `syncActorWorkspaceFromHostContext` on `chat_send`; `coalesceInstallDefaultToolPath` in `resolveActorArgs` when session cwd ≠ install default (including child paths like `~/SapaLOQ/workspace/profile.html` → session cwd).
+- **Widget:** `SendMessage` and `RetryChatTurn` call `workspace_set` before IPC; `currentSessionWorkspacePath` falls back to per-session cache.
 - **Tests:** `TestCoalesceInstallDefaultToolPathUsesSessionCWD`, `TestSyncActorWorkspaceFromHostContext`, `runtime-status-workspace.test.ts` cache fallback.
 
 ## Implemented this session (2026-06-29) - IPC/socket ordering hardening

@@ -197,7 +197,7 @@ run_path=%s
 etc_path=%s
 runtime_roadmap=%s
 
-Use these paths instead of guessing. workspace is this actor's persisted cwd and project root; relative tool paths and default exec cwd resolve from it.`,
+Use these paths instead of guessing. workspace= (above) is this actor's persisted cwd and project root; relative tool paths and default exec cwd resolve from it.`,
 		o.cfgPath, dirs.DataDir, dirs.MemoryDir, dirs.StateDir, workspace,
 		dirs.PromptsDir, dirs.SkillsDir, dirs.VaultDir, dirs.RunDir, dirs.EtcDir,
 		filepath.Join(dirs.EtcDir, "ROADMAP.md"))

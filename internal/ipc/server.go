@@ -236,7 +236,7 @@ func (s *Server) handleFeedback(ctx context.Context, conn net.Conn, req Request,
 }
 
 func (s *Server) handleRetry(ctx context.Context, conn net.Conn, req Request, start time.Time) {
-	stream, err := s.orch.RetryChat(ctx, req.SessionID, req.TurnID)
+	stream, err := s.orch.RetryChat(ctx, req.SessionID, req.TurnID, req.HostContext)
 	if err != nil {
 		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
 		return

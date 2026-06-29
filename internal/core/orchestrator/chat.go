@@ -433,7 +433,7 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string, 
 // RetryChat regenerates the response for an existing user turn. It preserves
 // that user turn, removes only its descendants, and does not append a duplicate
 // user message.
-func (o *Orchestrator) RetryChat(ctx context.Context, sessionID string, turnID int64) (<-chan bridge.StreamEvent, error) {
+func (o *Orchestrator) RetryChat(ctx context.Context, sessionID string, turnID int64, hostCtx json.RawMessage) (<-chan bridge.StreamEvent, error) {
 	if turnID <= 0 {
 		return nil, fmt.Errorf("turn id is required")
 	}
@@ -473,14 +473,16 @@ func (o *Orchestrator) RetryChat(ctx context.Context, sessionID string, turnID i
 	genStr := fmt.Sprintf("%d", runID)
 	_ = o.chat.SetTurnGenerationID(ctx, sessionID, turnID, genStr)
 	o.refreshActiveTranscriptBase(ctx, sessionID)
-	go o.completeExistingTurn(runCtx, cancel, runID, snap, out, sessionID, turn.Content)
+	go o.completeExistingTurn(runCtx, cancel, runID, snap, out, sessionID, turn.Content, hostCtx)
 	return out, nil
 }
 
-func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.CancelFunc, runID uint64, snap providerSnapshot, out chan bridge.StreamEvent, sessionID, message string) {
+func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.CancelFunc, runID uint64, snap providerSnapshot, out chan bridge.StreamEvent, sessionID, message string, hostCtx json.RawMessage) {
 	defer close(out)
 	defer o.clearActiveGeneration(sessionID, runID)
 	defer cancel()
+	o.syncActorWorkspaceFromHostContext(sessionID, hostCtx)
+	o.setSessionHostContext(sessionID, hostCtx)
 	messages, err := o.contextMessages(ctx, sessionID, message)
 	if err != nil {
 		o.emitChatTerminalError(ctx, out, sessionID, err)
