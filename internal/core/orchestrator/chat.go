@@ -23,6 +23,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/skills"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 	"github.com/jahrulnr/sapaloq/internal/vault"
+	"github.com/jahrulnr/searchwire"
 )
 
 type Orchestrator struct {
@@ -65,6 +66,7 @@ type Orchestrator struct {
 	skills           []skills.Skill
 	desktop          platform.Desktop
 	prompts          *prompts.Manager
+	webSearcher      webSearchClient
 	// bgJobsReg is the in-process registry for non-blocking (fire-and-forget)
 	// tool jobs. See tools_bg_jobs.go. bgJobsOnce guards its lazy init.
 	bgJobsReg  *bgJobRegistry
@@ -159,6 +161,7 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 		skills:       loadedSkills,
 		desktop:      desktop,
 		prompts:      promptMgr,
+		webSearcher:  newWebSearcher(cfg.WebSearch.WithDefaults()),
 		redactor:     privacyfilter.New(),
 	}
 	// Seed the in-memory vision cache from config so a model previously proven
@@ -184,6 +187,10 @@ func New(cfg config.Config, cfgPath string, b bridge.Bridge, eventBus *bus.Bus) 
 	// staring at a task that can never advance.
 	o.recoverOrphanedTasks()
 	return o, nil
+}
+
+func newWebSearcher(cfg config.WebSearchConfig) *searchwire.Searcher {
+	return searchwire.New(cfg.SearchwireConfig())
 }
 
 func (o *Orchestrator) Bus() *bus.Bus { return o.bus }

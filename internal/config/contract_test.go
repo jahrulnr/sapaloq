@@ -50,6 +50,9 @@ func TestPublicExampleLoadsActiveRuntimeFields(t *testing.T) {
 	if cfg.Vault.MaxLogBytes != 5<<20 || cfg.Vault.KeepRotatedFiles != 3 {
 		t.Fatalf("vault config not loaded: %+v", cfg.Vault)
 	}
+	if cfg.WebSearch.Limit != 8 || cfg.WebSearch.TimeoutSec != 20 || cfg.WebSearch.GitHub.TokenEnv != "GITHUB_TOKEN" {
+		t.Fatalf("web search config not loaded: %+v", cfg.WebSearch)
+	}
 	if !strings.HasSuffix(cfg.Events.Bus.WALPath, "/SapaLOQ/state/events.jsonl") {
 		t.Fatalf("event WAL path not loaded: %+v", cfg.Events.Bus)
 	}

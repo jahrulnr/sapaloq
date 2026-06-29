@@ -64,7 +64,7 @@ func (o *Orchestrator) sharedToolRunner(ctx context.Context, args toolArgs, name
 	case "web_fetch":
 		return func(ctx context.Context) (string, error) { return toolWebFetch(ctx, args), nil }, true
 	case "web_search":
-		return func(ctx context.Context) (string, error) { return toolWebSearch(ctx, args), nil }, true
+		return func(ctx context.Context) (string, error) { return o.webSearch(ctx, args), nil }, true
 	case "exec":
 		return o.execBgRun(args, actorRunID(ctx)), true
 	case "write_file":

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jahrulnr/searchwire"
+
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/credentials"
 )
 
@@ -27,6 +29,51 @@ type Config struct {
 	Nodes         NodesConfig        `json:"nodes,omitempty"`
 	Prompts       PromptsConfig      `json:"prompts,omitempty"`
 	Vault         VaultConfig        `json:"vault,omitempty"`
+	WebSearch     WebSearchConfig    `json:"webSearch,omitempty"`
+}
+
+// WebSearchConfig tunes the searchwire-backed web_search tool. Searchwire
+// keeps its built-in source set (Brave, Startpage, Wikipedia, and GitHub);
+// SapaLOQ only exposes the result limit, timeout, and optional GitHub token.
+type WebSearchConfig struct {
+	Limit      int             `json:"limit,omitempty"`
+	TimeoutSec int             `json:"timeoutSec,omitempty"`
+	GitHub     WebSearchGitHub `json:"github,omitempty"`
+}
+
+type WebSearchGitHub struct {
+	Token    string `json:"token,omitempty"`
+	TokenEnv string `json:"tokenEnv,omitempty"`
+}
+
+// WithDefaults preserves the old web_search result count and timeout while
+// letting searchwire supply its own source-level defaults.
+func (w WebSearchConfig) WithDefaults() WebSearchConfig {
+	if w.Limit <= 0 {
+		w.Limit = 8
+	}
+	if w.TimeoutSec <= 0 {
+		w.TimeoutSec = 20
+	}
+	if strings.TrimSpace(w.GitHub.TokenEnv) == "" {
+		w.GitHub.TokenEnv = "GITHUB_TOKEN"
+	}
+	return w
+}
+
+// SearchwireConfig maps the public SapaLOQ config to searchwire without
+// exposing source-selection knobs in the v1 config contract.
+func (w WebSearchConfig) SearchwireConfig() searchwire.Config {
+	w = w.WithDefaults()
+	return searchwire.Config{
+		Limit:     w.Limit,
+		Timeout:   time.Duration(w.TimeoutSec) * time.Second,
+		UserAgent: "SapaLOQ/1.0 (+searchwire)",
+		GitHub: searchwire.GitHubConfig{
+			Token:    strings.TrimSpace(w.GitHub.Token),
+			TokenEnv: w.GitHub.TokenEnv,
+		},
+	}
 }
 
 // VaultConfig tunes the rotating tool-call audit log (vault/tool-calls.jsonl).
@@ -913,6 +960,7 @@ func normalizeAndValidate(cfg Config) (Config, error) {
 	cfg.Nodes = cfg.Nodes.WithDefaults()
 	cfg.Prompts = cfg.Prompts.WithDefaults()
 	cfg.Vault = cfg.Vault.WithDefaults()
+	cfg.WebSearch = cfg.WebSearch.WithDefaults()
 	if err := cfg.Commands.Validate(); err != nil {
 		return Config{}, err
 	}

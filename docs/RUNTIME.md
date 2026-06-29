@@ -3,7 +3,7 @@
 > **Satu binary Go** - goroutine + channel + persistence lokal. No mandatory
 > broker/cache daemon; optional LLM drivers may manage an external provider
 > process such as `codex app-server`.
-> Last updated: 2026-06-28 (widget IPC sliding idle timeout: reset per frame when streaming; threshold-only when idle)
+> Last updated: 2026-06-29 (searchwire-backed web search config and live reload)
 
 Widget IPC read timeout (`cmd/sapaloq-widget/ipc.go`, `setIPCReadDeadline`):
 
@@ -136,11 +136,27 @@ No Docker, no compose, no message queue for SapaLOQ itself.
 Memory: JSON files under `~/SapaLOQ/memory/` and `~/SapaLOQ/state/config/`. Event wake: `events.bus` not external broker.
 
 The first-boot public example now contains only configuration read by the
-current runtime: runtime path, platform adapter, providers, command registry,
+current runtime: runtime path, platform adapter, providers, web search, command registry,
 continuation/compaction/completion, active sub-agent roles, storage, skills,
 prompts, feedback, vault, and event-bus socket/WAL. Roadmap-only knobs remain
 documented in their subsystem docs but are not copied into a live config where
 `/settings` could falsely report a successful no-op.
+
+`webSearch` configures the searchwire-backed `web_search` tool. Changes through
+`/settings patch` or the config watcher rebuild the searcher without restarting
+the process.
+
+| Config (`config.json` → `webSearch`) | Default | Meaning |
+|---|---:|---|
+| `limit` | `8` | Maximum fused results returned to the model |
+| `timeoutSec` | `20` | HTTP client timeout for concurrent source requests |
+| `github.token` | empty | Optional direct token override; prefer `tokenEnv` so the secret stays outside config.json |
+| `github.tokenEnv` | `GITHUB_TOKEN` | Optional GitHub API token environment variable; the public example contains no token value |
+
+The built-in source set is intentionally not configurable in v1: Brave,
+Startpage, Wikipedia, and GitHub run concurrently. Successful sources still
+produce title/URL/snippet output when another source fails; an all-source
+failure is reported explicitly.
 
 `orchestrator.continuation.maxParallelTools` defaults to `8`. Tool-job state is
 persisted under `state/tool-jobs/*.json`; queued/running jobs found after a
@@ -324,7 +340,9 @@ missing lifecycle tools (`sapaloq_stop`, etc.) to sub-agent `allowedTools`. Stil
 `os.json` regeneration checks and a unified SQL migration runner.
 `maxParallelTools` is additive and receives its default through
 `OrchestratorConfig.WithDefaults`, so existing 1.2 configs do not require a
-destructive rewrite.
+destructive rewrite. `webSearch` is likewise additive: older configs receive
+the `8` result / `20s` / `GITHUB_TOKEN` defaults during normalization, so no
+schema-version migration is required.
 
 ```bash
 sapaloq-core doctor              # current checks

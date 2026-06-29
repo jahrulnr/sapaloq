@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.5.0",
-  "updatedAt": "2026-06-21T00:00:00Z",
-  "updatedBy": "bootstrap",
+  "updatedAt": "2026-06-29T00:00:00Z",
+  "updatedBy": "searchwire-web-search",
   "runtime": {
     "dataDir": "~/SapaLOQ",
     "binaryName": "sapaloq-core"
@@ -14,6 +14,13 @@
       "headless"
     ],
     "allowFallback": true
+  },
+  "webSearch": {
+    "limit": 8,
+    "timeoutSec": 20,
+    "github": {
+      "tokenEnv": "GITHUB_TOKEN"
+    }
   },
   "llmBridge": {
     "providerKey": "cursor",

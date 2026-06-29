@@ -1,7 +1,7 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-28 (layer boundaries doc; see BOUNDARIES.md)
+> Last updated: 2026-06-29 (web_search backend migrated to searchwire metasearch)
 
 Related: [BOUNDARIES.md](./BOUNDARIES.md) · [VISION.md](./VISION.md)
 
@@ -196,6 +196,16 @@ Per-role limits (defaults): `task-runner: 2`, `planner: 1`, `research: 1`, other
 ### Non-Cursor canonical tool surface
 
 Provider-bridge backends (OpenAI/Claude/Kimi/OpenRouter/TokenRouter/etc.) do not get Cursor's native IDE tool set. SapaLOQ exposes **role-scoped canonical tools** instead. Tool availability is resolved by role/mode before each LLM request; never expose Agent tools to Ask.
+
+**Web assessment.** `web_search {"query":"..."}` delegates to the pinned
+`github.com/jahrulnr/searchwire` runtime, which queries Brave, Startpage,
+Wikipedia, and GitHub concurrently, deduplicates/ranks hits, and returns
+title + URL + snippet. Partial source failures are appended to successful
+results; when every source fails, the tool returns an explicit unavailable
+message. `webSearch.limit` defaults to `8`, `timeoutSec` to `20`, and the
+optional GitHub token is read from `webSearch.github.token` or
+`webSearch.github.tokenEnv` (default `GITHUB_TOKEN`). Config reload rebuilds
+the searcher. Use `web_fetch` for full text after selecting a result.
 
 **Streaming vs non-stream framing (provider-bridge only).** Each provider entry chooses its wire framing via the `stream` config flag (tri-state `*bool`, default `true`; resolved by `LLMBridge.StreamEnabled()`):
 

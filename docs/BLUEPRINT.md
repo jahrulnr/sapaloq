@@ -1,7 +1,7 @@
 # SapaLOQ - Development Blueprint (Proposal)
 
 > **Unified synthesis** of all SapaLOQ architecture docs. Single book for implementers, reviewers, and future contributors.
-> Last updated: 2026-06-28 (Codex app-server socket bridge + in-turn dynamic tools) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
+> Last updated: 2026-06-29 (searchwire web-search config domain and tool defaults) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
 
 ---
 
@@ -1679,7 +1679,8 @@ No "Redis failed so events broken" cascade.
   the bootstrap example are parity-tested.
 - **Agent-editable paths** - current `/settings patch` accepts only runtime
   fields that are actually consumed; roadmap-only paths are rejected.
-- **Secrets never in config** - use `credentialsEnv` for LLM tokens.
+- **Secrets never ship in config** - public examples use env-backed fields such
+  as `credentialsEnv` and `webSearch.github.tokenEnv`.
 
 Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 
@@ -1695,6 +1696,7 @@ Example bootstrap: [config.example.json](../config/config.example.json) (repo).
 | `events.bus`                                                     | Socket path, JSONL WAL path, replay flag                                                         |
 | `storage`, `subAgents`, `commands`                               | Scribe destinations, active role profiles, slash registry                                       |
 | `vault`                                                          | Tool-call audit log rotation/retention (`maxLogBytes`, `keepRotatedFiles`) - see [RUNTIME.md](./RUNTIME.md#rotation--retention) |
+| `webSearch`                                                      | searchwire result limit, request timeout, and optional GitHub token/env mapping |
 
 
 Roadmap-only domains such as task-stack policy, context ingress, learning,
@@ -1711,6 +1713,9 @@ exist.
 | `llmBridge.driver`                          | `cursor-bridge` | Primary brain; `local-llama` = offline fallback only |
 | `orchestrator.spawnRouting.agentToolPolicy` | `"full"`        | Agent unrestricted post-plan                         |
 | `orchestrator.spawnRouting.autoApprovePlan` | `false`         | User reviews plans                                   |
+| `webSearch.limit`                          | `8`             | Bound fused title/URL/snippet results                |
+| `webSearch.timeoutSec`                     | `20`            | Concurrent source HTTP timeout in seconds            |
+| `webSearch.github.tokenEnv`                | `GITHUB_TOKEN`  | Optional GitHub API authentication via environment   |
 | Host command tool (`exec`) | available in **all** modes | Run any command anywhere (any path; optional `cwd`) - also reads any host file via `cat`/`sed`/`head`/`tail`/`rg`; shared dispatch in every mode - see `internal/core/orchestrator/tools_workspace.go` (`toolExec`) |
 | File tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`) | agent mutates; read/search/list everywhere | Flat, unrestricted CRUD - every `path` accepts absolute/`~`/CWD-relative. No workspace sandbox (a feature-not-security design) - see `internal/core/orchestrator/tools_workspace.go` |
 | Local image vision (`read_image`) | available in **all** modes | Read a local image file (png/jpeg/gif/webp) into the model's vision - returns inline `data:` markdown that `extractImages` re-ingests into `bridge.Request.Images` (same channel as widget attachments); needs a vision-capable model |
@@ -1725,7 +1730,7 @@ exist.
 ### `/settings` allowed paths (default)
 
 Hot-reloadable prefixes currently include continuation/compaction/completion,
-sub-agent profiles, storage, and the two implemented feedback fields. Other
+sub-agent profiles, storage, `webSearch`, and the two implemented feedback fields. Other
 active startup config remains manually editable and takes effect on restart.
 Nested leaf paths are validated; a patch to a roadmap-only field such as
 `orchestrator.spawnRouting.autoApprovePlan` fails instead of reporting success.

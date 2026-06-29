@@ -20,6 +20,7 @@ var defaultAllowedPaths = []string{
 	"/feedback/explicitSignalsEnabled",
 	"/feedback/maxNegativeSlicesPerTurn",
 	"/storage",
+	"/webSearch",
 }
 
 func (o *Orchestrator) handleSettings(ctx context.Context, out chan<- bridge.StreamEvent, sessionID, message string) bool {

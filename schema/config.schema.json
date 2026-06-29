@@ -181,6 +181,41 @@
       }
     },
 
+    "webSearch": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "searchwire-backed web_search tool configuration. Built-in sources remain Brave, Startpage, Wikipedia, and GitHub.",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 8,
+          "description": "Maximum number of fused results returned to the model."
+        },
+        "timeoutSec": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 20,
+          "description": "HTTP client timeout applied to searchwire source requests."
+        },
+        "github": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "token": {
+              "type": "string",
+              "description": "Optional GitHub token. Prefer tokenEnv so secrets stay outside config.json."
+            },
+            "tokenEnv": {
+              "type": "string",
+              "default": "GITHUB_TOKEN",
+              "description": "Environment variable read when token is empty."
+            }
+          }
+        }
+      }
+    },
+
     "llmBridge": {
       "type": "object",
       "description": "LLM brain bridge registry - see BRIDGE.md and PROVIDER-BRIDGE.md. Separate from platform driver (os.json).",
@@ -989,6 +1024,7 @@
                 "/prompts",
                 "/learning",
                 "/feedback",
+                "/webSearch",
                 "/events",
                 "/events/bus",
                 "/nodes",

@@ -2,7 +2,9 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**idle standby**: ping-only health probe when orb collapsed; piggyback status/usage on ping when expanded)
+> Last updated: 2026-06-29 (**searchwire web search**: concurrent metasearch, snippets, partial failures, live config reload)
+
+> Prior: 2026-06-28 (**idle standby**: ping-only health probe when orb collapsed; piggyback status/usage on ping when expanded)
 
 > Prior: 2026-06-28 (**widget IPC sliding idle timeout**: reset per stream frame; idle waits until threshold only)
 
@@ -126,7 +128,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 |---|-----------|--------|------------------|
 | 1 | Execution modes Ask / Plan / Agent | ✅ | Shared `runActor` → `runTurnLoop` (`actor.go`); roles differ by `systemPrompt` + `toolsForRole` + `dispatchTool` only |
 | 2 | Sub-agent tool loop + per-role profiles | ✅ | `dispatchTool` + `runBackgroundTool` / `dispatchAskTool`; `policyForRole` in `actor_policy.go`; role allowlist before shared tools |
-| 3 | Assessment tools (read/search/list_dir, web_search/fetch) | ✅ | `tools_workspace.go`, `tools_web.go`, dispatch in `tools_dispatch.go` |
+| 3 | Assessment tools (read/search/list_dir, web_search/fetch) | ✅ | `web_search` uses pinned `searchwire` for concurrent Brave/Startpage/Wikipedia/GitHub results with snippets, dedup/ranking, and partial-failure reporting; config `webSearch` hot-reloads limit/timeout/GitHub token mapping. `web_fetch` remains direct HTML→text. `tools_workspace.go`, `tools_web.go`, `tools_dispatch.go` |
 | 4 | File + exec tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`, `exec`) | ✅ | `tools_workspace.go`; flat unrestricted surface (any path; no workspace sandbox). Mutating file tools gated to `task-runner`; `exec` available in every mode |
 | 5 | In-place edit / delete / glob tools | ✅ | `tools_workspace.go` (`toolEditFile`, `toolDeleteFile`, `toolGlob`) - added 2026-06-20 |
 | 6 | `read_file` binary guard + line-range read | ✅ | `tools_workspace.go` (`toolReadFile`: NUL/non-printable sniff + `offset`/`limit` line range) - added 2026-06-20 |
@@ -158,6 +160,12 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-29) - searchwire web search
+
+- Replaced the inline DuckDuckGo HTML regex scraper behind `web_search` with pinned `github.com/jahrulnr/searchwire`: Brave, Startpage, Wikipedia, and GitHub execute concurrently; results are fused/deduplicated and rendered as title + URL + snippet. Partial source failures remain visible without discarding successful results; all-source errors and cancellation are explicit.
+- Added `webSearch.{limit,timeoutSec,github.{token,tokenEnv}}` with defaults `8`, `20`, and `GITHUB_TOKEN`; bootstrap/schema parity and `/settings` allowlist are updated. `Orchestrator` owns a testable search client and rebuilds it under the config lock on live reload.
+- Contract tests cover defaults/mapper, multiline and empty snippets, no-result and partial-error formatting, all-source errors, empty input, cancellation, backend injection, uninitialized backend, public example loading, and settings patch acceptance. No live-network test is required in SapaLOQ; source adapter live tests remain searchwire-owned.
 
 ## Implemented this session (2026-06-28) - idle standby ping-only IPC
 
