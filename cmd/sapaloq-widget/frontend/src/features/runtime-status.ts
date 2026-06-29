@@ -135,7 +135,11 @@ export function renderRuntimeStatus(status: RuntimeStatusData) {
 
 export function currentSessionWorkspacePath(): string {
   const el = document.getElementById('runtime-workspace');
-  return (el?.dataset.workspacePath || '').trim();
+  const fromDom = (el?.dataset.workspacePath || '').trim();
+  if (fromDom) return fromDom;
+  const sid = getSessionID().trim();
+  if (sid && workspaceBySession.has(sid)) return workspaceBySession.get(sid)!.trim();
+  return '';
 }
 
 export async function refreshRuntimeStatus() {

@@ -1,7 +1,7 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-29 (host context Fase 3: SearchHints for prefetch + skills)
+> Last updated: 2026-06-29 (causal durable-turn ordering)
 
 Related: [BOUNDARIES.md](./BOUNDARIES.md) · [VISION.md](./VISION.md)
 
@@ -945,6 +945,27 @@ status walaupun event bus in-memory terlewat. Widget meng-update satu card per
 `task_id`, bukan menambah bubble baru untuk setiap perubahan.
 
 Config: `orchestrator.progressStreaming` (see config.schema.json).
+
+### Live transcript ordering
+
+Foreground and actor-monitor transcript deltas are coalesced for 50 ms before
+IPC delivery. Each generation has one emission lock: a delta arriving while an
+older timed flush is scheduled joins that pending buffer, and the timer,
+boundary snapshots, and terminal snapshots cannot overtake one another. This
+preserves provider text order across the timer-goroutine scheduling boundary.
+
+Cold `SessionTranscript` uses chronological turn order, never a generation-wide
+role rank. A generation may contain several inference rounds, so ranking all
+thinking before all assistant rows would move later autopilot thinking above an
+earlier answer. Tool cards use their matching persisted `[Called tools: …]`
+turn as the display anchor because raw tool-call time precedes persistence of
+the same round's thinking turn.
+
+The durable source is ordered the same way. At an inference boundary,
+`runTurnLoop` persists `thinking → assistant → continuation`, where continuation
+is either a `tool` result or hidden `autopilot` input for the next inference.
+`Store.Append*` assigns both `id` and `seq` at call time, so continuation must be
+appended only after the output that caused it.
 
 ---
 

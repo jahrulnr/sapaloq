@@ -33,8 +33,9 @@ type subscriber struct {
 // full subscriber buffers drop the event (same behavior as before), and WAL
 // appends are handed to a serialized background goroutine.
 type Bus struct {
-	mu   sync.RWMutex
-	subs map[*subscriber]struct{}
+	publishMu sync.Mutex
+	mu        sync.RWMutex
+	subs      map[*subscriber]struct{}
 
 	seq int64
 
@@ -166,6 +167,11 @@ func (b *Bus) Close() {
 // appends it to the WAL when enabled. Non-blocking: a full subscriber buffer
 // drops the event.
 func (b *Bus) Publish(topic string, data bridge.StreamEvent) {
+	// Seq is the delivery order contract, not just a unique id. Serialize the
+	// assignment and every downstream enqueue so concurrent publishers cannot
+	// deliver or persist seq N+1 before seq N.
+	b.publishMu.Lock()
+	defer b.publishMu.Unlock()
 	ev := Event{
 		Seq:   atomic.AddInt64(&b.seq, 1),
 		At:    time.Now().UTC().Format(time.RFC3339Nano),

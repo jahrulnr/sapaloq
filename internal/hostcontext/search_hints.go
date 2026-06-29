@@ -6,7 +6,7 @@ import (
 )
 
 // SearchHints are ephemeral host signals used to augment index prefetch FTS and
-// skillsBlock matching. They never change actorCWD or persisted workspace.
+// skillsBlock matching. chat_send also persists session_workspace into actor cwd.
 type SearchHints struct {
 	SessionWorkspace string
 	AttachmentPaths  []string

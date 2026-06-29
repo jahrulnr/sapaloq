@@ -14,6 +14,7 @@ const deltaWidgetPatchMinInterval = 50 * time.Millisecond
 // widgetPatchState holds throttled delta-transcript bookkeeping shared by
 // foreground chat (activeRun) and background actors (subagentSink).
 type widgetPatchState struct {
+	deltaEmitMu           sync.Mutex
 	lastDeltaPatch        time.Time
 	deltaFlushScheduled   bool
 	pendingTextUpsert     bool
@@ -33,12 +34,17 @@ type transcriptEmitOpts struct {
 	coalescer          *TranscriptCoalescer
 	patchState         *widgetPatchState
 	patchMu            *sync.Mutex
+	emitMu             *sync.Mutex
 	out                chan<- bridge.StreamEvent
 	mergePersistedBase bool
 	usageSessionID     string
 }
 
 func (o *Orchestrator) emitCoalescedTranscript(ctx context.Context, opts transcriptEmitOpts, ev bridge.StreamEvent) bool {
+	if opts.emitMu != nil {
+		opts.emitMu.Lock()
+		defer opts.emitMu.Unlock()
+	}
 	if !widgetPatchKind(ev.Kind) {
 		return true
 	}
@@ -67,13 +73,13 @@ func (o *Orchestrator) emitCoalescedTranscript(ctx context.Context, opts transcr
 		}
 	}
 	patchEv := bridge.StreamEvent{
-		Kind:              bridge.EventTranscript,
-		SessionID:         opts.sessionID,
-		ActorID:           opts.actorID,
-		ParentSessionID:   opts.parentSessionID,
-		GenerationID:      opts.generationID,
-		Transcript:        &patch,
-		At:                time.Now().UTC(),
+		Kind:            bridge.EventTranscript,
+		SessionID:       opts.sessionID,
+		ActorID:         opts.actorID,
+		ParentSessionID: opts.parentSessionID,
+		GenerationID:    opts.generationID,
+		Transcript:      &patch,
+		At:              time.Now().UTC(),
 	}
 	return o.emitTranscriptPatch(ctx, opts.out, patchEv)
 }
@@ -118,20 +124,20 @@ func (o *Orchestrator) emitCoalescedTextDelta(ctx context.Context, opts transcri
 		return true
 	}
 	opts.patchMu.Lock()
-	ops := buildTextDeltaOps(opts.patchState, opts.coalescer, opts.generationID, ev.Kind, ev.Delta)
+	ops := buildTextDeltaOps(opts.patchState, opts.generationID, ev.Kind, ev.Delta)
 	opts.patchState.markDeltaPatch()
 	opts.patchMu.Unlock()
 	patch := bridge.DeltaPatch(opts.sessionID, opts.generationID, ops)
 	patch.ActorID = opts.actorID
 	patch.ParentSessionID = opts.parentSessionID
 	patchEv := bridge.StreamEvent{
-		Kind:              bridge.EventTranscript,
-		SessionID:         opts.sessionID,
-		ActorID:           opts.actorID,
-		ParentSessionID:   opts.parentSessionID,
-		GenerationID:      opts.generationID,
-		Transcript:        &patch,
-		At:                time.Now().UTC(),
+		Kind:            bridge.EventTranscript,
+		SessionID:       opts.sessionID,
+		ActorID:         opts.actorID,
+		ParentSessionID: opts.parentSessionID,
+		GenerationID:    opts.generationID,
+		Transcript:      &patch,
+		At:              time.Now().UTC(),
 	}
 	return o.emitTranscriptPatch(ctx, opts.out, patchEv)
 }
@@ -157,25 +163,28 @@ func (o *Orchestrator) flushCoalescedDeltaPatch(ctx context.Context, opts transc
 	if opts.patchState == nil || opts.patchMu == nil || opts.coalescer == nil {
 		return
 	}
+	if opts.emitMu != nil {
+		opts.emitMu.Lock()
+		defer opts.emitMu.Unlock()
+	}
 	opts.patchMu.Lock()
 	opts.patchState.deltaFlushScheduled = false
 	textDelta := opts.patchState.pendingTextFlush.String()
 	thinkDelta := opts.patchState.pendingThinkFlush.String()
 	opts.patchState.pendingTextFlush.Reset()
 	opts.patchState.pendingThinkFlush.Reset()
-	coalescer := opts.coalescer
 	genID := opts.generationID
 	patchState := opts.patchState
 	opts.patchMu.Unlock()
 	var ops []bridge.TranscriptPatchOp
 	if textDelta != "" {
 		opts.patchMu.Lock()
-		ops = append(ops, buildTextDeltaOps(patchState, coalescer, genID, bridge.EventResponseDelta, textDelta)...)
+		ops = append(ops, buildTextDeltaOps(patchState, genID, bridge.EventResponseDelta, textDelta)...)
 		opts.patchMu.Unlock()
 	}
 	if thinkDelta != "" {
 		opts.patchMu.Lock()
-		ops = append(ops, buildTextDeltaOps(patchState, coalescer, genID, bridge.EventThinkingDelta, thinkDelta)...)
+		ops = append(ops, buildTextDeltaOps(patchState, genID, bridge.EventThinkingDelta, thinkDelta)...)
 		opts.patchMu.Unlock()
 	}
 	if len(ops) == 0 {
@@ -188,28 +197,28 @@ func (o *Orchestrator) flushCoalescedDeltaPatch(ctx context.Context, opts transc
 	patch.ActorID = opts.actorID
 	patch.ParentSessionID = opts.parentSessionID
 	patchEv := bridge.StreamEvent{
-		Kind:              bridge.EventTranscript,
-		SessionID:         opts.sessionID,
-		ActorID:           opts.actorID,
-		ParentSessionID:   opts.parentSessionID,
-		GenerationID:      genID,
-		Transcript:        &patch,
-		At:                time.Now().UTC(),
+		Kind:            bridge.EventTranscript,
+		SessionID:       opts.sessionID,
+		ActorID:         opts.actorID,
+		ParentSessionID: opts.parentSessionID,
+		GenerationID:    genID,
+		Transcript:      &patch,
+		At:              time.Now().UTC(),
 	}
 	_ = o.emitTranscriptPatch(ctx, opts.out, patchEv)
 }
 
-func buildTextDeltaOps(ps *widgetPatchState, coalescer *TranscriptCoalescer, genID string, kind bridge.EventKind, delta string) []bridge.TranscriptPatchOp {
+func buildTextDeltaOps(ps *widgetPatchState, genID string, kind bridge.EventKind, delta string) []bridge.TranscriptPatchOp {
 	var entryID string
 	var entryKind bridge.TranscriptEntryKind
 	var upsertSent *bool
 	switch kind {
 	case bridge.EventThinkingDelta:
-		entryID = coalescer.PendingThinkingID()
+		entryID = pendingTranscriptEntryID(genID, "thinking")
 		entryKind = bridge.TranscriptThinking
 		upsertSent = &ps.pendingThinkingUpsert
 	default:
-		entryID = coalescer.PendingTextID()
+		entryID = pendingTranscriptEntryID(genID, "text")
 		entryKind = bridge.TranscriptText
 		upsertSent = &ps.pendingTextUpsert
 	}
@@ -234,6 +243,13 @@ func buildTextDeltaOps(ps *widgetPatchState, coalescer *TranscriptCoalescer, gen
 		})
 	}
 	return ops
+}
+
+func pendingTranscriptEntryID(generationID, kind string) string {
+	if generationID == "" {
+		return "pending-" + kind
+	}
+	return generationID + "-pending-" + kind
 }
 
 func (ps *widgetPatchState) accumulateFlush(mu *sync.Mutex, ev bridge.StreamEvent) {
@@ -264,6 +280,12 @@ func (ps *widgetPatchState) resetPendingUpsert(kind bridge.EventKind) {
 func (ps *widgetPatchState) throttleDelta(mu *sync.Mutex) bool {
 	mu.Lock()
 	defer mu.Unlock()
+	// Once a timed flush owns older bytes, every later delta must join that
+	// buffer until the flush is emitted. Otherwise a scheduler race can publish
+	// the new delta first and the buffered older text second.
+	if ps.deltaFlushScheduled {
+		return true
+	}
 	now := time.Now()
 	if ps.lastDeltaPatch.IsZero() || now.Sub(ps.lastDeltaPatch) >= deltaWidgetPatchMinInterval {
 		return false

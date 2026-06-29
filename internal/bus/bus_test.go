@@ -2,11 +2,43 @@ package bus
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 )
+
+func TestConcurrentPublishPreservesSequenceDeliveryOrder(t *testing.T) {
+	const (
+		publishers   = 16
+		perPublisher = 250
+	)
+	b := New()
+	events, cancel := b.Subscribe(publishers * perPublisher)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for publisher := 0; publisher < publishers; publisher++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < perPublisher; n++ {
+				b.Publish("sapaloq.v1.chat.transcript", bridge.NewEvent(bridge.EventTranscript))
+			}
+		}()
+	}
+	wg.Wait()
+
+	var previous int64
+	for n := 0; n < publishers*perPublisher; n++ {
+		event := <-events
+		if event.Seq != previous+1 {
+			t.Fatalf("delivery %d has seq %d after %d", n, event.Seq, previous)
+		}
+		previous = event.Seq
+	}
+}
 
 func TestMatchTopic(t *testing.T) {
 	cases := []struct {

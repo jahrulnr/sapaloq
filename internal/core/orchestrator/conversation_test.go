@@ -118,6 +118,101 @@ func (b *thinkingBridge) Complete(_ context.Context, _ bridge.Request) (<-chan b
 	return out, nil
 }
 
+type durableTurnOrderBridge struct{ calls int }
+
+func (b *durableTurnOrderBridge) ID() string              { return "durable-turn-order" }
+func (b *durableTurnOrderBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *durableTurnOrderBridge) Complete(_ context.Context, _ bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	call := b.calls
+	out := make(chan bridge.StreamEvent, 5)
+	go func() {
+		defer close(out)
+		out <- bridge.StreamEvent{Kind: bridge.EventThinkingDelta, Delta: fmt.Sprintf("thinking-%d", call)}
+		switch call {
+		case 1:
+			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "first answer"}
+		case 2:
+			out <- bridge.StreamEvent{Kind: bridge.EventResponseDelta, Delta: "using tool"}
+			tool := parse.ToolCall{ID: "exec-1", Name: "exec", Arguments: []byte(`{"command":"true"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
+		default:
+			tool := parse.ToolCall{ID: "stop-1", Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &tool}
+		}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+func TestRunTurnLoopPersistsRoundOutputBeforeContinuation(t *testing.T) {
+	ctx := context.Background()
+	store, err := chatstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := store.ActiveSession(ctx, "test", "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendTurnIDWithGeneration(ctx, sessionID, "user", "hy hy", 2, "3"); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &durableTurnOrderBridge{}
+	o := &Orchestrator{
+		cfg:          config.Config{Orchestrator: config.DefaultOrchestratorConfig()},
+		chat:         store,
+		memoryDir:    t.TempDir(),
+		vision:       make(map[string]bool),
+		active:       make(map[string]*activeRun),
+		sessionTasks: make(map[string]map[string]struct{}),
+	}
+	out := make(chan bridge.StreamEvent, 64)
+	go func() {
+		for range out {
+		}
+	}()
+	cfg := turnConfig{
+		sessionID: sessionID, runID: sessionID, generationID: "3",
+		tools: []string{"exec", "sapaloq_stop"},
+		sink:  chatSink{o: o, out: out}, recordToolTurns: true,
+		dispatch: func(_ context.Context, call parse.ToolCall) turnOutcome {
+			switch call.Name {
+			case "exec":
+				return turnOutcome{text: "exec ok", handled: true}
+			case "sapaloq_stop":
+				return turnOutcome{text: "stopped", handled: true, stop: true}
+			default:
+				return turnOutcome{}
+			}
+		},
+	}
+	if _, err := o.runTurnLoop(ctx, providerSnapshot{
+		cfg: o.cfg, entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake,
+	}, "hy hy", []bridge.Message{{Role: "user", Content: "hy hy"}}, cfg); err != nil {
+		t.Fatal(err)
+	}
+	close(out)
+
+	turns, err := store.ActiveTurns(ctx, sessionID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoles := []string{"user", "thinking", "assistant", "autopilot", "thinking", "assistant", "tool", "thinking", "assistant"}
+	if len(turns) != len(wantRoles) {
+		t.Fatalf("turn count = %d, want %d: %+v", len(turns), len(wantRoles), turns)
+	}
+	for i, wantRole := range wantRoles {
+		if turns[i].Role != wantRole {
+			t.Fatalf("turn %d id=%d seq=%d role=%q, want %q; turns=%+v", i, turns[i].ID, turns[i].Seq, turns[i].Role, wantRole, turns)
+		}
+		if turns[i].ID != int64(i+1) || turns[i].Seq != i+1 {
+			t.Fatalf("turn %d has id=%d seq=%d, want %d; turns=%+v", i, turns[i].ID, turns[i].Seq, i+1, turns)
+		}
+	}
+}
+
 // stuckBridge models a provider/bridge that ignores context cancellation and
 // never closes its event channel. User Stop must still finish the conversation
 // immediately instead of waiting for this producer forever.

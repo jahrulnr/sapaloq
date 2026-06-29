@@ -61,13 +61,13 @@ type Orchestrator struct {
 	// autoClarifyCount bounds orchestrator self-answers per task so an
 	// auto-answer ↔ re-ask loop with a confused sub-agent can't run forever.
 	// Guarded by spokenMu (same terminal-path lock).
-	autoClarifyCount map[string]int
-	visionMu         sync.RWMutex
-	vision           map[string]bool
-	skillsMu         sync.RWMutex
-	skills           []skills.Skill
-	desktop          platform.Desktop
-	prompts          *prompts.Manager
+	autoClarifyCount   map[string]int
+	visionMu           sync.RWMutex
+	vision             map[string]bool
+	skillsMu           sync.RWMutex
+	skills             []skills.Skill
+	desktop            platform.Desktop
+	prompts            *prompts.Manager
 	webSearcher        webSearchClient
 	hostCtxMu          sync.Mutex
 	sessionHostContext map[string]*hostcontext.Snapshot
@@ -382,6 +382,7 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string, 
 			GenerationID: genStr,
 			At:           time.Now().UTC(),
 		})
+		o.syncActorWorkspaceFromHostContext(sessionID, hostCtx)
 		o.setSessionHostContext(sessionID, hostCtx)
 		messages, err := o.contextMessages(ctx, sessionID, message)
 		if err != nil {
@@ -765,6 +766,9 @@ func (o *Orchestrator) emitWidget(ctx context.Context, out chan<- bridge.StreamE
 		out:                out,
 		mergePersistedBase: true,
 		usageSessionID:     sessionID,
+	}
+	if patchState != nil {
+		opts.emitMu = &patchState.deltaEmitMu
 	}
 	if coalescer == nil {
 		opts.coalescer = scratch

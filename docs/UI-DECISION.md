@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-29 (host_context on chat send)
+> Last updated: 2026-06-29 (workspace UI↔AI sync on chat send)
 
 Related: [PLATFORM.md](./PLATFORM.md) · [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [BOUNDARIES.md](./BOUNDARIES.md)
 
@@ -78,14 +78,20 @@ visible); the choice persists **only for that chat id** via `workspace_set` IPC
 (no global `_last.json`; new chat rooms start at `~/SapaLOQ/workspace` until
 picked). On each chat send the widget also ships an ephemeral **`host_context`**
 JSON blob (session workspace path + compose attachment paths/metadata) alongside
-the user message; core injects it as a separate system block without changing
-persisted cwd. It refreshes every three seconds and immediately after task
+the user message; core persists `session_workspace` into `actorCWD` before the
+turn runs and injects the snapshot as a separate system block. `SendMessage`
+also calls `workspace_set` so the WORKSPACE card and tool cwd stay aligned even
+if the user did not re-open the picker after switching rooms. It refreshes every three seconds and immediately after task
 events; the existing task cards remain the detailed lifecycle history.
 
 ### Transcript boundary (widget ↔ orchestrator)
 
 The widget **renders** `TranscriptPatch` only; it does not own persistence or tool
 coalesce logic. See [BOUNDARIES.md](./BOUNDARIES.md).
+Cold history arrives already ordered by inference round (`thinking → response →
+next thinking → tool`); the widget must not regroup rows by role or generation.
+That order originates in durable `turns.json` append order for new sessions;
+backend compatibility logic repairs presentation of older malformed sessions.
 
 | Path | Use when | Do not use when |
 |------|----------|-----------------|

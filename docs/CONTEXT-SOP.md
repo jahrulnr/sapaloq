@@ -2,11 +2,17 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop - bukan repo coding.
-> Last updated: 2026-06-29 (Fase 3 host SearchHints: prefetch workspace + skills attachment boost)
+> Last updated: 2026-06-29 (causal durable-turn ordering)
 
 ---
 
 ## Sub-agent resume (2026-06-28)
+
+`turns.json` is causally ordered at each inference boundary: persist the
+round's `thinking`, then `assistant`, then the continuation fed into the next
+round (`tool` result or hidden `autopilot`). Because `id` and `seq` are assigned
+by append time, changing this call order would corrupt durable replay even if
+the UI later sorted it correctly.
 
 When a background actor **failed** or was **stopped** but has durable turns in `state/tasks/{taskId}/turns.json`, Ask should call **`sapaloq_resume_task`** (same task id) to continue that work instead of spawning anew for the same job. Multiple concurrent sub-agents per session remain allowed (e.g. explore two repos in parallel).
 

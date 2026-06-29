@@ -98,6 +98,10 @@ func (a *App) emitTranscriptPatch(event bridge.StreamEvent) {
 }
 
 func (a *App) SendMessage(sessionID string, text string, attachments []ComposeAttachment, sessionWorkspace string) (chatResult, error) {
+	// sapaloq:boundary widget→ipc — persist WORKSPACE card cwd before chat_send so tools match the UI.
+	if ws := strings.TrimSpace(sessionWorkspace); ws != "" && strings.TrimSpace(sessionID) != "" {
+		_, _ = setWorkspace(a.socketPath, sessionID, ws)
+	}
 	hostCtx := buildHostContextJSON(sessionWorkspace, attachments)
 	return sendChatWithStatus(a.socketPath, sessionID, text, hostCtx, nil)
 }

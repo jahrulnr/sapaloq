@@ -265,3 +265,48 @@ func TestListenRefusesNonSocketPath(t *testing.T) {
 		t.Fatalf("non-socket path was modified: %q", got)
 	}
 }
+
+func TestListenRefusesActiveSocketWithoutUnlinkingIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), config.TestSocketFileName)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	err = NewServer(config.Config{}, nil).ListenAndServe(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "already served") {
+		t.Fatalf("ListenAndServe() = %v, want active-socket refusal", err)
+	}
+	conn, err := net.DialTimeout("unix", path, time.Second)
+	if err != nil {
+		t.Fatalf("original listener became unreachable: %v", err)
+	}
+	_ = conn.Close()
+}
+
+func TestListenReplacesStaleOwnedSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), config.TestSocketFileName)
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- NewServer(config.Config{}, nil).ListenAndServe(ctx, path) }()
+	waitIPCServerSocket(t, path)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("server shutdown: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop")
+	}
+}

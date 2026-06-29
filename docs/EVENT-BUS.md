@@ -2,7 +2,7 @@
 
 > **Internal pub/sub** inside `sapaloq-core` - goroutine + channel + route watcher.
 > Bukan service terpisah. Bukan Redis / Rabbit / MQTT.
-> Last updated: 2026-06-22 (tool lifecycle, steering, and decision events)
+> Last updated: 2026-06-29 (concurrent publish ordering)
 
 Related: [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md)
 
@@ -56,6 +56,7 @@ flowchart TB
 // sapaloq-core/internal/bus/bus.go
 
 type Bus struct {
+    publishMu sync.Mutex
     mu       sync.RWMutex
     watchers []*Watcher
     seq      atomic.Uint64
@@ -67,7 +68,12 @@ func (b *Bus) Watch(id string, patterns []string, buf int) *Watcher
 func (b *Bus) Publish(topic, producer string, payload any) (Envelope, error)
 ```
 
-Publish never blocks on slow consumer - drop + log.
+`Publish` serializes sequence assignment, subscriber fan-out, and WAL enqueue.
+Therefore the observed channel/WAL order always matches increasing `seq`, even
+when foreground chat and background actors publish concurrently. Subscriber
+delivery remains non-blocking: a full subscriber buffer drops that live copy.
+When WAL is configured its enqueue applies backpressure instead of dropping the
+durable replay copy.
 
 ---
 

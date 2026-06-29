@@ -157,3 +157,55 @@ func TestChatSessionPickerToDefaultRemovesFile(t *testing.T) {
 		t.Fatalf("default picker should remove chat workspace file, stat err=%v", err)
 	}
 }
+
+func TestCoalesceInstallDefaultToolPathUsesSessionCWD(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	project := filepath.Join(root, "project")
+	for _, dir := range []string{workspace, project} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
+	o.persistChatSessionWorkspace("chat-a", project)
+	ctx := withActorRunID(context.Background(), "chat-a")
+
+	args := o.resolveActorArgs(ctx, toolArgs{Path: workspace})
+	if args.Path != project {
+		t.Fatalf("install-default path = %q, want session cwd %q", args.Path, project)
+	}
+	args = o.resolveActorArgs(ctx, toolArgs{Path: project})
+	if args.Path != project {
+		t.Fatalf("explicit session path must be preserved: %q", args.Path)
+	}
+}
+
+func TestSyncActorWorkspaceFromHostContext(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	project := filepath.Join(root, "project")
+	for _, dir := range []string{workspace, project} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
+	sessionID := "chat-sync"
+	raw, err := json.Marshal(map[string]any{
+		"version": 1,
+		"workspace": map[string]string{
+			"session_workspace": project,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := o.actorCWD(sessionID); got != workspace {
+		t.Fatalf("initial cwd = %q, want install default %q", got, workspace)
+	}
+	o.syncActorWorkspaceFromHostContext(sessionID, raw)
+	if got := o.actorCWD(sessionID); got != project {
+		t.Fatalf("after sync cwd = %q, want %q", got, project)
+	}
+}

@@ -2,7 +2,13 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-29 (**host context Fase 3**: prefetch workspace FTS + skills attachment boost via `SearchHints`)
+> Last updated: 2026-06-29 (**workspace UI↔AI sync**: chat_send persists host_context cwd; SendMessage pre-flight workspace_set; install-default tool path coalesce)
+
+> Prior: 2026-06-29 (**cold transcript round ordering**: later autopilot thinking no longer rises above an earlier answer)
+
+> Prior: 2026-06-29 (**IPC/socket ordering hardening**: ordered delta flush, serialized bus publish, active-socket protection)
+
+> Prior: 2026-06-29 (**host context Fase 3**: prefetch workspace FTS + skills attachment boost via `SearchHints`)
 
 > Prior: 2026-06-29 (**host context Fase 2**: dry prefetch sizing for ledger, hot-cache key fix, Phase 2 tests)
 
@@ -149,8 +155,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. Live transcript updates auto-follow only while the reader is at the chat end; scrolling upward preserves the reading position until the reader returns to the bottom. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
 | 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering interrupts an in-flight bridge stream via `actorSignal` (cancels attempt, applies inbox, continues inference); additional drains at turn start, after bridge stream ends, after orchestrator tool batch, and before continuation body. Run end (stop/cancel/error/budget) skips unconsumed inbox with `steering skipped - run ended`. Widget keeps the STEERING bubble `is-pending` until `steering applied` / skip status; does not create a chat turn. V1 is normal-priority, foreground-target, text-only |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
-| 16 | JSON chat store (sessions/turns/checkpoints/rollout) | ✅ | `internal/store/chat/store.go` — `state/sessions/index.json`, per-session `turns.json` / `checkpoints.json`, `state/rollout/*.jsonl` (no SQLite) |
-| 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
+| 16 | JSON chat store (sessions/turns/checkpoints/rollout) | ✅ | `internal/store/chat/store.go` — `state/sessions/index.json`, per-session `turns.json` / `checkpoints.json`, `state/rollout/*.jsonl` (no SQLite). Inference boundaries append causally (`thinking → assistant → tool/autopilot`) so durable `id`/`seq` match the model flow; `SessionTranscript` retains compatibility ordering for older sessions |
+| 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Concurrent publishers are serialized across seq assignment, fan-out, and WAL enqueue, so subscriber/WAL order is monotonic. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
 | 18 | Context-SOP: index / prefetch / anti-deep-check / intent-router | 🟡 | `memory/facts.json` + `state/config/{prefetch_rules,prompt_slices,skills_index}.json` (`facts.go`, `prefetch.go`, `slices.go`, `skills_index.go`). Substring fact search (legacy FTS removed with SQLite). Heuristic intent-router (`intent.go`) + index-first prefetch (`prefetch.go`) + `prefetch_log.jsonl`. Host attachment paths augment FTS query; telemetry `host_context_bytes` / `attachment_count`. Still missing: prompt-slice/skills boot sync, full Fase-0 task-stack hook, bandit auto rule-tuning |
 | 18b | Host context (IDE-context-lite) | ✅ | Fase 1–2: widget `host_context` → `hostContextBlock`; dry ledger prefetch; IPC test. **Fase 3:** `hostcontext.SearchHints` feeds prefetch FTS (`session_workspace` + attachment paths) and `skillsBlock` (attachment path tokens for trigger + per-term FTS); hot-cache digests workspace separately (`search_hints.go`, `prefetch.go`, `prompt.go`) |
 | 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `memory/feedback.jsonl` + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; widget 👍/👎 wired. `memory/learning_queue.json` + in-proc janitor (`learning.go`). No bandit auto-tuning yet |
@@ -167,6 +173,55 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-29) - causal durable-turn ordering
+
+- **Root cause:** `Store.Append*` correctly assigned the next `id`/`seq`, but
+  `runTurnLoop` called `AppendAutopilotTurn` / tool-turn append before
+  `persistAssistantTurnWithThinking`; the file therefore recorded next-round
+  input before the output that caused it.
+- **Fix:** normal inference boundaries now persist `thinking → assistant →
+  continuation`, for both hidden autopilot nudges and real tool-result turns.
+- **Durable regression:** a three-round run checks every stored role, `id`, and
+  `seq`: user, thinking, assistant, autopilot, thinking, assistant, tool,
+  thinking, terminal-tool marker assistant.
+- Existing historical sessions are rendered compatibly but are not silently
+  renumbered because turn IDs can be referenced by retry, feedback, and
+  checkpoints.
+
+## Implemented this session (2026-06-29) - cold transcript inference-round ordering
+
+- **Reproduction:** session `chat-1782745303339439678` persisted visible flow
+  `turn 1 → 3 → 4 → 5 → tool/6`; the old same-generation role comparator
+  rendered both thinking turns before the first assistant answer.
+- **Fix:** removed generation-wide `thinking < assistant` grouping. Cold history
+  now respects chronological inference rounds, and tool cards anchor to the
+  matching persisted `[Called tools: …]` marker so their earlier stream
+  timestamp cannot jump above the round's thinking row.
+- **Regression tests:** legacy out-of-seq persistence, two inference rounds in
+  one generation, hidden autopilot input, exact/count-suffixed tool markers,
+  and tool-card placement after second-round thinking.
+
+## Implemented this session (2026-06-29) - workspace UI ↔ AI sync
+
+- **Bug:** WORKSPACE card showed `/tmp/profile` while Ask tools ran against `~/SapaLOQ/workspace` (model hard-coded install default; widget host_context did not persist cwd on send).
+- **Core:** `syncActorWorkspaceFromHostContext` on `chat_send`; `coalesceInstallDefaultToolPath` in `resolveActorArgs` when session cwd ≠ install default.
+- **Widget:** `SendMessage` calls `workspace_set` before `chat_send`; `currentSessionWorkspacePath` falls back to per-session cache.
+- **Tests:** `TestCoalesceInstallDefaultToolPathUsesSessionCWD`, `TestSyncActorWorkspaceFromHostContext`, `runtime-status-workspace.test.ts` cache fallback.
+
+## Implemented this session (2026-06-29) - IPC/socket ordering hardening
+
+- **Transcript timer race:** per-generation emission serialization prevents a
+  newer delta from overtaking an older 50 ms coalescer flush; a delta arriving
+  while a flush is scheduled joins the older pending buffer.
+- **Concurrent bus order:** `Bus.Publish` now serializes seq assignment,
+  subscriber fan-out, and WAL enqueue, keeping observed seq strictly monotonic.
+- **Socket ownership:** core startup probes an existing owned Unix socket and
+  refuses to unlink a live listener; unreachable stale socket files are still
+  recovered automatically.
+- **Regression coverage:** ordering and socket lifecycle stress cases run under
+  the Go race detector, including repeated concurrent publishers and 20× timer/
+  active-vs-stale-socket cases.
 
 ## Implemented this session (2026-06-29) - host context Fase 3 (prefetch workspace + skills boost)
 

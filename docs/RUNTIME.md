@@ -3,7 +3,7 @@
 > **Satu binary Go** - goroutine + channel + persistence lokal. No mandatory
 > broker/cache daemon; optional LLM drivers may manage an external provider
 > process such as `codex app-server`.
-> Last updated: 2026-06-29 (isolated IPC sockets: production vs repo mock vs go test)
+> Last updated: 2026-06-29 (active vs stale IPC socket startup)
 
 Widget IPC read timeout (`cmd/sapaloq-widget/ipc.go`, `setIPCReadDeadline`):
 
@@ -272,6 +272,12 @@ An absent `vault` block uses the defaults (the cursor-bridge writer inherits the
 | **Test / e2e** | `<tmpdir>/run/sapaloq-test.sock` | `go test`, `config.WriteTestConfig` — isolated per test process |
 
 `go test` refuses to bind the production socket (`internal/ipc/server.go`). Point a dev widget at a non-production core with `SAPALOQ_SOCKET=/abs/path/to.sock`.
+
+At startup, an existing owned socket is probed before cleanup. A reachable
+listener means another core is already serving the path, so startup fails
+without unlinking it. Only an unreachable stale socket inode is removed and
+rebound. This prevents a second core process from stealing the first core's
+pathname and leaving it unreachable later.
 
 ---
 

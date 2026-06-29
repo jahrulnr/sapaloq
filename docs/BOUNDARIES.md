@@ -2,7 +2,7 @@
 
 > **Contract doc:** who owns what between cursor-bridge, orchestrator, IPC, and widget.
 > Use this before adding guards at the turn loop or widget remount paths.
-> Last updated: 2026-06-29 (host context ownership row)
+> Last updated: 2026-06-29 (workspace sync on chat_send)
 
 Related: [CURSOR_AGENT_CONTRACT.md](./CURSOR_AGENT_CONTRACT.md) · [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [UI-DECISION.md](./UI-DECISION.md) · [RUNTIME.md](./RUNTIME.md)
 
@@ -67,7 +67,7 @@ flowchart TB
 | Turn loop, budgets, stop, compaction | **orchestrator** | Bridge deciding run end | `conversation.go`, `turnloop.go` |
 | Tool dispatch (orchestrator tools) | **orchestrator** | Double-run `Source:cursor` tools | `tools_dispatch.go`, `streamLoop` cursor skip |
 | In-bridge MCP persist (`cursor`/`codex`) | **orchestrator** | Widget or bridge writing `turns.json` | `in_bridge_persist.go`, `conversation.go` `EventToolUpdate` |
-| Transcript **persistence** | **orchestrator** | Widget writing turns | `session_transcript.go`, `store/chat` |
+| Transcript **persistence + cold ordering** | **orchestrator** | Widget writing/reordering turns; grouping every role across a generation | `session_transcript.go`, `store/chat` |
 | Transcript **live patch** | **orchestrator** `emitCoalescedTranscript` | Per-sink duplicate snapshot/delta logic | `widget_transcript_emit.go`, `chat.go`, `turnloop.go` |
 | Transcript **render** | **widget** | Backend assuming DOM shape | `transcript-pane.ts`, `apply-transcript-delta.ts` |
 | Foreground steering inbox | **orchestrator** | Steering as chat turn | `actor_events.go`, IPC `chat_steering` |
@@ -90,6 +90,10 @@ Map reported bugs to **boundary violations**, not random line bugs:
 | Workspace back to `~/SapaLOQ` | UI shows `workspace_path` before `session_workspace`; session switch race | orchestrator + widget `runtime-status.ts` |
 
 **Rule:** fix at the **owner** row in the table above, not by adding a third merge path.
+
+At every inference boundary the persistence owner must append causally:
+`thinking → assistant → tool/autopilot continuation`. `id`/`seq` are append
+order; a renderer sort is not a substitute for this store contract.
 
 ---
 
@@ -158,6 +162,9 @@ Do **not** skip phases. Each phase ends with tests + manual row in the matrix.
 - [x] Widget: `task_update` / idle task patches use `patchForegroundTaskCards` (not `ChatHistory` restore).
 - [x] Widget: removed `scheduleRestoreChatHistory` on Stop and on `patch.finished` (keep restore on session switch / delete branch / spoken-task completion for now).
 - [ ] Orchestrator: `ChatHistory` == `SessionTranscript` + same coalesce as `emitWidget` done path.
+- [x] Orchestrator: cold transcript preserves inference-round chronology; tool
+  cards anchor to their persisted `[Called tools: …]` turn instead of raw
+  pre-persistence event time.
 - [ ] Delete or gate redundant DOM rebuild paths (`syncTranscript` vs `mountChatTranscript` on same generation).
 
 **Exit:** Stop mid-run preserves tool bubbles without second IPC round-trip.
@@ -182,7 +189,7 @@ Also: identical-tool / vision-loop guard must include in-bridge signatures.
 ### Phase 3 — Context & workspace clarity
 
 - [ ] Context pill: one formula documented in `RUNTIME.md`; live == restart within overhead tolerance.
-- [ ] Workspace: `RuntimeStatus.session_workspace` always from `actorCWD(session_id)`; widget never shows `workspace_path` when `session_id` set.
+- [ ] Workspace: `RuntimeStatus.session_workspace` always from `actorCWD(session_id)`; widget never shows `workspace_path` when `session_id` set. **Partial (2026-06-29):** `chat_send` syncs `host_context.session_workspace` → `actorCWD`; widget `SendMessage` calls `workspace_set` before send; install-default tool paths coalesce to session cwd.
 
 **Exit:** restart manual matrix (below) green.
 

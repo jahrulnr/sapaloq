@@ -13,8 +13,8 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
-	"github.com/jahrulnr/sapaloq/internal/debug"
 	"github.com/jahrulnr/sapaloq/internal/core/orchestrator"
+	"github.com/jahrulnr/sapaloq/internal/debug"
 )
 
 // maxFrameBytes caps a single newline-delimited IPC frame. It must comfortably
@@ -47,6 +47,11 @@ func (s *Server) ListenAndServe(ctx context.Context, socketPath string) error {
 		}
 		if !socketOwnedByCurrentUser(info) {
 			return fmt.Errorf("refusing to remove IPC socket not owned by current user: %s", socketPath)
+		}
+		probe, dialErr := net.DialTimeout("unix", socketPath, 250*time.Millisecond)
+		if dialErr == nil {
+			_ = probe.Close()
+			return fmt.Errorf("IPC socket is already served by another process: %s", socketPath)
 		}
 		if err := os.Remove(socketPath); err != nil {
 			return err
@@ -314,10 +319,10 @@ func (s *Server) handleHistorySegment(ctx context.Context, conn net.Conn, req Re
 		OK: true, Op: req.Op, SessionID: sessionID,
 		Transcript: transcript, Usage: &usage,
 		SegmentCheckpoint: meta.SegmentCheckpoint,
-		HasOlder: meta.HasOlder, OlderCheckpoint: meta.OlderCheckpoint,
-		IsLatestSegment: meta.IsLatest,
+		HasOlder:          meta.HasOlder, OlderCheckpoint: meta.OlderCheckpoint,
+		IsLatestSegment:  meta.IsLatest,
 		SessionWorkspace: s.orch.SessionWorkspace(sessionID),
-		ServerMs: time.Since(start).Milliseconds(),
+		ServerMs:         time.Since(start).Milliseconds(),
 	})
 }
 

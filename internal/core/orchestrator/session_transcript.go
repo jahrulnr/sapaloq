@@ -16,14 +16,17 @@ import (
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
-var plannerSummaryRE = regexp.MustCompile(`^<!--sapaloq-planner-summary:([^>]+)-->\s*\n?([\s\S]*)$`)
+var (
+	plannerSummaryRE  = regexp.MustCompile(`^<!--sapaloq-planner-summary:([^>]+)-->\s*\n?([\s\S]*)$`)
+	calledToolsNoteRE = regexp.MustCompile(`\[(?:Called tools?|Tool):\s*([^\]]+)\]`)
+)
 
 type transcriptItem struct {
-	at   time.Time
-	seq  int
-	kind string // turn | event | entry
-	turn *chatstore.Turn
-	ev   *bridge.StreamEvent
+	at    time.Time
+	seq   int
+	kind  string // turn | event | entry
+	turn  *chatstore.Turn
+	ev    *bridge.StreamEvent
 	entry *bridge.TranscriptEntry
 }
 
@@ -139,18 +142,13 @@ func mergeTranscriptItems(turns []chatstore.Turn, events []bridge.StreamEvent) [
 		}
 		for _, entry := range CoalesceEvents(genID, toolEvents) {
 			e := entry
+			if anchor, ok := toolEntryTurnAnchor(e, turns); ok {
+				e.At = anchor
+			}
 			items = append(items, transcriptItem{at: e.At, kind: "entry", entry: &e})
 		}
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].kind == "turn" && items[j].kind == "turn" {
-			ti, tj := items[i].turn, items[j].turn
-			if ti.GenerationID != "" && ti.GenerationID == tj.GenerationID {
-				if oi, oj := turnTranscriptOrder(ti.Role), turnTranscriptOrder(tj.Role); oi != oj {
-					return oi < oj
-				}
-			}
-		}
+	sort.SliceStable(items, func(i, j int) bool {
 		if !items[i].at.Equal(items[j].at) {
 			return items[i].at.Before(items[j].at)
 		}
@@ -175,21 +173,45 @@ func mergeTranscriptItems(turns []chatstore.Turn, events []bridge.StreamEvent) [
 	return out
 }
 
-func turnTranscriptOrder(role string) int {
-	switch role {
-	case "user":
-		return 0
-	case "thinking":
-		return 1
-	case "assistant":
-		return 2
-	case "checkpoint":
-		return 3
-	case "error":
-		return 4
-	default:
-		return 5
+// toolEntryTurnAnchor moves a tool card to its persisted assistant marker.
+// Tool-call timestamps precede persistence of the round's thinking turn, so
+// sorting the card by its raw timestamp can place it above that thinking row.
+func toolEntryTurnAnchor(entry bridge.TranscriptEntry, turns []chatstore.Turn) (time.Time, bool) {
+	if entry.Kind != bridge.TranscriptTool || entry.ToolName == "" {
+		return time.Time{}, false
 	}
+	var fallback time.Time
+	for _, turn := range turns {
+		if turn.Role != "assistant" || turn.GenerationID != entry.GenerationID ||
+			turn.CreatedAt.IsZero() || !calledToolsNoteContains(turn.Content, entry.ToolName) {
+			continue
+		}
+		if fallback.IsZero() {
+			fallback = turn.CreatedAt
+		}
+		if !turn.CreatedAt.Before(entry.At) {
+			return turn.CreatedAt, true
+		}
+	}
+	return fallback, !fallback.IsZero()
+}
+
+func calledToolsNoteContains(content, toolName string) bool {
+	for _, match := range calledToolsNoteRE.FindAllStringSubmatch(content, -1) {
+		if len(match) != 2 {
+			continue
+		}
+		for _, item := range strings.Split(match[1], ",") {
+			name := strings.TrimSpace(item)
+			if count := strings.LastIndex(name, " ×"); count >= 0 {
+				name = strings.TrimSpace(name[:count])
+			}
+			if name == toolName {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func turnToEntry(t chatstore.Turn) []bridge.TranscriptEntry {

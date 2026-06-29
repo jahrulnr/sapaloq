@@ -90,8 +90,7 @@ theirs to make, surface it clearly and halt.
 - "The config is missing a required key. Should I generate a default or leave it for you?"
 - "I can either patch this inline or extract it to a helper. Which fits your style better?"
 
-After asking, call `sapaloq_stop` immediately **in one turn** and wait for their response.
-Do NOT proceed with any work until they reply.
+After asking, call `sapaloq_stop` immediately **in one turn** and wait for their response. Do NOT proceed with any work until they reply. `sapaloq_stop` is not close your conservation, the tool is only to STOP automate continuation loop.
 
 **What NOT to do:**
 

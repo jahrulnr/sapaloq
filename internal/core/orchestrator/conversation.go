@@ -966,38 +966,6 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 			out.emit(runCtx, statusEvent(sessionID, status))
 		}
-		// Persist tool results as a "tool" turn so they count toward context
-		// usage and auto-compaction. These messages ARE sent to the model (they
-		// are appended to cleanMessages below and replayed via contextMessages;
-		// the wire layer maps the internal "tool" role to a role the upstream
-		// API accepts), so leaving them unrecorded made ContextUsage
-		// under-count and auto-compact trigger too late. Use the outer ctx (not
-		// the cancelable runCtx) so a wall-time timeout does not drop the
-		// audit/accounting record. Chat-only (recordToolTurns).
-		if cfg.recordToolTurns && o.chat != nil && len(toolResults) > 0 {
-			_ = o.chat.AppendTurn(ctx, persistID, "tool", toolResultsBody, estimateContentTokens(toolResultsBody))
-		}
-		// Persist a tool-less autopilot continuation as a dedicated "autopilot"
-		// turn so it counts toward ContextUsage / auto-compaction accounting
-		// (it occupies real context on the next turn) WITHOUT being replayed to
-		// the model from history (the live in-run cleanMessages already carries
-		// it) and WITHOUT surfacing as a chat bubble (the UI skips "autopilot"
-		// like it skips "thinking"). Use the outer ctx so a wall-time timeout
-		// does not drop the accounting record. Chat-only (recordToolTurns).
-		if cfg.recordToolTurns && o.chat != nil && len(toolResults) == 0 {
-			skipPersist := false
-			if turns, terr := o.chat.ActiveTurns(ctx, persistID, false); terr == nil {
-				for _, t := range turns {
-					if t.Role == "autopilot" && t.Content == toolResultsBody {
-						skipPersist = true
-						break
-					}
-				}
-			}
-			if !skipPersist {
-				_ = o.chat.AppendAutopilotTurn(ctx, persistID, toolResultsBody, estimateContentTokens(toolResultsBody))
-			}
-		}
 		continuation := toolResultsBody
 		// Record the tool calls this turn actually made into the assistant
 		// message. response.String() carries only the model's text deltas - not
@@ -1024,6 +992,27 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			o.persistAssistantTurnWithThinking(ctx, persistID, assistantContent, cfg.generationID, cfg, &turnThinking)
 		} else if cfg.recordToolTurns {
 			o.flushTurnThinking(ctx, persistID, cfg.generationID, cfg, &turnThinking)
+		}
+		// Persist the continuation only after this inference round's thinking and
+		// assistant turn. turns.json is an ordered transcript contract: the next
+		// model input (tool result or autopilot nudge) must never receive an id/seq
+		// before the output that caused it.
+		if cfg.recordToolTurns && o.chat != nil && len(toolResults) > 0 {
+			_ = o.chat.AppendTurn(ctx, persistID, "tool", toolResultsBody, estimateContentTokens(toolResultsBody))
+		}
+		if cfg.recordToolTurns && o.chat != nil && len(toolResults) == 0 {
+			skipPersist := false
+			if turns, terr := o.chat.ActiveTurns(ctx, persistID, false); terr == nil {
+				for _, t := range turns {
+					if t.Role == "autopilot" && t.Content == toolResultsBody {
+						skipPersist = true
+						break
+					}
+				}
+			}
+			if !skipPersist {
+				_ = o.chat.AppendAutopilotTurn(ctx, persistID, toolResultsBody, estimateContentTokens(toolResultsBody))
+			}
 		}
 		// A turn carrying tool output is fed back under the dedicated "tool"
 		continuationRole := "user"

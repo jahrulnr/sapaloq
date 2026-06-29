@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jahrulnr/sapaloq/internal/hostcontext"
 )
 
 type actorRunIDKey struct{}
@@ -188,20 +190,78 @@ func (o *Orchestrator) persistActorCWD(runID, cwd string) {
 	_ = writeFileAtomic(path, raw, 0o600)
 }
 
+// syncActorWorkspaceFromHostContext persists session_workspace from chat_send
+// host_context so actor cwd matches the widget WORKSPACE card before tools run.
+func (o *Orchestrator) syncActorWorkspaceFromHostContext(sessionID string, raw json.RawMessage) {
+	if o == nil || sessionID == "" || len(raw) == 0 {
+		return
+	}
+	parsed := hostcontext.ParseRaw(raw)
+	if parsed == nil {
+		return
+	}
+	ws := strings.TrimSpace(parsed.Workspace.SessionWorkspace)
+	if ws == "" {
+		return
+	}
+	ws = configExpandHome(ws)
+	if !filepath.IsAbs(ws) {
+		return
+	}
+	if info, err := os.Stat(ws); err != nil || !info.IsDir() {
+		return
+	}
+	cleaned := filepath.Clean(ws)
+	if filepath.Clean(o.actorCWD(sessionID)) == cleaned {
+		return
+	}
+	o.persistChatSessionWorkspace(sessionID, cleaned)
+}
+
+// coalesceInstallDefaultToolPath rewrites tool paths that name the install-default
+// workspace while the actor cwd is a different persisted session folder. Models
+// often hard-code ~/SapaLOQ/workspace even when the WORKSPACE card differs.
+func (o *Orchestrator) coalesceInstallDefaultToolPath(runID, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || runID == "" {
+		return path
+	}
+	expanded := filepath.Clean(configExpandHome(path))
+	defaultDir := filepath.Clean(o.defaultWorkspace())
+	if expanded != defaultDir {
+		return path
+	}
+	actorDir := filepath.Clean(o.actorCWD(runID))
+	if actorDir == defaultDir {
+		return path
+	}
+	return actorDir
+}
+
 func (o *Orchestrator) resolveActorArgs(ctx context.Context, args toolArgs) toolArgs {
 	if o == nil || o.workspaceDir == "" && o.stateDir == "" && actorRunID(ctx) == "" {
 		return args
 	}
-	base := o.actorCWD(actorRunID(ctx))
+	runID := actorRunID(ctx)
+	base := o.actorCWD(runID)
 	if strings.TrimSpace(args.Cwd) == "" {
 		args.Cwd = base
-	} else if !filepath.IsAbs(configExpandHome(args.Cwd)) {
-		args.Cwd = filepath.Join(base, configExpandHome(args.Cwd))
 	} else {
-		args.Cwd = configExpandHome(args.Cwd)
+		args.Cwd = o.coalesceInstallDefaultToolPath(runID, args.Cwd)
+		if !filepath.IsAbs(configExpandHome(args.Cwd)) {
+			args.Cwd = filepath.Join(base, configExpandHome(args.Cwd))
+		} else {
+			args.Cwd = configExpandHome(args.Cwd)
+		}
 	}
-	if strings.TrimSpace(args.Path) != "" && !filepath.IsAbs(configExpandHome(args.Path)) {
-		args.Path = filepath.Join(base, configExpandHome(args.Path))
+	if strings.TrimSpace(args.Path) != "" {
+		args.Path = o.coalesceInstallDefaultToolPath(runID, args.Path)
+		expanded := configExpandHome(args.Path)
+		if !filepath.IsAbs(expanded) {
+			args.Path = filepath.Join(base, expanded)
+		} else {
+			args.Path = expanded
+		}
 	}
 	return args
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { applyWorkspacePath, renderRuntimeStatus } from './runtime-status';
+import { applyWorkspacePath, renderRuntimeStatus, currentSessionWorkspacePath } from './runtime-status';
 import type { RuntimeStatus } from '../core/types';
 import { setSessionID } from '../core/state';
 
@@ -66,5 +66,12 @@ describe('runtime-status workspace label', () => {
       actors: [],
     } as RuntimeStatus);
     expect(document.getElementById('runtime-workspace')?.querySelector('strong')?.textContent).toBe('~/proj');
+  });
+
+  it('currentSessionWorkspacePath falls back to per-session cache when DOM is empty', () => {
+    setSessionID('sess-a');
+    applyWorkspacePath('/home/me/proj', 'sess-a');
+    document.getElementById('runtime-workspace')!.dataset.workspacePath = '';
+    expect(currentSessionWorkspacePath()).toBe('/home/me/proj');
   });
 });

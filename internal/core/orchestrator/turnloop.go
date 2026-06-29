@@ -168,6 +168,7 @@ func (s *subagentSink) emit(ctx context.Context, ev bridge.StreamEvent) {
 		coalescer:          s.coalescer,
 		patchState:         &s.widgetPatchState,
 		patchMu:            &s.patchMu,
+		emitMu:             &s.deltaEmitMu,
 		mergePersistedBase: false,
 		usageSessionID:     s.taskID,
 	}
