@@ -13,6 +13,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/debug"
 	"github.com/jahrulnr/sapaloq/internal/core/orchestrator"
 )
 
@@ -113,6 +114,8 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			write(conn, Response{OK: true, Op: req.Op, Suggestions: s.orch.SlashSuggest(req.Query), ServerMs: time.Since(start).Milliseconds()})
 		case "session_active", "chat_history":
 			s.handleHistory(ctx, conn, req, start)
+		case "chat_history_segment":
+			s.handleHistorySegment(ctx, conn, req, start)
 		case "session_list":
 			s.handleSessionList(ctx, conn, req, start)
 		case "session_switch":
@@ -275,6 +278,15 @@ func (s *Server) writeStream(ctx context.Context, conn net.Conn, requestedSessio
 }
 
 func (s *Server) handleHistory(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	latest := -1
+	req.SegmentCheckpoint = &latest
+	req.Op = "chat_history"
+	s.handleHistorySegment(ctx, conn, req, start)
+}
+
+func (s *Server) handleHistorySegment(ctx context.Context, conn net.Conn, req Request, start time.Time) {
+	// sapaloq:boundary ipc→orchestrator — compaction segment transcript; widget prepends older on scroll.
+	debug.TraceBoundary("ipc", "orchestrator", "chat_history_segment")
 	sessionID := req.SessionID
 	if sessionID == "" {
 		var err error
@@ -284,14 +296,26 @@ func (s *Server) handleHistory(ctx context.Context, conn net.Conn, req Request, 
 			return
 		}
 	}
+	seg := -1
+	if req.SegmentCheckpoint != nil {
+		seg = *req.SegmentCheckpoint
+	}
 	_, err := s.orch.ActiveTurns(ctx, sessionID)
 	if err != nil {
 		write(conn, Response{OK: false, Op: req.Op, Message: err.Error(), ServerMs: time.Since(start).Milliseconds()})
 		return
 	}
 	usage, _ := s.orch.ContextUsage(ctx, sessionID)
-	transcript, _ := s.orch.SessionTranscript(ctx, sessionID)
-	write(conn, Response{OK: true, Op: req.Op, SessionID: sessionID, Transcript: transcript, Usage: &usage, ServerMs: time.Since(start).Milliseconds()})
+	transcript, meta, _ := s.orch.SessionTranscriptSegment(ctx, sessionID, seg)
+	write(conn, Response{
+		OK: true, Op: req.Op, SessionID: sessionID,
+		Transcript: transcript, Usage: &usage,
+		SegmentCheckpoint: meta.SegmentCheckpoint,
+		HasOlder: meta.HasOlder, OlderCheckpoint: meta.OlderCheckpoint,
+		IsLatestSegment: meta.IsLatest,
+		SessionWorkspace: s.orch.SessionWorkspace(sessionID),
+		ServerMs: time.Since(start).Milliseconds(),
+	})
 }
 
 func (s *Server) handleSessionList(ctx context.Context, conn net.Conn, req Request, start time.Time) {

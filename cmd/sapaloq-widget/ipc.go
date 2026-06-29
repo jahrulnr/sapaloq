@@ -74,10 +74,15 @@ type chatUsage struct {
 }
 
 type chatHistoryResult struct {
-	OK         bool                     `json:"ok"`
-	SessionID  string                   `json:"session_id"`
-	Transcript []bridge.TranscriptEntry `json:"transcript,omitempty"`
-	Usage      *chatUsage               `json:"usage,omitempty"`
+	OK                bool                     `json:"ok"`
+	SessionID         string                   `json:"session_id"`
+	SessionWorkspace  string                   `json:"session_workspace,omitempty"`
+	Transcript        []bridge.TranscriptEntry `json:"transcript,omitempty"`
+	Usage             *chatUsage               `json:"usage,omitempty"`
+	SegmentCheckpoint int                      `json:"segment_checkpoint,omitempty"`
+	HasOlder          bool                     `json:"has_older,omitempty"`
+	OlderCheckpoint   int                      `json:"older_checkpoint,omitempty"`
+	IsLatestSegment   bool                     `json:"is_latest_segment,omitempty"`
 }
 
 type sessionSummary struct {
@@ -208,8 +213,13 @@ func sendChatWithStatus(socketPath, sessionID, message string, onEvent func(brid
 }
 
 func chatHistory(socketPath string) (chatHistoryResult, error) {
+	return chatHistorySegment(socketPath, -1)
+}
+
+func chatHistorySegment(socketPath string, segmentCheckpoint int) (chatHistoryResult, error) {
 	var result chatHistoryResult
-	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_history"})
+	seg := segmentCheckpoint
+	responses, err := roundTrip(socketPath, ipcRequest{Op: "chat_history_segment", SegmentCheckpoint: &seg})
 	if err != nil {
 		return result, err
 	}
@@ -219,8 +229,13 @@ func chatHistory(socketPath string) (chatHistoryResult, error) {
 	res := responses[0]
 	result.OK = true
 	result.SessionID = res.SessionID
+	result.SessionWorkspace = res.SessionWorkspace
 	result.Usage = mapUsage(res.Usage)
 	result.Transcript = res.Transcript
+	result.SegmentCheckpoint = res.SegmentCheckpoint
+	result.HasOlder = res.HasOlder
+	result.OlderCheckpoint = res.OlderCheckpoint
+	result.IsLatestSegment = res.IsLatestSegment
 	return result, nil
 }
 

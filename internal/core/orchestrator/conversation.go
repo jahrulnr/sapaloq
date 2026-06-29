@@ -13,6 +13,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/debug"
 	"github.com/jahrulnr/sapaloq/internal/parse"
 	"github.com/jahrulnr/sapaloq/internal/parse/artifacts"
 )
@@ -402,10 +403,26 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			case bridge.EventToolCall:
 				resetIdle()
 				if ev.ToolCall != nil {
-					// Codex app-server native and dynamic tools execute inside its
-					// own turn loop. Cursor agent api5 MCP exec runs in-bridge.
-					// Surface both as UI telemetry; never enqueue for double dispatch.
-					if ev.ToolCall.Source == "codex" || ev.ToolCall.Source == "cursor" {
+					// sapaloq:boundary cursor-bridge→orchestrator — in-bridge MCP: execute in bridge; persist on ToolUpdate.
+					if isInBridgeToolSource(ev.ToolCall.Source) {
+						debug.TraceBoundary("cursor-bridge", "orchestrator", "in_bridge_tool:"+ev.ToolCall.Name)
+						toolCalls++
+						toolCallsThisTurn++
+						if toolCalls > budget.MaxToolCalls {
+							cancelAttempt()
+							return all, fmt.Errorf("tool-call budget exhausted after %d calls", budget.MaxToolCalls)
+						}
+						signature := toolCallSignature(*ev.ToolCall)
+						if signature == lastToolSignature {
+							identicalToolCalls++
+						} else {
+							lastToolSignature = signature
+							identicalToolCalls = 1
+						}
+						if budget.MaxIdenticalToolCalls > 0 && identicalToolCalls > budget.MaxIdenticalToolCalls {
+							cancelAttempt()
+							return all, fmt.Errorf("loop detected: identical tool call repeated %d times", identicalToolCalls)
+						}
 						out.emit(runCtx, ev)
 						out.beat(ev.ToolCall.Source + " tool: " + ev.ToolCall.Name)
 						continue
@@ -525,6 +542,13 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 					thinkingOut.WriteString(ev.Delta)
 				}
 				out.beat(fmt.Sprintf("thinking turn %d/%s", inferenceTurn, turnBudgetLabel))
+				out.emit(runCtx, ev)
+			case bridge.EventToolUpdate:
+				resetIdle()
+				if ev.ToolCall != nil && isInBridgeToolSource(ev.ToolCall.Source) {
+					dynamicProgress.Store(true)
+					o.persistInBridgeToolUpdate(ctx, persistID, cfg.generationID, cfg, &response, &turnThinking, &cleanMessages, ev)
+				}
 				out.emit(runCtx, ev)
 			case bridge.EventDone:
 				// A bridge-level done ends one inference turn. The orchestrator

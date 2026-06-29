@@ -29,6 +29,7 @@ type transcriptItem struct {
 
 // SessionTranscript rebuilds the full widget transcript from SQLite turns and
 // progress JSONL (tools + tasks), replacing the FE buildMergedTimeline path.
+// sapaloq:boundary store→orchestrator — authoritative cold transcript; must match emitWidget finished snapshot.
 func (o *Orchestrator) SessionTranscript(ctx context.Context, sessionID string) ([]bridge.TranscriptEntry, error) {
 	turns, err := o.chat.ActiveTurns(ctx, sessionID, true)
 	if err != nil {

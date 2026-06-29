@@ -16,6 +16,8 @@ import {
   mountTranscriptPane,
   syncTranscriptPane,
   emptyTranscriptState,
+  applyTranscriptPatchToTarget,
+  flushTranscriptPatchMarkdown,
   type TranscriptEntry,
   type TranscriptPatch,
 } from './transcript';
@@ -44,6 +46,8 @@ let stopTaskPush: (() => void) | null = null;
 let activeTab: Tab = 'planner';
 let activeSubTab: SubTab = 'activity';
 let escapeHandler: ((e: KeyboardEvent) => void) | null = null;
+let monitorSyncRaf = 0;
+let pendingMonitorPatch: TranscriptPatch | null = null;
 // When the overlay is opened from a specific chat bubble we PIN that exact
 // task into its tab instead of resolving the tab's task from RuntimeStatus
 // (which only ever surfaces ONE actor per role - the latest - so multiple
@@ -149,6 +153,52 @@ function stopPush() {
   stopTaskPush?.();
   stopTranscriptPush = null;
   stopTaskPush = null;
+  if (monitorSyncRaf) {
+    cancelAnimationFrame(monitorSyncRaf);
+    monitorSyncRaf = 0;
+  }
+  pendingMonitorPatch = null;
+}
+
+function scheduleMonitorPatch(patch: TranscriptPatch) {
+  pendingMonitorPatch = patch;
+  if (monitorSyncRaf) return;
+  monitorSyncRaf = requestAnimationFrame(() => {
+    monitorSyncRaf = 0;
+    const p = pendingMonitorPatch;
+    pendingMonitorPatch = null;
+    if (!p || !overlay) return;
+    applyMonitorTranscriptPatch(p);
+  });
+}
+
+function applyMonitorTranscriptPatch(patch: TranscriptPatch) {
+  if (!overlay || !patch.actor_id) return;
+  const tab = (['planner', 'agent'] as Tab[]).find((candidate) => actorState[candidate].taskID === patch.actor_id);
+  if (!tab) return;
+  if (patch.entries?.length) {
+    actorState[tab].transcript = patch.entries;
+  }
+  if (tab !== activeTab) return;
+  const body = overlay.querySelector('.task-monitor-body') as HTMLElement | null;
+  if (!body || !body.querySelector('.transcript-pane')) return;
+  const state = actorState[tab];
+  applyTranscriptPatchToTarget({
+    body,
+    state,
+    mode: 'monitor',
+    emptyMessage: 'Belum ada aktivitas',
+    emptyClass: 'task-monitor-empty',
+    onSnapshot: (entries) => {
+      state.transcript = entries;
+    },
+  }, patch);
+  if (patch.mode === 'delta') {
+    flushTranscriptPatchMarkdown(body);
+  }
+  if (scrollFollow) {
+    scrollToBottom(body);
+  }
 }
 
 function startPush() {
@@ -156,10 +206,7 @@ function startPush() {
   try {
     stopTranscriptPush = EventsOn('sapaloq:transcript', (patch: TranscriptPatch) => {
       if (!overlay || !patch.actor_id) return;
-      const tab = (['planner', 'agent'] as Tab[]).find((candidate) => actorState[candidate].taskID === patch.actor_id);
-      if (!tab) return;
-      actorState[tab].transcript = patch.entries || [];
-      if (tab === activeTab) void renderCurrent();
+      scheduleMonitorPatch(patch);
     });
     stopTaskPush = EventsOn('sapaloq:stream', (event: { kind?: string; task_id?: string }) => {
       if (event.kind !== 'task_update' || !event.task_id) return;

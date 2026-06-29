@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"context"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/parse"
@@ -137,9 +137,11 @@ type subagentSink struct {
 	taskID          string
 	parentSessionID string
 	coalescer       *TranscriptCoalescer
+	widgetPatchState
+	patchMu sync.Mutex
 }
 
-func (s *subagentSink) emit(_ context.Context, ev bridge.StreamEvent) {
+func (s *subagentSink) emit(ctx context.Context, ev bridge.StreamEvent) {
 	if ev.SessionID == "" {
 		ev.SessionID = s.taskID
 	}
@@ -155,17 +157,21 @@ func (s *subagentSink) emit(_ context.Context, ev bridge.StreamEvent) {
 	if s.coalescer == nil {
 		s.coalescer = NewTranscriptCoalescer(s.taskID)
 	}
-	if !s.coalescer.Apply(ev) {
-		return
+	if widgetCoalesceKind(ev.Kind) {
+		s.coalescer.Apply(ev)
 	}
-	patch := bridge.SnapshotPatch(s.parentSessionID, s.taskID, s.coalescer.EntriesWithPending(), false)
-	patch.ActorID = s.taskID
-	patch.ParentSessionID = s.parentSessionID
-	s.o.bus.Publish(topicFor(bridge.EventTranscript), bridge.StreamEvent{
-		Kind: bridge.EventTranscript, SessionID: s.parentSessionID,
-		ActorID: s.taskID, ParentSessionID: s.parentSessionID,
-		GenerationID: s.taskID, Transcript: &patch, At: time.Now().UTC(),
-	})
+	opts := transcriptEmitOpts{
+		sessionID:          s.parentSessionID,
+		actorID:            s.taskID,
+		parentSessionID:    s.parentSessionID,
+		generationID:       s.taskID,
+		coalescer:          s.coalescer,
+		patchState:         &s.widgetPatchState,
+		patchMu:            &s.patchMu,
+		mergePersistedBase: false,
+		usageSessionID:     s.taskID,
+	}
+	s.o.emitCoalescedTranscript(ctx, opts, ev)
 }
 
 // beat updates only the phase label (liveness is owned by the ticker). Passing

@@ -28,6 +28,7 @@ type actorControlEvent struct {
 // UserSteering queues a text correction for the next safe point of an active
 // foreground Ask run. Steering is actor control input, not a new chat turn, so
 // it is persisted only in the session actor inbox.
+// sapaloq:boundary widget→orchestrator — IPC chat_steering; not a chat_turn.
 func (o *Orchestrator) UserSteering(ctx context.Context, sessionID, message string) error {
 	if err := ctx.Err(); err != nil {
 		return err

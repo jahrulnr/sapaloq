@@ -21,6 +21,9 @@ type Request struct {
 	Signal     string `json:"signal,omitempty"`
 	Correction string `json:"correction,omitempty"`
 	Path       string `json:"path,omitempty"`
+	// SegmentCheckpoint selects a compaction segment for chat_history_segment:
+	// -1 latest tail, 0 pre-first checkpoint, k>0 historical anchor. Nil → latest.
+	SegmentCheckpoint *int `json:"segment_checkpoint,omitempty"`
 }
 
 type Response struct {
@@ -43,4 +46,9 @@ type Response struct {
 	ActorInspect *orchestrator.ActorInspectResult `json:"actor_inspect,omitempty"`
 	Path         string                           `json:"path,omitempty"`
 	TaskID       string                           `json:"task_id,omitempty"`
+	SegmentCheckpoint int                         `json:"segment_checkpoint,omitempty"`
+	HasOlder          bool                        `json:"has_older,omitempty"`
+	OlderCheckpoint   int                         `json:"older_checkpoint,omitempty"`
+	SessionWorkspace string               `json:"session_workspace,omitempty"`
+	IsLatestSegment   bool                        `json:"is_latest_segment,omitempty"`
 }

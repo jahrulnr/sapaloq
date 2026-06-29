@@ -505,34 +505,18 @@ func (o *Orchestrator) contextPercent(messages []bridge.Message, contextWindow i
 }
 
 // effectiveContextPercent is the headroom/compaction trigger percentage. It
-// takes the higher of (a) persisted turn usage + per-request overhead from
-// ContextUsage and (b) the in-flight cleanMessages estimate. Image attachments
-// are stripped to placeholders in cleanMessages before inference, so (b) alone
-// would undercount huge pasted images and never fire forced compaction while
-// the UI pill already shows 100%+.
+// delegates to SessionContextLedger with the in-flight cleanMessages slice.
+// Live messages already include injected system blocks, so overhead is not
+// added again (avoids double-count vs the pre-restart pill).
 func (o *Orchestrator) effectiveContextPercent(ctx context.Context, sessionID string, live []bridge.Message, contextWindow int) int {
 	if contextWindow <= 0 {
 		return 0
 	}
-	userMsg := ""
-	if o.chat != nil && sessionID != "" {
-		userMsg = o.latestUserMessageContent(ctx, sessionID)
+	ledger, err := o.SessionContextLedger(ctx, sessionID, LedgerOptions{LiveMessages: live})
+	if err != nil {
+		return 0
 	}
-	overhead := o.estimatePerTurnOverhead(ctx, sessionID, userMsg)
-	liveUsed := estimateMessagesTokens(live) + overhead
-	livePct := (liveUsed * 100) / contextWindow
-
-	storePct := 0
-	if o.chat != nil && sessionID != "" {
-		usage, err := o.ContextUsage(ctx, sessionID)
-		if err == nil && usage.ContextWindow > 0 {
-			storePct = usage.Percent
-		}
-	}
-	if livePct > storePct {
-		return livePct
-	}
-	return storePct
+	return ledger.Percent
 }
 
 // shrinkContextForRun compacts the in-flight message slice before the next

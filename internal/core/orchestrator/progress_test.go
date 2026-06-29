@@ -102,4 +102,5 @@ func TestAsyncProgressWriterConcurrentSessions(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	w.CloseAll()
 }

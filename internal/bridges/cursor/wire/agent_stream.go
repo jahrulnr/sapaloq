@@ -31,7 +31,14 @@ type AgentStreamOptions struct {
 	GhostMode bool
 	Tools   []AgentTool
 	Body    []byte // Connect-RPC framed AgentClientMessage
-	Timeout time.Duration // 0 → 120s
+	// Timeout is an optional wall-clock cap on the whole api5 stream. Zero defers
+	// to the parent context (orchestrator idle cancel). Non-zero is for tests
+	// and direct wire calls only — production agent turns can run long MCP/exec
+	// loops and must not inherit requestTimeoutSec as a total-runtime cap.
+	Timeout time.Duration
+	// IdleTimeout refills on each upstream/downlink frame (default from
+	// streamIdleTimeoutSec, typically 60s). Zero disables bridge-level idle.
+	IdleTimeout time.Duration
 
 	// MCPExecutor handles exec_mcp frames inside the api5 turn loop.
 	MCPExecutor AgentMCPExecutor
@@ -45,6 +52,15 @@ type AgentStreamOptions struct {
 
 // AgentFrameHandler is invoked for each decoded AgentServerMessage.
 type AgentFrameHandler func(decoded []AgentDecoded, raw []byte)
+
+// attachAgentStreamTimeout applies an optional wall-clock cap. Zero means the
+// caller (orchestrator run idle cancel) owns stream lifetime.
+func attachAgentStreamTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(ctx, timeout)
+	}
+	return context.WithCancel(ctx)
+}
 
 // StreamAgentHTTP2 drives the Agent API via net/http http2 with a duplex
 // request body (pipe) so exec/KV responses can be written mid-stream.
@@ -74,15 +90,13 @@ func streamAgentHTTP2Simple(ctx context.Context, opts AgentStreamOptions, onFram
 		path = AgentAgentPath
 	}
 
-	timeout := opts.Timeout
-	if timeout == 0 {
-		timeout = 120 * time.Second
+	runCtx, watch := agentStreamRunCtx(ctx, opts)
+	if watch != nil {
+		defer watch.Stop()
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	endpoint := "https://" + host + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(opts.Body))
+	req, err := http.NewRequestWithContext(runCtx, http.MethodPost, endpoint, bytes.NewReader(opts.Body))
 	if err != nil {
 		return err
 	}
@@ -92,7 +106,7 @@ func streamAgentHTTP2Simple(ctx context.Context, opts AgentStreamOptions, onFram
 
 	tlsCfg := &tls.Config{InsecureSkipVerify: opts.InsecureTLS}
 	t2 := &http2.Transport{TLSClientConfig: tlsCfg}
-	client := &http.Client{Transport: t2, Timeout: timeout}
+	client := &http.Client{Transport: t2, Timeout: opts.Timeout}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -139,16 +153,14 @@ func streamAgentBidirectionalHTTP2(ctx context.Context, opts AgentStreamOptions,
 		path = AgentAgentPath
 	}
 
-	timeout := opts.Timeout
-	if timeout == 0 {
-		timeout = 120 * time.Second
+	runCtx, watch := agentStreamRunCtx(ctx, opts)
+	if watch != nil {
+		defer watch.Stop()
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	upload := newAgentUploadBody(opts.Body)
 	state := &agentStreamState{
-		ctx:         ctx,
+		ctx:         runCtx,
 		tools:       opts.Tools,
 		blobStore:   map[string][]byte{},
 		ackedExec:   map[string]struct{}{},
@@ -157,14 +169,15 @@ func streamAgentBidirectionalHTTP2(ctx context.Context, opts AgentStreamOptions,
 		onFrame:     onFrame,
 		writeFrame:  upload.Write,
 	}
+	bindAgentStreamIdle(state, watch)
 
 	go func() {
-		<-ctx.Done()
+		<-runCtx.Done()
 		_ = upload.Close()
 	}()
 
 	endpoint := "https://" + host + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, upload)
+	req, err := http.NewRequestWithContext(runCtx, http.MethodPost, endpoint, upload)
 	if err != nil {
 		_ = upload.Close()
 		return err
@@ -197,13 +210,19 @@ func streamAgentBidirectionalHTTP2(ctx context.Context, opts AgentStreamOptions,
 	var dataBuf bytes.Buffer
 	readBuf := make([]byte, 32*1024)
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := runCtx.Err(); err != nil {
 			_ = upload.Close()
+			if idleErr := agentStreamIdleErr(watch, opts.IdleTimeout); idleErr != nil {
+				return idleErr
+			}
 			return err
 		}
 		n, err := resp.Body.Read(readBuf)
 		if n > 0 {
 			dataBuf.Write(readBuf[:n])
+			if watch != nil {
+				watch.Reset()
+			}
 			if err := dispatchAgentFrames(&dataBuf, state); err != nil {
 				_ = upload.Close()
 				return err
@@ -243,15 +262,13 @@ func streamAgentOverH2(ctx context.Context, opts AgentStreamOptions, onFrame fun
 		path = AgentAgentPath
 	}
 
-	timeout := opts.Timeout
-	if timeout == 0 {
-		timeout = 120 * time.Second
+	runCtx, watch := agentStreamRunCtx(ctx, opts)
+	if watch != nil {
+		defer watch.Stop()
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	state := &agentStreamState{
-		ctx:         ctx,
+		ctx:         runCtx,
 		tools:       opts.Tools,
 		blobStore:   map[string][]byte{},
 		ackedExec:   map[string]struct{}{},
@@ -270,7 +287,7 @@ func streamAgentOverH2(ctx context.Context, opts AgentStreamOptions, onFrame fun
 	if !strings.Contains(addr, ":") {
 		addr += ":443"
 	}
-	conn, err := dialHTTP2(ctx, addr, tlsCfg)
+	conn, err := dialHTTP2(runCtx, addr, tlsCfg)
 	if err != nil {
 		return fmt.Errorf("agent h2 connect: %w", err)
 	}
@@ -282,6 +299,7 @@ func streamAgentOverH2(ctx context.Context, opts AgentStreamOptions, onFrame fun
 		}
 		return conn.framer.WriteData(1, false, frame)
 	}
+	bindAgentStreamIdle(state, watch)
 
 	headers := BuildAgentHeaders(opts.Token, opts.MachineID, opts.GhostMode)
 	headers[":method"] = "POST"
@@ -289,7 +307,7 @@ func streamAgentOverH2(ctx context.Context, opts AgentStreamOptions, onFrame fun
 	headers[":scheme"] = "https"
 	headers[":authority"] = urlHostOnly(host)
 
-	return conn.sendAgentStream(ctx, headers, opts.Body, state)
+	return conn.sendAgentStream(runCtx, headers, opts.Body, state)
 }
 
 // StreamAgentRawSimple is a one-shot agent stream using the raw framer (no exec
@@ -339,9 +357,15 @@ type agentStreamState struct {
 	turnEnded   bool
 	onFrame     func(decoded []AgentDecoded, raw []byte)
 	writeFrame  func(frame []byte) error
+	onActivity  func()
+	pauseIdle   func()
+	resumeIdle  func()
 }
 
 func (s *agentStreamState) processPayload(flags byte, payload []byte) error {
+	if s.onActivity != nil {
+		s.onActivity()
+	}
 	if os.Getenv("SAPALOQ_AGENT_H2_DEBUG") == "1" {
 		snippet := payload
 		if len(snippet) > 48 {

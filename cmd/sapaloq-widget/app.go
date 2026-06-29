@@ -105,6 +105,11 @@ func (a *App) ChatHistory() (chatHistoryResult, error) {
 	return chatHistory(a.socketPath)
 }
 
+// ChatHistorySegment loads one compaction segment (-1 latest tail, 0 pre-first, k>0 historical).
+func (a *App) ChatHistorySegment(segmentCheckpoint int) (chatHistoryResult, error) {
+	return chatHistorySegment(a.socketPath, segmentCheckpoint)
+}
+
 // ListSessions returns recent chat sessions for the topbar history switcher.
 func (a *App) ListSessions() (sessionListResult, error) {
 	return listSessions(a.socketPath)

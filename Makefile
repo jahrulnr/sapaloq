@@ -113,8 +113,11 @@ run: desktop-entry
 
 test:
 	go clean -testcache
-	go test -v -covermode=count ./... -coverprofile=coverage.cov
-	go tool cover -func=coverage.cov
+	@cov=$$(mktemp coverage.XXXXXX); \
+	trap 'rm -f "$$cov"' EXIT; \
+	go test -v -covermode=count ./... -coverprofile="$$cov"; \
+	go tool cover -func="$$cov"; \
+	cp "$$cov" coverage.cov
 
 e2e:
 	go test ./test/e2e/... -v -count=1 -timeout 120s

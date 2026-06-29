@@ -44,6 +44,56 @@ export function mountTranscriptPane(
   state.renderedEntryCount = pane.children.length;
 }
 
+export function prependTranscriptPane(
+  body: HTMLElement,
+  state: TranscriptPaneState,
+  entries: TranscriptEntry[],
+  mode: ToolActivityMode = 'monitor',
+) {
+  const pane = body.querySelector('.transcript-pane') as HTMLElement | null;
+  if (!pane || entries.length === 0) return;
+  const visible = visibleTranscriptEntries(entries, mode);
+  const list = body;
+  const prevHeight = list.scrollHeight;
+  const frag = document.createDocumentFragment();
+  for (const entry of visible) {
+    const el = renderTranscriptEntry(entry, mode, { restore: true });
+    if (!el.classList.contains('is-empty')) frag.appendChild(el);
+  }
+  const anchor = pane.querySelector('.transcript-segment-sentinel');
+  if (anchor) pane.insertBefore(frag, anchor.nextSibling);
+  else pane.insertBefore(frag, pane.firstChild);
+  state.renderedEntryCount = pane.querySelectorAll('.transcript-entry, .tool-activity, .transcript-user, .transcript-text').length;
+  list.scrollTop += list.scrollHeight - prevHeight;
+}
+
+export function ensureSegmentSentinel(pane: HTMLElement): HTMLElement {
+  let sentinel = pane.querySelector('.transcript-segment-sentinel') as HTMLElement | null;
+  if (sentinel) return sentinel;
+  sentinel = document.createElement('div');
+  sentinel.className = 'transcript-segment-sentinel';
+  sentinel.setAttribute('aria-hidden', 'true');
+  pane.insertBefore(sentinel, pane.firstChild);
+  return sentinel;
+}
+
+export function setSegmentLoader(pane: HTMLElement, loading: boolean) {
+  let loader = pane.querySelector('.transcript-segment-loader') as HTMLElement | null;
+  if (loading) {
+    if (!loader) {
+      loader = document.createElement('div');
+      loader.className = 'transcript-segment-loader';
+      loader.textContent = 'Memuat riwayat…';
+      const sentinel = pane.querySelector('.transcript-segment-sentinel');
+      if (sentinel) pane.insertBefore(loader, sentinel.nextSibling);
+      else pane.insertBefore(loader, pane.firstChild);
+    }
+    loader.hidden = false;
+    return;
+  }
+  if (loader) loader.hidden = true;
+}
+
 export function syncTranscriptPane(
   body: HTMLElement,
   state: TranscriptPaneState,

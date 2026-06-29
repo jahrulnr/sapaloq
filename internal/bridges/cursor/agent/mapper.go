@@ -6,6 +6,7 @@ import (
 )
 
 // Mapper converts Agent API decoded events into bridge.StreamEvent slices.
+// sapaloq:boundary cursor-bridge(wire)→cursor-bridge(stream) — text/thinking only; tools via OnMCPTool.
 type Mapper struct {
 	sessionID string
 	streamed  map[string]bool

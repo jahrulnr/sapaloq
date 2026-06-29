@@ -17,11 +17,12 @@ import (
 )
 
 type agentH2GatewayConfig struct {
-	Host      string            `json:"host"`
-	Path      string            `json:"path"`
-	Headers   map[string]string `json:"headers"`
-	BodyB64   string            `json:"bodyB64"`
-	TimeoutMs int               `json:"timeoutMs,omitempty"`
+	Host          string            `json:"host"`
+	Path          string            `json:"path"`
+	Headers       map[string]string `json:"headers"`
+	BodyB64       string            `json:"bodyB64"`
+	TimeoutMs     int               `json:"timeoutMs,omitempty"`
+	IdleTimeoutMs int               `json:"idleTimeoutMs,omitempty"`
 }
 
 type agentH2GatewayMsg struct {
@@ -99,12 +100,10 @@ func StreamAgentNode(ctx context.Context, opts AgentStreamOptions, onFrame func(
 		path = AgentAgentPath
 	}
 
-	timeout := opts.Timeout
-	if timeout == 0 {
-		timeout = 120 * time.Second
+	runCtx, watch := agentStreamRunCtx(ctx, opts)
+	if watch != nil {
+		defer watch.Stop()
 	}
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	headers := BuildAgentHeaders(opts.Token, opts.MachineID, opts.GhostMode)
 	headers[":method"] = "POST"
@@ -113,11 +112,12 @@ func StreamAgentNode(ctx context.Context, opts AgentStreamOptions, onFrame func(
 	headers[":authority"] = urlHostOnly(host)
 
 	cfg := agentH2GatewayConfig{
-		Host:      urlHostOnly(host),
-		Path:      path,
-		Headers:   headers,
-		BodyB64:   base64.StdEncoding.EncodeToString(opts.Body),
-		TimeoutMs: int(timeout / time.Millisecond),
+		Host:          urlHostOnly(host),
+		Path:          path,
+		Headers:       headers,
+		BodyB64:       base64.StdEncoding.EncodeToString(opts.Body),
+		TimeoutMs:     agentH2GatewayTimeoutMs(opts.Timeout),
+		IdleTimeoutMs: agentH2GatewayTimeoutMs(opts.IdleTimeout),
 	}
 	cfgLine, err := json.Marshal(cfg)
 	if err != nil {
@@ -150,6 +150,7 @@ func StreamAgentNode(ctx context.Context, opts AgentStreamOptions, onFrame func(
 		onFrame:     onFrame,
 		writeFrame:  gw.WriteFrame,
 	}
+	bindAgentStreamIdle(state, watch)
 
 	go func() {
 		<-runCtx.Done()
@@ -178,10 +179,16 @@ func StreamAgentNode(ctx context.Context, opts AgentStreamOptions, onFrame func(
 		}
 		switch msg.T {
 		case "status":
+			if watch != nil {
+				watch.Reset()
+			}
 			if msg.Code != 0 && msg.Code != 200 {
 				streamErr = fmt.Errorf("agent http status %d", msg.Code)
 			}
 		case "data":
+			if watch != nil {
+				watch.Reset()
+			}
 			if msg.B64 == "" {
 				continue
 			}
@@ -217,6 +224,11 @@ func StreamAgentNode(ctx context.Context, opts AgentStreamOptions, onFrame func(
 	}
 done:
 	if streamErr == nil {
+		if err := agentStreamIdleErr(watch, opts.IdleTimeout); err != nil {
+			streamErr = err
+		}
+	}
+	if streamErr == nil {
 		if err := scanner.Err(); err != nil {
 			streamErr = fmt.Errorf("agent h2 gateway read: %w", err)
 		} else if dataBuf.Len() > 0 {
@@ -232,6 +244,9 @@ done:
 		return streamErr
 	}
 	if waitErr != nil {
+		if err := runCtx.Err(); err != nil {
+			return fmt.Errorf("agent h2 gateway: %w", err)
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = waitErr.Error()
@@ -304,6 +319,13 @@ func AgentNodeStreamAvailable() bool {
 	}
 	_, err := exec.LookPath("node")
 	return err == nil
+}
+
+func agentH2GatewayTimeoutMs(timeout time.Duration) int {
+	if timeout <= 0 {
+		return 0
+	}
+	return int(timeout / time.Millisecond)
 }
 
 func classifyAgentAPIError(msg string) string {
