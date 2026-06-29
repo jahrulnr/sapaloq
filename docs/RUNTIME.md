@@ -3,7 +3,7 @@
 > **Satu binary Go** - goroutine + channel + persistence lokal. No mandatory
 > broker/cache daemon; optional LLM drivers may manage an external provider
 > process such as `codex app-server`.
-> Last updated: 2026-06-29 (searchwire-backed web search config and live reload)
+> Last updated: 2026-06-29 (isolated IPC sockets: production vs repo mock vs go test)
 
 Widget IPC read timeout (`cmd/sapaloq-widget/ipc.go`, `setIPCReadDeadline`):
 
@@ -260,6 +260,18 @@ The log is append-only, so it is **size-rotated** to stay bounded (it would othe
 | `keepRotatedFiles` | `3` | How many numbered siblings (`.1` … `.N`) to retain |
 
 An absent `vault` block uses the defaults (the cursor-bridge writer inherits the same default rotation). Implementation: `internal/vault` (`vault.go`, `read.go`).
+
+---
+
+## IPC socket paths
+
+| Socket | Path | Used by |
+|--------|------|---------|
+| **Production** | `~/SapaLOQ/run/sapaloq.sock` | `make run`, systemd `sapaloq-core`, widget default |
+| **Repo mock** | `<repo>/.sapaloq/run/sapaloq-mock.sock` | `make mock` / `sapaloq-mock` only — never the widget default |
+| **Test / e2e** | `<tmpdir>/run/sapaloq-test.sock` | `go test`, `config.WriteTestConfig` — isolated per test process |
+
+`go test` refuses to bind the production socket (`internal/ipc/server.go`). Point a dev widget at a non-production core with `SAPALOQ_SOCKET=/abs/path/to.sock`.
 
 ---
 

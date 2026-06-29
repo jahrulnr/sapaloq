@@ -7,6 +7,7 @@
 *.test
 *.out
 *.cov
+coverage.*
 /vendor/
 
 # Built binaries (from `go build` without -o, or install.sh into the repo)
@@ -20,6 +21,7 @@ cmd/sapaloq-widget/frontend/dist/
 
 # Local runtime / sockets
 *.sock
+.sapaloq/
 companion.db
 *.db-journal
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jahrulnr/sapaloq/internal/hostcontext"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
@@ -41,7 +42,17 @@ const maxPrefetchFacts = 8
 //
 // The returned packet's AntiDeepCheck is true when Confidence crosses the
 // threshold, which the orchestrator uses to skip filesystem exploration.
-func (o *Orchestrator) prefetchContext(ctx context.Context, message string) PrefetchPacket {
+func (o *Orchestrator) prefetchContext(ctx context.Context, message string, hints hostcontext.SearchHints) PrefetchPacket {
+	return o.prefetchContextWithOpts(ctx, message, hints, true)
+}
+
+// prefetchContextDry assembles a prefetch packet for sizing/ledger polls without
+// writing the hot-cache entry (reads still apply so rendered size matches cache hits).
+func (o *Orchestrator) prefetchContextDry(ctx context.Context, message string, hints hostcontext.SearchHints) PrefetchPacket {
+	return o.prefetchContextWithOpts(ctx, message, hints, false)
+}
+
+func (o *Orchestrator) prefetchContextWithOpts(ctx context.Context, message string, hints hostcontext.SearchHints, writeCache bool) PrefetchPacket {
 	mc := o.cfg.Memory.WithDefaults()
 	threshold := mc.PrefetchConfidenceThreshold
 	ttl := time.Duration(mc.HotCacheTTLSeconds) * time.Second
@@ -63,7 +74,7 @@ func (o *Orchestrator) prefetchContext(ctx context.Context, message string) Pref
 	}
 
 	// Hot cache: serve a recent identical-intent packet to avoid re-querying.
-	cacheKey := "prefetch:" + namespace + ":" + in.Name + ":" + hotCacheDigest(message)
+	cacheKey := "prefetch:" + namespace + ":" + in.Name + ":" + prefetchCacheKey(message, hints)
 	if cached, ok, err := o.chat.HotCacheGet(ctx, cacheKey); err == nil && ok {
 		var cp PrefetchPacket
 		if json.Unmarshal([]byte(cached), &cp) == nil {
@@ -111,10 +122,10 @@ func (o *Orchestrator) prefetchContext(ctx context.Context, message string) Pref
 			add(got)
 		}
 	}
-	if strings.TrimSpace(message) != "" && len(packet.Facts) < maxPrefetchFacts {
+	if search := hostcontext.PrefetchSearchQuery(message, hints); strings.TrimSpace(search) != "" && len(packet.Facts) < maxPrefetchFacts {
 		// Exclude the skill index from prefetch facts - skills are injected
 		// separately by skillsBlock.
-		if got, err := o.chat.SearchFacts(ctx, message, nil, maxPrefetchFacts); err == nil {
+		if got, err := o.chat.SearchFacts(ctx, search, nil, maxPrefetchFacts); err == nil {
 			filtered := got[:0]
 			for _, f := range got {
 				if f.Kind == "skill" {
@@ -129,8 +140,10 @@ func (o *Orchestrator) prefetchContext(ctx context.Context, message string) Pref
 	packet.AntiDeepCheck = packet.Confidence >= threshold
 
 	// Cache the assembled packet briefly so an immediate repeat is served fast.
-	if payload, err := json.Marshal(packet); err == nil {
-		_ = o.chat.HotCacheSet(ctx, cacheKey, string(payload), ttl)
+	if writeCache {
+		if payload, err := json.Marshal(packet); err == nil {
+			_ = o.chat.HotCacheSet(ctx, cacheKey, string(payload), ttl)
+		}
 	}
 	return packet
 }
@@ -178,6 +191,14 @@ func hotCacheDigest(message string) string {
 		msg = msg[:64]
 	}
 	return msg
+}
+
+func prefetchCacheKey(message string, hints hostcontext.SearchHints) string {
+	key := hotCacheDigest(message)
+	if digest := hints.CacheDigest(); digest != "" {
+		key += ":" + digest
+	}
+	return key
 }
 
 // decodeStringArray parses a JSON string array, returning nil on any error or

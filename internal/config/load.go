@@ -68,7 +68,7 @@ func (w WebSearchConfig) SearchwireConfig() searchwire.Config {
 	return searchwire.Config{
 		Limit:     w.Limit,
 		Timeout:   time.Duration(w.TimeoutSec) * time.Second,
-		UserAgent: "SapaLOQ/1.0 (+searchwire)",
+		UserAgent: "SapaLOQ/1.0 (+https://github.com/jahrulnr/sapaloq)",
 		GitHub: searchwire.GitHubConfig{
 			Token:    strings.TrimSpace(w.GitHub.Token),
 			TokenEnv: w.GitHub.TokenEnv,
@@ -622,10 +622,50 @@ type BusConfig struct {
 	ReplayOnBoot      bool   `json:"replayOnBoot,omitempty"`
 }
 
+type HostContextConfig struct {
+	// Enabled injects the per-turn host context system block when the widget
+	// sends host_context on chat_send. Omitted JSON defaults to true.
+	Enabled *bool `json:"enabled,omitempty"`
+	// MaxAttachments caps attachment path entries in the normalized snapshot.
+	MaxAttachments int `json:"maxAttachments,omitempty"`
+	// MaxBlockTokens bounds rendered host block size (rough truncate).
+	MaxBlockTokens int `json:"maxBlockTokens,omitempty"`
+}
+
+func DefaultHostContextConfig() HostContextConfig {
+	return HostContextConfig{
+		Enabled:        boolPtr(true),
+		MaxAttachments: 20,
+		MaxBlockTokens: 512,
+	}
+}
+
+func (c HostContextConfig) WithDefaults() HostContextConfig {
+	d := DefaultHostContextConfig()
+	if c.Enabled == nil {
+		c.Enabled = d.Enabled
+	}
+	if c.MaxAttachments <= 0 {
+		c.MaxAttachments = d.MaxAttachments
+	}
+	if c.MaxBlockTokens <= 0 {
+		c.MaxBlockTokens = d.MaxBlockTokens
+	}
+	return c
+}
+
+func (c HostContextConfig) EnabledOrDefault() bool {
+	if c.Enabled != nil {
+		return *c.Enabled
+	}
+	return true
+}
+
 type OrchestratorConfig struct {
 	Continuation ContinuationConfig `json:"continuation"`
 	Compaction   CompactionConfig   `json:"compaction"`
 	Completion   CompletionConfig   `json:"completion"`
+	HostContext  HostContextConfig  `json:"hostContext"`
 	// DefaultContextWindowTokens is the fallback context window (tokens) used
 	// when a provider entry does not declare its own contextWindow. Surfaced as
 	// config so the "max context" floor is tunable per install instead of a
@@ -675,10 +715,10 @@ func (c CompletionConfig) WithDefaults() CompletionConfig {
 }
 
 type ContinuationConfig struct {
-	MaxInferenceTurns     int `json:"maxInferenceTurns"`
-	MaxToolCalls          int `json:"maxToolCalls"`
-	MaxParallelTools      int `json:"maxParallelTools"`
-	MaxWallTimeMinutes    int `json:"maxWallTimeMinutes"`
+	MaxInferenceTurns  int `json:"maxInferenceTurns"`
+	MaxToolCalls       int `json:"maxToolCalls"`
+	MaxParallelTools   int `json:"maxParallelTools"`
+	MaxWallTimeMinutes int `json:"maxWallTimeMinutes"`
 	// MaxNoProgressTurns is the initial "toolless-turn budget" under the
 	// explicit-stop model: a turn that calls no tool is NOT a completion
 	// signal, so the run keeps looping while a model only narrates. Each
@@ -764,18 +804,19 @@ func DefaultOrchestratorConfig() OrchestratorConfig {
 			WorkerErrorLog:       true,
 		},
 		DefaultContextWindowTokens: 131072,
+		HostContext:                DefaultHostContextConfig(),
 		Compaction: CompactionConfig{
-			BackgroundThreshold:        0.70,
-			BlockingThreshold:          0.88,
-			PreserveRecentFraction:     0.30,
-			ResumeAfterCompaction:      true,
-			UseCheckpoints:             boolPtr(true),
-			HeadroomPercent:            0.05,
-			SteerPercent:               0.85,
-			KeepRecentTurns:            4,
-			PreserveLastAgentTurn:      true,
-			PreservePrecedingUserTurn:  true,
-			MaxForceRetries:            3,
+			BackgroundThreshold:       0.70,
+			BlockingThreshold:         0.88,
+			PreserveRecentFraction:    0.30,
+			ResumeAfterCompaction:     true,
+			UseCheckpoints:            boolPtr(true),
+			HeadroomPercent:           0.05,
+			SteerPercent:              0.85,
+			KeepRecentTurns:           4,
+			PreserveLastAgentTurn:     true,
+			PreservePrecedingUserTurn: true,
+			MaxForceRetries:           3,
 		},
 	}
 }
@@ -849,6 +890,7 @@ func (c OrchestratorConfig) WithDefaults() OrchestratorConfig {
 	if c.DefaultContextWindowTokens <= 0 {
 		c.DefaultContextWindowTokens = defaults.DefaultContextWindowTokens
 	}
+	c.HostContext = c.HostContext.WithDefaults()
 	c.Completion = c.Completion.WithDefaults()
 	return c
 }

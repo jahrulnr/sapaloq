@@ -19,12 +19,14 @@ type PrefetchRule struct {
 }
 
 type PrefetchTelemetry struct {
-	SessionID     string
-	Intent        string
-	Confidence    float64
-	DeepCheckUsed bool
-	TaskSuccess   *bool
-	LatencyMS     int64
+	SessionID        string
+	Intent           string
+	Confidence       float64
+	DeepCheckUsed    bool
+	TaskSuccess      *bool
+	LatencyMS        int64
+	HostContextBytes int
+	AttachmentCount  int
 }
 
 func (s *Store) UpsertPrefetchRule(ctx context.Context, r PrefetchRule) error {
@@ -122,6 +124,7 @@ func (s *Store) LogPrefetch(ctx context.Context, t PrefetchTelemetry) error {
 	rec := prefetchLogRecord{
 		SessionID: t.SessionID, Intent: t.Intent, Confidence: t.Confidence,
 		DeepCheckUsed: t.DeepCheckUsed, TaskSuccess: t.TaskSuccess, LatencyMS: t.LatencyMS,
+		HostContextBytes: t.HostContextBytes, AttachmentCount: t.AttachmentCount,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	return appendJSONL(s.paths.prefetchLogFile(), rec)

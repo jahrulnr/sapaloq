@@ -42,7 +42,7 @@ func TestWebSearchConfigSearchwireConfig(t *testing.T) {
 	if got.Limit != 5 || got.Timeout != 9*time.Second {
 		t.Fatalf("searchwire limits = limit %d timeout %s", got.Limit, got.Timeout)
 	}
-	if got.UserAgent != "SapaLOQ/1.0 (+searchwire)" {
+	if got.UserAgent != "SapaLOQ/1.0 (+https://github.com/jahrulnr/sapaloq)" {
 		t.Fatalf("UserAgent = %q", got.UserAgent)
 	}
 	if got.GitHub.Token != "token-value" || got.GitHub.TokenEnv != "GH_TOKEN_CUSTOM" {

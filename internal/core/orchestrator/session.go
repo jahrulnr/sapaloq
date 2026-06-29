@@ -176,6 +176,7 @@ func (o *Orchestrator) DeleteSession(ctx context.Context, sessionID string) (str
 		}
 	}
 	o.purgeSessionTasks(sessionID)
+	o.clearSessionHostContext(sessionID)
 	if err := o.chat.DeleteSession(ctx, sessionID); err != nil {
 		return "", false, err
 	}
@@ -281,17 +282,20 @@ func (o *Orchestrator) ContextUsage(ctx context.Context, sessionID string) (chat
 // estimatePerTurnOverhead sums the rough token cost of the per-request system
 // blocks the orchestrator injects on every Ask turn but never persists as
 // chat_turns: the Ask system prompt (persona-wrapped), the runtime context
-// block, negative guidance, the prefetch packet, and the skills block. Keeping
-// this in one place and reusing it from both ContextUsage and the mid-run
-// headroom check prevents the two from drifting (a common cause of the
-// force-trigger firing after, not before, a provider overflow).
+// block, host context snapshot, negative guidance, the prefetch packet, and the
+// skills block. Keeping this in one place and reusing it from both ContextUsage
+// and the mid-run headroom check prevents the two from drifting (a common cause
+// of the force-trigger firing after, not before, a provider overflow).
 func (o *Orchestrator) estimatePerTurnOverhead(ctx context.Context, sessionID, userMsg string) int {
 	stripped, _ := stripAttachmentPayloads(userMsg)
 	overhead := estimateTextTokens(o.systemPrompt(prompts.RoleAsk))
 	overhead += estimateTextTokens(o.runtimeContextMessage(sessionID).Content)
+	overhead += estimateTextTokens(o.hostContextBlock(sessionID))
 	overhead += estimateTextTokens(o.negativeGuidanceBlock(ctx))
-	overhead += estimateTextTokens(o.prefetchBlock(ctx, sessionID, stripped))
-	overhead += estimateTextTokens(o.skillsBlock(ctx, stripped))
+	if block, _ := o.prefetchBlockDry(ctx, sessionID, stripped); block != "" {
+		overhead += estimateTextTokens(block)
+	}
+	overhead += estimateTextTokens(o.skillsBlock(ctx, sessionID, stripped))
 	return overhead
 }
 

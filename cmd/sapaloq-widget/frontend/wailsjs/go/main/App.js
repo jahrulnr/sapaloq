@@ -78,8 +78,8 @@ export function RuntimeStatus() {
   return window['go']['main']['App']['RuntimeStatus']();
 }
 
-export function SendMessage(arg1, arg2) {
-  return window['go']['main']['App']['SendMessage'](arg1, arg2);
+export function SendMessage(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SendMessage'](arg1, arg2, arg3, arg4);
 }
 
 export function SetWorkspace(arg1, arg2) {

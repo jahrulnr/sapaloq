@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-28 (transcript boundary contract; see BOUNDARIES.md Phase 1)
+> Last updated: 2026-06-29 (host_context on chat send)
 
 Related: [PLATFORM.md](./PLATFORM.md) · [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [BOUNDARIES.md](./BOUNDARIES.md)
 
@@ -76,7 +76,10 @@ session workspace (`session_workspace`). Clicking the WORKSPACE tile opens the
 OS-native directory chooser (GTK/Nautilus-style on GNOME; hidden dot-directories
 visible); the choice persists **only for that chat id** via `workspace_set` IPC
 (no global `_last.json`; new chat rooms start at `~/SapaLOQ/workspace` until
-picked). It refreshes every three seconds and immediately after task
+picked). On each chat send the widget also ships an ephemeral **`host_context`**
+JSON blob (session workspace path + compose attachment paths/metadata) alongside
+the user message; core injects it as a separate system block without changing
+persisted cwd. It refreshes every three seconds and immediately after task
 events; the existing task cards remain the detailed lifecycle history.
 
 ### Transcript boundary (widget ↔ orchestrator)

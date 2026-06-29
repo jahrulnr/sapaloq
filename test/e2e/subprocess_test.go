@@ -36,23 +36,14 @@ func TestE2ESubprocessCoreRun(t *testing.T) {
 
 	forceMockCredentials(t)
 	bin := buildCoreBinary(t)
-	dir := t.TempDir()
-	socketPath := filepath.Join(dir, "run", "sapaloq.sock")
-	cfgPath := filepath.Join(dir, "config.json")
-	if err := config.SaveRaw(cfgPath, map[string]any{
-		"schemaVersion": "1.0.0",
-		"runtime":       map[string]any{"dataDir": dir},
-		"events":        map[string]any{"bus": map[string]any{"socketPath": socketPath}},
-	}, "e2e"); err != nil {
-		t.Fatal(err)
-	}
+	dataDir, cfgPath, socketPath := config.WriteTestConfig(t, "e2e-subprocess")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, "run")
 	cmd.Env = append(os.Environ(),
 		"SAPALOQ_CONFIG="+cfgPath,
-		"CURSOR_STATE_VSCDB="+filepath.Join(dir, "missing.vscdb"),
+		"CURSOR_STATE_VSCDB="+filepath.Join(dataDir, "missing.vscdb"),
 		"SAPALOQ_CURSOR_TOKEN=",
 		"CURSOR_ACCESS_TOKEN=",
 		"CURSOR_MACHINE_ID=",

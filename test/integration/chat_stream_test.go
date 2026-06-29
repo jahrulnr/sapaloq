@@ -35,7 +35,11 @@ func activeEntry(t *testing.T, cfg config.Config) (config.LLMBridge, config.Runt
 
 func TestChatStreamMockBridge(t *testing.T) {
 	forceMockCredentials(t)
-	cfg := config.DefaultConfig()
+	_, cfgPath, _ := config.WriteTestConfig(t, "integration-mock-chat")
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	reg := bridge.NewRegistry()
 	entry, runtime := activeEntry(t, cfg)
 	if err := cursor.Register(reg, entry, runtime); err != nil {
@@ -49,7 +53,7 @@ func TestChatStreamMockBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream, err := orch.SendChat(context.Background(), "test", "hello mock")
+	stream, err := orch.SendChat(context.Background(), "test", "hello mock", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +111,7 @@ func TestSettingsPatchWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream, err := orch.SendChat(context.Background(), "test", `/settings patch {"orchestrator":{"completion":{"notifyUserOnDone":true}}}`)
+	stream, err := orch.SendChat(context.Background(), "test", `/settings patch {"orchestrator":{"completion":{"notifyUserOnDone":true}}}`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

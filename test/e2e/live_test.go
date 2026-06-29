@@ -106,16 +106,7 @@ func TestE2ELiveSubprocessCoreRun(t *testing.T) {
 	}
 
 	bin := buildCoreBinary(t)
-	dir := t.TempDir()
-	socketPath := filepath.Join(dir, "run", "sapaloq.sock")
-	cfgPath := filepath.Join(dir, "config.json")
-	if err := config.SaveRaw(cfgPath, map[string]any{
-		"schemaVersion": "1.0.0",
-		"runtime":       map[string]any{"dataDir": dir},
-		"events":        map[string]any{"bus": map[string]any{"socketPath": socketPath}},
-	}, "e2e-live"); err != nil {
-		t.Fatal(err)
-	}
+	_, cfgPath, socketPath := config.WriteTestConfig(t, "e2e-live")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, bin, "run")

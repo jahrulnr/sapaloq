@@ -409,6 +409,16 @@
           "default": 131072,
           "description": "Fallback context window (tokens) used when a provider entry does not declare its own contextWindow. This is the tunable 'max context' floor for the context pill and compaction thresholds; moved out of a hardcoded code constant so it is configurable per install."
         },
+        "hostContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-turn widget host snapshot injected as an ephemeral system block on chat_send.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "maxAttachments": { "type": "integer", "minimum": 1, "default": 20 },
+            "maxBlockTokens": { "type": "integer", "minimum": 64, "default": 512 }
+          }
+        },
         "clarification": {
           "type": "object",
           "description": "Sub-agent unclear decision → orchestrator Q&A → optional user forward",

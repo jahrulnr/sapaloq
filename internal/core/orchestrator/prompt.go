@@ -32,6 +32,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,6 +41,7 @@ import (
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
+	"github.com/jahrulnr/sapaloq/internal/hostcontext"
 	"github.com/jahrulnr/sapaloq/internal/parse/artifacts"
 	"github.com/jahrulnr/sapaloq/internal/prompts"
 	"github.com/jahrulnr/sapaloq/internal/skills"
@@ -216,6 +218,11 @@ func (o *Orchestrator) materializeRuntimeRoadmap() {
 - Every actor starts at workspace unless it has a persisted cwd.
 - Relative file and exec paths follow that actor cwd.
 - cd persists for the same actor.
+
+# Host context contract
+- Host snapshot is ephemeral per turn; not stored in chat history.
+- Host paths are hints; tool cwd follows workspace contract above.
+- File content comes from tools unless user attached it in the message.
 `
 	if os.MkdirAll(dirs.EtcDir, 0o755) != nil {
 		return
@@ -250,41 +257,60 @@ func (o *Orchestrator) negativeGuidanceBlock(ctx context.Context) string {
 }
 
 // prefetchBlock runs the index-first prefetch pipeline for a user message and
-// renders its bounded system block. It logs one prefetch telemetry row per call
-// (best-effort) so rule tuning has data. Returns "" when memory prefetch is
+// renders its bounded system block. It logs one prefetch telemetry row per Ask
+// turn ingress (best-effort). Context-usage polls must use prefetchBlockDry
+// instead so prefetch_log is not spammed. Returns "" when memory prefetch is
 // disabled, the orchestrator has no store, or the packet has nothing to inject.
 //
 // This is the anti-forget anchor: the packet is assembled from companion.db,
 // never the transcript, so it is identical before and after a compaction.
 func (o *Orchestrator) prefetchBlock(ctx context.Context, sessionID, userMsg string) string {
-	if o == nil || o.chat == nil {
-		return ""
-	}
-	if !o.cfg.Memory.WithDefaults().PrefetchEnabled {
-		return ""
-	}
 	start := time.Now()
-	packet := o.prefetchContext(ctx, userMsg)
-	block := packet.render()
-	// Telemetry: deep_check_used is the inverse of the anti-deep-check decision
-	// at assembly time (the actual tool loop may still escalate; that refinement
-	// is left to the learning layer).
+	block, packet := o.prefetchBlockDry(ctx, sessionID, userMsg)
+	if block == "" || o == nil || o.chat == nil {
+		return block
+	}
+	hostSnap := o.sessionHostSnapshot(sessionID)
+	hostBytes := 0
+	attachCount := 0
+	if hostSnap != nil {
+		if raw, err := json.Marshal(hostSnap); err == nil {
+			hostBytes = len(raw)
+		}
+		attachCount = len(hostSnap.Attachments)
+	}
 	_ = o.chat.LogPrefetch(ctx, chatstore.PrefetchTelemetry{
-		SessionID:     sessionID,
-		Intent:        packet.Intent,
-		Confidence:    packet.Confidence,
-		DeepCheckUsed: !packet.AntiDeepCheck,
-		LatencyMS:     time.Since(start).Milliseconds(),
+		SessionID:        sessionID,
+		Intent:           packet.Intent,
+		Confidence:       packet.Confidence,
+		DeepCheckUsed:    !packet.AntiDeepCheck,
+		LatencyMS:        time.Since(start).Milliseconds(),
+		HostContextBytes: hostBytes,
+		AttachmentCount:  attachCount,
 	})
 	return block
+}
+
+// prefetchBlockDry assembles and renders the prefetch system block without
+// prefetch_log telemetry or hot-cache writes (cache reads still apply).
+func (o *Orchestrator) prefetchBlockDry(ctx context.Context, sessionID, userMsg string) (string, PrefetchPacket) {
+	if o == nil || o.chat == nil {
+		return "", PrefetchPacket{}
+	}
+	if !o.cfg.Memory.WithDefaults().PrefetchEnabled {
+		return "", PrefetchPacket{}
+	}
+	packet := o.prefetchContextDry(ctx, userMsg, o.hostContextSearchHints(sessionID))
+	return packet.render(), packet
 }
 
 // skillsBlock builds a short system block listing the skills relevant to the
 // current user message. Selection is trigger-phrase first (fast, deterministic),
 // then augmented by an FTS/keyword search over indexed skill bodies, deduped by
-// id, sorted by priority, and capped by skills.maxLoadPerTurn. Each body is
-// bounded by skills.maxBodyLines. Returns "" when disabled or nothing matches.
-func (o *Orchestrator) skillsBlock(ctx context.Context, userMsg string) string {
+// id, sorted by priority, and capped by skills.maxLoadPerTurn. Host attachment
+// paths augment trigger/FTS when a snapshot is present. Returns "" when disabled
+// or nothing matches.
+func (o *Orchestrator) skillsBlock(ctx context.Context, sessionID, userMsg string) string {
 	if o == nil {
 		return ""
 	}
@@ -304,25 +330,44 @@ func (o *Orchestrator) skillsBlock(ctx context.Context, userMsg string) string {
 		byID[sk.ID] = sk
 	}
 
+	hints := o.hostContextSearchHints(sessionID)
+	augmented := strings.TrimSpace(userMsg + " " + hostcontext.SkillsAugmentQuery(hints))
+
 	selected := make(map[string]skills.Skill)
-	for _, sk := range skills.Match(loaded, userMsg) {
+	for _, sk := range skills.Match(loaded, augmented) {
 		selected[sk.ID] = sk
 	}
 
 	// Secondary signal: FTS/keyword search over indexed skill bodies. Map any
 	// hit back to a loaded skill by id (first token of the stored content).
-	if len(selected) < cfg.MaxLoadPerTurn && o.chat != nil && strings.TrimSpace(userMsg) != "" {
-		if facts, err := o.chat.SearchFacts(ctx, userMsg, []string{"skill"}, cfg.MaxLoadPerTurn*3); err == nil {
-			for _, f := range facts {
-				id, _, ok := splitSkillFact(f.Content)
-				if !ok {
-					continue
-				}
-				if sk, ok := byID[id]; ok {
-					selected[sk.ID] = sk
-				}
+	searchSkillFacts := func(query string) {
+		if len(selected) >= cfg.MaxLoadPerTurn || o.chat == nil {
+			return
+		}
+		query = strings.TrimSpace(query)
+		if query == "" {
+			return
+		}
+		facts, err := o.chat.SearchFacts(ctx, query, []string{"skill"}, cfg.MaxLoadPerTurn*3)
+		if err != nil {
+			return
+		}
+		for _, f := range facts {
+			id, _, ok := splitSkillFact(f.Content)
+			if !ok {
+				continue
+			}
+			if sk, ok := byID[id]; ok {
+				selected[sk.ID] = sk
 			}
 		}
+	}
+	searchSkillFacts(userMsg)
+	for _, term := range hostcontext.SkillsSearchTerms(hints) {
+		if len(selected) >= cfg.MaxLoadPerTurn {
+			break
+		}
+		searchSkillFacts(term)
 	}
 	if len(selected) == 0 {
 		return ""
@@ -614,13 +659,16 @@ func (o *Orchestrator) buildForegroundActorMessages(ctx context.Context, session
 	messages := make([]bridge.Message, 0, len(turns)+6)
 	messages = append(messages, bridge.Message{Role: "system", Content: o.systemPrompt(prompts.RoleAsk)})
 	messages = append(messages, o.runtimeContextMessage(sessionID))
+	if block := o.hostContextBlock(sessionID); block != "" {
+		messages = append(messages, bridge.Message{Role: "system", Content: block})
+	}
 	if block := o.negativeGuidanceBlock(ctx); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
 	if block := o.prefetchBlock(ctx, sessionID, latestUserMessage); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
-	if block := o.skillsBlock(ctx, latestUserMessage); block != "" {
+	if block := o.skillsBlock(ctx, sessionID, latestUserMessage); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
 	}
 	messages = append(messages, actorTurnsToMessages(turns)...)

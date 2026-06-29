@@ -47,16 +47,7 @@ func startCore(t *testing.T, opts coreStartOptions) *coreHarness {
 		forceMockCredentials(t)
 	}
 
-	dir := t.TempDir()
-	socketPath := filepath.Join(dir, "run", "sapaloq.sock")
-	cfgPath := filepath.Join(dir, "config.json")
-	if err := config.SaveRaw(cfgPath, map[string]any{
-		"schemaVersion": "1.0.0",
-		"runtime":       map[string]any{"dataDir": dir},
-		"events":        map[string]any{"bus": map[string]any{"socketPath": socketPath}},
-	}, "e2e"); err != nil {
-		t.Fatal(err)
-	}
+	_, cfgPath, socketPath := config.WriteTestConfig(t, "e2e")
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

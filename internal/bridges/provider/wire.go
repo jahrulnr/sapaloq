@@ -459,6 +459,7 @@ func buildHTTPRequest(ctx context.Context, opts WireOptions, body []byte) (*http
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("User-Agent", "SapaLOQ/1.0 (+https://github.com/jahrulnr/sapaloq)")
 	switch opts.Auth {
 	case AuthXAPIKey:
 		req.Header.Set("x-api-key", opts.Token)

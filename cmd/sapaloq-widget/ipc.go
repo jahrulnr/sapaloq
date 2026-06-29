@@ -169,12 +169,20 @@ type taskInspectResult struct {
 }
 
 func sendChat(socketPath, sessionID, message string) (chatResult, error) {
-	return sendChatWithStatus(socketPath, sessionID, message, nil)
+	return sendChatWithStatus(socketPath, sessionID, message, nil, nil)
 }
 
-func sendChatWithStatus(socketPath, sessionID, message string, onEvent func(bridge.StreamEvent)) (chatResult, error) {
+func sendChatWithHostContext(socketPath, sessionID, message string, hostContext json.RawMessage, onEvent func(bridge.StreamEvent)) (chatResult, error) {
+	return sendChatWithStatus(socketPath, sessionID, message, hostContext, onEvent)
+}
+
+func sendChatWithStatus(socketPath, sessionID, message string, hostContext json.RawMessage, onEvent func(bridge.StreamEvent)) (chatResult, error) {
 	var result chatResult
-	responses, err := roundTripWithEvent(socketPath, ipcRequest{Op: "chat_send", SessionID: sessionID, Message: message}, func(res ipcResponse) {
+	req := ipcRequest{Op: "chat_send", SessionID: sessionID, Message: message}
+	if len(hostContext) > 0 {
+		req.HostContext = hostContext
+	}
+	responses, err := roundTripWithEvent(socketPath, req, func(res ipcResponse) {
 		if onEvent != nil && res.Event != nil {
 			onEvent(*res.Event)
 		}

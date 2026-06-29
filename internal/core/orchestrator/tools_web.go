@@ -57,7 +57,7 @@ func toolWebFetch(ctx context.Context, args toolArgs) string {
 	if err != nil {
 		return "Error: " + err.Error()
 	}
-	req.Header.Set("User-Agent", "SapaLOQ/1.0 (+companion)")
+	req.Header.Set("User-Agent", "SapaLOQ/1.0 (+https://github.com/jahrulnr/sapaloq)")
 	resp, err := httpClient().Do(req)
 	if err != nil {
 		return "Error: " + err.Error()

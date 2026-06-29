@@ -119,13 +119,15 @@ type hotCacheRecord struct {
 }
 
 type prefetchLogRecord struct {
-	SessionID     string  `json:"session_id"`
-	Intent        string  `json:"intent"`
-	Confidence    float64 `json:"confidence"`
-	DeepCheckUsed bool    `json:"deep_check_used"`
-	TaskSuccess   *bool   `json:"task_success,omitempty"`
-	LatencyMS     int64   `json:"latency_ms"`
-	CreatedAt     string  `json:"created_at"`
+	SessionID        string  `json:"session_id"`
+	Intent           string  `json:"intent"`
+	Confidence       float64 `json:"confidence"`
+	DeepCheckUsed    bool    `json:"deep_check_used"`
+	TaskSuccess      *bool   `json:"task_success,omitempty"`
+	LatencyMS        int64   `json:"latency_ms"`
+	HostContextBytes int     `json:"host_context_bytes,omitempty"`
+	AttachmentCount  int     `json:"attachment_count,omitempty"`
+	CreatedAt        string  `json:"created_at"`
 }
 
 func loadJSONLines[T any](path string) ([]T, error) {

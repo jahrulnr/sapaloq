@@ -13,7 +13,7 @@ import { applyChatResetFromBE } from './apply-session-reset';
 import { syncChatTranscript, syncChatTranscriptStateFromDOM, scheduleSyncChatTranscript, flushScheduledChatTranscript, applyDeltaChatTranscript, mountChatTranscript, resetChatTranscriptState, patchForegroundTaskCards } from './transcript-pane';
 import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory, scheduleRestoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
-import { refreshRuntimeStatus } from './runtime-status';
+import { refreshRuntimeStatus, currentSessionWorkspacePath } from './runtime-status';
 import { notifyCompletion, primeNotifications } from './notifications';
 import {
   getCompose,
@@ -149,7 +149,7 @@ function handleChatIPCError(err: unknown, opts?: { turnID?: number; allowWhenIdl
   setConnection('connected');
 }
 
-async function sendText(text: string, _visibleText = text, _attachments: AttachmentData[] = []) {
+async function sendText(text: string, _visibleText = text, attachments: AttachmentData[] = []) {
   const input = getComposeInput();
   if (isSubmitting() || !input || !text.trim()) return;
   closeMessageMenu();
@@ -162,8 +162,13 @@ async function sendText(text: string, _visibleText = text, _attachments: Attachm
   setComposeDisabled(false);
   activeGeneration = null;
   syncChatTranscriptStateFromDOM();
+  const hostAttachments = attachments.map((a) => ({
+    name: a.name,
+    path: a.path || '',
+    isDir: a.isDir || false,
+  }));
   try {
-    const res = await SendMessage(getSessionID(), text);
+    const res = await SendMessage(getSessionID(), text, hostAttachments, currentSessionWorkspacePath());
     if (res.generation_id) activeGeneration = res.generation_id;
     if (res.reset) {
       applyChatResetFromBE({

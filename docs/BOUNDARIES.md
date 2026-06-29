@@ -2,7 +2,7 @@
 
 > **Contract doc:** who owns what between cursor-bridge, orchestrator, IPC, and widget.
 > Use this before adding guards at the turn loop or widget remount paths.
-> Last updated: 2026-06-28 (in-bridge MCP persist on `EventToolUpdate`)
+> Last updated: 2026-06-29 (host context ownership row)
 
 Related: [CURSOR_AGENT_CONTRACT.md](./CURSOR_AGENT_CONTRACT.md) · [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [UI-DECISION.md](./UI-DECISION.md) · [RUNTIME.md](./RUNTIME.md)
 
@@ -72,6 +72,7 @@ flowchart TB
 | Transcript **render** | **widget** | Backend assuming DOM shape | `transcript-pane.ts`, `apply-transcript-delta.ts` |
 | Foreground steering inbox | **orchestrator** | Steering as chat turn | `actor_events.go`, IPC `chat_steering` |
 | Session workspace cwd | **orchestrator** | Widget persisting cwd without IPC | `workspace.go`, IPC `workspace_set` |
+| Host context snapshot | **widget** collects, **orchestrator** normalizes + injects | Persisting host context to turns.json; silent cwd override | `internal/hostcontext`, `host_context.go`, IPC `chat_send.host_context` |
 | Context usage pill | **orchestrator** `SessionContextLedger` (compute) + **widget** (display) | Two different token formulas; turns.json without orch JSONL | `session_context_ledger.go`, `connection.ts` |
 
 ---

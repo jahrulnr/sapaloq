@@ -1,7 +1,7 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-29 (web_search backend migrated to searchwire metasearch)
+> Last updated: 2026-06-29 (host context Fase 3: SearchHints for prefetch + skills)
 
 Related: [BOUNDARIES.md](./BOUNDARIES.md) · [VISION.md](./VISION.md)
 
@@ -16,6 +16,18 @@ Foreground **Ask** and background **planner / task-runner / scribe** share one i
 | Tools | `dispatchTool` → `dispatchAskTool` (orchestrator) or `runBackgroundTool` (lifecycle) |
 | Policy | `policyForRole` / `resolveActorOutcome` (`actor_policy.go`) |
 | Persist | `turns.json` + `checkpoints.json` beside `status.json` for `task-*` actors |
+
+### Foreground Ask system block order (per turn)
+
+1. `systemPrompt(ask)` — persona + rules + ask role
+2. `runtimeContextMessage` — install paths + persisted `workspace=` cwd
+3. `hostContextBlock` — ephemeral widget snapshot (`host_context` on `chat_send`; hints only)
+4. `negativeGuidanceBlock` — feedback `do_not_repeat`
+5. `prefetchBlock` — index facts (`SearchHints`: session_workspace + attachment paths augment FTS); logs one `prefetch_log.jsonl` row per turn ingress only
+6. `skillsBlock` — matched skills (user message + host attachment path tokens for trigger/FTS)
+7. Durable turns + latest user message
+
+**Context pill / ledger:** `SessionContextLedger` and `estimatePerTurnOverhead` size prefetch via `prefetchBlockDry` (no `prefetch_log` write, no hot-cache write). Hot-cache keys digest message and `SearchHints` (workspace + attachment paths) separately so long prompts do not collapse host signals.
 
 ## Codex in-turn tool callbacks (2026-06-28)
 

@@ -19,7 +19,7 @@ type SessionContextLedger struct {
 	ContextWindow    int
 	TurnTokens       int // active turns, replay-shaped (actorTurnsToMessages)
 	StreamToolTokens int // tool results in orch JSONL not covered by role=tool turns
-	OverheadTokens   int // system / runtime / prefetch / skills (once per request)
+	OverheadTokens   int // system / runtime / host context / prefetch / skills (once per request)
 	UsedTokens       int // TurnTokens + StreamToolTokens + OverheadTokens, or live overlay
 	Percent          int
 	ActiveTurns      int

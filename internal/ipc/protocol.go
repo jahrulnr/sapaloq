@@ -1,6 +1,8 @@
 package ipc
 
 import (
+	"encoding/json"
+
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/core/orchestrator"
@@ -21,6 +23,9 @@ type Request struct {
 	Signal     string `json:"signal,omitempty"`
 	Correction string `json:"correction,omitempty"`
 	Path       string `json:"path,omitempty"`
+	// HostContext is an ephemeral widget snapshot (paths, attachments) for the
+	// current chat_send turn. Invalid payloads are dropped; chat still proceeds.
+	HostContext json.RawMessage `json:"host_context,omitempty"`
 	// SegmentCheckpoint selects a compaction segment for chat_history_segment:
 	// -1 latest tail, 0 pre-first checkpoint, k>0 historical anchor. Nil → latest.
 	SegmentCheckpoint *int `json:"segment_checkpoint,omitempty"`

@@ -11,7 +11,7 @@ func TestRuntimeStatusReportsModelPathsAndLiveActors(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.DefaultConfig()
 	cfg.Runtime.DataDir = root
-	cfg.Events.Bus.SocketPath = filepath.Join(root, "run", "sapaloq.sock")
+	cfg.Events.Bus.SocketPath = filepath.Join(root, "run", config.TestSocketFileName)
 	o := &Orchestrator{
 		cfgPath:      filepath.Join(root, "config.json"),
 		cfg:          cfg,

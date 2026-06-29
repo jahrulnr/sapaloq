@@ -143,7 +143,7 @@ func runChat(cfg config.Config, cfgPath string, message string) {
 	if err != nil {
 		exitf("orchestrator: %v", err)
 	}
-	stream, err := orch.SendChat(context.Background(), "cli", message)
+	stream, err := orch.SendChat(context.Background(), "cli", message, nil)
 	if err != nil {
 		exitf("chat: %v", err)
 	}

@@ -41,7 +41,7 @@ export function RetryChatTurn(arg1:string,arg2:number):Promise<main.chatResult>;
 
 export function RuntimeStatus():Promise<main.runtimeStatus>;
 
-export function SendMessage(arg1:string,arg2:string):Promise<main.chatResult>;
+export function SendMessage(arg1:string,arg2:string,arg3:Array<main.ComposeAttachment>,arg4:string):Promise<main.chatResult>;
 
 export function SetWorkspace(arg1:string,arg2:string):Promise<main.workspaceSetResult>;
 

@@ -149,6 +149,7 @@ vault-list:
 	$(CORE) vault list --limit 20
 
 mock:
+	@mkdir -p .sapaloq/run
 	go run ./$(MOCK_DIR)
 
 sync-cursor-schema:

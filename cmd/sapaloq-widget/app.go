@@ -97,8 +97,9 @@ func (a *App) emitTranscriptPatch(event bridge.StreamEvent) {
 	runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
 }
 
-func (a *App) SendMessage(sessionID string, text string) (chatResult, error) {
-	return sendChatWithStatus(a.socketPath, sessionID, text, nil)
+func (a *App) SendMessage(sessionID string, text string, attachments []ComposeAttachment, sessionWorkspace string) (chatResult, error) {
+	hostCtx := buildHostContextJSON(sessionWorkspace, attachments)
+	return sendChatWithStatus(a.socketPath, sessionID, text, hostCtx, nil)
 }
 
 func (a *App) ChatHistory() (chatHistoryResult, error) {

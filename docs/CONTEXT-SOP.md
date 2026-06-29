@@ -2,7 +2,7 @@
 
 > Anchor untuk **efficient context**, **dynamic system-prompt**, dan **auto-learning**.
 > Adaptasi pola `automation-learning` untuk companion desktop - bukan repo coding.
-> Last updated: 2026-06-28 (JSON store primary; legacy SQLite section archived)
+> Last updated: 2026-06-29 (Fase 3 host SearchHints: prefetch workspace + skills attachment boost)
 
 ---
 
@@ -102,12 +102,17 @@ flowchart LR
 
 | Step | Actor | Output |
 |------|-------|--------|
+| Host context snapshot | widget → IPC `chat_send.host_context` | Ephemeral paths + attachment metadata (no file bodies) |
 | Parse mode | orchestrator | `personal` / `hobby` / `work` / `auto` |
 | Classify intent | intent-router (heuristic + optional tiny LLM) | `settings`, `catat`, `notify`, `task`, `chat`, … |
 | Match task stack | orchestrator | `activeTaskId`, poison check |
 | Lookup prefetch rules | `state/config/prefetch_rules.json` | kinds, skills, config keys |
 
 ### Fase 1 - Index prefetch (<500ms)
+
+Host compose signals from `chat_send.host_context` augment the fact-search query via `hostcontext.SearchHints`: **`session_workspace`** and **attachment paths**. They do not change intent classification or `actorCWD` (persisted workspace remains authoritative in `runtimeContextMessage`). `prefetch_log.jsonl` records `host_context_bytes` and `attachment_count` once per Ask turn (`prefetchBlock` ingress), not on context-pill polls (`prefetchBlockDry`).
+
+**skillsBlock (Fase 3):** attachment path tokens (full path, basename, extension, stem) augment trigger matching and per-term skill FTS when a host snapshot is present. `editor.active_file` / `recent_files` are not published by widget v1 yet — not used for boost.
 
 Query order (parallel where safe):
 

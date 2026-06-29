@@ -32,6 +32,9 @@ func NewServer(cfg config.Config, orch *orchestrator.Orchestrator) *Server {
 }
 
 func (s *Server) ListenAndServe(ctx context.Context, socketPath string) error {
+	if config.RunningUnderGoTest() && config.IsProductionSocketPath(socketPath) {
+		return fmt.Errorf("refusing to bind production IPC socket %q from go test; use config.WriteTestConfig", socketPath)
+	}
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
 		return err
 	}
@@ -238,7 +241,7 @@ func (s *Server) handleRetry(ctx context.Context, conn net.Conn, req Request, st
 }
 
 func (s *Server) handleChat(ctx context.Context, conn net.Conn, req Request, start time.Time) {
-	stream, err := s.orch.SendChat(ctx, req.SessionID, req.Message)
+	stream, err := s.orch.SendChat(ctx, req.SessionID, req.Message, req.HostContext)
 	if err != nil {
 		write(conn, Response{OK: false, Op: "event", Message: err.Error()})
 		return

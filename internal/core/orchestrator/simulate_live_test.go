@@ -402,7 +402,7 @@ func TestSimulateAgentReadPlanWorkSummary(t *testing.T) {
 // drainChat runs one SendChat turn to completion, failing on a stream error.
 func drainChat(t *testing.T, o *Orchestrator, ctx context.Context, sessionID, msg string) {
 	t.Helper()
-	stream, err := o.SendChat(ctx, sessionID, msg)
+	stream, err := o.SendChat(ctx, sessionID, msg, nil)
 	if err != nil {
 		t.Fatalf("SendChat: %v", err)
 	}

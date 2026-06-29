@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bus"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/debug"
+	"github.com/jahrulnr/sapaloq/internal/hostcontext"
 	"github.com/jahrulnr/sapaloq/internal/parse"
 	"github.com/jahrulnr/sapaloq/internal/platform"
 	"github.com/jahrulnr/sapaloq/internal/platform/headless"
@@ -66,7 +68,9 @@ type Orchestrator struct {
 	skills           []skills.Skill
 	desktop          platform.Desktop
 	prompts          *prompts.Manager
-	webSearcher      webSearchClient
+	webSearcher        webSearchClient
+	hostCtxMu          sync.Mutex
+	sessionHostContext map[string]*hostcontext.Snapshot
 	// bgJobsReg is the in-process registry for non-blocking (fire-and-forget)
 	// tool jobs. See tools_bg_jobs.go. bgJobsOnce guards its lazy init.
 	bgJobsReg  *bgJobRegistry
@@ -330,7 +334,7 @@ func (o *Orchestrator) emitChatTerminalError(ctx context.Context, out chan<- bri
 	o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 }
 
-func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) (<-chan bridge.StreamEvent, error) {
+func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string, hostCtx json.RawMessage) (<-chan bridge.StreamEvent, error) {
 	o.reloadConfigIfChanged(ctx)
 	snap := o.snapshot()
 	if sessionID == "" {
@@ -378,6 +382,7 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string) 
 			GenerationID: genStr,
 			At:           time.Now().UTC(),
 		})
+		o.setSessionHostContext(sessionID, hostCtx)
 		messages, err := o.contextMessages(ctx, sessionID, message)
 		if err != nil {
 			o.emitChatTerminalError(ctx, out, sessionID, err)

@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/jahrulnr/sapaloq/internal/config"
 )
 
 type request struct {
@@ -25,21 +27,41 @@ type response struct {
 	ServerMs  int64  `json:"server_ms"`
 }
 
+func defaultMockSocket() string {
+	if p, err := config.RepoMockSocketPath(); err == nil {
+		return p
+	}
+	return filepath.Join(".sapaloq", "run", "sapaloq-mock.sock")
+}
+
 func main() {
-	socketPath := flag.String("socket", filepath.Join(os.TempDir(), "sapaloq-spike.sock"), "unix socket path")
+	socketPath := flag.String("socket", defaultMockSocket(), "unix socket path (default: <repo>/.sapaloq/run/sapaloq-mock.sock)")
 	flag.Parse()
 
-	_ = os.Remove(*socketPath)
+	abs, err := filepath.Abs(*socketPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "socket path: %v\n", err)
+		os.Exit(1)
+	}
+	if config.IsProductionSocketPath(abs) {
+		fmt.Fprintf(os.Stderr, "refusing to bind production socket %q; use repo mock path or -socket\n", abs)
+		os.Exit(1)
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "mkdir: %v\n", err)
+		os.Exit(1)
+	}
+	_ = os.Remove(abs)
 
-	ln, err := net.Listen("unix", *socketPath)
+	ln, err := net.Listen("unix", abs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "listen: %v\n", err)
 		os.Exit(1)
 	}
 	defer ln.Close()
-	defer os.Remove(*socketPath)
+	defer os.Remove(abs)
 
-	fmt.Printf("mock-core listening on %s\n", *socketPath)
+	fmt.Printf("mock-core listening on %s\n", abs)
 
 	for {
 		conn, err := ln.Accept()

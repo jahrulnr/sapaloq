@@ -2,7 +2,13 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-29 (**searchwire web search**: concurrent metasearch, snippets, partial failures, live config reload)
+> Last updated: 2026-06-29 (**host context Fase 3**: prefetch workspace FTS + skills attachment boost via `SearchHints`)
+
+> Prior: 2026-06-29 (**host context Fase 2**: dry prefetch sizing for ledger, hot-cache key fix, Phase 2 tests)
+
+> Prior: 2026-06-29 (**host context Fase 1**: widget `host_context` on `chat_send` → ephemeral `hostContextBlock`; prefetch attachment-path hints; `orchestrator.hostContext` config)
+
+> Prior: 2026-06-29 (**searchwire web search**: concurrent metasearch, snippets, partial failures, live config reload)
 
 > Prior: 2026-06-28 (**idle standby**: ping-only health probe when orb collapsed; piggyback status/usage on ping when expanded)
 
@@ -145,7 +151,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
 | 16 | JSON chat store (sessions/turns/checkpoints/rollout) | ✅ | `internal/store/chat/store.go` — `state/sessions/index.json`, per-session `turns.json` / `checkpoints.json`, `state/rollout/*.jsonl` (no SQLite) |
 | 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
-| 18 | Context-SOP: index / prefetch / anti-deep-check / intent-router | 🟡 | `memory/facts.json` + `state/config/{prefetch_rules,prompt_slices,skills_index}.json` (`facts.go`, `prefetch.go`, `slices.go`, `skills_index.go`). Substring fact search (legacy FTS removed with SQLite). Heuristic intent-router (`intent.go`) + index-first prefetch (`prefetch.go`) + `prefetch_log.jsonl`. Still missing: prompt-slice/skills boot sync, full Fase-0 task-stack hook, bandit auto rule-tuning |
+| 18 | Context-SOP: index / prefetch / anti-deep-check / intent-router | 🟡 | `memory/facts.json` + `state/config/{prefetch_rules,prompt_slices,skills_index}.json` (`facts.go`, `prefetch.go`, `slices.go`, `skills_index.go`). Substring fact search (legacy FTS removed with SQLite). Heuristic intent-router (`intent.go`) + index-first prefetch (`prefetch.go`) + `prefetch_log.jsonl`. Host attachment paths augment FTS query; telemetry `host_context_bytes` / `attachment_count`. Still missing: prompt-slice/skills boot sync, full Fase-0 task-stack hook, bandit auto rule-tuning |
+| 18b | Host context (IDE-context-lite) | ✅ | Fase 1–2: widget `host_context` → `hostContextBlock`; dry ledger prefetch; IPC test. **Fase 3:** `hostcontext.SearchHints` feeds prefetch FTS (`session_workspace` + attachment paths) and `skillsBlock` (attachment path tokens for trigger + per-term FTS); hot-cache digests workspace separately (`search_hints.go`, `prefetch.go`, `prompt.go`) |
 | 19 | Feedback / penalty (👍👎, slices, do_not_repeat, learning_queue, bandit) | 🟡 | `memory/feedback.jsonl` + `AddFeedback`/`RecentDoNotRepeat` (`feedback.go`); 👎+correction → `do_not_repeat` fact; widget 👍/👎 wired. `memory/learning_queue.json` + in-proc janitor (`learning.go`). No bandit auto-tuning yet |
 | 20 | Named sub-agent roles (scribe, memory-janitor, intent-router, boundary-guard, event-watcher, learning-agent, research) | 🟡 | `scribe` is now spawnable (`sapaloq_spawn_scribe`); the sub-agent tool gate is config-driven (`roleAllows` honors `subAgents.roles[].allowedTools` with `*`-wildcards, default-deny mutation when unconfigured); `toolsForRole` offers only allowed+registered tools. `intent-router` and `memory-janitor` now exist as **in-process orchestrator hooks** (`intent.go` classify, `learning.go` drain) rather than spawnable sub-agents. boundary-guard/event-watcher/learning-agent/research still not spawnable |
 | 21 | Mode-aware scribe storage mapping (personal/work/hobby) | ✅ | `scribe_write_note` resolves a destination via `storage.intents`/explicit id/mode(+kind) and appends a timestamped note, boundary-enforced to declared `storage.paths` only. `internal/config/load.go` (`StorageConfig`/`StoragePath`/`Resolve`), `scribe.go` |
@@ -160,6 +167,36 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-29) - host context Fase 3 (prefetch workspace + skills boost)
+
+- **`hostcontext.SearchHints`:** `PrefetchSearchQuery`, `SkillsAugmentQuery` / `SkillsSearchTerms`, `CacheDigest` — shared host signals from snapshot.
+- **Prefetch:** FTS query includes `session_workspace` + attachment paths; hot-cache key digests workspace independently.
+- **skillsBlock:** trigger match on augmented message; per-term FTS over attachment path tokens (basename, ext, stem).
+- **Tests:** `TestPrefetchSearchQueryIncludesSessionWorkspace`, `TestPrefetchHotCacheKeyDiffersByWorkspace`, `TestSkillsBlockHostAttachmentTriggerBoost`, `TestSkillsBlockHostAttachmentFTSBoost`.
+- **Known limitation:** `editor.active_file` / `recent_files` not published by widget v1 → not used for boost yet.
+
+## Implemented this session (2026-06-29) - host context Fase 2 (hardening)
+
+- **`prefetchBlockDry`:** `estimatePerTurnOverhead` / `SessionContextLedger` size prefetch without `LogPrefetch` or hot-cache writes; `prefetchBlock` still logs once per Ask turn ingress.
+- **Hot-cache key:** `prefetchCacheKey` digests message and host attachment paths independently (fixes 64-char message truncation dropping paths).
+- **Tests:** `TestPrefetchHotCacheKeyDiffersByHostPaths`, `TestPrefetchBlockLogsHostTelemetry`, `TestEstimateOverheadDoesNotLogPrefetch`, `TestEstimateOverheadIncludesHostBlock`, `TestSessionDeleteClearsHostContext`, `TestChatSendWithHostContext` (IPC).
+- **Docs:** `ORCHESTRATOR.md` ledger/prefetch note; `CONTEXT-SOP.md` prefetch host-path note.
+
+## Implemented this session (2026-06-29) - host context (IDE-context-lite)
+
+- **Widget → core:** `chat_send` accepts optional `host_context` JSON (workspace path + compose attachment metadata). `SendMessage(session, text, attachments, sessionWorkspace)` builds the snapshot in `cmd/sapaloq-widget/host_context.go`.
+- **Orchestrator:** ephemeral in-memory store per session; `hostContextBlock` injected after `runtimeContextMessage` in `buildForegroundActorMessages`. Does not persist to `turns.json` or change `actorCWD`.
+- **Package:** `internal/hostcontext` — parse, normalize, render (`---` + `# Host context (ephemeral)` + `key=value` + contract line).
+- **Prefetch:** attachment paths augment FTS search query; `prefetch_log.jsonl` records `host_context_bytes` and `attachment_count`.
+- **Config:** `orchestrator.hostContext.{enabled,maxAttachments,maxBlockTokens}`; ROADMAP static host-context contract bullets.
+- **Tests:** `internal/hostcontext`, `host_context_test.go` (orchestrator + widget); `go test` + frontend build green.
+
+## Implemented this session (2026-06-29) - isolated IPC sockets
+
+- **Production** stays `~/SapaLOQ/run/sapaloq.sock`. **Repo mock** is `<repo>/.sapaloq/run/sapaloq-mock.sock` (`make mock`, `sapaloq-mock`; refuses production path). **Tests/e2e** use `<tmpdir>/run/sapaloq-test.sock` via `config.WriteTestConfig`.
+- `go test` cannot bind the production socket (`ListenAndServe` guard). Integration/e2e harnesses migrated; `sapaloq-mock` no longer defaults to `/tmp`.
+- Docs: `docs/RUNTIME.md` socket table.
 
 ## Implemented this session (2026-06-29) - idle socket error bubbles (follow-up)
 

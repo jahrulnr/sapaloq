@@ -133,6 +133,11 @@ export function renderRuntimeStatus(status: RuntimeStatusData) {
   }
 }
 
+export function currentSessionWorkspacePath(): string {
+  const el = document.getElementById('runtime-workspace');
+  return (el?.dataset.workspacePath || '').trim();
+}
+
 export async function refreshRuntimeStatus() {
   try {
     renderRuntimeStatus(await RuntimeStatus() as RuntimeStatusData);
