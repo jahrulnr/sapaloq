@@ -530,7 +530,7 @@ func buildAutopilotContinuation(toolCalls, toollessStreak int, toolResults []str
 		case !agentSession && escalated:
 			b.WriteString("Invoke `sapaloq_stop` silently now - do not repeat your answer or write a sign-off. If a concrete next step genuinely remains for YOU to take now, take it with a single concrete action; otherwise stop.")
 		default:
-			b.WriteString("Continue the existing task only if a concrete next step remains for YOU to take now. If the work is finished, or the only remaining work is running in the background (a delegated task you cannot advance), call `sapaloq_stop` immediately - stopping is a silent action, so do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
+			b.WriteString("Continue the existing task only if a concrete next step remains for YOU to take now. If YOU awaiting the user's response, there's no task to proceed with, the work is finished, or the only remaining work is running in the background (a delegated task you cannot advance), call `sapaloq_stop` immediately - stopping is a silent action, so do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
 		}
 	}
 
