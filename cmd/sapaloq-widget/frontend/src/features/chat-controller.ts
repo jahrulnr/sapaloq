@@ -3,6 +3,7 @@ import { DeleteChatTurn, RetryChatTurn, SendMessage, SteerChat, StopChat } from 
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { AttachmentData } from '../ui/compose';
 import type { ChatUsage, StreamEvent, TranscriptPatch } from '../core/types';
+import { friendlyIPCError, isSocketIPCError } from '../core/ipc-errors';
 import { errorText, getComposeInput, getMessageList, captureMessageScroll } from '../ui/dom';
 import { autosizeCompose, resetComposeSize, setComposeDisabled } from '../ui/compose-ui';
 import { renderUsage, setConnection, setRingState, runPing } from './connection';
@@ -169,9 +170,18 @@ async function sendText(text: string, _visibleText = text, _attachments: Attachm
     renderUsage(res.usage as ChatUsage | undefined);
     void runPing();
   } catch (err) {
-    const message = errorText(err);
-    appendMessage('message--error', message.includes('dial ') ? 'core offline' : message, getUserGroup());
-    setConnection(message.includes('dial ') ? 'disconnected' : 'connected');
+    const raw = errorText(err);
+    const socketErr = isSocketIPCError(raw) || raw.includes('dial ');
+    // Watch stream may have already finished the turn while SendMessage was
+    // still waiting on the request socket — do not paint a stale IPC error.
+    if (!isSubmitting()) {
+      if (socketErr) setConnection(raw.includes('dial ') ? 'disconnected' : 'reconnecting');
+    } else if (!socketErr) {
+      appendMessage('message--error', friendlyIPCError(err), getUserGroup());
+      setConnection('connected');
+    } else {
+      setConnection(raw.includes('dial ') ? 'disconnected' : 'reconnecting');
+    }
     setRingState('idle');
   } finally {
     clearProgressFromTranscript();
@@ -273,7 +283,13 @@ export async function stopActiveResponse() {
     await StopChat(getSessionID());
     flushScheduledChatTranscript();
   } catch (err) {
-    appendMessage('message--error', errorText(err), getUserGroup());
+    const raw = errorText(err);
+    if (isSocketIPCError(raw) || raw.includes('dial ')) {
+      setConnection(raw.includes('dial ') ? 'disconnected' : 'reconnecting');
+      releaseInFlightTurn();
+      return;
+    }
+    appendMessage('message--error', friendlyIPCError(err), getUserGroup());
   }
 }
 

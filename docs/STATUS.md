@@ -2,7 +2,11 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-28 (**unified transcript emit** — sub-agent monitor shares emitCoalescedTranscript + delta IPC with foreground chat)
+> Last updated: 2026-06-28 (**idle standby**: ping-only health probe when orb collapsed; piggyback status/usage on ping when expanded)
+
+> Prior: 2026-06-28 (**widget IPC sliding idle timeout**: reset per stream frame; idle waits until threshold only)
+
+> Prior: 2026-06-28 (**unified transcript emit** — sub-agent monitor shares emitCoalescedTranscript + delta IPC with foreground chat)
 
 > Prior: 2026-06-28 (**in-bridge tool persist** — cursor/codex MCP writes assistant+tool to turns.json on each ToolUpdate)
 
@@ -154,6 +158,12 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-28) - idle standby ping-only IPC
+
+- **Scenario:** overlay laptop standby, no chat transaction — parallel `runtime_status` (3–5 s) + `context_usage` (15 s) + `ping` (4 s) stacked socket reads; flat 3 s read deadline caused `i/o timeout` bubbles when core was busy with background agents.
+- **Fix (Go):** `setIPCReadDeadline` sliding model — idle waits until `maxTotal` only; `ping` threshold 60 s. **Fix (FE):** single ping loop; status/usage piggyback on successful ping when panel expanded (collapsed orb = ping only); socket errors update conn dot only, not chat.
+- **Tests:** `ipc_idle_test.go`, `ipc-errors.test.ts`; `go test ./cmd/sapaloq-widget/...`, frontend build green.
 
 ## Implemented this session (2026-06-28) - task card patch without full restore
 

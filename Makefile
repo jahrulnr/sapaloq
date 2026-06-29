@@ -38,7 +38,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 help:
 	@echo "SapaLOQ - common targets"
 	@echo "  make run              - run core + widget dev together (Ctrl+C cleanly stops all child processes)"
-	@echo "  make test             - go test ./..."
+	@echo "  make test             - go test -short ./... + widget frontend vitest"
 	@echo "  make e2e              - mock e2e (test/e2e)"
 	@echo "  make e2e-live         - live api2 e2e (needs Cursor creds, SAPALOQ_LIVE_E2E=1)"
 	@echo "  make simulate-live    - live orchestrator/planner/agent sim vs real LLM (needs BLACKBOX_API_KEY)"
@@ -115,9 +115,10 @@ test:
 	go clean -testcache
 	@cov=$$(mktemp coverage.XXXXXX); \
 	trap 'rm -f "$$cov"' EXIT; \
-	go test -v -covermode=count ./... -coverprofile="$$cov"; \
-	go tool cover -func="$$cov"; \
-	cp "$$cov" coverage.cov
+	go test -short -v -covermode=count ./... -coverprofile="$$cov" && \
+	go tool cover -func="$$cov" && \
+	cp "$$cov" coverage.cov && \
+	npm run test --prefix $(WIDGET_DIR)/frontend
 
 e2e:
 	go test ./test/e2e/... -v -count=1 -timeout 120s

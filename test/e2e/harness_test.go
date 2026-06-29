@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -109,8 +110,12 @@ func forceMockCredentials(t *testing.T) {
 }
 
 func waitForSocket(t *testing.T, socketPath string) {
+	waitForSocketWithin(t, socketPath, 5*time.Second)
+}
+
+func waitForSocketWithin(t *testing.T, socketPath string, within time.Duration, diag ...string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(within)
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("unix", socketPath, 100*time.Millisecond)
 		if err == nil {
@@ -119,7 +124,11 @@ func waitForSocket(t *testing.T, socketPath string) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("socket not ready: %s", socketPath)
+	msg := fmt.Sprintf("socket not ready after %s: %s", within, socketPath)
+	if len(diag) > 0 && strings.TrimSpace(diag[0]) != "" {
+		msg += "\n" + diag[0]
+	}
+	t.Fatal(msg)
 }
 
 func ipcRoundTrip(t *testing.T, socketPath string, req ipc.Request, untilDone bool) []ipc.Response {

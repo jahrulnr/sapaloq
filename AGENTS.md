@@ -109,7 +109,7 @@ migrations/              # Legacy SQL DDL (archived; runtime uses JSON store)
 ## Common commands
 
 ```bash
-make test            # go test ./...
+make test            # go test -short ./... + widget frontend vitest (subprocess e2e: make e2e)
 make e2e             # e2e suite
 make run             # run core
 make doctor          # config/infra validation

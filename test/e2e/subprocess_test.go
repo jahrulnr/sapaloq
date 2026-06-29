@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -47,6 +48,7 @@ func TestE2ESubprocessCoreRun(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, "run")
 	cmd.Env = append(os.Environ(),
 		"SAPALOQ_CONFIG="+cfgPath,
@@ -56,7 +58,7 @@ func TestE2ESubprocessCoreRun(t *testing.T) {
 		"CURSOR_MACHINE_ID=",
 	)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = &stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -70,7 +72,7 @@ func TestE2ESubprocessCoreRun(t *testing.T) {
 		_ = cmd.Wait()
 	})
 
-	waitForSocket(t, socketPath)
+	waitForSocketWithin(t, socketPath, 30*time.Second, "sapaloq-core stderr:\n"+stderr.String())
 
 	ping := ipcRoundTrip(t, socketPath, ipc.Request{Op: "ping"}, false)
 	if len(ping) == 0 || !ping[0].OK {

@@ -116,6 +116,7 @@ export async function setExpanded(next: boolean) {
     await delay(PANEL_TRANSITION_MS);
     WindowSetSize(COLLAPSED.w, COLLAPSED.h);
     WindowSetPosition(pos.x, pos.y + deltaH);
+    window.dispatchEvent(new Event('sapaloq:collapsed'));
   } finally {
     document.body.classList.remove('closing');
     transitionBusy = false;

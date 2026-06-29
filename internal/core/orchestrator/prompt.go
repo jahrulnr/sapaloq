@@ -697,11 +697,6 @@ func actorTurnsToMessages(turns []chatstore.Turn) []bridge.Message {
 	return out
 }
 
-// buildSubAgentMessages is retained for tests; new code should use buildActorMessages.
-func (o *Orchestrator) buildSubAgentMessages(record *taskRecord) []bridge.Message {
-	return o.buildBackgroundActorMessages(context.Background(), record)
-}
-
 func stripPlannerSummaryMarker(content string) string {
 	const prefix = "<!--sapaloq-planner-summary:"
 	if !strings.HasPrefix(content, prefix) {

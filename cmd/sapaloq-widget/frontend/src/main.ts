@@ -17,6 +17,7 @@ import {
   toggleExpanded,
 } from './ui/window-layout';
 import { cycleRingState, refreshUsage, runPing, startPingLoop } from './features/connection';
+import { refreshRuntimeStatus } from './features/runtime-status';
 import { autosizeCompose, toggleComposeExpand } from './ui/compose-ui';
 import { initComposeContextMenu } from './ui/compose-context-menu';
 import { closeMessageMenu } from './features/messages';
@@ -165,6 +166,8 @@ initDragAndDrop();
 let visibleHistoryHydrated = false;
 let visibleHistoryHydrating = false;
 window.addEventListener('sapaloq:expanded', () => {
+  void refreshRuntimeStatus();
+  void refreshUsage();
   if (visibleHistoryHydrated || visibleHistoryHydrating) return;
   visibleHistoryHydrating = true;
   void restoreChatHistory().then((ok) => {

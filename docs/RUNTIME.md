@@ -3,7 +3,16 @@
 > **Satu binary Go** - goroutine + channel + persistence lokal. No mandatory
 > broker/cache daemon; optional LLM drivers may manage an external provider
 > process such as `codex app-server`.
-> Last updated: 2026-06-28 (widget transcript patch modes: snapshot vs delta ops on watch bus)
+> Last updated: 2026-06-28 (widget IPC sliding idle timeout: reset per frame when streaming; threshold-only when idle)
+
+Widget IPC read timeout (`cmd/sapaloq-widget/ipc.go`, `setIPCReadDeadline`):
+
+| Phase | Behavior |
+|-------|----------|
+| **Standby (orb / panel idle, no chat transaction)** | Hanya **`ping`** tiap ~4 s (+ backoff kalau gagal). `runtime_status` / `context_usage` **tidak** punya timer paralel — piggyback setelah ping sukses saat panel expanded. Socket `watch` tetap long-lived tanpa read deadline. |
+| **Belum ada frame** (menunggu core jawab) | Tunggu sampai `maxTotal` habis — tidak ada cap per-read pendek. |
+| **Ada transaksi** (stream `chat_send`/`chat_retry`) | Reset sliding `idleBetween` (5 menit) tiap event; tetap dibatasi `maxTotal` 35 menit dari awal round-trip. |
+| **`watch`** | Read tanpa deadline (idle sampai event atau putus); reconnect backoff. |
 
 Related: [EVENT-BUS.md](./EVENT-BUS.md) · [VISION.md](./VISION.md)
 
@@ -258,7 +267,7 @@ Server write deadline per frame: **5 s** (`internal/ipc/server.go`).
 |---------|----------------|
 | `dial …/sapaloq.sock: connect: connection refused` | `sapaloq-core` not running |
 | `dial …/sapaloq.sock: i/o timeout` | Core not accepting within 500 ms (slow boot, stale socket file, overloaded host) |
-| `read unix …/sapaloq.sock: i/o timeout` | Core did not finish a **non-chat** IPC handler within **3 s** |
+| `read unix …/sapaloq.sock: i/o timeout` | Read deadline habis: idle threshold (`maxTotal`) untuk op tunggal, atau sliding `idleBetween` antar-frame saat stream chat. Lihat `ipcIdlePolicy` / `setIPCReadDeadline` di `cmd/sapaloq-widget/ipc.go`. |
 
 Chat streaming itself uses the 35-minute deadline — a slow model reply does **not** hit the 3 s cap. The 3 s timeout shows up on **side calls** while core is busy: ping (every 4 s), context usage (every 15 s), opening sub-agent monitor (`actor_inspect`), loading a large `chat_history`, or JSON compaction writes.
 

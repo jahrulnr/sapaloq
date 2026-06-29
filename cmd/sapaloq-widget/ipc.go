@@ -584,7 +584,7 @@ func watchEvents(socketPath string, stop <-chan struct{}, onEvent func(bridge.St
 			return
 		default:
 		}
-		conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+		conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 		if err != nil {
 			select {
 			case <-stop:
@@ -636,32 +636,75 @@ func watchEvents(socketPath string, stop <-chan struct{}, onEvent func(bridge.St
 	}
 }
 
+func ipcIdlePolicy(op string) (idleBetween, maxTotal time.Duration) {
+	switch op {
+	case "chat_send", "chat_retry":
+		return 5 * time.Minute, 35 * time.Minute
+	case "ping":
+		return 0, 60 * time.Second
+	case "runtime_status", "context_usage":
+		return 0, 30 * time.Second
+	case "chat_history", "chat_history_segment", "session_list", "session_switch",
+		"session_new", "session_delete", "chat_delete", "submit_feedback":
+		return 0, 60 * time.Second
+	case "actor_inspect", "task_inspect":
+		return 0, 45 * time.Second
+	case "chat_stop", "chat_steering", "task_resume", "workspace_set":
+		return 0, 30 * time.Second
+	default:
+		return 0, 20 * time.Second
+	}
+}
+
+// setIPCReadDeadline applies the widget IPC timeout contract:
+//   - no transaction yet (active=false): wait until maxTotal elapses — no short
+//     per-read cap; the connection blocks until the core answers or the threshold
+//     is exhausted ("-1 detik sampai threshold habis").
+//   - transaction in flight (active=true): reset a sliding idleBetween window on
+//     each received frame, still bounded by maxTotal from round-trip start.
+func setIPCReadDeadline(conn net.Conn, idleBetween, maxTotal time.Duration, started time.Time, active bool) error {
+	if maxTotal <= 0 {
+		return conn.SetReadDeadline(time.Time{})
+	}
+	rem := maxTotal - time.Since(started)
+	if rem <= 0 {
+		return fmt.Errorf("ipc: round-trip exceeded %s", maxTotal)
+	}
+	if active && idleBetween > 0 && idleBetween < rem {
+		rem = idleBetween
+	}
+	return conn.SetReadDeadline(time.Now().Add(rem))
+}
+
 func roundTripWithEvent(socketPath string, req ipcRequest, onResponse func(ipcResponse)) ([]ipcResponse, error) {
-	conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", socketPath, err)
 	}
 	defer conn.Close()
 
-	deadline := 3 * time.Second
-	if req.Op == "chat_send" || req.Op == "chat_retry" {
-		deadline = 35 * time.Minute
-	}
-	if err := conn.SetDeadline(time.Now().Add(deadline)); err != nil {
-		return nil, fmt.Errorf("set deadline: %w", err)
-	}
+	idleBetween, maxTotal := ipcIdlePolicy(req.Op)
+	streaming := req.Op == "chat_send" || req.Op == "chat_retry"
+	started := time.Now()
+	active := false
 
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return nil, fmt.Errorf("set write deadline: %w", err)
+	}
 	b, _ := json.Marshal(req)
 	if _, err := conn.Write(append(b, '\n')); err != nil {
 		return nil, fmt.Errorf("write: %w", err)
 	}
+	if err := setIPCReadDeadline(conn, idleBetween, maxTotal, started, active); err != nil {
+		return nil, err
+	}
+
 	sc := bufio.NewScanner(conn)
-	// Responses can echo large attachment payloads (e.g. chat_history turns with
-	// inlined images/files), which exceed bufio.Scanner's default 64KB line cap.
 	sc.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
 	var responses []ipcResponse
 scanLoop:
 	for sc.Scan() {
+		active = true
 		var res ipcResponse
 		if err := json.Unmarshal(sc.Bytes(), &res); err != nil {
 			return nil, fmt.Errorf("decode: %w", err)
@@ -670,7 +713,7 @@ scanLoop:
 		if onResponse != nil {
 			onResponse(res)
 		}
-		if req.Op != "chat_send" && req.Op != "chat_retry" {
+		if !streaming {
 			break scanLoop
 		}
 		if res.Op == "event" && res.Event != nil {
@@ -678,6 +721,9 @@ scanLoop:
 			case bridge.EventDone, bridge.EventError:
 				break scanLoop
 			}
+		}
+		if err := setIPCReadDeadline(conn, idleBetween, maxTotal, started, active); err != nil {
+			return nil, err
 		}
 	}
 	if err := sc.Err(); err != nil {

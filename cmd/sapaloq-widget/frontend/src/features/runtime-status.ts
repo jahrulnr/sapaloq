@@ -3,7 +3,6 @@ import type { ActorRuntimeStatus, RuntimeStatus as RuntimeStatusData } from '../
 import { getSessionID, setSessionID } from '../core/state';
 import { openTaskMonitor } from '../ui/task-monitor-overlay';
 
-let timer: ReturnType<typeof setInterval> | null = null;
 // Per chat-room workspace cache. Never reuse another session's path when the
 // active room has no persisted cwd yet (switch room / restart race).
 const workspaceBySession = new Map<string, string>();
@@ -20,9 +19,6 @@ function roleLabel(role: string) {
   return role || 'Actor';
 }
 
-// A worker that has reached a terminal outcome (done/failed/stopped) or whose
-// phase says it has wound down (finalizing/exited) is NOT live work - it must
-// not keep the pill blinking. Only genuinely-running phases map to 'active'.
 function isSettled(actor: ActorRuntimeStatus) {
   const status = (actor.status || '').toLowerCase();
   const phase = (actor.phase || '').toLowerCase();
@@ -45,7 +41,6 @@ function actorTile(role: string, actor?: ActorRuntimeStatus) {
   article.dataset.state = actorState(actor);
   article.title = actor ? `${actor.id}\n${actor.workspace}` : `${roleLabel(role)} tidak aktif`;
 
-  // Only Planner and Agent pills open the pop-up; scribe stays a static tile.
   if (role === 'planner' || role === 'task-runner') {
     article.classList.add('actor-tile--clickable');
     article.setAttribute('role', 'button');
@@ -64,8 +59,6 @@ function actorTile(role: string, actor?: ActorRuntimeStatus) {
   const label = document.createElement('b');
   label.textContent = roleLabel(role);
   const phase = document.createElement('small');
-  // Once settled, the pill reads 'idle' rather than freezing on a transient
-  // phase like 'finalizing' that no longer reflects live work.
   phase.textContent = actor && !isSettled(actor) ? (actor.phase || actor.status || 'active') : 'idle';
   copy.append(label, phase);
   article.append(signal, copy);
@@ -97,7 +90,6 @@ function activeWorkspacePath(status: RuntimeStatusData) {
   if (fromCore && sid) workspaceBySession.set(sid, fromCore);
   if (fromCore) return fromCore;
   if (sid && workspaceBySession.has(sid)) return workspaceBySession.get(sid)!;
-  // Active chat room: avoid flashing install default while session workspace loads.
   if (sid) return '';
   return status.workspace_path || '';
 }
@@ -145,12 +137,11 @@ export async function refreshRuntimeStatus() {
   try {
     renderRuntimeStatus(await RuntimeStatus() as RuntimeStatusData);
   } catch {
-    // Connection indicator owns offline feedback; preserve the last snapshot.
+    // ping loop owns offline feedback; preserve the last snapshot.
   }
 }
 
+/** One-shot refresh when the panel opens; ongoing polls piggyback on ping (see connection.ts). */
 export function startRuntimeStatusLoop() {
-  if (timer) return;
   void refreshRuntimeStatus();
-  timer = setInterval(() => void refreshRuntimeStatus(), 3000);
 }
