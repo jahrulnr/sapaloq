@@ -3,7 +3,7 @@ import { DeleteChatTurn, RetryChatTurn, SendMessage, SteerChat, StopChat } from 
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { AttachmentData } from '../ui/compose';
 import type { ChatUsage, StreamEvent, TranscriptPatch } from '../core/types';
-import { friendlyIPCError, isSocketIPCError } from '../core/ipc-errors';
+import { friendlyIPCError, ipcConnectionStateForError, isTransientIPCError } from '../core/ipc-errors';
 import { errorText, getComposeInput, getMessageList, captureMessageScroll } from '../ui/dom';
 import { autosizeCompose, resetComposeSize, setComposeDisabled } from '../ui/compose-ui';
 import { renderUsage, setConnection, setRingState, runPing } from './connection';
@@ -139,6 +139,16 @@ function applyTranscriptPatch(patch: TranscriptPatch) {
   if (patch.usage) renderUsage(patch.usage as ChatUsage);
 }
 
+function handleChatIPCError(err: unknown, opts?: { turnID?: number; allowWhenIdle?: boolean }): void {
+  if (isTransientIPCError(err)) {
+    setConnection(ipcConnectionStateForError(err));
+    return;
+  }
+  if (!opts?.allowWhenIdle && !isSubmitting()) return;
+  appendMessage('message--error', friendlyIPCError(err), getUserGroup(), opts?.turnID);
+  setConnection('connected');
+}
+
 async function sendText(text: string, _visibleText = text, _attachments: AttachmentData[] = []) {
   const input = getComposeInput();
   if (isSubmitting() || !input || !text.trim()) return;
@@ -170,17 +180,11 @@ async function sendText(text: string, _visibleText = text, _attachments: Attachm
     renderUsage(res.usage as ChatUsage | undefined);
     void runPing();
   } catch (err) {
-    const raw = errorText(err);
-    const socketErr = isSocketIPCError(raw) || raw.includes('dial ');
-    // Watch stream may have already finished the turn while SendMessage was
-    // still waiting on the request socket — do not paint a stale IPC error.
-    if (!isSubmitting()) {
-      if (socketErr) setConnection(raw.includes('dial ') ? 'disconnected' : 'reconnecting');
-    } else if (!socketErr) {
+    if (isTransientIPCError(err)) {
+      setConnection(ipcConnectionStateForError(err));
+    } else if (isSubmitting()) {
       appendMessage('message--error', friendlyIPCError(err), getUserGroup());
       setConnection('connected');
-    } else {
-      setConnection(raw.includes('dial ') ? 'disconnected' : 'reconnecting');
     }
     setRingState('idle');
   } finally {
@@ -254,7 +258,7 @@ async function retryMessage(turnID: number) {
     await bindLatestGroupTurnID();
     renderUsage(res.usage as ChatUsage | undefined);
   } catch (err) {
-    appendMessage('message--error', errorText(err), getUserGroup(), turnID);
+    handleChatIPCError(err, { turnID, allowWhenIdle: true });
   } finally {
     clearProgressFromTranscript();
     setSubmitting(false);
@@ -273,7 +277,7 @@ async function deleteMessageBranch(turnID: number) {
     await DeleteChatTurn(getSessionID(), turnID);
     await restoreChatHistory();
   } catch (err) {
-    appendMessage('message--error', errorText(err), getUserGroup(), turnID);
+    handleChatIPCError(err, { turnID, allowWhenIdle: true });
   }
 }
 
@@ -283,9 +287,8 @@ export async function stopActiveResponse() {
     await StopChat(getSessionID());
     flushScheduledChatTranscript();
   } catch (err) {
-    const raw = errorText(err);
-    if (isSocketIPCError(raw) || raw.includes('dial ')) {
-      setConnection(raw.includes('dial ') ? 'disconnected' : 'reconnecting');
+    if (isTransientIPCError(err)) {
+      setConnection(ipcConnectionStateForError(err));
       releaseInFlightTurn();
       return;
     }

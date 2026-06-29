@@ -641,7 +641,7 @@ func ipcIdlePolicy(op string) (idleBetween, maxTotal time.Duration) {
 	case "chat_send", "chat_retry":
 		return 5 * time.Minute, 35 * time.Minute
 	case "ping":
-		return 0, 60 * time.Second
+		return 0, 90 * time.Second
 	case "runtime_status", "context_usage":
 		return 0, 30 * time.Second
 	case "chat_history", "chat_history_segment", "session_list", "session_switch",

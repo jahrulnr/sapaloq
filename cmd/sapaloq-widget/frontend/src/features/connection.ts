@@ -60,40 +60,53 @@ export function cycleRingState() {
 let pingIntervalMs = 4000;
 let pingFailures = 0;
 let pingCount = 0;
+let pingInFlight = false;
 let statusInFlight = false;
 let usageInFlight = false;
-
-function maybeRefreshStatus() {
-  if (statusInFlight || !isExpanded()) return;
-  statusInFlight = true;
-  void refreshRuntimeStatus().finally(() => { statusInFlight = false; });
-}
-
-function maybeRefreshUsage() {
-  if (usageInFlight || !isExpanded()) return;
-  usageInFlight = true;
-  void refreshUsage().finally(() => { usageInFlight = false; });
-}
 
 /** Piggyback secondary polls on ping so idle standby never opens parallel IPC sockets. */
 function piggybackOnPing(wasOffline: boolean) {
   const idle = !isSubmitting();
   if (wasOffline) {
-    maybeRefreshStatus();
-    maybeRefreshUsage();
+    void runSecondaryAfterPing(true);
     return;
   }
   if (!isExpanded()) return;
   pingCount++;
   if (idle) {
-    if (pingCount % 3 === 0) maybeRefreshStatus();
-    if (pingCount % 4 === 0) maybeRefreshUsage();
+    void runSecondaryAfterPing(false);
     return;
   }
   if (pingCount % 6 === 0) maybeRefreshStatus();
 }
 
+/** Run at most one secondary IPC (status or usage) per successful ping. */
+async function runSecondaryAfterPing(both: boolean) {
+  if (both) {
+    await maybeRefreshStatus();
+    await maybeRefreshUsage();
+    return;
+  }
+  // Alternate so idle never stacks runtime_status + context_usage on one tick.
+  if (pingCount % 2 === 0) await maybeRefreshStatus();
+  else await maybeRefreshUsage();
+}
+
+function maybeRefreshStatus(): Promise<void> {
+  if (statusInFlight || !isExpanded()) return Promise.resolve();
+  statusInFlight = true;
+  return refreshRuntimeStatus().finally(() => { statusInFlight = false; });
+}
+
+function maybeRefreshUsage(): Promise<void> {
+  if (usageInFlight || !isExpanded()) return Promise.resolve();
+  usageInFlight = true;
+  return refreshUsage().finally(() => { usageInFlight = false; });
+}
+
 export async function runPing() {
+  if (pingInFlight) return;
+  pingInFlight = true;
   try {
     const res = await PingCore();
     const wasOffline = getConnection() !== 'connected';
@@ -104,6 +117,8 @@ export async function runPing() {
   } catch {
     schedulePingBackoff();
     setConnection(getConnection() === 'connected' ? 'reconnecting' : 'disconnected');
+  } finally {
+    pingInFlight = false;
   }
 }
 

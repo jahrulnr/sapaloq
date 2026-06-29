@@ -47,4 +47,13 @@ describe('error retry button', () => {
     expect(btn).not.toBeNull();
     expect(el.querySelector('.transcript-entry-body')?.textContent).toContain('updated error');
   });
+
+  it('does not offer retry for transient socket IPC errors', () => {
+    const el = document.createElement('div');
+    el.className = 'transcript-error message message--error';
+    el.dataset.transientIpc = '1';
+    el.dataset.rawText = 'read unix @->/home/user/SapaLOQ/run/sapaloq.sock: i/o timeout';
+    wireErrorMessage(el);
+    expect(el.querySelector('.message-inline-actions button')).toBeNull();
+  });
 });

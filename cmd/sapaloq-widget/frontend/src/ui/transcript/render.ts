@@ -1,3 +1,4 @@
+import { friendlyIPCErrorText, isTransientIPCError } from '../../core/ipc-errors';
 import { renderMarkdown } from '../markdown';
 import { hasVisibleText } from '../dom';
 import type { TranscriptEntry } from './types';
@@ -150,14 +151,17 @@ export function renderTranscriptEntry(
     }
     el = wrap;
   } else if (entry.kind === 'error') {
+    const raw = entry.text || '';
+    const display = friendlyIPCErrorText(raw);
     const wrap = document.createElement('div');
     wrap.className = `transcript-entry transcript-error message message--error${entry.archived ? ' message--archived' : ''}`;
     wrap.dataset.entryKind = 'error';
-    wrap.dataset.rawText = entry.text || '';
+    wrap.dataset.rawText = raw;
+    if (isTransientIPCError(raw)) wrap.dataset.transientIpc = '1';
     if (entry.id) wrap.dataset.entryId = entry.id;
     const body = document.createElement('div');
     body.className = 'transcript-entry-body';
-    body.append(renderMarkdown(entry.text || ''));
+    body.append(renderMarkdown(display));
     wrap.append(body);
     el = wrap;
   } else if (entry.kind === 'progress') {

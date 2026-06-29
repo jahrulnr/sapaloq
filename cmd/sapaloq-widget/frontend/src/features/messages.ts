@@ -12,6 +12,7 @@ import {
 } from '../ui/dom';
 import { renderMarkdown } from '../ui/markdown';
 import { showImagePreview } from '../ui/image-preview';
+import { isTransientIPCError } from '../core/ipc-errors';
 import {
   getSessionID,
   getUserGroup,
@@ -414,6 +415,9 @@ function resolveRetryTurnID(item: HTMLElement): number {
 }
 
 export function wireErrorMessage(item: HTMLElement) {
+  if (item.dataset.transientIpc === '1' || isTransientIPCError(item.dataset.rawText || item.textContent || '')) {
+    return;
+  }
   let actions = item.querySelector('.message-inline-actions');
   if (!actions) {
     actions = document.createElement('div');

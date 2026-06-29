@@ -12,7 +12,7 @@ func TestIPCIdlePolicy(t *testing.T) {
 		t.Fatalf("chat_send = (%v,%v)", idle, total)
 	}
 	idle, total = ipcIdlePolicy("ping")
-	if idle != 0 || total != 60*time.Second {
+	if idle != 0 || total != 90*time.Second {
 		t.Fatalf("ping = (%v,%v)", idle, total)
 	}
 }

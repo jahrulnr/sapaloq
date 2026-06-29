@@ -161,6 +161,12 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 
 ---
 
+## Implemented this session (2026-06-29) - idle socket error bubbles (follow-up)
+
+- **Root cause:** `retryMessage` / `deleteMessageBranch` still appended raw `read unix … i/o timeout` into chat; retry on those bubbles duplicated the noise. Idle piggyback could still open `runtime_status` + `context_usage` on the same ping tick.
+- **Fix:** transient IPC errors never enter transcript (shared `isTransientIPCError`); error rows render friendly text and hide retry for socket blips; ping `inFlight` guard + alternate status/usage per ping; ping `maxTotal` 90s.
+- **Tests:** extended `ipc-errors.test.ts`, `messages-error.test.ts`; `go test ./cmd/sapaloq-widget/...`, frontend vitest green.
+
 ## Implemented this session (2026-06-29) - searchwire web search
 
 - Replaced the inline DuckDuckGo HTML regex scraper behind `web_search` with pinned `github.com/jahrulnr/searchwire`: Brave, Startpage, Wikipedia, and GitHub execute concurrently; results are fused/deduplicated and rendered as title + URL + snippet. Partial source failures remain visible without discarding successful results; all-source errors and cancellation are explicit.
