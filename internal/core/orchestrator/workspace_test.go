@@ -83,7 +83,7 @@ func TestActorWorkspacePersistsFinalCWDWhenLaterCommandFails(t *testing.T) {
 	}
 }
 
-func TestNewChatSessionInheritsLastWorkspace(t *testing.T) {
+func TestChatSessionWithoutFileUsesInstallDefault(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	project := filepath.Join(root, "project")
@@ -94,34 +94,11 @@ func TestNewChatSessionInheritsLastWorkspace(t *testing.T) {
 	}
 	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
 	o.persistChatSessionWorkspace("chat-old", project)
-	if got := o.actorCWD("chat-new"); got != project {
-		t.Fatalf("new chat cwd = %q, want inherited last %q", got, project)
+	if got := o.actorCWD("chat-new"); got != workspace {
+		t.Fatalf("chat without file cwd = %q, want install default %q", got, workspace)
 	}
 	if got := o.actorCWD("task-fresh"); got != workspace {
 		t.Fatalf("task cwd = %q, want install default %q", got, workspace)
-	}
-}
-
-func TestChatSessionLegacyDefaultFileTreatedAsUnset(t *testing.T) {
-	root := t.TempDir()
-	workspace := filepath.Join(root, "workspace")
-	project := filepath.Join(root, "project")
-	for _, dir := range []string{workspace, project} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
-	// Legacy pollution: per-chat file pointing at install default.
-	if err := os.MkdirAll(o.workspacesDir(), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(workspaceState{CWD: workspace})
-	if err := os.WriteFile(o.workspaceStatePath("chat-legacy"), raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := o.actorCWD("chat-legacy"); got != workspace {
-		t.Fatalf("legacy default file cwd = %q, want install default", got)
 	}
 }
 
@@ -158,11 +135,38 @@ func TestChatSessionPickerToDefaultRemovesFile(t *testing.T) {
 	}
 }
 
-func TestCoalesceInstallDefaultToolPathUsesSessionCWD(t *testing.T) {
+func TestActorCWDIgnoresLastJSONOnDisk(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	project := filepath.Join(root, "project")
 	for _, dir := range []string{workspace, project} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
+	if err := os.MkdirAll(o.workspacesDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lastPath := filepath.Join(o.workspacesDir(), "_last.json")
+	raw, err := json.Marshal(workspaceState{CWD: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lastPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := o.actorCWD("chat-no-file"); got != workspace {
+		t.Fatalf("_last.json must be ignored: cwd=%q want install default %q", got, workspace)
+	}
+}
+
+func TestResolveActorArgsPreservesAbsolutePaths(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	project := filepath.Join(root, "project")
+	realWorkspace := filepath.Join(root, "real-workspace")
+	for _, dir := range []string{workspace, project, realWorkspace} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -171,46 +175,13 @@ func TestCoalesceInstallDefaultToolPathUsesSessionCWD(t *testing.T) {
 	o.persistChatSessionWorkspace("chat-a", project)
 	ctx := withActorRunID(context.Background(), "chat-a")
 
-	args := o.resolveActorArgs(ctx, toolArgs{Path: workspace})
-	if args.Path != project {
-		t.Fatalf("install-default path = %q, want session cwd %q", args.Path, project)
+	args := o.resolveActorArgs(ctx, toolArgs{Path: realWorkspace})
+	if args.Path != realWorkspace {
+		t.Fatalf("absolute path must be preserved: %q", args.Path)
 	}
-	args = o.resolveActorArgs(ctx, toolArgs{Path: project})
-	if args.Path != project {
-		t.Fatalf("explicit session path must be preserved: %q", args.Path)
-	}
-	args = o.resolveActorArgs(ctx, toolArgs{Path: filepath.Join(workspace, "profile.html")})
-	want := filepath.Join(project, "profile.html")
-	if args.Path != want {
-		t.Fatalf("child of install default = %q, want %q", args.Path, want)
+	args = o.resolveActorArgs(ctx, toolArgs{Path: "SPEC.md"})
+	if args.Path != filepath.Join(project, "SPEC.md") {
+		t.Fatalf("relative path = %q", args.Path)
 	}
 }
 
-func TestSyncActorWorkspaceFromHostContext(t *testing.T) {
-	root := t.TempDir()
-	workspace := filepath.Join(root, "workspace")
-	project := filepath.Join(root, "project")
-	for _, dir := range []string{workspace, project} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	o := &Orchestrator{stateDir: filepath.Join(root, "state"), workspaceDir: workspace}
-	sessionID := "chat-sync"
-	raw, err := json.Marshal(map[string]any{
-		"version": 1,
-		"workspace": map[string]string{
-			"session_workspace": project,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := o.actorCWD(sessionID); got != workspace {
-		t.Fatalf("initial cwd = %q, want install default %q", got, workspace)
-	}
-	o.syncActorWorkspaceFromHostContext(sessionID, raw)
-	if got := o.actorCWD(sessionID); got != project {
-		t.Fatalf("after sync cwd = %q, want %q", got, project)
-	}
-}

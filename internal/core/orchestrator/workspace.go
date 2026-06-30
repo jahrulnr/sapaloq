@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/jahrulnr/sapaloq/internal/hostcontext"
 )
 
 type actorRunIDKey struct{}
@@ -59,52 +57,8 @@ func (o *Orchestrator) workspaceStatePath(runID string) string {
 	return filepath.Join(o.workspacesDir(), safeActorID(runID)+".json")
 }
 
-func (o *Orchestrator) lastWorkspacePath() string {
-	return filepath.Join(o.workspacesDir(), "_last.json")
-}
-
-func (o *Orchestrator) readLastWorkspace() string {
-	defaultDir := filepath.Clean(o.defaultWorkspace())
-	raw, err := os.ReadFile(o.lastWorkspacePath())
-	if err != nil {
-		return ""
-	}
-	var state workspaceState
-	if json.Unmarshal(raw, &state) != nil {
-		return ""
-	}
-	cwd := filepath.Clean(strings.TrimSpace(state.CWD))
-	if cwd == "" || cwd == defaultDir {
-		return ""
-	}
-	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
-		return ""
-	}
-	return cwd
-}
-
-func (o *Orchestrator) writeLastWorkspace(cwd string) {
-	defaultDir := filepath.Clean(o.defaultWorkspace())
-	cleaned := filepath.Clean(strings.TrimSpace(cwd))
-	if cleaned == "" || cleaned == defaultDir {
-		return
-	}
-	if info, err := os.Stat(cleaned); err != nil || !info.IsDir() {
-		return
-	}
-	if os.MkdirAll(o.workspacesDir(), 0o700) != nil {
-		return
-	}
-	raw, err := json.MarshalIndent(workspaceState{CWD: cleaned}, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = writeFileAtomic(o.lastWorkspacePath(), raw, 0o600)
-}
-
 // actorCWD returns the persisted cwd for an actor/session id, or the install
-// default when no chat-specific file exists. Chat rooms without a file inherit
-// _last.json (explicit WORKSPACE picker history) but never another room's file.
+// default when no per-session file exists.
 func (o *Orchestrator) actorCWD(runID string) string {
 	defaultDir := filepath.Clean(o.defaultWorkspace())
 	if runID == "" {
@@ -112,11 +66,6 @@ func (o *Orchestrator) actorCWD(runID string) string {
 	}
 	raw, err := os.ReadFile(o.workspaceStatePath(runID))
 	if err != nil {
-		if isChatSessionID(runID) {
-			if last := o.readLastWorkspace(); last != "" {
-				return last
-			}
-		}
 		return defaultDir
 	}
 	var state workspaceState
@@ -125,13 +74,6 @@ func (o *Orchestrator) actorCWD(runID string) string {
 	}
 	cwd := filepath.Clean(state.CWD)
 	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
-		return defaultDir
-	}
-	// Legacy chat files that only recorded the install default are treated as unset.
-	if isChatSessionID(runID) && cwd == defaultDir {
-		if last := o.readLastWorkspace(); last != "" {
-			return last
-		}
 		return defaultDir
 	}
 	return cwd
@@ -167,7 +109,6 @@ func (o *Orchestrator) persistChatSessionWorkspace(sessionID, cwd string) {
 		return
 	}
 	_ = writeFileAtomic(path, raw, 0o600)
-	o.writeLastWorkspace(cleaned)
 }
 
 // persistActorCWD updates cwd for background actors (task-*, agent runs). Foreground
@@ -190,76 +131,19 @@ func (o *Orchestrator) persistActorCWD(runID, cwd string) {
 	_ = writeFileAtomic(path, raw, 0o600)
 }
 
-// syncActorWorkspaceFromHostContext persists session_workspace from chat_send
-// host_context so actor cwd matches the widget WORKSPACE card before tools run.
-func (o *Orchestrator) syncActorWorkspaceFromHostContext(sessionID string, raw json.RawMessage) {
-	if o == nil || sessionID == "" || len(raw) == 0 {
-		return
-	}
-	parsed := hostcontext.ParseRaw(raw)
-	if parsed == nil {
-		return
-	}
-	ws := strings.TrimSpace(parsed.Workspace.SessionWorkspace)
-	if ws == "" {
-		return
-	}
-	ws = configExpandHome(ws)
-	if !filepath.IsAbs(ws) {
-		return
-	}
-	if info, err := os.Stat(ws); err != nil || !info.IsDir() {
-		return
-	}
-	cleaned := filepath.Clean(ws)
-	if filepath.Clean(o.actorCWD(sessionID)) == cleaned {
-		return
-	}
-	o.persistChatSessionWorkspace(sessionID, cleaned)
-}
-
-// coalesceInstallDefaultToolPath rewrites tool paths under the install-default
-// workspace while the actor cwd is a different persisted session folder. Models
-// often hard-code ~/SapaLOQ/workspace/... even when the WORKSPACE card differs.
-func (o *Orchestrator) coalesceInstallDefaultToolPath(runID, path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" || runID == "" {
-		return path
-	}
-	expanded := filepath.Clean(configExpandHome(path))
-	defaultDir := filepath.Clean(o.defaultWorkspace())
-	actorDir := filepath.Clean(o.actorCWD(runID))
-	if actorDir == defaultDir {
-		return path
-	}
-	if expanded == defaultDir {
-		return actorDir
-	}
-	rel, err := filepath.Rel(defaultDir, expanded)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return path
-	}
-	return filepath.Join(actorDir, rel)
-}
-
 func (o *Orchestrator) resolveActorArgs(ctx context.Context, args toolArgs) toolArgs {
 	if o == nil || o.workspaceDir == "" && o.stateDir == "" && actorRunID(ctx) == "" {
 		return args
 	}
-	runID := actorRunID(ctx)
-	base := o.actorCWD(runID)
+	base := o.actorCWD(actorRunID(ctx))
 	if strings.TrimSpace(args.Cwd) == "" {
 		args.Cwd = base
+	} else if !filepath.IsAbs(configExpandHome(args.Cwd)) {
+		args.Cwd = filepath.Join(base, configExpandHome(args.Cwd))
 	} else {
-		args.Cwd = o.coalesceInstallDefaultToolPath(runID, args.Cwd)
-		if !filepath.IsAbs(configExpandHome(args.Cwd)) {
-			args.Cwd = filepath.Join(base, configExpandHome(args.Cwd))
-		} else {
-			args.Cwd = configExpandHome(args.Cwd)
-		}
+		args.Cwd = configExpandHome(args.Cwd)
 	}
 	if strings.TrimSpace(args.Path) != "" {
-		args.Path = o.coalesceInstallDefaultToolPath(runID, args.Path)
 		expanded := configExpandHome(args.Path)
 		if !filepath.IsAbs(expanded) {
 			args.Path = filepath.Join(base, expanded)

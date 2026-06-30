@@ -185,11 +185,11 @@ func (o *Orchestrator) runtimeContextMessage(actorRunID string) bridge.Message {
 	content := fmt.Sprintf(`---
 # SapaLOQ runtime variables
 
+workspace=%s
 config_path=%s
 data_path=%s
 memory_path=%s
 state_path=%s
-workspace=%s
 prompts_path=%s
 skills_path=%s
 vault_path=%s
@@ -197,8 +197,9 @@ run_path=%s
 etc_path=%s
 runtime_roadmap=%s
 
-Use these paths instead of guessing. workspace= (above) is this actor's persisted cwd and project root; relative tool paths and default exec cwd resolve from it.`,
-		o.cfgPath, dirs.DataDir, dirs.MemoryDir, dirs.StateDir, workspace,
+Authoritative tool cwd is workspace= above. Relative paths and default exec cwd resolve from it; absolute paths are used as given.`,
+		workspace,
+		o.cfgPath, dirs.DataDir, dirs.MemoryDir, dirs.StateDir,
 		dirs.PromptsDir, dirs.SkillsDir, dirs.VaultDir, dirs.RunDir, dirs.EtcDir,
 		filepath.Join(dirs.EtcDir, "ROADMAP.md"))
 	return bridge.Message{Role: "system", Content: content}

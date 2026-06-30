@@ -503,7 +503,7 @@ func toolWriteFile(args toolArgs, mustNotExist bool) string {
 			_ = os.Remove(abs)
 			return "Error: " + closeErr.Error()
 		}
-		return fmt.Sprintf("Wrote %d bytes to %s.", len(args.Content), args.Path)
+		return fmt.Sprintf("Wrote %d bytes to %s.", len(args.Content), abs)
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "Error: " + err.Error()
@@ -511,7 +511,7 @@ func toolWriteFile(args toolArgs, mustNotExist bool) string {
 	if err := os.WriteFile(abs, []byte(args.Content), 0o644); err != nil {
 		return "Error: " + err.Error()
 	}
-	return fmt.Sprintf("Wrote %d bytes to %s.", len(args.Content), args.Path)
+	return fmt.Sprintf("Wrote %d bytes to %s.", len(args.Content), abs)
 }
 
 // toolExec runs an arbitrary shell command anywhere on the host. SapaLOQ is

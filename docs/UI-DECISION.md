@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-29 (workspace UI↔AI sync on chat send)
+> Last updated: 2026-06-29 (review follow-up — workspace_set errors propagated)
 
 Related: [PLATFORM.md](./PLATFORM.md) · [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [BOUNDARIES.md](./BOUNDARIES.md)
 
@@ -76,12 +76,12 @@ session workspace (`session_workspace`). Clicking the WORKSPACE tile opens the
 OS-native directory chooser (GTK/Nautilus-style on GNOME; hidden dot-directories
 visible); the choice persists **only for that chat id** via `workspace_set` IPC
 (no global `_last.json`; new chat rooms start at `~/SapaLOQ/workspace` until
-picked). On each chat send the widget also ships an ephemeral **`host_context`**
+picked). On each chat send the widget ships an ephemeral **`host_context`**
 JSON blob (session workspace path + compose attachment paths/metadata) alongside
-the user message; core persists `session_workspace` into `actorCWD` before the
-turn runs and injects the snapshot as a separate system block. `SendMessage`
-also calls `workspace_set` so the WORKSPACE card and tool cwd stay aligned even
-if the user did not re-open the picker after switching rooms. It refreshes every three seconds and immediately after task
+the user message; core injects the snapshot as a separate system block (hints
+only — cwd is persisted via `workspace_set`, including before each send/retry).
+`SendMessage` calls `workspace_set` before chat IPC; failures surface to the
+frontend instead of sending with a stale cwd. It refreshes every three seconds and immediately after task
 events; the existing task cards remain the detailed lifecycle history.
 
 ### Transcript boundary (widget ↔ orchestrator)

@@ -2,7 +2,7 @@
 
 > **Contract doc:** who owns what between cursor-bridge, orchestrator, IPC, and widget.
 > Use this before adding guards at the turn loop or widget remount paths.
-> Last updated: 2026-06-29 (workspace sync on chat_send)
+> Last updated: 2026-06-29 (review follow-up — migration restored, host_context boundary)
 
 Related: [CURSOR_AGENT_CONTRACT.md](./CURSOR_AGENT_CONTRACT.md) · [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [UI-DECISION.md](./UI-DECISION.md) · [RUNTIME.md](./RUNTIME.md)
 
@@ -72,7 +72,7 @@ flowchart TB
 | Transcript **render** | **widget** | Backend assuming DOM shape | `transcript-pane.ts`, `apply-transcript-delta.ts` |
 | Foreground steering inbox | **orchestrator** | Steering as chat turn | `actor_events.go`, IPC `chat_steering` |
 | Session workspace cwd | **orchestrator** | Widget persisting cwd without IPC | `workspace.go`, IPC `workspace_set` |
-| Host context snapshot | **widget** collects, **orchestrator** normalizes + injects | Persisting host context to turns.json; silent cwd override | `internal/hostcontext`, `host_context.go`, IPC `chat_send.host_context` |
+| Host context snapshot | **widget** collects, **orchestrator** normalizes + injects | Persisting host context to turns.json; using host_context to persist cwd (use `workspace_set`) | `internal/hostcontext`, `host_context.go`, IPC `chat_send.host_context` |
 | Context usage pill | **orchestrator** `SessionContextLedger` (compute) + **widget** (display) | Two different token formulas; turns.json without orch JSONL | `session_context_ledger.go`, `connection.ts` |
 
 ---
@@ -189,7 +189,7 @@ Also: identical-tool / vision-loop guard must include in-bridge signatures.
 ### Phase 3 — Context & workspace clarity
 
 - [ ] Context pill: one formula documented in `RUNTIME.md`; live == restart within overhead tolerance.
-- [ ] Workspace: `RuntimeStatus.session_workspace` always from `actorCWD(session_id)`; widget never shows `workspace_path` when `session_id` set. **Partial (2026-06-29):** `chat_send` syncs `host_context.session_workspace` → `actorCWD`; widget `SendMessage` calls `workspace_set` before send; install-default tool paths coalesce to session cwd.
+- [ ] Workspace: `RuntimeStatus.session_workspace` always from `actorCWD(session_id)`; widget never shows `workspace_path` when `session_id` set. **Partial (2026-06-29):** widget `SendMessage` calls `workspace_set` before send; cwd = `chat-{id}.json` only (no `_last.json`, no host_context persist).
 
 **Exit:** restart manual matrix (below) green.
 

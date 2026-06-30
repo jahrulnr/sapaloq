@@ -2,7 +2,11 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-29 (**workspace prompt alignment**: ask.md + runtime/host-context contract)
+> Last updated: 2026-06-29 (**review follow-up** — migration restored, workspace_set errors propagated)
+
+> Prior: 2026-06-29 (**workspace path contract simplified** — no silent path remap)
+
+> Prior: 2026-06-29 (**/workspace alias remap** — reverted; absolute paths honored as given)
 
 > Prior: 2026-06-29 (**cold transcript round ordering**: later autopilot thinking no longer rises above an earlier answer)
 
@@ -202,6 +206,30 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
   one generation, hidden autopilot input, exact/count-suffixed tool markers,
   and tool-card placement after second-round thinking.
 
+## Implemented this session (2026-06-29) - review follow-up
+
+- **Restored:** `MigrateDefaultDataRoot` + `MigrateLegacyLayout` startup (accidental removal reverted); `migrate_layout.go` tests intact.
+- **Widget:** `persistSessionWorkspace` propagates `workspace_set` errors; `SendMessage` / `RetryChatTurn` fail fast before chat IPC.
+- **Tests:** `TestActorCWDIgnoresLastJSONOnDisk` — `_last.json` no longer consulted.
+
+## Implemented this session (2026-06-29) - workspace legacy prune
+
+- **Removed:** `_last.json` global inherit, legacy install-default file special-case in `actorCWD`, `syncActorWorkspaceFromHostContext` (duplicate of widget `workspace_set` before send).
+- **Contract:** one persist path — IPC `workspace_set` → `state/workspaces/chat-{id}.json`; `NewSession` copies previous active room cwd only; no file = install default.
+- **Tests:** `TestChatSessionWithoutFileUsesInstallDefault` replaces `_last` inherit test; removed `TestSyncActorWorkspaceFromHostContext`.
+
+## Implemented this session (2026-06-29) - workspace path contract simplified
+
+- **Problem:** `/workspace` remap and install-default coalesce were band-aids — wrong when `/workspace` is a real path; high complexity.
+- **Fix:** Removed `remapActorToolPath`, sandbox alias, and install-default rewrite. `resolveActorArgs` only: empty `cwd` → actor base; relative paths join actor cwd; `~` expand; **absolute paths unchanged**. `write_file` success text uses resolved absolute path.
+- **Kept:** widget `workspace_set` before IPC; `workspace=` first in runtime block; `ask.md` points to `workspace=` / use `"."`.
+- **Tests:** `TestResolveActorArgsPreservesAbsolutePaths` (replaces remap/coalesce tests).
+
+## Implemented this session (2026-06-29) - /workspace sandbox alias remap (reverted)
+
+- **Bug:** Model wrote `/workspace/SPEC.md` while WORKSPACE card showed `/tmp/profile`.
+- **Reverted:** Silent remap removed — see "workspace path contract simplified" above.
+
 ## Implemented this session (2026-06-29) - workspace prompt alignment
 
 - **Bug:** `ask.md` hardcoded `initially ~/SapaLOQ/workspace`, contradicting `workspace=` / WORKSPACE card (`/tmp/profile`); model thinking echoed install default.
@@ -211,9 +239,9 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 ## Implemented this session (2026-06-29) - workspace UI ↔ AI sync
 
 - **Bug:** WORKSPACE card showed `/tmp/profile` while Ask tools ran against `~/SapaLOQ/workspace` (model hard-coded install default; widget host_context did not persist cwd on send).
-- **Core:** `syncActorWorkspaceFromHostContext` on `chat_send`; `coalesceInstallDefaultToolPath` in `resolveActorArgs` when session cwd ≠ install default (including child paths like `~/SapaLOQ/workspace/profile.html` → session cwd).
+- **Core:** `resolveActorArgs` joins relative paths to persisted actor cwd only; cwd persisted via `workspace_set` IPC (not `host_context`).
 - **Widget:** `SendMessage` and `RetryChatTurn` call `workspace_set` before IPC; `currentSessionWorkspacePath` falls back to per-session cache.
-- **Tests:** `TestCoalesceInstallDefaultToolPathUsesSessionCWD`, `TestSyncActorWorkspaceFromHostContext`, `runtime-status-workspace.test.ts` cache fallback.
+- **Tests:** `TestResolveActorArgsPreservesAbsolutePaths`, `TestSyncActorWorkspaceFromHostContext` removed, `TestChatSessionWithoutFileUsesInstallDefault`, `runtime-status-workspace.test.ts` cache fallback.
 
 ## Implemented this session (2026-06-29) - IPC/socket ordering hardening
 

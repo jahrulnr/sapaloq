@@ -141,8 +141,6 @@ func (o *Orchestrator) NewSession(ctx context.Context) (string, error) {
 	defaultDir := filepath.Clean(o.defaultWorkspace())
 	if prevCWD != "" && prevCWD != defaultDir {
 		o.persistChatSessionWorkspace(newID, prevCWD)
-	} else if last := o.readLastWorkspace(); last != "" {
-		o.persistChatSessionWorkspace(newID, last)
 	}
 	return newID, nil
 }

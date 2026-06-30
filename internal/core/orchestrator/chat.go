@@ -382,7 +382,6 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string, 
 			GenerationID: genStr,
 			At:           time.Now().UTC(),
 		})
-		o.syncActorWorkspaceFromHostContext(sessionID, hostCtx)
 		o.setSessionHostContext(sessionID, hostCtx)
 		messages, err := o.contextMessages(ctx, sessionID, message)
 		if err != nil {
@@ -481,7 +480,6 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 	defer close(out)
 	defer o.clearActiveGeneration(sessionID, runID)
 	defer cancel()
-	o.syncActorWorkspaceFromHostContext(sessionID, hostCtx)
 	o.setSessionHostContext(sessionID, hostCtx)
 	messages, err := o.contextMessages(ctx, sessionID, message)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"os"
@@ -97,15 +98,31 @@ func (a *App) emitTranscriptPatch(event bridge.StreamEvent) {
 	runtime.EventsEmit(a.ctx, "sapaloq:transcript", transcriptPatchFromEvent(event))
 }
 
-func (a *App) persistSessionWorkspace(sessionID, sessionWorkspace string) {
-	if ws := strings.TrimSpace(sessionWorkspace); ws != "" && strings.TrimSpace(sessionID) != "" {
-		_, _ = setWorkspace(a.socketPath, sessionID, ws)
+func (a *App) persistSessionWorkspace(sessionID, sessionWorkspace string) error {
+	ws := strings.TrimSpace(sessionWorkspace)
+	sid := strings.TrimSpace(sessionID)
+	if ws == "" || sid == "" {
+		return nil
 	}
+	res, err := setWorkspace(a.socketPath, sid, ws)
+	if err != nil {
+		return fmt.Errorf("workspace_set: %w", err)
+	}
+	if !res.OK {
+		msg := strings.TrimSpace(res.Message)
+		if msg == "" {
+			msg = "workspace_set failed"
+		}
+		return fmt.Errorf("workspace_set: %s", msg)
+	}
+	return nil
 }
 
 func (a *App) SendMessage(sessionID string, text string, attachments []ComposeAttachment, sessionWorkspace string) (chatResult, error) {
 	// sapaloq:boundary widget→ipc — persist WORKSPACE card cwd before chat_send so tools match the UI.
-	a.persistSessionWorkspace(sessionID, sessionWorkspace)
+	if err := a.persistSessionWorkspace(sessionID, sessionWorkspace); err != nil {
+		return chatResult{}, err
+	}
 	hostCtx := buildHostContextJSON(sessionWorkspace, attachments)
 	return sendChatWithStatus(a.socketPath, sessionID, text, hostCtx, nil)
 }
@@ -147,7 +164,9 @@ func (a *App) DeleteChatTurn(sessionID string, turnID int64) error {
 }
 
 func (a *App) RetryChatTurn(sessionID string, turnID int64, sessionWorkspace string) (chatResult, error) {
-	a.persistSessionWorkspace(sessionID, sessionWorkspace)
+	if err := a.persistSessionWorkspace(sessionID, sessionWorkspace); err != nil {
+		return chatResult{}, err
+	}
 	hostCtx := buildHostContextJSON(sessionWorkspace, nil)
 	return retryChatTurnWithStatus(a.socketPath, sessionID, turnID, hostCtx, nil)
 }
