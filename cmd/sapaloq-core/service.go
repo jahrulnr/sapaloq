@@ -212,12 +212,16 @@ func userUnitPath() (string, error) {
 // SAPALOQ_CONFIG is pinned only when a non-default config path is in effect, so
 // the service resolves the same config the CLI used to install it.
 func renderUnit(exePath, cfgPath string) string {
+	home, _ := os.UserHomeDir()
+	dotenv := filepath.Join(home, ".config", "sapaloq", ".env")
+
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
 	b.WriteString("Description=SapaLOQ core (orchestrator + IPC)\n")
 	b.WriteString("After=network.target\n\n")
 	b.WriteString("[Service]\n")
 	b.WriteString("Type=simple\n")
+	b.WriteString(fmt.Sprintf("EnvironmentFile=-%s\n", dotenv))
 	if env := os.Getenv("SAPALOQ_CONFIG"); env != "" {
 		b.WriteString(fmt.Sprintf("Environment=SAPALOQ_CONFIG=%s\n", cfgPath))
 	}

@@ -249,7 +249,7 @@ func init() {
 		"type":"object",
 		"properties":{
 			"path":{"type":"string","description":"Root directory to search (default CWD). Any host path is allowed."},
-			"pattern":{"type":"string","description":"Glob pattern, e.g. *.go or **/*.ts (supports ** for recursive)."},
+			"pattern":{"type":"string","description":"Glob pattern (rg-style via gobwas): **/*.go, **/*.{js,tsx}, brace groups supported. Respects root .gitignore and skips .git/node_modules/vendor/dist."},
 			"max_results":{"type":"integer","description":"Max paths to return (default 40)."}
 		},
 		"required":["pattern"]

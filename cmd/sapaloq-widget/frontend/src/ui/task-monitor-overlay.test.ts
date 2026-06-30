@@ -282,29 +282,25 @@ describe('task-monitor-overlay', () => {
     expect(overlay.querySelector('.task-monitor-empty')?.textContent).toContain('tidak aktif');
   });
 
-  // Regression: a planner's task prompt can be a huge planning brief. It used
-  // to render as an unbounded inline span that grew into a wall of text and
-  // broke the header layout. It must now live in a collapsed, clamped
-  // <details> whose summary is a single truncated line.
-  it('renders a long task prompt as a collapsed, truncated details block', async () => {
-    const longTask = 'dan /about, Drupal shim filters ' + 'x'.repeat(400);
-    taskInspectMock.mockResolvedValue(makeInspect({ task: longTask, plan: '# Plan\n- step' }));
-    await openTaskMonitor({ tab: 'planner' });
+  // Task prompt lives in the activity transcript as a user bubble — no
+  // duplicate collapsed header block.
+  it('does not duplicate the task prompt in a collapsed header details block', async () => {
+    const longTask = 'Create a cool personal web profile ' + 'x'.repeat(400);
+    runtimeStatusMock.mockResolvedValue({ actors: [makeActor('task-runner', 'in_progress', 'task-1')] });
+    taskInspectMock.mockResolvedValue(makeInspect({
+      role: 'task-runner',
+      task: longTask,
+      transcript: [{ kind: 'user', text: longTask }],
+      event_count: 1,
+    }));
+    await openTaskMonitor({ tab: 'agent' });
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
     const overlay = document.getElementById('task-monitor-overlay')!;
-    const details = overlay.querySelector('.task-monitor-task-details') as HTMLDetailsElement | null;
-    expect(details).not.toBeNull();
-    // Collapsed by default so the header stays compact.
-    expect(details?.open).toBe(false);
-    const summary = details?.querySelector('summary');
-    expect(summary?.textContent?.endsWith('…')).toBe(true);
-    // The full text is reachable inside the expandable body, not spilled into
-    // the header line.
-    const bodyNode = details?.querySelector('.task-monitor-task-body');
-    expect(bodyNode?.textContent).toContain('xxxx');
-    // The inline task span that used to blow up the layout is gone.
-    expect(overlay.querySelector('.task-monitor-task')).toBeNull();
+    expect(overlay.querySelector('.task-monitor-task-details')).toBeNull();
+    const userBubble = overlay.querySelector('.transcript-user');
+    expect(userBubble).not.toBeNull();
+    expect(userBubble?.textContent || '').toContain('Create a cool personal web profile');
   });
 
   it('keeps accumulated activity across incremental polls with no new lines', async () => {

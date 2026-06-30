@@ -6,16 +6,15 @@
 // user's `~/.bashrc` / `~/.zshrc` exports (e.g. provider tokens) are NOT in the
 // process environment unless we import them here.
 //
-// LoadOnce sources the shell rc files (bash first, then zsh) and copies every
-// variable from the sourced environment into the process, skipping keys already
-// set by the parent (systemd, explicit Environment=, …). Then it loads
-// ~/.config/sapaloq/.env and cwd .env the same way.
+// Bootstrap waits until a desktop user session looks ready (XDG_RUNTIME_DIR),
+// then sources shell rc files and ~/.config/sapaloq/.env. Watch retries in the
+// background when configured credential env names are still empty — no systemd
+// restart required after login.
 //
-// Priority: real process env (unchanged) > shell rc > dotenv files.
+// Priority: real process env (non-empty) > shell rc > dotenv files.
 //
-// Linux-only, best-effort, short timeout on rc source. The rc is sourced with an
-// interactive shell (`bash -ic` / `zsh -ic`) so the stock Debian/Ubuntu
-// `~/.bashrc` non-interactive guard does not skip exports below it.
+// Linux-only, best-effort. Rc is sourced with an interactive shell (`bash -ic` /
+// `zsh -ic`) so the stock Debian/Ubuntu ~/.bashrc guard does not skip exports.
 package shellenv
 
 import (
@@ -27,20 +26,72 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jahrulnr/sapaloq/internal/debug"
 )
 
-// sourceTimeout bounds how long a single shell rc source may take.
-var sourceTimeout = 3 * time.Second
+// sourceTimeout is the absolute cap for one bash/zsh rc source subprocess.
+// We wait for the shell to finish (not a short per-poll kill); heavy nvm/conda
+// bashrc must be allowed to complete.
+var sourceTimeout = 120 * time.Second
 
-var once sync.Once
+// sessionPoll is how often Bootstrap/Watch recheck session readiness.
+var sessionPoll = 500 * time.Millisecond
 
-// LoadOnce sources the user's shell rc files and folds their environment into
-// the process. It runs at most once per process.
-func LoadOnce() {
-	once.Do(load)
+// watchInterval is how long Watch sleeps between reload attempts.
+var watchInterval = 5 * time.Second
+
+var (
+	bootOnce sync.Once
+	loadMu   sync.Mutex
+)
+
+// LoadOnce is an alias for Bootstrap (legacy name).
+func LoadOnce() { Bootstrap() }
+
+// Bootstrap waits for a user session (when needed), then imports shell rc and
+// dotenv once per process.
+func Bootstrap() {
+	bootOnce.Do(func() {
+		waitForUserSession(10 * time.Minute)
+		reload()
+	})
 }
 
-func load() {
+// Watch keeps importing shell rc/dotenv in the background until every listed
+// env name is non-empty. Intended for `sapaloq-core run` under systemd linger:
+// the first import may run before login; Watch picks up tokens after
+// XDG_RUNTIME_DIR appears without restarting the service.
+func Watch(keys ...string) {
+	keys = dedupeKeys(keys)
+	if len(keys) == 0 {
+		return
+	}
+	go func() {
+		for {
+			if len(missingKeys(keys)) == 0 {
+				time.Sleep(watchInterval)
+				continue
+			}
+			waitForUserSession(0)
+			reload()
+			if debug.Enabled() {
+				if miss := missingKeys(keys); len(miss) > 0 {
+					debug.Debugf("shellenv: still missing %v after reload", miss)
+				}
+			}
+			time.Sleep(watchInterval)
+		}
+	}()
+}
+
+func reload() {
+	loadMu.Lock()
+	defer loadMu.Unlock()
+	importEnv()
+}
+
+func importEnv() {
 	if runtime.GOOS != "linux" {
 		return
 	}
@@ -60,6 +111,61 @@ func load() {
 		applyEnv(env)
 	}
 	loadDotEnvFiles(home)
+}
+
+func waitForUserSession(maxWait time.Duration) {
+	if sessionReady() {
+		return
+	}
+	deadline := time.Now().Add(maxWait)
+	if maxWait <= 0 {
+		deadline = time.Now().Add(24 * time.Hour)
+	}
+	ticker := time.NewTicker(sessionPoll)
+	defer ticker.Stop()
+	for time.Now().Before(deadline) {
+		if sessionReady() {
+			return
+		}
+		<-ticker.C
+	}
+}
+
+func sessionReady() bool {
+	xdg := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR"))
+	if xdg == "" {
+		return false
+	}
+	st, err := os.Stat(xdg)
+	return err == nil && st.IsDir()
+}
+
+func missingKeys(keys []string) []string {
+	var out []string
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		if strings.TrimSpace(os.Getenv(k)) == "" {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func dedupeKeys(keys []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	return out
 }
 
 func loadDotEnvFiles(home string) {
@@ -138,13 +244,15 @@ func sourceShellRC(s shellRC) (map[string]string, bool) {
 	return parseNulEnv(out), true
 }
 
-// applyEnv copies keys into the process env when not already set.
+// applyEnv copies keys into the process env when not already set to a
+// non-empty value. Empty placeholders from systemd/pam must not block imports
+// from shell rc or dotenv.
 func applyEnv(env map[string]string) {
 	for k, v := range env {
 		if k == "" {
 			continue
 		}
-		if _, present := os.LookupEnv(k); present {
+		if cur, ok := os.LookupEnv(k); ok && strings.TrimSpace(cur) != "" {
 			continue
 		}
 		_ = os.Setenv(k, v)

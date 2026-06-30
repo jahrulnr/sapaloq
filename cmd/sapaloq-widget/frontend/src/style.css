@@ -1936,42 +1936,6 @@ body:not(.expanded):not(.closing) .orb-body { animation: orb-float 4.8s ease-in-
   text-transform: uppercase;
 }
 .task-monitor-question { color: var(--accent-hot); font-size: 0.74rem; }
-/* Task prompt: a planner's brief can be huge. Keep it in a collapsed, clamped
-   block so the header stays one line and never grows into a wall of text. */
-.task-monitor-task-details {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-1);
-  padding: 4px 8px;
-  font-size: 0.66rem;
-}
-.task-monitor-task-details > summary {
-  cursor: pointer;
-  color: var(--muted);
-  list-style: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.task-monitor-task-details > summary::-webkit-details-marker { display: none; }
-.task-monitor-task-details > summary::before { content: '▸ '; color: var(--subtle); }
-.task-monitor-task-details[open] > summary::before { content: '▾ '; }
-.task-monitor-task-details[open] > summary {
-  white-space: normal;
-  margin-bottom: 4px;
-  color: var(--subtle);
-}
-.task-monitor-task-body {
-  color: var(--ink);
-  font-size: 0.68rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 30vh;
-  overflow-y: auto;
-  padding-top: 4px;
-  border-top: 1px solid var(--line);
-}
 
 /* Activity entries render as chat-style translucent bubbles (mirroring
    .message / .message--assistant / .message--tool / .message--thinking) so the

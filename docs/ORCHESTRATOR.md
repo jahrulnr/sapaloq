@@ -1,7 +1,7 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-29 (causal durable-turn ordering)
+> Last updated: 2026-06-30 (malformed tool failed rows show raw call)
 
 Related: [BOUNDARIES.md](./BOUNDARIES.md) · [VISION.md](./VISION.md)
 
@@ -218,6 +218,11 @@ message. `webSearch.limit` defaults to `8`, `timeoutSec` to `20`, and the
 optional GitHub token is read from `webSearch.github.token` or
 `webSearch.github.tokenEnv` (default `GITHUB_TOKEN`). Config reload rebuilds
 the searcher. Use `web_fetch` for full text after selecting a result.
+
+**Glob (`glob`).** Native path listing in `glob_walk.go` (ripgrep-inspired, not a Rust port):
+compiled `gobwas/glob` matchers (not per-file regex), root `.gitignore` pruning, hard skip of `.git` / `node_modules` / `vendor` / `dist`, early cap at `max_results` (default 40). Patterns use forward slashes; `**` matches any depth including files at the search root (`**/*.go` → `a.go` and `pkg/b.go`). Brace groups expand (`**/*.{js,tsx}`). Search root: explicit `path`, else actor `cwd` (workspace), else process CWD — see `toolSearchRoot`.
+
+**Malformed / orphan tool calls.** When the model emits `EventToolCall` but no matching `EventToolUpdate` completes (inline leak, api5 drop, unhandled name), the orchestrator surfaces a **failed** tool row in the transcript with raw `name`, `source`, and `args` — not only a `retrying malformed tool call` status line. In-bridge cursor/codex tools that completed via `ToolUpdate` do not false-trigger recovery.
 
 **Streaming vs non-stream framing (provider-bridge only).** Each provider entry chooses its wire framing via the `stream` config flag (tri-state `*bool`, default `true`; resolved by `LLMBridge.StreamEnabled()`):
 

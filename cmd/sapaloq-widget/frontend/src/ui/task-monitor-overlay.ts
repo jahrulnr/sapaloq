@@ -498,21 +498,6 @@ function buildHeaderLine(res: TaskInspectResult, active: boolean): HTMLElement {
   line.append(status, role);
   wrap.append(line);
 
-  // The task prompt can be very long (a planner's full planning brief). Render
-  // it as a collapsed, line-clamped block instead of an unbounded inline span
-  // so it never grows into a wall of text that pushes the tabs/overlap. The
-  // full text is still reachable by expanding the <details>.
-  const task = (res.task || '(no task text)').trim();
-  const details = document.createElement('details');
-  details.className = 'task-monitor-task-details';
-  const summary = document.createElement('summary');
-  summary.textContent = truncateForSummary(task);
-  const body = document.createElement('div');
-  body.className = 'task-monitor-task-body';
-  body.textContent = task;
-  details.append(summary, body);
-  wrap.append(details);
-
   if (res.question) {
     const q = document.createElement('div');
     q.className = 'task-monitor-question';
@@ -538,14 +523,6 @@ function updateHeaderLine(wrap: HTMLElement, res: TaskInspectResult, active: boo
   }
   const role = wrap.querySelector('.task-monitor-role');
   if (role) role.textContent = roleLabel(res.role);
-  const task = (res.task || '(no task text)').trim();
-  const details = wrap.querySelector('.task-monitor-task-details') as HTMLDetailsElement | null;
-  if (details) {
-    const summary = details.querySelector('summary');
-    if (summary) summary.textContent = truncateForSummary(task);
-    const body = details.querySelector('.task-monitor-task-body');
-    if (body) body.textContent = task;
-  }
   const question = wrap.querySelector('.task-monitor-question') as HTMLElement | null;
   if (res.question) {
     if (question) question.textContent = '❓ ' + res.question;
@@ -558,15 +535,6 @@ function updateHeaderLine(wrap: HTMLElement, res: TaskInspectResult, active: boo
   } else {
     question?.remove();
   }
-}
-
-// truncateForSummary produces a one-line preview for the collapsed task
-// <details> summary. Keeps the header compact; the full text lives in the
-// expandable body.
-function truncateForSummary(text: string): string {
-  const oneLine = text.replace(/\s+/g, ' ').trim();
-  if (oneLine.length <= 100) return oneLine || '(no task text)';
-  return oneLine.slice(0, 100) + '…';
 }
 
 function statusLabel(status: string, active: boolean): string {

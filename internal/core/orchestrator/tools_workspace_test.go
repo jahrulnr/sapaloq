@@ -116,6 +116,86 @@ func TestDeleteFile(t *testing.T) {
 	}
 }
 
+func TestGlobUsesActorCwdWhenPathEmpty(t *testing.T) {
+	chdirTemp(t)
+	ws := filepath.Join(t.TempDir(), "agent-ws")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "only.go"), []byte("package x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile("noise.go", []byte("package n"), 0o644)
+
+	out := toolGlob(toolArgs{Pattern: "*.go", Cwd: ws})
+	if !strings.Contains(out, "only.go") {
+		t.Fatalf("glob should search Cwd=%s, got:\n%s", ws, out)
+	}
+	if strings.Contains(out, "noise.go") {
+		t.Fatalf("glob should not search process CWD:\n%s", out)
+	}
+}
+
+func TestGlobBraceGroupsExpand(t *testing.T) {
+	chdirTemp(t)
+	_ = os.WriteFile("app.js", []byte(""), 0o644)
+	_ = os.WriteFile("app.tsx", []byte(""), 0o644)
+	_ = os.WriteFile("readme.md", []byte(""), 0o644)
+
+	out := toolGlob(toolArgs{Pattern: "**/*.{js,tsx}"})
+	if !strings.Contains(out, "app.js") || !strings.Contains(out, "app.tsx") {
+		t.Fatalf("brace groups should expand:\n%s", out)
+	}
+	if strings.Contains(out, "readme.md") {
+		t.Fatalf("should not match readme.md:\n%s", out)
+	}
+}
+
+func TestGlobRespectsGitignore(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("secret/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "secret"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secret", "hidden.js"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "visible.js"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := globWalk(root, "**/*.js", 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0] != "visible.js" {
+		t.Fatalf("gitignore prune: got %v", matches)
+	}
+}
+
+func TestGlobSkipsNodeModules(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "node_modules", "pkg", "dep.js"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := globWalk(root, "**/*.js", 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0] != "app.js" {
+		t.Fatalf("node_modules skip: got %v", matches)
+	}
+}
+
 func TestGlob(t *testing.T) {
 	chdirTemp(t)
 	_ = os.MkdirAll("pkg/sub", 0o755)

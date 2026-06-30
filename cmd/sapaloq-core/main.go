@@ -55,7 +55,7 @@ func main() {
 	// failure; never overrides an already-set variable. Dotenv (~/.config/sapaloq/.env)
 	// is loaded here too (same prefix allowlist) so provider-bridge env vars work
 	// under systemd, not only cursor-bridge's credential loader.
-	shellenv.LoadOnce()
+	shellenv.Bootstrap()
 	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
 		printUsage()
 		if len(os.Args) >= 2 && isHelpArg(os.Args[1]) {
@@ -122,6 +122,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sapaloq-core: %v\n", err)
 		}
 		orchestrator.SetBridgeFactory(newBridge)
+		shellenv.Watch(config.CredentialEnvKeys(cfg)...)
 		orch, err := newOrchestrator(cfg, cfgPath)
 		if err != nil {
 			exitf("orchestrator: %v", err)

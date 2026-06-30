@@ -1,7 +1,7 @@
 # SapaLOQ - Development Blueprint (Proposal)
 
 > **Unified synthesis** of all SapaLOQ architecture docs. Single book for implementers, reviewers, and future contributors.
-> Last updated: 2026-06-29 (searchwire web-search config domain and tool defaults) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
+> Last updated: 2026-06-29 (rg-style glob: gobwas + gitignore prune) · Status: architecture target; implementation truth lives in [STATUS.md](./STATUS.md)
 
 ---
 
@@ -1717,7 +1717,7 @@ exist.
 | `webSearch.timeoutSec`                     | `20`            | Concurrent source HTTP timeout in seconds            |
 | `webSearch.github.tokenEnv`                | `GITHUB_TOKEN`  | Optional GitHub API authentication via environment   |
 | Host command tool (`exec`) | available in **all** modes | Run any command anywhere (any path; optional `cwd`) - also reads any host file via `cat`/`sed`/`head`/`tail`/`rg`; shared dispatch in every mode - see `internal/core/orchestrator/tools_workspace.go` (`toolExec`) |
-| File tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`) | agent mutates; read/search/list everywhere | Flat, unrestricted CRUD - every `path` accepts absolute/`~`/CWD-relative. No workspace sandbox (a feature-not-security design) - see `internal/core/orchestrator/tools_workspace.go` |
+| File tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`) | agent mutates; read/search/list everywhere | Flat, unrestricted CRUD - every `path` accepts absolute/`~`/CWD-relative. No workspace sandbox (a feature-not-security design). `glob` uses rg-style walk (`glob_walk.go`: gobwas matcher, root `.gitignore`, skip dep dirs, brace groups, early cap). See `tools_workspace.go` |
 | Local image vision (`read_image`) | available in **all** modes | Read a local image file (png/jpeg/gif/webp) into the model's vision - returns inline `data:` markdown that `extractImages` re-ingests into `bridge.Request.Images` (same channel as widget attachments); needs a vision-capable model |
 | Tool wire descriptions | embedded `internal/tooldocs/defaults/<name>.md` | YAML `description` frontmatter → OpenAI/Claude tool.description at request time; JSON schema still registered in `tools.go` init |
 | `nodes.allowSharedMemoryRemote`             | `false`         | Remote = context packet only                         |

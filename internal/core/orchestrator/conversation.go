@@ -359,6 +359,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// call tools but they failed to parse/execute (the latter must not be
 		// mistaken for a clean tool-less finish).
 		toolCallsThisTurn := 0
+		var trackedTools []toolCallTrace
 		steeringInterrupted := false
 	streamLoop:
 		for {
@@ -425,6 +426,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 						}
 						out.emit(runCtx, ev)
 						out.beat(ev.ToolCall.Source + " tool: " + ev.ToolCall.Name)
+						trackToolCall(&trackedTools, *ev.ToolCall)
 						continue
 					}
 					// Some inline/non-native providers do not assign tool-call IDs.
@@ -455,6 +457,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 						return all, fmt.Errorf("loop detected: identical tool call repeated %d times", identicalToolCalls)
 					}
 					call := *ev.ToolCall
+					trackToolCall(&trackedTools, call)
 					item := scheduledTool{
 						index: len(pendingTools),
 						call:  call,
@@ -545,6 +548,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				out.emit(runCtx, ev)
 			case bridge.EventToolUpdate:
 				resetIdle()
+				resolveToolCall(&trackedTools, ev.ToolCall)
 				if ev.ToolCall != nil && isInBridgeToolSource(ev.ToolCall.Source) {
 					dynamicProgress.Store(true)
 					o.persistInBridgeToolUpdate(ctx, persistID, cfg.generationID, cfg, &response, &turnThinking, &cleanMessages, ev)
@@ -598,9 +602,10 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 					update.SessionID = sessionID
 					call := result.call
 					update.ToolCall = &call
-					update.ToolResult = "Tool call was not handled."
+					update.ToolResult = malformedToolFailureResult(call)
 					update.Status = "failed"
 					out.emit(runCtx, update)
+					resolveToolCall(&trackedTools, &call)
 					continue
 				}
 				redacted := o.redactToolResults([]string{result.text})
@@ -615,6 +620,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				update.ToolResult = truncateToolResultForUI(redacted[0])
 				update.Status = "completed"
 				out.emit(runCtx, update)
+				resolveToolCall(&trackedTools, &call)
 			}
 			stop = stop || batchStop
 			if afterCheckpoint, _ := o.latestCheckpointIndex(runCtx, sessionID); afterCheckpoint > beforeCheckpoint && cfg.recordToolTurns {
@@ -738,14 +744,22 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// Malformed-tool-call recovery (non-native function calling). A model
 		// that emits tool calls inline in its content (source "openai_inline",
 		// e.g. MiniMax-M3) can produce a turn where tool calls were EMITTED
-		// (toolCallsThisTurn > 0) but none parsed/executed into a result
+		// (EventToolCall) but none parsed/executed into a result
 		// (toolResults empty) - typically a multi-call batch whose JSON got
 		// mangled by leaked template tokens. Without this guard that turn looks
 		// identical to a clean tool-less finish and the run would end mid-task
 		// with no answer. Instead, nudge the model to retry one call at a time
 		// and continue. Bounded by maxMalformedToolTurns so a model that can
 		// never emit a valid call still finishes rather than looping forever.
-		if !stop && toolCallsThisTurn > 0 && len(toolResults) == 0 && malformedToolTurns < maxMalformedToolTurns {
+		// In-bridge cursor/codex tools that completed via ToolUpdate are not
+		// malformed — only orphan EventToolCall rows or orchestrator tools with
+		// no usable result trigger recovery.
+		unresolvedTools := unresolvedToolCalls(trackedTools)
+		inBridgeOnlySuccess := dynamicProgress.Load() && len(unresolvedTools) == 0
+		if !stop && toolCallsThisTurn > 0 && len(toolResults) == 0 && !inBridgeOnlySuccess && malformedToolTurns < maxMalformedToolTurns {
+			if len(unresolvedTools) > 0 {
+				o.surfaceUnresolvedToolFailures(runCtx, out, sessionID, persistID, cfg.generationID, cfg, &response, &turnThinking, &cleanMessages, unresolvedTools)
+			}
 			malformedToolTurns++
 			nudge := "Your previous tool call(s) could not be parsed or executed - likely " +
 				"because they were emitted as inline text or batched together with stray " +

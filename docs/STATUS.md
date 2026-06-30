@@ -2,9 +2,9 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-29 (**review follow-up** — migration restored, workspace_set errors propagated)
+> Last updated: 2026-06-30 (**sub-agent monitor** — task prompt only in user bubble, no collapsed header duplicate)
 
-> Prior: 2026-06-29 (**workspace path contract simplified** — no silent path remap)
+> Prior: 2026-06-30 (**malformed tool visibility** — failed tool rows show raw name/args)
 
 > Prior: 2026-06-29 (**/workspace alias remap** — reverted; absolute paths honored as given)
 
@@ -145,8 +145,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 1 | Execution modes Ask / Plan / Agent | ✅ | Shared `runActor` → `runTurnLoop` (`actor.go`); roles differ by `systemPrompt` + `toolsForRole` + `dispatchTool` only |
 | 2 | Sub-agent tool loop + per-role profiles | ✅ | `dispatchTool` + `runBackgroundTool` / `dispatchAskTool`; `policyForRole` in `actor_policy.go`; role allowlist before shared tools |
 | 3 | Assessment tools (read/search/list_dir, web_search/fetch) | ✅ | `web_search` uses pinned `searchwire` for concurrent Brave/Startpage/Wikipedia/GitHub results with snippets, dedup/ranking, and partial-failure reporting; config `webSearch` hot-reloads limit/timeout/GitHub token mapping. `web_fetch` remains direct HTML→text. `tools_workspace.go`, `tools_web.go`, `tools_dispatch.go` |
-| 4 | File + exec tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`, `exec`) | ✅ | `tools_workspace.go`; flat unrestricted surface (any path; no workspace sandbox). Mutating file tools gated to `task-runner`; `exec` available in every mode |
-| 5 | In-place edit / delete / glob tools | ✅ | `tools_workspace.go` (`toolEditFile`, `toolDeleteFile`, `toolGlob`) - added 2026-06-20 |
+| 4 | File + exec tools (`read_file`/`write_file`/`create_file`/`edit_file`/`delete_file`/`search`/`list_dir`/`glob`, `exec`) | ✅ | `tools_workspace.go` + `glob_walk.go` (rg-style glob: gobwas, root `.gitignore`, dep-dir skip, brace groups, early cap); flat unrestricted surface (any path; no workspace sandbox). Mutating file tools gated to `task-runner`; `exec` available in every mode |
+| 5 | In-place edit / delete / glob tools | ✅ | `tools_workspace.go` (`toolEditFile`, `toolDeleteFile`, `toolGlob` → `globWalk`) - added 2026-06-20; glob rewrite 2026-06-29 |
 | 6 | `read_file` binary guard + line-range read | ✅ | `tools_workspace.go` (`toolReadFile`: NUL/non-printable sniff + `offset`/`limit` line range) - added 2026-06-20 |
 | 7 | Plan artifact + handoff | ✅ | `subagent.go` (`write_plan`, `readPlanMarkdown`, `buildSubAgentMessages`); `sapaloq_spawn_agent.plan_task_id` is explicit and validated as same-session, completed Planner work with a real `plan.md`. No implicit latest-plan attachment. `ask.md` now states the delegation action order (spawn tool call first, then acknowledge) so a context-sensitive model doesn't narrate the hand-off and END turn without emitting the spawn call |
 | 8 | Plan iteration (revise before finishing) | 🟡 | `write_plan_markdown` is non-terminal; planner can rewrite + read its own plan. Ask prompt requires user review before passing `plan_task_id`, but no approval-gate UI/state machine yet; no post-handoff agent amend |
@@ -177,6 +177,32 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-06-30) - sub-agent monitor task prompt dedup
+
+- **Symptom:** Sub-agents pop-up showed the task brief twice — collapsed `▸ Create a cool…` header block plus the user bubble in activity.
+- **Fix:** removed `task-monitor-task-details` from monitor header; task text only appears in the activity transcript user bubble (`task-monitor-overlay.ts`).
+- **Tests:** `task-monitor-overlay.test.ts` regression.
+
+## Implemented this session (2026-06-30) - malformed tool call visibility
+
+- **Symptom:** cursor-bridge (api5) turn showed `retrying malformed tool call` status but no tool bubble with the bad call or args.
+- **Fix:** per-turn `toolCallTrace` tracks EventToolCall vs ToolUpdate; orphan calls emit `EventToolUpdate` `status=failed` with raw `name`/`source`/`args` (`tool_trace.go`). In-bridge tools that completed via ToolUpdate no longer false-trigger malformed retry. Unhandled orchestrator dispatch uses the same failed payload (not generic "not handled").
+- **Tests:** `tool_trace_test.go`, `TestRunConversationRecoversFromMalformedToolCall`, `TestRunConversationInBridgeToolSkipsMalformedRecovery`.
+
+## Implemented this session (2026-06-29) - rg-style glob
+
+- **Symptom:** `glob` with `**/*.{html,css,js}` on a large workspace returned empty after a long walk; wrong search root when `path` omitted (ignored actor `cwd`).
+- **Fix:** new `glob_walk.go` — compiled `gobwas/glob` matchers (not per-file regex), root `.gitignore` prune, hard skip `.git`/`node_modules`/`vendor`/`dist`, early cap, brace groups; `toolSearchRoot` for `path` → `cwd` → `.`. gobwas `**` quirk: also compile root variant (`**/*.go` → `*.go`) so files at search root match.
+- **Deps:** `github.com/gobwas/glob`, `github.com/sabhiram/go-gitignore`.
+- **Tests:** `TestGlobBraceGroupsExpand`, `TestGlobRespectsGitignore`, `TestGlobSkipsNodeModules`, existing glob tests green.
+
+## Implemented this session (2026-06-30) - systemd relogin env (NROUTER / credentialsEnv empty)
+
+- **Symptom:** after relogin, widget chat shows `provider-bridge: token env NROUTER_API_KEY is empty` until manual `systemctl --user stop` + `sapaloq-core service start`. `source ~/.bashrc` in unit `Exec=` does not help — systemd never runs a login shell.
+- **Root cause:** `internal/shellenv` runs once per process (`sync.Once`). With `loginctl enable-linger`, `sapaloq.service` can start before the graphical session; heavy `~/.bashrc` (nvm/conda/brew) sometimes exceeded the old **3s** source cap → tokens never imported for that process lifetime. `Restart=on-failure` does not recover (empty token is not a crash).
+- **Fix:** Go-native `shellenv.Bootstrap` (wait `XDG_RUNTIME_DIR` + source bashrc) + `shellenv.Watch(config.CredentialEnvKeys(cfg)…)` retries until every `credentialsEnv` / `webSearch.github.tokenEnv` from **config.json** is non-empty — no hardcoded env names in code. Also: 120s bashrc wait, empty-placeholder override, optional `EnvironmentFile=-~/.config/sapaloq/.env`. Re-apply unit: `sapaloq-core service install`.
+- **Tests:** `service_test.go`, `TestApplyEnvOverridesEmptyPlaceholder`, `TestServiceLikeEnvImportsNrouter`.
 
 ## Implemented this session (2026-06-29) - causal durable-turn ordering
 

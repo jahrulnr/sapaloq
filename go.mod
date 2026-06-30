@@ -3,10 +3,12 @@ module github.com/jahrulnr/sapaloq
 go 1.25.0
 
 require (
+	github.com/gobwas/glob v0.2.3
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jahrulnr/searchwire v0.0.0-20260628145521-682384176033
+	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/net v0.56.0
 	modernc.org/sqlite v1.53.0

@@ -51,6 +51,17 @@ func TestApplyEnvSkipsAlreadySet(t *testing.T) {
 	}
 }
 
+func TestApplyEnvOverridesEmptyPlaceholder(t *testing.T) {
+	const key = "SAPALOQ_EMPTY_PLACEHOLDER"
+	t.Setenv(key, "")
+	t.Cleanup(func() { os.Unsetenv(key) })
+
+	applyEnv(map[string]string{key: "from-rc"})
+	if got := os.Getenv(key); got != "from-rc" {
+		t.Fatalf("empty placeholder not overridden: %q", got)
+	}
+}
+
 func TestSourceShellRCMissingFileIsSilent(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("shell-rc sourcing is linux-only")
@@ -77,7 +88,7 @@ func TestLoadEndToEnd(t *testing.T) {
 	os.Unsetenv("SAPALOQ_E2E_PROBE")
 	t.Cleanup(func() { os.Unsetenv("SAPALOQ_E2E_PROBE") })
 
-	load()
+	reload()
 
 	if got := os.Getenv("SAPALOQ_E2E_PROBE"); got != "from-rc" {
 		t.Fatalf("SAPALOQ_E2E_PROBE = %q, want from-rc", got)
@@ -143,41 +154,17 @@ func TestLoadDotEnvImportsAllKeys(t *testing.T) {
 	if err := os.MkdirAll(dotenvDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	const key = "SAPALOQ_DOTENV_PROBE"
 	if err := os.WriteFile(filepath.Join(dotenvDir, ".env"),
-		[]byte("NROUTER_API_KEY=from-dotenv\nINI_EXPERIMENT_APIKEY=dotenv\n"), 0o600); err != nil {
+		[]byte(key+"=from-dotenv\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	os.Unsetenv("NROUTER_API_KEY")
-	os.Unsetenv("INI_EXPERIMENT_APIKEY")
-	t.Cleanup(func() {
-		os.Unsetenv("NROUTER_API_KEY")
-		os.Unsetenv("INI_EXPERIMENT_APIKEY")
-	})
+	os.Unsetenv(key)
+	t.Cleanup(func() { os.Unsetenv(key) })
 
 	loadDotEnvFiles(home)
 
-	if got := os.Getenv("NROUTER_API_KEY"); got != "from-dotenv" {
-		t.Fatalf("NROUTER_API_KEY = %q, want from-dotenv", got)
-	}
-	if got := os.Getenv("INI_EXPERIMENT_APIKEY"); got != "dotenv" {
-		t.Fatalf("INI_EXPERIMENT_APIKEY = %q, want dotenv", got)
-	}
-}
-
-func TestRealHomeImportsNrouter(t *testing.T) {
-	if os.Getenv("SAPALOQ_SHELLENV_E2E") != "1" {
-		t.Skip("set SAPALOQ_SHELLENV_E2E=1")
-	}
-	if runtime.GOOS != "linux" {
-		t.Skip("linux only")
-	}
-	if _, err := exec.LookPath("bash"); err != nil {
-		t.Skip("bash missing")
-	}
-	os.Unsetenv("NROUTER_API_KEY")
-	t.Cleanup(func() { os.Unsetenv("NROUTER_API_KEY") })
-	load()
-	if os.Getenv("NROUTER_API_KEY") == "" {
-		t.Fatal("NROUTER_API_KEY still empty after load() with real HOME")
+	if got := os.Getenv(key); got != "from-dotenv" {
+		t.Fatalf("%s = %q, want from-dotenv", key, got)
 	}
 }

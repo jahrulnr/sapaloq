@@ -3,7 +3,7 @@
 > **Satu binary Go** - goroutine + channel + persistence lokal. No mandatory
 > broker/cache daemon; optional LLM drivers may manage an external provider
 > process such as `codex app-server`.
-> Last updated: 2026-06-29 (active vs stale IPC socket startup)
+> Last updated: 2026-06-30 (systemd env: EnvironmentFile + login try-restart; shellenv 30s timeout + empty override)
 
 Widget IPC read timeout (`cmd/sapaloq-widget/ipc.go`, `setIPCReadDeadline`):
 
@@ -96,19 +96,29 @@ No cascade: "Redis failed so events broken" - **cannot happen**.
 
 ## systemd user unit
 
+`sapaloq-core service install` writes `~/.config/systemd/user/sapaloq.service`:
+
 ```ini
 [Unit]
-Description=SapaLOQ desktop companion
-After=graphical-session.target
+Description=SapaLOQ core (orchestrator + IPC)
+After=network.target graphical-session-pre.target
 
 [Service]
-ExecStart=%h/.local/bin/sapaloq-core
+Type=simple
+EnvironmentFile=-~/.config/sapaloq/.env
+ExecStart=%h/.local/bin/sapaloq-core run
 Restart=on-failure
-Environment=SAPALOQ_HOME=%h/SapaLOQ
+RestartSec=2
 
 [Install]
 WantedBy=default.target
 ```
+
+`EnvironmentFile=-…` loads `KEY=value` pairs natively (leading `-` = ignore if missing). This is the **recommended** place for provider tokens used under systemd (`NROUTER_API_KEY`, `BLACKBOX_API_KEY`, …) — no bashrc required.
+
+`After=graphical-session-pre.target` avoids starting the core before the desktop session exists (important with `loginctl enable-linger`).
+
+Widget login autostart launches the GUI only; env import is handled in Go (`shellenv.Bootstrap` + `Watch`). `Watch` polls until every env name from `config.CredentialEnvKeys` — `llmBridge.providers[].credentialsEnv` and `webSearch.github.tokenEnv` — is non-empty, re-sourcing bashrc/dotenv after `XDG_RUNTIME_DIR` appears (linger/login) without restarting systemd.
 
 One service. One binary. One socket path.
 
@@ -222,7 +232,7 @@ Debug output goes to **stderr**; chat events stay on stdout. Env: `SAPALOQ_DEBUG
 | `CURSOR_MACHINE_ID` | - | Machine id for checksum headers |
 | `CURSOR_STATE_VSCDB` | auto | Override IDE `state.vscdb` path |
 
-Without explicit env vars, `sapaloq-core` first sources the user's shell rc (`~/.bashrc` then `~/.zshrc`, Linux only - needed under systemd `--user`/autostart where no login shell runs), then autoloads from `.env`, then Cursor IDE `state.vscdb` - broadly the same priority as the [cursor-bridge credential-loader](https://github.com/jahrulnr/cursor-bridge/tree/master/packages/credential-loader) with the shell-rc step added in front of `.env` (`internal/shellenv`). The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) so the stock Debian/Ubuntu `~/.bashrc` interactive guard (`case $- in *i*) ;; *) return;; esac`) doesn't short-circuit before the user's exports. Shell-rc import copies **every** variable from the sourced environment (including `PATH` and any custom `credentialsEnv` name), best-effort and silent on failure, and never overrides an already-set variable.
+Without explicit env vars, `sapaloq-core` first sources the user's shell rc (`~/.bashrc` then `~/.zshrc`, Linux only - needed under systemd `--user`/autostart where no login shell runs), then autoloads from `~/.config/sapaloq/.env` (also wired into the systemd unit as `EnvironmentFile`), then Cursor IDE `state.vscdb` - broadly the same priority as the [cursor-bridge credential-loader](https://github.com/jahrulnr/cursor-bridge/tree/master/packages/credential-loader) with the shell-rc step added in front of `.env` (`internal/shellenv`). The rc is sourced with an **interactive** shell (`bash -ic`/`zsh -ic`) so the stock Debian/Ubuntu `~/.bashrc` interactive guard (`case $- in *i*) ;; *) return;; esac`) doesn't short-circuit before the user's exports. Shell-rc import copies **every** variable from the sourced environment (including `PATH` and any custom `credentialsEnv` name), best-effort and silent on failure (30s cap per rc — heavy nvm/conda/bashrc must finish), and never overrides an already-set **non-empty** variable (empty systemd placeholders are filled in).
 
 `chat` output prefixes: `[thinking]`, `[response]`, `[tool]`, `[error]`, `[done]`.
 

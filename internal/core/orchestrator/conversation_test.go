@@ -1007,8 +1007,10 @@ func TestRunConversationRecoversFromMalformedToolCall(t *testing.T) {
 	}
 	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
 	out := make(chan bridge.StreamEvent, 32)
+	var events []bridge.StreamEvent
 	go func() {
-		for range out {
+		for ev := range out {
+			events = append(events, ev)
 		}
 	}()
 	result, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
@@ -1022,10 +1024,86 @@ func TestRunConversationRecoversFromMalformedToolCall(t *testing.T) {
 	if fake.calls != 2 {
 		t.Fatalf("calls = %d, want a nudge + retry (2)", fake.calls)
 	}
+	var failedResult string
+	for i := range events {
+		ev := events[i]
+		if ev.Kind == bridge.EventToolUpdate && ev.Status == "failed" && ev.ToolCall != nil &&
+			ev.ToolCall.Name == "definitely_not_a_real_tool" {
+			failedResult = ev.ToolResult
+			break
+		}
+		if ev.Kind == bridge.EventTranscript && ev.Transcript != nil {
+			for _, e := range ev.Transcript.Entries {
+				if e.Kind == bridge.TranscriptTool && e.ToolName == "definitely_not_a_real_tool" && e.ToolStatus == "failed" {
+					failedResult = e.ToolResult
+					break
+				}
+			}
+		}
+		if failedResult != "" {
+			break
+		}
+	}
+	if failedResult == "" {
+		t.Fatal("expected failed tool update for malformed call")
+	}
+	if !strings.Contains(failedResult, "definitely_not_a_real_tool") || !strings.Contains(failedResult, "malformed tool call") {
+		t.Fatalf("failed tool result should show raw call:\n%s", failedResult)
+	}
 	// The nudge must have been appended as a user message before the retry.
 	last := fake.requests[1].Messages[len(fake.requests[1].Messages)-1].Content
 	if !strings.Contains(last, "well-formed call") {
 		t.Fatalf("retry prompt missing malformed-tool nudge: %q", last)
+	}
+}
+
+type inBridgeResolvedBridge struct {
+	calls int
+}
+
+func (b *inBridgeResolvedBridge) ID() string              { return "inbridge-resolved" }
+func (b *inBridgeResolvedBridge) Caps() bridge.BridgeCaps { return bridge.BridgeCaps{Tools: true} }
+func (b *inBridgeResolvedBridge) Complete(_ context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
+	b.calls++
+	out := make(chan bridge.StreamEvent, 8)
+	go func() {
+		defer close(out)
+		call := parse.ToolCall{ID: "tc-1", Name: "list_dir", Arguments: []byte(`{}`), Source: "cursor"}
+		out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &call}
+		upd := bridge.NewEvent(bridge.EventToolUpdate)
+		upd.ToolCall = &call
+		upd.ToolResult = "ok"
+		upd.Status = "completed"
+		out <- upd
+		if b.calls >= 2 {
+			stop := parse.ToolCall{Name: "sapaloq_stop", Arguments: []byte(`{"reason":"done"}`)}
+			out <- bridge.StreamEvent{Kind: bridge.EventToolCall, ToolCall: &stop}
+		}
+		out <- bridge.StreamEvent{Kind: bridge.EventDone}
+	}()
+	return out, nil
+}
+
+func TestRunConversationInBridgeToolSkipsMalformedRecovery(t *testing.T) {
+	fake := &inBridgeResolvedBridge{}
+	orch := &Orchestrator{
+		memoryDir: t.TempDir(),
+		vision:    make(map[string]bool),
+		active:    make(map[string]*activeRun),
+	}
+	snap := providerSnapshot{entry: config.LLMBridge{Key: "test", Model: "model"}, br: fake}
+	out := make(chan bridge.StreamEvent, 32)
+	go func() {
+		for range out {
+		}
+	}()
+	_, err := orch.runConversation(context.Background(), snap, out, "session", "task", []bridge.Message{{Role: "user", Content: "hi"}}, nil)
+	close(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.calls != 2 {
+		t.Fatalf("in-bridge resolved tool should not trigger malformed retry; calls=%d", fake.calls)
 	}
 }
 

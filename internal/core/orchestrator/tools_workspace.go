@@ -35,6 +35,16 @@ func resolvePath(p string) (string, error) {
 	return abs, nil
 }
 
+// toolSearchRoot is the directory work tools walk when listing/searching/globbing.
+// resolveActorArgs sets Cwd to the actor workspace; Path overrides when explicit.
+func toolSearchRoot(args toolArgs) (string, error) {
+	p := strings.TrimSpace(args.Path)
+	if p == "" {
+		p = strings.TrimSpace(args.Cwd)
+	}
+	return resolvePath(p)
+}
+
 const (
 	defaultReadBytes = 64 * 1024
 	maxReadBytes     = 512 * 1024
@@ -276,15 +286,15 @@ func toolDeleteFile(args toolArgs) string {
 	return fmt.Sprintf("Deleted %s.", args.Path)
 }
 
-// toolGlob lists files matching a glob pattern under a root directory (path
-// arg, default CWD). It supports "**" for recursive matching. Native - no
-// shell needed.
+// toolGlob lists files matching a glob pattern under a root directory. Uses
+// ripgrep-inspired pruning (gitignore + dep-dir skip), compiled globs (gobwas),
+// brace groups, and ** recursion. Native — no shell required.
 func toolGlob(args toolArgs) string {
 	pattern := strings.TrimSpace(args.Pattern)
 	if pattern == "" {
 		return "Error: pattern is required."
 	}
-	root, err := resolvePath(args.Path)
+	root, err := toolSearchRoot(args)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
@@ -292,95 +302,15 @@ func toolGlob(args toolArgs) string {
 	if limit <= 0 || limit > maxSearchResults {
 		limit = maxSearchResults
 	}
-	recursive := strings.Contains(pattern, "**")
-	// Reduce "**/" to a base pattern matched against each path's basename or
-	// relative path. We do a manual walk so "**" works regardless of OS glob.
-	var matches []string
-	count := 0
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil || count >= limit {
-			return nil
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "node_modules" || name == "vendor" || name == "dist" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		if globMatch(pattern, rel, recursive) {
-			matches = append(matches, rel)
-			count++
-		}
-		return nil
-	})
-	if len(matches) == 0 {
-		return "No files match."
+	matches, err := globWalk(root, pattern, limit)
+	if err != nil {
+		return "Error: " + err.Error()
 	}
-	sort.Strings(matches)
-	out := strings.Join(matches, "\n")
-	if count >= limit {
-		out += fmt.Sprintf("\n[capped at %d results]", limit)
-	}
-	return out
-}
-
-// globMatch matches rel against pattern. With recursive=true ("**" present) it
-// uses a path-aware regex; otherwise it uses filepath.Match on basename and rel.
-func globMatch(pattern, rel string, recursive bool) bool {
-	if recursive {
-		re, err := globPatternToRegex(pattern)
-		if err != nil {
-			return false
-		}
-		return re.MatchString(filepath.ToSlash(rel))
-	}
-	base := filepath.Base(rel)
-	if ok, _ := filepath.Match(pattern, base); ok {
-		return true
-	}
-	if ok, _ := filepath.Match(pattern, rel); ok {
-		return true
-	}
-	return false
-}
-
-// globPatternToRegex converts a glob with ** to a regex anchored to the full
-// relative path. * matches one path segment; ** matches across /.
-func globPatternToRegex(pattern string) (*regexp.Regexp, error) {
-	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
-	var b strings.Builder
-	b.WriteByte('^')
-	for i := 0; i < len(pattern); i++ {
-		switch pattern[i] {
-		case '*':
-			if i+1 < len(pattern) && pattern[i+1] == '*' {
-				i++
-				if i+1 < len(pattern) && pattern[i+1] == '/' {
-					b.WriteString("(?:.*/)?")
-					i++
-				} else {
-					b.WriteString(".*")
-				}
-			} else {
-				b.WriteString("[^/]*")
-			}
-		case '?':
-			b.WriteString("[^/]")
-		case '.', '+', '^', '$', '(', ')', '|', '[', ']', '{', '}', '\\':
-			b.WriteByte('\\')
-			b.WriteByte(pattern[i])
-		default:
-			b.WriteByte(pattern[i])
-		}
-	}
-	b.WriteByte('$')
-	return regexp.Compile(b.String())
+	return formatGlobMatches(matches, limit)
 }
 
 func toolListDir(args toolArgs) string {
-	abs, err := resolvePath(args.Path)
+	abs, err := toolSearchRoot(args)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
@@ -417,7 +347,7 @@ func toolSearch(args toolArgs) string {
 	if err != nil {
 		return "Error: invalid regex: " + err.Error()
 	}
-	root, err := resolvePath(args.Path)
+	root, err := toolSearchRoot(args)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
