@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/hostcontext"
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
@@ -157,7 +158,7 @@ func (p PrefetchPacket) render() string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("Prefetched context (from memory index - trust this before exploring):")
+	b.WriteString(prompts.GetInternal(prompts.KeyBlockPrefetchHeader))
 	if len(p.Facts) > 0 {
 		for _, f := range p.Facts {
 			b.WriteString("\n- ")
@@ -178,7 +179,7 @@ func (p PrefetchPacket) render() string {
 		}
 	}
 	if p.AntiDeepCheck {
-		b.WriteString("\nThe above is high-confidence; do not search the filesystem or re-read skills/memory before acting unless it is clearly insufficient.")
+		b.WriteString(prompts.GetInternal(prompts.KeyBlockPrefetchAntiDeepCheck))
 	}
 	return b.String()
 }

@@ -109,7 +109,7 @@ func TestReadImageDispatchedSharedInAllModes(t *testing.T) {
 	if !handled || !strings.HasPrefix(text, "![d.png](data:image/png;base64,") {
 		t.Fatalf("shared dispatch failed for read_image: handled=%v text=%q", handled, truncate(text))
 	}
-	for mode, profile := range map[string][]string{"ask": askTools, "plan": planTools, "agent": agentTools} {
+	for mode, profile := range map[string][]string{"orchestrator": orchestratorTools, "plan": planTools, "agent": agentTools} {
 		if !containsTool(profile, "read_image") {
 			t.Fatalf("%s profile missing read_image: %v", mode, profile)
 		}

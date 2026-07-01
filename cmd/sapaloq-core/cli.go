@@ -29,6 +29,10 @@ Commands:
   vault list          Show recent undeclared/unknown tool calls
   vault stats         Summarize vault log
   vault path          Print vault log file path
+  prompts list        List all prompt keys (editable, internal, bridge)
+  prompts show <key>  Print resolved prompt body
+  prompts preview <role>  Show composed role stack + internal blocks
+  prompts where       Print active prompts.dir and embed locations
   service install     Install systemd --user unit, enable + start it
   service uninstall   Stop, disable and remove the unit (config is kept)
   service start       Start the service (manual)

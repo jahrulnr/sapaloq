@@ -142,13 +142,14 @@ func mergeTranscriptItems(turns []chatstore.Turn, events []bridge.StreamEvent) [
 		}
 		for _, entry := range CoalesceEvents(genID, toolEvents) {
 			e := entry
-			if anchor, ok := toolEntryTurnAnchor(e, turns); ok {
-				e.At = anchor
-			}
 			items = append(items, transcriptItem{at: e.At, kind: "entry", entry: &e})
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].kind == "turn" && items[j].kind == "turn" &&
+			items[i].turn != nil && items[j].turn != nil {
+			return items[i].turn.Seq < items[j].turn.Seq
+		}
 		if !items[i].at.Equal(items[j].at) {
 			return items[i].at.Before(items[j].at)
 		}
@@ -171,29 +172,6 @@ func mergeTranscriptItems(turns []chatstore.Turn, events []bridge.StreamEvent) [
 		out = append(out, eventToEntry(*item.ev)...)
 	}
 	return out
-}
-
-// toolEntryTurnAnchor moves a tool card to its persisted assistant marker.
-// Tool-call timestamps precede persistence of the round's thinking turn, so
-// sorting the card by its raw timestamp can place it above that thinking row.
-func toolEntryTurnAnchor(entry bridge.TranscriptEntry, turns []chatstore.Turn) (time.Time, bool) {
-	if entry.Kind != bridge.TranscriptTool || entry.ToolName == "" {
-		return time.Time{}, false
-	}
-	var fallback time.Time
-	for _, turn := range turns {
-		if turn.Role != "assistant" || turn.GenerationID != entry.GenerationID ||
-			turn.CreatedAt.IsZero() || !calledToolsNoteContains(turn.Content, entry.ToolName) {
-			continue
-		}
-		if fallback.IsZero() {
-			fallback = turn.CreatedAt
-		}
-		if !turn.CreatedAt.Before(entry.At) {
-			return turn.CreatedAt, true
-		}
-	}
-	return fallback, !fallback.IsZero()
 }
 
 func calledToolsNoteContains(content, toolName string) bool {

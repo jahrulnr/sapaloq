@@ -9,7 +9,7 @@ import (
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
-func TestMergeTranscriptItemsUsesChronologyForLegacyTurnSequence(t *testing.T) {
+func TestMergeTranscriptItemsUsesSeqOrder(t *testing.T) {
 	at := time.Now().UTC()
 	turns := []chatstore.Turn{
 		{ID: 1, Seq: 1, Role: "user", Content: "heyy", GenerationID: "1", CreatedAt: at},
@@ -20,8 +20,8 @@ func TestMergeTranscriptItemsUsesChronologyForLegacyTurnSequence(t *testing.T) {
 	if len(out) != 3 {
 		t.Fatalf("entries = %d, want 3", len(out))
 	}
-	if out[1].Kind != bridge.TranscriptThinking || out[2].Kind != bridge.TranscriptText {
-		t.Fatalf("order = %q then %q, want thinking before text", out[1].Kind, out[2].Kind)
+	if out[1].Kind != bridge.TranscriptText || out[2].Kind != bridge.TranscriptThinking {
+		t.Fatalf("order = %q then %q, want text before thinking (seq order)", out[1].Kind, out[2].Kind)
 	}
 }
 
@@ -52,16 +52,41 @@ func TestMergeTranscriptItemsPreservesInferenceRoundOrder(t *testing.T) {
 		bridge.TranscriptUser,
 		bridge.TranscriptThinking,
 		bridge.TranscriptText,
-		bridge.TranscriptThinking,
 		bridge.TranscriptTool,
+		bridge.TranscriptThinking,
 	}
 	for i, want := range wantKinds {
 		if out[i].Kind != want {
 			t.Fatalf("entry %d kind = %q, want %q; transcript=%+v", i, out[i].Kind, want, out)
 		}
 	}
-	if out[1].Text != "first thinking" || out[2].Text != "first answer" || out[3].Text != "second thinking" {
+	if out[1].Text != "first thinking" || out[2].Text != "first answer" || out[4].Text != "second thinking" {
 		t.Fatalf("round text order is wrong: %+v", out)
+	}
+}
+
+func TestMergeTranscriptItemsToolCardsUseStreamTimestamps(t *testing.T) {
+	// Tool events arrive mid-stream (early At); thinking is persisted later.
+	// Cold restore must keep tools before thinking — same as live coalescer order.
+	at := time.Now().UTC()
+	turns := []chatstore.Turn{
+		{ID: 1, Seq: 1, Role: "user", Content: "hai", GenerationID: "2", CreatedAt: at},
+		{ID: 2, Seq: 2, Role: "thinking", Content: "greeting", GenerationID: "2", CreatedAt: at.Add(12 * time.Second)},
+		{ID: 3, Seq: 3, Role: "assistant", Content: "Hey!", GenerationID: "2", CreatedAt: at.Add(12 * time.Second)},
+	}
+	call := &parse.ToolCall{ID: "stop-1", Name: "sapaloq_stop"}
+	events := []bridge.StreamEvent{
+		{Kind: bridge.EventToolUpdate, GenerationID: "2", ToolCall: call, Status: "completed", At: at.Add(4 * time.Second)},
+	}
+	out := mergeTranscriptItems(turns, events)
+	if len(out) != 4 {
+		t.Fatalf("entries = %d, want 4: %+v", len(out), out)
+	}
+	if out[1].Kind != bridge.TranscriptTool {
+		t.Fatalf("entry 1 = %q, want tool before thinking on cold restore", out[1].Kind)
+	}
+	if out[2].Kind != bridge.TranscriptThinking {
+		t.Fatalf("entry 2 = %q, want thinking after tool", out[2].Kind)
 	}
 }
 

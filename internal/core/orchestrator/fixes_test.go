@@ -70,7 +70,7 @@ func TestAuditToolWritesVault(t *testing.T) {
 	}
 
 	// Nil vault writer must be a no-op (no panic).
-	(&Orchestrator{}).auditTool("s", "ask", parse.ToolCall{Name: "x"})
+	(&Orchestrator{}).auditTool("s", "orchestrator", parse.ToolCall{Name: "x"})
 }
 
 // TestPlanWriteIsIterable verifies write_plan is non-terminal

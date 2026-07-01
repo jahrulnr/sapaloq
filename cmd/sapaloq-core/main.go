@@ -20,6 +20,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/ipc"
 	"github.com/jahrulnr/sapaloq/internal/platform"
 	"github.com/jahrulnr/sapaloq/internal/platform/freedesktop"
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 	"github.com/jahrulnr/sapaloq/internal/shellenv"
 )
 
@@ -83,6 +84,9 @@ func main() {
 		if err != nil {
 			exitf("doctor failed: %v", err)
 		}
+		if err := prompts.ValidateInternal(); err != nil {
+			exitf("doctor failed: %v", err)
+		}
 		entry, _ := cfg.LLMBridge.ActiveProvider()
 		if entry.Driver == "codex-bridge" {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -106,6 +110,8 @@ func main() {
 		runChat(cfg, cfgPath, message)
 	case "vault":
 		runVault(cmdArgs)
+	case "prompts":
+		runPrompts(cfg, cmdArgs)
 	case "service":
 		runService(cfg, cfgPath, cmdArgs)
 	case "run":

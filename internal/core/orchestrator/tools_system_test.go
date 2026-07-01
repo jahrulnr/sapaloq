@@ -82,7 +82,7 @@ func TestSharedToolDispatchesExec(t *testing.T) {
 }
 
 func TestExecInAllModeProfiles(t *testing.T) {
-	for mode, profile := range map[string][]string{"ask": askTools, "plan": planTools, "agent": agentTools} {
+	for mode, profile := range map[string][]string{"orchestrator": orchestratorTools, "plan": planTools, "agent": agentTools} {
 		if !containsTool(profile, "exec") {
 			t.Fatalf("%s profile missing exec: %v", mode, profile)
 		}
@@ -94,7 +94,7 @@ func TestExecInAllModeProfiles(t *testing.T) {
 
 func TestAskProfileIncludesWriteTools(t *testing.T) {
 	for _, name := range []string{"write_file", "create_file", "edit_file", "delete_file"} {
-		if !containsTool(askTools, name) {
+		if !containsTool(orchestratorTools, name) {
 			t.Fatalf("ask profile missing %s", name)
 		}
 	}
@@ -109,7 +109,7 @@ func TestAskForegroundCanCreateFile(t *testing.T) {
 		Arguments: []byte(`{"path":"` + path + `","content":"hi"}`),
 	}
 	got := o.dispatchTool(context.Background(), providerSnapshot{}, ActorRun{
-		Foreground: true, ParentSessionID: "chat-1", Role: "ask", Tools: askTools,
+		Foreground: true, ParentSessionID: "chat-1", Role: "orchestrator", Tools: orchestratorTools,
 	}, call)
 	if !got.handled || strings.Contains(got.text, "not allowed") {
 		t.Fatalf("ask create_file should be allowed, got %q", got.text)

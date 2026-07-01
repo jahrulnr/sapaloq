@@ -1,0 +1,1 @@
+Your previous tool call(s) could not be parsed or executed - likely because they were emitted as inline text or batched together with stray markers. Re-issue with the proper structured tool-call format: one well-formed call, or separate calls for unrelated files (those can run in parallel). If no tool is needed, answer in plain text.

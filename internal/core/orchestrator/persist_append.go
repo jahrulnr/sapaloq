@@ -12,10 +12,10 @@ func isInBridgeToolSource(source string) bool {
 	return source == "codex" || source == "cursor"
 }
 
-// persistInBridgeToolUpdate records one completed in-bridge MCP tool (cursor/codex
-// api5 path) into turns.json and cleanMessages immediately so transport retries,
-// context rebuild, and restart see work already done mid-generation.
-func (o *Orchestrator) persistInBridgeToolUpdate(
+// appendInBridgeToolUpdate persists one in-bridge MCP ToolUpdate in wire order:
+// tool row first, then assistant narration/note when available. Replay order for
+// the model API is fixed in actorTurnsToMessages.
+func (o *Orchestrator) appendInBridgeToolUpdate(
 	ctx context.Context,
 	persistID, generationID string,
 	cfg turnConfig,
@@ -52,24 +52,25 @@ func (o *Orchestrator) persistInBridgeToolUpdate(
 		}
 		assistantContent += note
 	}
-	if assistantContent != "" {
-		o.persistAssistantTurnWithThinking(ctx, persistID, assistantContent, generationID, cfg, turnThinking)
-	} else {
-		o.flushTurnThinking(ctx, persistID, generationID, cfg, turnThinking)
-	}
+
+	o.flushTurnThinking(ctx, persistID, generationID, cfg, turnThinking)
 	if toolBody != "" {
-		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, persistID, "tool", toolBody, estimateContentTokens(toolBody), generationID)
+		o.persistToolTurn(ctx, persistID, toolBody, generationID)
+		if cleanMessages != nil {
+			*cleanMessages = append(*cleanMessages, bridge.Message{Role: "tool", Content: toolBody})
+		}
 	}
-	if assistantContent != "" {
+	visible := strings.TrimSpace(StripCalledToolsMarkers(assistantContent))
+	skipNoteOnlyStop := visible == "" && note != "" && call.Name == "sapaloq_stop" && cfg.foregroundOrchestrator
+	if assistantContent != "" && !skipNoteOnlyStop {
+		o.persistAssistantTurn(ctx, persistID, assistantContent, generationID)
+		if cleanMessages != nil {
+			*cleanMessages = append(*cleanMessages, bridge.Message{Role: "assistant", Content: assistantContent})
+		}
+	} else if assistantContent != "" && cleanMessages != nil {
 		*cleanMessages = append(*cleanMessages, bridge.Message{Role: "assistant", Content: assistantContent})
-	}
-	if toolBody != "" {
-		*cleanMessages = append(*cleanMessages, bridge.Message{Role: "tool", Content: toolBody})
 	}
 	if response != nil {
 		response.Reset()
-	}
-	if turnThinking != nil {
-		turnThinking.Reset()
 	}
 }

@@ -86,10 +86,10 @@ func (o *Orchestrator) surfaceUnresolvedToolFailures(
 		update.Status = "failed"
 		out.emit(ctx, update)
 		if isInBridgeToolSource(c.Source) {
-			o.persistInBridgeToolUpdate(ctx, persistID, generationID, cfg, response, turnThinking, cleanMessages, update)
+			o.appendInBridgeToolUpdate(ctx, persistID, generationID, cfg, response, turnThinking, cleanMessages, update)
 		} else if cfg.recordToolTurns && o.chat != nil && persistID != "" {
 			body := toolObservationBody([]string{update.ToolResult})
-			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, persistID, "tool", body, estimateContentTokens(body), generationID)
+			o.persistToolTurn(ctx, persistID, body, generationID)
 		}
 	}
 }

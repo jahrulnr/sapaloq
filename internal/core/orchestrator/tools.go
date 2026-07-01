@@ -7,8 +7,8 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/tooldocs"
 )
 
-// Tool profiles per execution mode (see docs/ORCHESTRATOR.md "Ask → Plan →
-// Agent"). Ask and Agent share the same workspace tool surface; behavioral
+// Tool profiles per execution mode (see docs/ORCHESTRATOR.md "Orchestrator → Plan →
+// Agent"). Orchestrator and Agent share the same workspace tool surface; behavioral
 // differences are prompt-driven (delegation, spawn, fire-and-forget). Plan is
 // read-only on the project plus write_plan; scribe is assessment + notes.
 
@@ -29,10 +29,10 @@ var desktopTools = []string{
 	"desktop_dnd_status",
 }
 
-// askTools: full workspace surface for the foreground Ask actor. Behavioral
-// differences vs background executors live in the Ask system prompt (when to
+// orchestratorTools: full workspace surface for the foreground orchestrator actor. Behavioral
+// differences vs background executors live in the orchestrator system prompt (when to
 // delegate, fire-and-forget spawn, etc.) — not in a reduced tool allowlist.
-var askTools = append(append([]string{
+var orchestratorTools = append(append([]string{
 	"sapaloq_spawn_plan",
 	"sapaloq_spawn_agent",
 	"sapaloq_spawn_scribe",
@@ -113,7 +113,7 @@ func staticToolsForRole(role string) []string {
 	case "scribe":
 		return scribeTools
 	default:
-		return askTools
+		return orchestratorTools
 	}
 }
 
@@ -197,7 +197,7 @@ func mergeToolOffer(base, extra []string) []string {
 // names the orchestrator actually implements.
 func knownToolSet() map[string]struct{} {
 	set := map[string]struct{}{}
-	for _, profile := range [][]string{askTools, planTools, agentTools, scribeTools, desktopTools} {
+	for _, profile := range [][]string{orchestratorTools, planTools, agentTools, scribeTools, desktopTools} {
 		for _, name := range profile {
 			set[name] = struct{}{}
 		}

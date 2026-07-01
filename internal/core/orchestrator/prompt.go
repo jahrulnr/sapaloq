@@ -182,26 +182,35 @@ func (o *Orchestrator) contextWindow() int {
 func (o *Orchestrator) runtimeContextMessage(actorRunID string) bridge.Message {
 	dirs := config.RuntimeDirs(o.snapshot().cfg)
 	workspace := o.actorCWD(actorRunID)
-	content := fmt.Sprintf(`---
-# SapaLOQ runtime variables
-
-workspace=%s
-config_path=%s
-data_path=%s
-memory_path=%s
-state_path=%s
-prompts_path=%s
-skills_path=%s
-vault_path=%s
-run_path=%s
-etc_path=%s
-runtime_roadmap=%s
-
-Authoritative tool cwd is workspace= above. Relative paths and default exec cwd resolve from it; absolute paths are used as given.`,
-		workspace,
-		o.cfgPath, dirs.DataDir, dirs.MemoryDir, dirs.StateDir,
-		dirs.PromptsDir, dirs.SkillsDir, dirs.VaultDir, dirs.RunDir, dirs.EtcDir,
-		filepath.Join(dirs.EtcDir, "ROADMAP.md"))
+	content, err := prompts.RenderInternal(prompts.KeyTemplateRuntimeContext, prompts.RuntimeContextData{
+		Workspace:      workspace,
+		ConfigPath:     o.cfgPath,
+		DataPath:       dirs.DataDir,
+		MemoryPath:     dirs.MemoryDir,
+		StatePath:      dirs.StateDir,
+		PromptsPath:    dirs.PromptsDir,
+		SkillsPath:     dirs.SkillsDir,
+		VaultPath:      dirs.VaultDir,
+		RunPath:        dirs.RunDir,
+		EtcPath:        dirs.EtcDir,
+		RuntimeRoadmap: filepath.Join(dirs.EtcDir, "ROADMAP.md"),
+	})
+	if err != nil || strings.TrimSpace(content) == "" {
+		// Centered-prompt migration must never silently drop the runtime block.
+		content = prompts.RuntimeContextFallback(prompts.RuntimeContextData{
+			Workspace:      workspace,
+			ConfigPath:     o.cfgPath,
+			DataPath:       dirs.DataDir,
+			MemoryPath:     dirs.MemoryDir,
+			StatePath:      dirs.StateDir,
+			PromptsPath:    dirs.PromptsDir,
+			SkillsPath:     dirs.SkillsDir,
+			VaultPath:      dirs.VaultDir,
+			RunPath:        dirs.RunDir,
+			EtcPath:        dirs.EtcDir,
+			RuntimeRoadmap: filepath.Join(dirs.EtcDir, "ROADMAP.md"),
+		})
+	}
 	return bridge.Message{Role: "system", Content: content}
 }
 
@@ -213,18 +222,7 @@ func (o *Orchestrator) materializeRuntimeRoadmap() {
 	if dirs.EtcDir == "" {
 		return
 	}
-	content := o.runtimeContextMessage("").Content + `
-
-# Workspace contract
-- Every actor starts at workspace unless it has a persisted cwd.
-- Relative file and exec paths follow that actor cwd.
-- cd persists for the same actor.
-
-# Host context contract
-- Host snapshot is ephemeral per turn; not stored in chat history.
-- Host paths are hints; tool cwd follows workspace contract above.
-- File content comes from tools unless user attached it in the message.
-`
+	content := o.runtimeContextMessage("").Content + prompts.GetInternal(prompts.KeyTemplateRuntimeRoadmapSuffix)
 	if os.MkdirAll(dirs.EtcDir, 0o755) != nil {
 		return
 	}
@@ -249,7 +247,7 @@ func (o *Orchestrator) negativeGuidanceBlock(ctx context.Context) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("Avoid repeating these mistakes the user flagged:")
+	b.WriteString(prompts.GetInternal(prompts.KeyBlockNegativeGuidanceHeader))
 	for _, f := range facts {
 		b.WriteString("\n- ")
 		b.WriteString(f.Content)
@@ -381,7 +379,7 @@ func (o *Orchestrator) skillsBlock(ctx context.Context, sessionID, userMsg strin
 	picks = skills.SortByRelevance(picks, cfg.MaxLoadPerTurn)
 
 	var b strings.Builder
-	b.WriteString("Relevant skills:")
+	b.WriteString(prompts.GetInternal(prompts.KeyBlockSkillsHeader))
 	for _, sk := range picks {
 		b.WriteString("\n")
 		b.WriteString(sk.Render(cfg.MaxBodyLines))
@@ -556,28 +554,19 @@ func buildAutopilotContinuation(toolCalls, toollessStreak int, toolResults []str
 		escalateAt = 6
 	}
 	escalated := toollessStreak >= escalateAt
-	agentSession := toolCalls > 0
+	// agentSession := toolCalls > 0
 
 	switch {
 	case sig.awaitingClarification:
-		b.WriteString("A delegated task is awaiting clarification from you. Relay its question to the user (or answer it via `sapaloq_answer_clarification`) before doing anything else; do NOT call `sapaloq_stop` while a clarification is pending.")
+		b.WriteString(prompts.GetInternal(prompts.KeyAutopilotClarificationPending))
 	case sig.runningTasks > 0:
 		if escalated {
-			b.WriteString("Background work is still running and you have already acknowledged it. Invoke `sapaloq_stop` silently now - do not re-narrate status or repeat your acknowledgement.")
+			b.WriteString(prompts.GetInternal(prompts.KeyAutopilotRunningEscalated))
 		} else {
-			b.WriteString("Background task(s) are running and you cannot advance them from here. If you have already replied to the user, call `sapaloq_stop` immediately - stopping is a silent action, so do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
+			b.WriteString(prompts.GetInternal(prompts.KeyAutopilotRunning))
 		}
 	default:
-		switch {
-		case agentSession && !escalated:
-			b.WriteString("Brief narration is fine. Next, use a tool (read_file, edit_file, exec, etc.) to finish or verify the deliverable—check missing sections (e.g. footer), run a quick read/list, and fix gaps. Call `sapaloq_stop` only when the task is actually complete, not after a plan or status-only message.")
-		case agentSession && escalated:
-			b.WriteString("If the deliverable is complete and you have verified it with a tool, call `sapaloq_stop` silently. If concrete work remains (missing UI sections, unverified files, incomplete edits), take one tool action now—do not stop or re-summarize mid-task.")
-		case !agentSession && escalated:
-			b.WriteString("Invoke `sapaloq_stop` silently now - do not repeat your answer or write a sign-off. If a concrete next step genuinely remains for YOU to take now, take it with a single concrete action; otherwise stop.")
-		default:
-			b.WriteString("Continue the existing task only if a concrete next step remains for YOU to take now. If YOU awaiting the user's response, there's no task to proceed with, the work is finished, or the only remaining work is running in the background (a delegated task you cannot advance), call `sapaloq_stop` immediately - stopping is a silent action, so do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.")
-		}
+		b.WriteString(prompts.GetInternal(prompts.KeyAutopilotDefaultStop))
 	}
 
 	// Non-blocking compaction steer removed: compaction is orchestrator-driven
@@ -638,7 +627,7 @@ func (o *Orchestrator) buildActorMessages(ctx context.Context, actor ActorRun) (
 	return o.buildBackgroundActorMessages(ctx, actor.Record), nil
 }
 
-// contextMessages builds the full message slice for an Ask / chat turn.
+// contextMessages builds the full message slice for an orchestrator / chat turn.
 func (o *Orchestrator) contextMessages(ctx context.Context, sessionID, latestUserMessage string) ([]bridge.Message, error) {
 	return o.buildForegroundActorMessages(ctx, sessionID, latestUserMessage)
 }
@@ -658,7 +647,7 @@ func (o *Orchestrator) buildForegroundActorMessages(ctx context.Context, session
 		return nil, err
 	}
 	messages := make([]bridge.Message, 0, len(turns)+6)
-	messages = append(messages, bridge.Message{Role: "system", Content: o.systemPrompt(prompts.RoleAsk)})
+	messages = append(messages, bridge.Message{Role: "system", Content: o.systemPrompt(prompts.RoleOrchestrator)})
 	messages = append(messages, o.runtimeContextMessage(sessionID))
 	if block := o.hostContextBlock(sessionID); block != "" {
 		messages = append(messages, bridge.Message{Role: "system", Content: block})
@@ -682,7 +671,7 @@ func (o *Orchestrator) buildForegroundActorMessages(ctx context.Context, session
 func (o *Orchestrator) buildBackgroundActorMessages(ctx context.Context, record *taskRecord) []bridge.Message {
 	systemContent := o.systemPrompt(record.Role)
 	if strings.TrimSpace(systemContent) == "" {
-		systemContent = "You are a background SapaLOQ task agent. Use your tools, then return a concise final result."
+		systemContent = prompts.GetInternal(prompts.KeyBackgroundFallbackSystem)
 	}
 	messages := []bridge.Message{{Role: "system", Content: systemContent}}
 	messages = append(messages, o.runtimeContextMessage(record.ID))
@@ -690,7 +679,7 @@ func (o *Orchestrator) buildBackgroundActorMessages(ctx context.Context, record 
 		if plan := o.readPlanMarkdown(record.PlanTaskID); plan != "" {
 			messages = append(messages, bridge.Message{
 				Role:    "system",
-				Content: "Approved plan to execute (read it as authoritative; satisfy every item under ## Acceptance):\n\n" + plan,
+				Content: prompts.GetInternal(prompts.KeyBackgroundPlanHandoff) + plan,
 			})
 		}
 	}
@@ -706,7 +695,7 @@ func (o *Orchestrator) buildBackgroundActorMessages(ctx context.Context, record 
 	if strings.TrimSpace(record.Answer) != "" {
 		messages = append(messages, bridge.Message{
 			Role:    "user",
-			Content: "Answer to your clarification question: " + strings.TrimSpace(record.Answer) + "\nContinue the task using this answer.",
+			Content: prompts.GetInternal(prompts.KeyBackgroundClarifyPrefix) + strings.TrimSpace(record.Answer) + prompts.GetInternal(prompts.KeyBackgroundClarifySuffix),
 		})
 	}
 	if nudge := strings.TrimSpace(record.ResumeNudge); nudge != "" {
@@ -716,14 +705,29 @@ func (o *Orchestrator) buildBackgroundActorMessages(ctx context.Context, record 
 	return messages
 }
 
+// actorTurnsToMessages maps persisted turns (wire seq order) into API replay
+// messages. Thinking and autopilot are UI/context-only. Within a contiguous
+// stretch of turns, assistant rows precede buffered tool rows so the model sees
+// tool results after the assistant turn that invoked them.
 func actorTurnsToMessages(turns []chatstore.Turn) []bridge.Message {
 	out := make([]bridge.Message, 0, len(turns))
+	var pendingTools []bridge.Message
+
+	flushTools := func() {
+		if len(pendingTools) == 0 {
+			return
+		}
+		out = append(out, pendingTools...)
+		pendingTools = nil
+	}
+
 	for _, turn := range turns {
 		role := turn.Role
 		if role == "thinking" || role == "autopilot" {
 			continue
 		}
 		if role == "checkpoint" {
+			flushTools()
 			out = append(out, bridge.Message{Role: "system", Content: turn.Content})
 			continue
 		}
@@ -737,12 +741,21 @@ func actorTurnsToMessages(turns []chatstore.Turn) []bridge.Message {
 			if strings.TrimSpace(content) == "" {
 				continue
 			}
+			out = append(out, bridge.Message{Role: "assistant", Content: content})
+			flushTools()
+			continue
 		}
-		if role != "assistant" && role != "user" && role != "system" && role != "tool" && role != "error" {
+		if role == "tool" {
+			pendingTools = append(pendingTools, bridge.Message{Role: "tool", Content: content})
+			continue
+		}
+		flushTools()
+		if role != "user" && role != "system" && role != "error" {
 			role = "user"
 		}
 		out = append(out, bridge.Message{Role: role, Content: content})
 	}
+	flushTools()
 	return out
 }
 

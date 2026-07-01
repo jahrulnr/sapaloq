@@ -26,8 +26,8 @@ func TestDispatchToolResolvesCursorGlobWithGlobPatternArgs(t *testing.T) {
 	got := o.dispatchTool(context.Background(), providerSnapshot{}, ActorRun{
 		Foreground:      true,
 		ParentSessionID: "chat-1",
-		Role:            "ask",
-		Tools:           askTools,
+		Role:            "orchestrator",
+		Tools:           orchestratorTools,
 	}, parse.ToolCall{
 		Name:      "glob",
 		Arguments: args,
@@ -57,8 +57,8 @@ func TestDispatchToolResolvesCursorGrepToSearch(t *testing.T) {
 	got := o.dispatchTool(context.Background(), providerSnapshot{}, ActorRun{
 		Foreground:      true,
 		ParentSessionID: "chat-1",
-		Role:            "ask",
-		Tools:           askTools,
+		Role:            "orchestrator",
+		Tools:           orchestratorTools,
 	}, parse.ToolCall{
 		Name:      "grep",
 		Arguments: args,

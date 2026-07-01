@@ -590,6 +590,37 @@ func (s *Store) deleteRelativeToTurn(ctx context.Context, sessionID string, turn
 	return s.touchSessionLocked(sessionID)
 }
 
+// DeleteSystemPromptAudits removes audit-only system rows (included_in_context=false)
+// for the given generation ids — used on chat retry and before re-snapshotting audit.
+func (s *Store) DeleteSystemPromptAudits(ctx context.Context, sessionID string, generationIDs map[string]struct{}) error {
+	_ = ctx
+	if sessionID == "" || len(generationIDs) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns, err := s.loadSessionTurns(sessionID)
+	if err != nil {
+		return err
+	}
+	kept := turns[:0]
+	for _, t := range turns {
+		if t.Role == "system" && !t.IncludedInContext && t.GenerationID != "" {
+			if _, drop := generationIDs[t.GenerationID]; drop {
+				continue
+			}
+		}
+		kept = append(kept, t)
+	}
+	if len(kept) == len(turns) {
+		return nil
+	}
+	if err := s.saveSessionTurns(sessionID, kept); err != nil {
+		return err
+	}
+	return s.touchSessionLocked(sessionID)
+}
+
 func (s *Store) ActiveTurns(ctx context.Context, sessionID string, includeCompacted bool) ([]Turn, error) {
 	_ = ctx
 	s.mu.Lock()

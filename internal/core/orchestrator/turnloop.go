@@ -9,7 +9,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
 
-// turnloop.go is the SINGLE inference engine shared by the chat (Ask) loop and
+// turnloop.go is the SINGLE inference engine shared by the chat (orchestrator) loop and
 // every sub-agent role (planner, task-runner/agent, scribe). Historically chat
 // and sub-agents had two independent multi-turn loops; the sub-agent copy was
 // missing the chat loop's budgets, loop-detection, compaction and clean
@@ -92,10 +92,10 @@ type turnConfig struct {
 	// recordToolTurns persists tool-result turns to the chat store for context
 	// accounting. Chat-only.
 	recordToolTurns bool
-	// foregroundAsk enables ask-chat finish policy: a clean tool-less reply ends
+	// foregroundOrchestrator enables orchestrator-chat finish policy: a clean tool-less reply ends
 	// the run without an autopilot continuation (sub-agents and test harnesses
 	// leave this false and keep looping until an explicit terminal tool).
-	foregroundAsk bool
+	foregroundOrchestrator bool
 	// generationID links persisted turns to the active chat run (runSeq).
 	generationID string
 	// maxInferenceTurns overrides the continuation budget's turn cap when > 0

@@ -2,7 +2,7 @@
 
 > **Contract doc:** who owns what between cursor-bridge, orchestrator, IPC, and widget.
 > Use this before adding guards at the turn loop or widget remount paths.
-> Last updated: 2026-06-29 (review follow-up — migration restored, host_context boundary)
+> Last updated: 2026-07-01 (event-driven turn loop; finished patch authority)
 
 Related: [CURSOR_AGENT_CONTRACT.md](./CURSOR_AGENT_CONTRACT.md) · [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [UI-DECISION.md](./UI-DECISION.md) · [RUNTIME.md](./RUNTIME.md)
 
@@ -91,9 +91,11 @@ Map reported bugs to **boundary violations**, not random line bugs:
 
 **Rule:** fix at the **owner** row in the table above, not by adding a third merge path.
 
-At every inference boundary the persistence owner must append causally:
-`thinking → assistant → tool/autopilot continuation`. `id`/`seq` are append
-order; a renderer sort is not a substitute for this store contract.
+**Persist contract (KISS):** append each turn row when its stream event completes
+(wire order; `seq` reflects append time). Do not reorder at write. Model replay
+uses `actorTurnsToMessages` + `replayContext`, which adapts storage to API order.
+Terminal `EventTranscript{finished}` snapshot comes from `LiveSessionTranscript`
+— same source as `ChatHistory` IPC; widget must not `restoreChatHistory` over it.
 
 ---
 
@@ -131,8 +133,10 @@ Not wired until Phase 1 audit is done.
 |-----------------|----------|
 | `internal/bridges/cursor/bridge_agent.go` | bridge → orchestrator stream |
 | `internal/bridges/cursor/agent/mapper.go` | wire decode → StreamEvent |
-| `internal/core/orchestrator/conversation.go` | streamLoop cursor/codex tool skip + ToolUpdate persist |
-| `internal/core/orchestrator/in_bridge_persist.go` | in-bridge ToolUpdate → turns.json + cleanMessages |
+| `internal/core/orchestrator/conversation.go` | streamLoop cursor/codex tool skip + ToolUpdate append |
+| `internal/core/orchestrator/persist_append.go` | in-bridge ToolUpdate → turns.json + cleanMessages (wire order) |
+| `internal/core/orchestrator/replay_context.go` | replayContext refresh for Complete() messages |
+| `internal/core/orchestrator/stream_persist.go` | append-on-event persist handlers |
 | `internal/core/orchestrator/chat.go` | emitWidget → IPC transcript patch |
 | `internal/core/orchestrator/session_transcript.go` | store + JSONL → TranscriptEntry |
 | `internal/core/orchestrator/actor_events.go` | widget steering → inbox |

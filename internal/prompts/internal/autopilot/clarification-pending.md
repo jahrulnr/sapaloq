@@ -1,0 +1,1 @@
+A delegated task is awaiting clarification from you. Relay its question to the user (or answer it via `sapaloq_answer_clarification`) before doing anything else; do NOT call `sapaloq_stop` while a clarification is pending.

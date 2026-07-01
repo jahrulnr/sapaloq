@@ -29,6 +29,8 @@ type liveTurnBuffer struct {
 	frameCount               int
 	kimiTokens               []string
 	promoteThinking          bool
+	mcpToolCompleted         bool
+	mcpToolCount             int
 }
 
 func newLiveTurnBuffer(kimiTokens []string, promoteThinking bool) *liveTurnBuffer {
@@ -39,8 +41,46 @@ func newLiveTurnBuffer(kimiTokens []string, promoteThinking bool) *liveTurnBuffe
 	}
 }
 
+// noteMCPTool marks that an api5 in-bridge MCP tool ran on this turn. Post-MCP
+// text/thinking on the agent wire is continuation noise, not assistant output.
+func (acc *liveTurnBuffer) noteMCPTool() {
+	acc.mcpToolCount++
+	acc.mcpToolCompleted = true
+}
+
+func (acc *liveTurnBuffer) ingestAgentDecoded(d wire.AgentDecoded) {
+	acc.frameCount++
+	if acc.mcpToolCompleted {
+		return
+	}
+	toolCallActive := len(acc.protoByID) > 0 || len(acc.protoOrder) > 0 || acc.mcpToolCount > 0
+
+	switch d.Kind {
+	case "thinking":
+		if d.Thinking == "" || ShouldSuppressKimiToolStreamChunk(d.Thinking, acc.kimiTokens) {
+			return
+		}
+		acc.totalThinking.WriteString(d.Thinking)
+		if acc.promoteThinking {
+			acc.promotedThinking.WriteString(d.Thinking)
+			if visible := VisibleContentFromThinking(acc.promotedThinking.String()); len(visible) > acc.promotedThinkingLen {
+				delta := visible[acc.promotedThinkingLen:]
+				acc.promotedThinkingLen = len(visible)
+				acc.appendVisibleDelta(delta, toolCallActive)
+			}
+		}
+	case "text":
+		if d.Text != "" {
+			acc.appendVisibleDelta(d.Text, toolCallActive)
+		}
+	}
+}
+
 func (acc *liveTurnBuffer) ingest(part wire.ExtractedPart) {
 	acc.frameCount++
+	if acc.mcpToolCompleted {
+		return
+	}
 	toolCallActive := len(acc.protoByID) > 0 || len(acc.protoOrder) > 0
 
 	if part.Thinking != "" && !ShouldSuppressKimiToolStreamChunk(part.Thinking, acc.kimiTokens) {
@@ -117,6 +157,10 @@ func (b *Bridge) finalizeBufferedTurn(
 	protoCalls := acc.finalizeProtoToolCalls()
 	kimiCalls := acc.extractKimiInlineTools(len(protoCalls))
 	allCalls := append(append([]parse.ToolCall(nil), protoCalls...), kimiCalls...)
+	toolCallCount := len(allCalls)
+	if acc.mcpToolCount > toolCallCount {
+		toolCallCount = acc.mcpToolCount
+	}
 
 	thinking := acc.thinkingText()
 	content := acc.contentText()
@@ -145,8 +189,8 @@ func (b *Bridge) finalizeBufferedTurn(
 	}
 
 	content = CleanKimiAssistantContent(content, acc.kimiTokens)
-	content = FinalizeAssistantContentWithToolCalls(content, len(allCalls))
-	content = b.schema.SanitizeFinalTurnContent(content, guard, len(allCalls))
+	content = FinalizeAssistantContentWithToolCalls(content, toolCallCount)
+	content = b.schema.SanitizeFinalTurnContent(content, guard, toolCallCount)
 	if content != "" && artifacts.IsModelResponseArtifact(content) {
 		content = ""
 	}

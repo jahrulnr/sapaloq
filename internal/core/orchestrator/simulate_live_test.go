@@ -8,7 +8,7 @@ package orchestrator
 //
 // Why this exists: a context-sensitive model (e.g. MiniMax) sometimes narrates
 // a delegation ("oke aku delegasikan ke agent") and ends its turn WITHOUT
-// emitting the spawn tool call. The ask.md "spawn-before-acknowledge" fix is
+// emitting the spawn tool call. The orchestrator.md "spawn-before-acknowledge" fix is
 // meant to stop that; mode 1 below is the live regression for it.
 //
 // These tests are GATED: without SAPALOQ_BLACKBOX_E2E=1 and a working token in
@@ -109,7 +109,7 @@ const (
 )
 
 // detectRole inspects the assembled system messages for the stable role markers
-// that systemPrompt() bakes in from ask.md / planner.md / agent.md, falling back
+// that systemPrompt() bakes in from orchestrator.md / planner.md / agent.md, falling back
 // to declared tools (only Ask offers sapaloq_spawn_*).
 func detectRole(req bridge.Request) simRole {
 	var sys strings.Builder
@@ -241,7 +241,7 @@ func newSimOrchestrator(t *testing.T, router *roleRoutingBridge, entry config.LL
 // ---------------------------------------------------------------------------
 // Mode 1: live ORCHESTRATOR (Ask) ↔ mocked planner + mocked agent round-trip.
 // Proves the live model emits the spawn tool call at each hand-off rather than
-// narrating it and ending the turn (the ask.md regression).
+// narrating it and ending the turn (the orchestrator.md regression).
 // ---------------------------------------------------------------------------
 
 func TestSimulateOrchestratorPlannerAgentRoundTrip(t *testing.T) {

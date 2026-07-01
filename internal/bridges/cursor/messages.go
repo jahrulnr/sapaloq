@@ -12,7 +12,7 @@ const cursorSystemInstructionsPrefix = "[System Instructions]\n"
 
 // normalizeCursorWireMessages maps OpenAI-style roles to the Cursor api2 wire
 // shape used by 9router/open-sse. cursor-proto-lab treats any non-user role as
-// assistant; sending ask.md as system would appear as fake assistant turns and
+// assistant; sending orchestrator.md as system would appear as fake assistant turns and
 // trigger agent-task confabulation on short user messages like "hey hey".
 func normalizeCursorWireMessages(messages []bridge.Message) []wire.ChatMessage {
 	if len(messages) == 0 {

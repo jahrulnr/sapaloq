@@ -67,7 +67,9 @@ func Normalize(s *Snapshot, limits Limits, redactor *privacyfilter.Filter) *Snap
 		out.UI.ComposeAttachmentCount = len(atts)
 	}
 	if strings.TrimSpace(out.UI.Mode) == "" {
-		out.UI.Mode = "ask"
+		out.UI.Mode = "orchestrator"
+	} else if out.UI.Mode == "ask" {
+		out.UI.Mode = "orchestrator"
 	}
 
 	if out.Editor.Selection != nil && redactor != nil && limits.MaxSelectionText > 0 {

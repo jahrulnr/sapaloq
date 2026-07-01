@@ -286,7 +286,7 @@ func (o *Orchestrator) ContextUsage(ctx context.Context, sessionID string) (chat
 // of the force-trigger firing after, not before, a provider overflow).
 func (o *Orchestrator) estimatePerTurnOverhead(ctx context.Context, sessionID, userMsg string) int {
 	stripped, _ := stripAttachmentPayloads(userMsg)
-	overhead := estimateTextTokens(o.systemPrompt(prompts.RoleAsk))
+	overhead := estimateTextTokens(o.systemPrompt(prompts.RoleOrchestrator))
 	overhead += estimateTextTokens(o.runtimeContextMessage(sessionID).Content)
 	overhead += estimateTextTokens(o.hostContextBlock(sessionID))
 	overhead += estimateTextTokens(o.negativeGuidanceBlock(ctx))

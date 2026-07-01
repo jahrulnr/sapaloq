@@ -208,6 +208,14 @@ export function patchTranscriptEntry(
     }
     const body = el.querySelector('.transcript-entry-body') || el;
     if (body instanceof HTMLElement && entry.text !== undefined) {
+      const raw = el.dataset.rawText || '';
+      const hasStream = !!body.querySelector('.stream-plain');
+      // Delta patches own the live row; ignore stale snapshot text that would
+      // rewind or duplicate what appendTextDelta already accumulated.
+      if (hasStream) {
+        const incoming = entry.text || '';
+        if (incoming.length < raw.length || incoming === raw) return;
+      }
       el.dataset.rawText = entry.text;
       const target = body.classList.contains('transcript-entry-body') ? body : el;
       target.replaceChildren(renderMarkdown(entry.text));
@@ -240,8 +248,12 @@ export function appendTextDelta(el: HTMLElement, delta: string) {
       stream = document.createElement('span');
       stream.className = 'stream-plain';
       body.append(stream);
+      // After a debounced markdown flush, rawText is cumulative but the DOM
+      // no longer has .stream-plain — seed with the full buffer, not just delta.
+      stream.append(document.createTextNode(next));
+    } else {
+      stream.append(document.createTextNode(delta));
     }
-    stream.append(document.createTextNode(delta));
   }
   const isThinking = el.dataset.entryKind === 'thinking' || !!el.closest('.transcript-thinking');
   if (isThinking) return;

@@ -1,7 +1,7 @@
 # SapaLOQ - UI Decision (Widget / HUD)
 
 > Locked direction for M5 widget. Supersedes "GTK4 + Layer Shell everywhere" in older drafts.
-> Last updated: 2026-06-29 (review follow-up — workspace_set errors propagated)
+> Last updated: 2026-07-01 (KISS persist — cold transcript by seq)
 
 Related: [PLATFORM.md](./PLATFORM.md) · [RUNTIME.md](./RUNTIME.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [BOUNDARIES.md](./BOUNDARIES.md)
 
@@ -88,10 +88,9 @@ events; the existing task cards remain the detailed lifecycle history.
 
 The widget **renders** `TranscriptPatch` only; it does not own persistence or tool
 coalesce logic. See [BOUNDARIES.md](./BOUNDARIES.md).
-Cold history arrives already ordered by inference round (`thinking → response →
-next thinking → tool`); the widget must not regroup rows by role or generation.
-That order originates in durable `turns.json` append order for new sessions;
-backend compatibility logic repairs presentation of older malformed sessions.
+Cold history follows durable `turns.json` **seq** order (wire append order); the
+widget must not regroup rows by role or generation. Tool cards from progress
+JSONL may anchor for presentation only.
 
 | Path | Use when | Do not use when |
 |------|----------|-----------------|
@@ -144,7 +143,7 @@ the newest transcript entry.
 
 Delta ops: `upsert` (one `TranscriptEntry`), `append_text` (`entry_id` + `delta`), `remove` (`entry_id`). Entry ids match the coalescer (`{generation}-pending-text`, tool rows, etc.).
 
-The widget applies deltas by `data-entry-id` (`applyDeltaOps`): plain text appends immediately; markdown re-render is debounced (~48ms). Full-array `syncTranscriptPane` remains the snapshot path.
+The widget applies deltas by `data-entry-id` (`applyDeltaOps`): plain text appends immediately; markdown re-render is debounced (~48ms). When a debounced flush removes `.stream-plain`, the next `append_text` re-seeds the span from `dataset.rawText` (cumulative), not only the latest delta. Snapshot `patchTranscriptEntry` skips rows that still have an active `.stream-plain` unless the incoming text is longer (recovery). Full-array `syncTranscriptPane` remains the snapshot path.
 
 Live foreground patches arrive on the `watch` bus subscription only (`sapaloq:transcript`); `chat_send` / `chat_retry` IPC streams no longer duplicate them to the webview.
 

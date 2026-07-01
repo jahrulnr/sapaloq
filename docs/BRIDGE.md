@@ -2,9 +2,9 @@
 
 > **Brain bridge drivers** - connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-06-28 (**tool mapping** — `ResolveToolCall` upstream→declared; see `TOOL-MAPPING.md`)
+> Last updated: 2026-07-01 (provider role notes; event-driven turn loop)
 >
-> Prior: 2026-06-28 (**cursor-bridge** vscdb credential autoload + offline mock `sapaloq_stop` on autopilot)
+> Prior: 2026-06-28 (**tool mapping** — `ResolveToolCall` upstream→declared; see `TOOL-MAPPING.md`)
 
 Related: [DRIVER.md](./DRIVER.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [TOOL-MAPPING.md](./TOOL-MAPPING.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) · [BOUNDARIES.md](./BOUNDARIES.md)
 
@@ -85,7 +85,7 @@ Before `wire.StreamChat*` / Node `cursor-proto-lab`, `normalizeCursorWireMessage
 (`internal/bridges/cursor/messages.go`) maps roles like 9router
 `openai-to-cursor.js`:
 
-- `system` → `user` with prefix `[System Instructions]\n` (ask.md, runtime context, skills, etc.)
+- `system` → `user` with prefix `[System Instructions]\n` (orchestrator.md, runtime context, skills, etc.)
 - `tool` → `user` with a `<tool_result>...</tool_result>` XML block (avoids protobuf `tool_results` loop bugs)
 - `user` / `assistant` unchanged
 
@@ -94,17 +94,29 @@ Before `wire.StreamChat*` / Node `cursor-proto-lab`, `normalizeCursorWireMessage
 - **INSTRUCTION guard** — protobuf field populated for `default`/`auto` models (`OpenAI bridge: callable tools are …` or no-tools variant); skipped when declared tools **or prompt-embedded** native Agent-session triggers (`run_terminal_cmd`, etc.) are detected.
 - **forceAgentMode** — `default`/`auto` → Agent wire (`IS_AGENTIC=1`, `UNIFIED_MODE=Agent`, tools enabled).
 - **MCP tools[]** — declared SapaLOQ tools encoded on the wire (schemas from `provider.RegisteredToolSchema`).
-- **Response hygiene** — accumulate one api2 turn in `stream_buffer.go`, then finalize (9router `transformProtobufToSSE` parity): defer Kimi inline tool extraction until stream end; `cleanKimiAssistantContent` + `finalizeAssistantContentWithToolCalls`; end-of-turn sanitizer (skip when tools present); drop undeclared structured tool calls (vault only); **drop all tools + visible text when thinking is unanchored confabulation** vs the user prompt; normalize `web_search.search_term` → executor `query`.
+- **Response hygiene** — accumulate one turn in `stream_buffer.go`, then finalize (9router `transformProtobufToSSE` parity): **api2** ingests `wire.ExtractedPart` frames; **api5** ingests `wire.AgentDecoded` via `ingestAgentDecoded` (same buffer). Post-MCP `text`/`thinking` on the agent wire is discarded (`noteMCPTool`) — it is continuation noise, not assistant output. Finalize: defer Kimi inline tool extraction until stream end; `cleanKimiAssistantContent` + `finalizeAssistantContentWithToolCalls`; end-of-turn sanitizer (skip when tools present); drop undeclared structured tool calls (vault only); **drop all tools + visible text when thinking is unanchored confabulation** vs the user prompt; normalize `web_search.search_term` → executor `query`.
 - **Thinking promote** — `default`/`auto`/`composer*`/` *-thinking` models promote post-`</think>` tail to visible assistant text (9router `visibleContentFromThinking`).
 - **Prompt agent detect** — scan messages for embedded native tool schemas (`"name": "…"`, markdown headers) to skip guard on real Agent sessions.
 
 Disable guard: `SAPALOQ_CURSOR_TOOL_GUARD=0` (also honors `NINEROUTER_CURSOR_TOOL_GUARD`).
 
 **Why message roles still matter:**
-Passing orchestrator `system` turns through unchanged made multi-kilobyte ask.md
+Passing orchestrator `system` turns through unchanged made multi-kilobyte orchestrator.md
 look like prior assistant speech, which triggered agent-task confabulation on
 short greetings (`hey hey` → invented website/21st.dev tasks). OpenClaw +
 9router never had this bug because the translator runs before encode.
+
+### Provider message roles (orchestrator notes)
+
+SapaLOQ maps wire events to storage/API roles per provider — do not pretend unsupported roles exist on the wire.
+
+| Provider / path | Native wire roles | SapaLOQ storage / replay notes |
+|-----------------|-------------------|--------------------------------|
+| OpenAI-compatible (`provider-bridge`) | `system`, `user`, `assistant`, `tool`; some gateways add `developer` | Direct replay via `actorTurnsToMessages`; assistant-before-tool fix in mapper |
+| Cursor api2/api5 (`cursor-bridge`) | Composed user blob; thinking/thinking+text deltas; MCP tools in-bridge | `thinking` turn UI-only; tool via `EventToolUpdate`; see `CURSOR_AGENT_CONTRACT.md` |
+| Codex app-server | Thread items; native tool namespace `sapaloq` | Tool `outputDelta` → progress; turns append on orchestrator ToolUpdate path |
+
+When a provider cannot carry a role (e.g. native `thinking` on OpenAI chat completions), persist as show-only `thinking` in `turns.json` and skip in API replay — explicit mapping, not silent reorder.
 
 Reference artifacts (dev / regen):
 

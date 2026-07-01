@@ -277,7 +277,7 @@ Fifteen numbered principles dengan rationale - anchor untuk semua design decisio
 flowchart TB
   subgraph core [sapaloq-core - one Go binary]
     UI[Widget IPC / Wails]
-    ORCH[Orchestrator loop - Ask mode]
+    ORCH[Orchestrator loop - Orchestrator mode]
     BUS[Event bus internal/bus]
     WAL[jsonl WAL goroutine]
     SQL[(JSON store)]
@@ -314,7 +314,7 @@ flowchart TB
 | Component           | Package (target)                   | Responsibility                                  |
 | ------------------- | ---------------------------------- | ----------------------------------------------- |
 | **Widget IPC**      | `internal/ui/`                     | Ring states, chat panel, progress mirror        |
-| **Orchestrator**    | `internal/core/orchestrator/`      | Ask mode routing, task stack, spawn, control    |
+| **Orchestrator**    | `internal/core/orchestrator/`      | Orchestrator mode routing, task stack, spawn, control    |
 | **Intent router**   | `internal/core/intent/`            | Classify intent, spawn path scores              |
 | **Context scaler**  | `internal/core/context/`           | Prefetch merge, context packet, anti-deep-check |
 | **Boundary guard**  | `internal/core/boundary/`          | Mode/cross-mode policy                          |
@@ -560,7 +560,7 @@ MVP exposes no other user-facing slash command. Mode, task control, scribe/note-
 
 | Role               | Trigger                      | Tool policy          | Primary job                                        |
 | ------------------ | ---------------------------- | -------------------- | -------------------------------------------------- |
-| **orchestrator**   | Every user turn              | `companion`          | **Ask mode** - route, spawn score, delegate, watch |
+| **orchestrator**   | Every user turn              | `companion`          | **Orchestrator mode** - route, spawn score, delegate, watch |
 | **settings**       | `/settings ...`              | Config R/W only      | Patch `config.json`                                |
 | **scribe**         | "catat ini", notes           | Append tools         | Write `storage.paths` by mode/intent               |
 | **planner**        | `spawnPath: plan_then_agent` | `**read_only`**      | Draft Markdown `plan.md` - no mutating exec        |

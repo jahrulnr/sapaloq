@@ -69,7 +69,37 @@ func (o *Orchestrator) flushTurnThinking(ctx context.Context, persistID, generat
 	o.persistThinkingTurn(ctx, persistID, text, generationID)
 }
 
-func (o *Orchestrator) persistAssistantTurnWithThinking(ctx context.Context, persistID, content, generationID string, cfg turnConfig, turnThinking *strings.Builder) {
-	o.flushTurnThinking(ctx, persistID, generationID, cfg, turnThinking)
-	o.persistAssistantTurn(ctx, persistID, content, generationID)
+func (o *Orchestrator) persistToolTurn(ctx context.Context, sessionID, content, generationID string) {
+	if o.chat == nil || sessionID == "" {
+		return
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+	_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "tool", content, estimateContentTokens(content), generationID)
+}
+
+// persistSystemPromptAudit writes the composed system stack for one generation
+// into turns.json for inspection. Audit-only: IncludedInContext is false so
+// replay still injects live system blocks from prompt.go.
+func (o *Orchestrator) persistSystemPromptAudit(ctx context.Context, sessionID, generationID string, messages []bridge.Message) {
+	if o.chat == nil || sessionID == "" {
+		return
+	}
+	var parts []string
+	for _, m := range messages {
+		if m.Role != "system" {
+			continue
+		}
+		if body := strings.TrimSpace(m.Content); body != "" {
+			parts = append(parts, body)
+		}
+	}
+	if len(parts) == 0 {
+		return
+	}
+	content := strings.Join(parts, "\n\n---\n\n")
+	_ = o.chat.DeleteSystemPromptAudits(ctx, sessionID, map[string]struct{}{generationID: {}})
+	_, _ = o.chat.AppendTurnIDWithFlags(ctx, sessionID, "system", content, estimateContentTokens(content), generationID, false)
 }

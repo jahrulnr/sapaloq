@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 )
 
 // maxAutoClarifyAnswers bounds how many times the orchestrator may auto-answer a
@@ -74,10 +75,11 @@ func (o *Orchestrator) runClarificationResolver(sessionID string, record taskRec
 		return
 	}
 
-	system := "You are the orchestrator mediating between the user and a background sub-agent. " +
-		"A sub-agent is paused and needs a decision to continue. " +
-		"If - and ONLY if - you can answer confidently from the conversation context and the user's evident intent, " +
-		"call `sapaloq_answer_clarification` with task_id=\"" + record.ID + "\" and a clear answer. "
+	system, err := prompts.RenderInternal(prompts.KeyClarificationMediator, prompts.ClarificationMediatorData{TaskID: record.ID})
+	if err != nil {
+		o.escalateClarification(sessionID, record)
+		return
+	}
 
 	user := fmt.Sprintf("Background task `%s` (%s) asks:\n\n%s\n\nTask goal was: %s",
 		record.ID, record.Role, strings.TrimSpace(record.Question), strings.TrimSpace(record.Task))

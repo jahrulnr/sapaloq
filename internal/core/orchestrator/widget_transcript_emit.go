@@ -96,6 +96,8 @@ func (o *Orchestrator) snapshotEntriesForEmit(ctx context.Context, opts transcri
 		ev.Kind == bridge.EventToolUpdate || ev.Kind == bridge.EventToolCall {
 		o.refreshActiveTranscriptBase(ctx, sessionID)
 	}
+	// sapaloq:boundary orchestrator→widget — terminal notify uses LiveSessionTranscript,
+	// the same source as ChatHistory IPC (store seq + JSONL tool cards + coalescer).
 	if finished {
 		if live, err := o.LiveSessionTranscript(ctx, sessionID, opts.coalescer); err == nil && len(live) > 0 {
 			return live

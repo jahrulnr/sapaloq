@@ -12,6 +12,7 @@ import {
   getUserGroup,
   getSessionID,
   setSessionID,
+  isSubmitting,
 } from '../core/state';
 
 export async function restoreChatHistory(forceBottom = false) {
@@ -46,6 +47,9 @@ let restoreAgain = false;
 
 /** Coalesce bursty task_update / completion events into one IPC round-trip. */
 export function scheduleRestoreChatHistory(delayMs = 250) {
+  if (isSubmitting()) {
+    return;
+  }
   if (restoreTimer) clearTimeout(restoreTimer);
   restoreTimer = setTimeout(() => {
     restoreTimer = null;

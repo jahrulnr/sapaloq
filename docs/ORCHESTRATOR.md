@@ -1,7 +1,7 @@
 # SapaLOQ - Orchestrator & Config-by-Agent
 
 > Companion doc untuk [VISION.md](./VISION.md). Anchor untuk arsitektur runtime.
-> Last updated: 2026-06-30 (malformed tool failed rows show raw call)
+> Last updated: 2026-07-02 (prompt role `orchestrator`; role prompts behavioral-only; tool contracts in tooldocs)
 
 Related: [BOUNDARIES.md](./BOUNDARIES.md) · [VISION.md](./VISION.md)
 
@@ -64,7 +64,7 @@ Roles differ only by **system prompt**, **tool profile** (`tools.go`), and **ter
 - **Anti-blocker** - orchestrator never awaits sub-agent; sub-agent agresif & parallel where safe.
 - **Progress streaming** - orchestrator **watch live** sub-agent: thinking, response, toolcall, todo, status.
 - **Completion triggers** - in-proc event bus wake (ms) + jsonl WAL; heartbeat watchdog force-fails stalled workers. On every terminal transition the orchestrator **speaks** the outcome into chat (durable assistant turn + `response_delta` republish), so a finish that lands after `sapaloq_wait` returns is surfaced as a real message - not just a card (`internal/core/orchestrator/completion.go`).
-- **Fire-and-forget delegation** - after spawning a sub-agent the orchestrator replies briefly and ENDS its turn; it does **not** `sapaloq_wait` to watch (that freezes the chat for no benefit now that completion is spoken automatically). `sapaloq_wait` is opt-in (only when the user explicitly asks to block). `waitForTaskChange` ends only on a terminal state or a real status *transition* - a bare progress update (same status) no longer breaks the wait, so there is no wait→progress→wait freeze loop (`tasks.go`, prompt `internal/prompts/defaults/ask.md`).
+- **Fire-and-forget delegation** - after spawning a sub-agent the orchestrator replies briefly and ENDS its turn; it does **not** `sapaloq_wait` to watch (that freezes the chat for no benefit now that completion is spoken automatically). `sapaloq_wait` is opt-in (only when the user explicitly asks to block). `waitForTaskChange` ends only on a terminal state or a real status *transition* - a bare progress update (same status) no longer breaks the wait, so there is no wait→progress→wait freeze loop (`tasks.go`, prompt `internal/prompts/defaults/orchestrator.md`).
 - **Worker health** - each background sub-agent is a tracked worker (`workerRegistry`, `worker.go`): id, role, session, PID, phase, heartbeat. Live snapshot at `state/workers/<id>/health.json`; errors-only trail at `state/workers/<id>/error.log`. The watchdog (`StartWorkerWatchdog`, interval `completion.heartbeatIntervalSec`, stall `completion.staleAfterSec`) fails any worker that stops heartbeating.
 - **Event watchers** - GNOME notification + custom (reminder, email, …) → orchestrator react.
 - **Context ingress** - intent-router + JSON prefetch + dynamic prompt before spawn ([CONTEXT-SOP.md](./CONTEXT-SOP.md)).
@@ -277,11 +277,11 @@ agent:
 
 Provider `declaredTools` should be generated from this role profile. Static per-provider `declaredTools` remains a compatibility fallback only.
 
-**Per-tool wire descriptions.** Each registered tool has a Markdown doc under `internal/tooldocs/defaults/<name>.md`. The YAML frontmatter `description` field is embedded at build time and sent upstream as OpenAI `function.description` / Claude `tool.description` alongside the JSON parameter schema from `tools.go` init (`provider.RegisterTool`). Role prompts (`ask.md`, `planner.md`, `agent.md`) keep behavioral policy; tool docs close the selection-time gap so the model sees name + description + parameters together. Lifecycle/meta tools (`sapaloq_stop`, spawn, wait, …) omit the injected `wait_for_output` schema property; work tools include it.
+**Per-tool wire descriptions.** Each registered tool has a Markdown doc under `internal/tooldocs/defaults/<name>.md`. The YAML frontmatter `description` field is embedded at build time and sent upstream as OpenAI `function.description` / Claude `tool.description` alongside the JSON parameter schema from `tools.go` init (`provider.RegisterTool`). Role prompts (`orchestrator.md`, `planner.md`, `agent.md`) keep behavioral policy; tool docs close the selection-time gap so the model sees name + description + parameters together. Lifecycle/meta tools (`sapaloq_stop`, spawn, wait, …) omit the injected `wait_for_output` schema property; work tools include it.
 
 **Mandatory lifecycle tools.** `toolsForRole` always merges `sapaloq_stop` (planner/executor/scribe) and terminal task tools for executors, even when `subAgents.roles.*.allowedTools` omits them—so a restrictive config cannot brick sub-agent completion. Config migration `1.5.0` backfills missing entries on disk.
 
-**`sapaloq_stop` scopes.** Documented in `internal/tooldocs/defaults/sapaloq_stop.md` (wire description + extended contract). Default/`generation` stops only the caller's run (Ask foreground turn; sub-agent self-stop). Ask may use `scope=task`/`all` as explicit supervisor abort—see `ask.md` § scopes.
+**`sapaloq_stop` scopes.** Documented in `internal/tooldocs/defaults/sapaloq_stop.md` (wire description + extended contract). Default/`generation` stops only the caller's run (Ask foreground turn; sub-agent self-stop). Ask may use `scope=task`/`all` as explicit supervisor abort—see that tool doc, not role prompts.
 
 Runtime enforcement rule: reusable/shared tool implementations still pass
 through the active role allowlist before execution. `exec` is expected
@@ -485,7 +485,7 @@ Planner **never** spawns agent - orchestrator only.
 
 | Role | Trigger | Job |
 |------|---------|-----|
-| **orchestrator** | every user turn | **Ask mode** - route, spawn score, delegate, watch progress |
+| **orchestrator** | every user turn | **Orchestrator mode** - route, spawn score, delegate, watch progress |
 | **settings** | `/settings ...` | Patch `config.json` |
 | **scribe** | "catat ini", notes | Append to `storage.paths` by mode/intent |
 | **planner** | spawnPath `plan_then_agent` | **Plan mode** - read-only; produce Markdown `plan.md` artifact |
@@ -959,18 +959,26 @@ older timed flush is scheduled joins that pending buffer, and the timer,
 boundary snapshots, and terminal snapshots cannot overtake one another. This
 preserves provider text order across the timer-goroutine scheduling boundary.
 
-Cold `SessionTranscript` uses chronological turn order, never a generation-wide
-role rank. A generation may contain several inference rounds, so ranking all
-thinking before all assistant rows would move later autopilot thinking above an
-earlier answer. Tool cards use their matching persisted `[Called tools: …]`
-turn as the display anchor because raw tool-call time precedes persistence of
-the same round's thinking turn.
+Cold `SessionTranscript` follows durable `seq` (wire append order). Tool cards from
+progress JSONL anchor to assistant markers for presentation.
 
-The durable source is ordered the same way. At an inference boundary,
-`runTurnLoop` persists `thinking → assistant → continuation`, where continuation
-is either a `tool` result or hidden `autopilot` input for the next inference.
-`Store.Append*` assigns both `id` and `seq` at call time, so continuation must be
-appended only after the output that caused it.
+### Event-driven turn loop (2026-07-01)
+
+One goroutine consumes `bridge.StreamEvent`; handlers are sync (no persist bus):
+
+| Event / moment | Handler | Effect |
+|----------------|---------|--------|
+| `EventThinkingDelta` | buffer | accumulate only |
+| `EventResponseDelta` | `stream_persist.persistOnResponseDelta` | flush thinking segment |
+| `EventToolUpdate` (in-bridge) | `persist_append.appendInBridgeToolUpdate` | append tool (+ assistant if prose) |
+| Stream end / cancel | `stream_persist` | flush thinking; partial assistant on cancel |
+| Run stop | `run_policy` then `stream_persist.persistStopAssistant` | greeting inject → persist |
+| Continuation | `stream_persist.persistContinuationRound` + `replayContext.RefreshInto` | store + replay |
+| Notify | `turnSink.emit` / `EventTranscript` | widget/progress only |
+
+**Replay:** `replayContext` + `actorTurnsToMessages` — single mapper for cold start,
+checkpoint rebuild, and mid-run refresh. **Inflight** holds autopilot nudge (`user`
+role) skipped by the mapper until the next `Complete()`.
 
 ---
 
@@ -1427,7 +1435,11 @@ Orchestrator reads **summaries**, not raw dumps.
 ~/SapaLOQ/memory/        # facts.json, feedback.jsonl (legacy companion.db migrated on boot)
 ```
 
-**Codex alignment (2026):** conversation persistence is JSON-first under `state/`; the orchestrator maintains a single transcript via per-turn assistant persist + rollout JSONL. In-bridge cursor/codex MCP tools persist on each `EventToolUpdate` (`in_bridge_persist.go`) so mid-generation replay matches progress JSONL. Compaction rewrites `turns.json` and rebuilds the live `cleanMessages` slice atomically.
+**Codex alignment (2026):** conversation persistence is JSON-first under `state/`;
+the orchestrator appends turns on stream events (wire order) and maps replay via
+`actorTurnsToMessages`. Terminal widget notify uses `LiveSessionTranscript`
+(same source as `ChatHistory` IPC). Compaction rewrites `turns.json` and rebuilds
+via `replayContext` / checkpoint mapper.
 
 ```text
 ~/SapaLOQ/memory/        # pre-migration only

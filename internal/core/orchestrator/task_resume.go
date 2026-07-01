@@ -7,22 +7,27 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 )
 
 // ResumeNudge is injected once when a failed/stopped task resumes so the actor
 // continues from persisted turns instead of restarting exploration.
 func buildResumeNudge(priorStatus, priorError string) string {
 	var b strings.Builder
-	b.WriteString("Resume this task from the conversation below. Do not restart exploration or redo completed work from scratch.")
+	b.WriteString(prompts.GetInternal(prompts.KeyResumeNudgeBase))
 	if priorError != "" {
-		b.WriteString("\nPrior failure (")
-		b.WriteString(priorStatus)
-		b.WriteString("): ")
-		b.WriteString(priorError)
+		fragment, err := prompts.RenderInternal(prompts.KeyResumeNudgePriorFailure, prompts.ResumeNudgeData{
+			PriorStatus: priorStatus,
+			PriorError:  priorError,
+		})
+		if err == nil {
+			b.WriteString(fragment)
+		}
 	} else if priorStatus == "stopped" {
-		b.WriteString("\nThe task was stopped before completion; continue where you left off.")
+		b.WriteString(prompts.GetInternal(prompts.KeyResumeNudgeStopped))
 	}
-	b.WriteString("\nProceed with the remaining work.")
+	b.WriteString(prompts.GetInternal(prompts.KeyResumeNudgeFooter))
 	return b.String()
 }
 

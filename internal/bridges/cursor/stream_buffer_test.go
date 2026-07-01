@@ -3,9 +3,11 @@ package cursor
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/wire"
 	"github.com/jahrulnr/sapaloq/internal/config"
 	"github.com/jahrulnr/sapaloq/internal/parse"
 )
@@ -204,6 +206,78 @@ func TestFinalizeAgentModeKeepsTaskNarrationThinking(t *testing.T) {
 	}
 	if thinking == "" {
 		t.Fatal("agent mode should keep anchored task narration in thinking")
+	}
+}
+
+func TestAgentTurnBufferDropsPostMCPEcho(t *testing.T) {
+	dir := t.TempDir()
+	entry, _ := defaultTestEntry()
+	b, err := New(entry, config.RuntimeConfig{DataDir: dir, BinaryName: "sapaloq-core"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := LoadSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := schema.BuildGuardContext("default", entry.DeclaredTools, []bridge.Message{{Role: "user", Content: "hay hay"}})
+	acc := newLiveTurnBuffer(schema.KimiTokens(), false)
+
+	acc.ingestAgentDecoded(wire.AgentDecoded{Kind: "text", Text: "Hai! Ada yang bisa kubantu hari ini?"})
+	acc.noteMCPTool()
+	echo := "<user_query>\n[system]\n# SapaLOQ - persona\nYou are SapaLOQ.\n\n[user]\nhay hay"
+	acc.ingestAgentDecoded(wire.AgentDecoded{Kind: "text", Text: echo})
+	acc.ingestAgentDecoded(wire.AgentDecoded{Kind: "thinking", Thinking: echo})
+
+	out := make(chan bridge.StreamEvent, 8)
+	b.finalizeBufferedTurn(context.Background(), out, "s-agent", entry.DeclaredTools, guard, "hay hay", acc)
+	close(out)
+
+	var response string
+	for ev := range out {
+		if ev.Kind == bridge.EventResponseDelta {
+			response += ev.Delta
+		}
+	}
+	if strings.Contains(response, "[system]") || strings.Contains(response, "SapaLOQ - persona") {
+		t.Fatalf("post-MCP echo leaked into response: %q", response)
+	}
+}
+
+func TestAgentTurnBufferKeepsLongPreToolReply(t *testing.T) {
+	dir := t.TempDir()
+	entry, _ := defaultTestEntry()
+	b, err := New(entry, config.RuntimeConfig{DataDir: dir, BinaryName: "sapaloq-core"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := LoadSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := schema.BuildGuardContext("default", entry.DeclaredTools, nil)
+	acc := newLiveTurnBuffer(schema.KimiTokens(), false)
+
+	longReply := strings.Repeat("Here is a detailed answer with enough length. ", 5)
+	acc.ingestAgentDecoded(wire.AgentDecoded{Kind: "text", Text: longReply})
+	acc.noteMCPTool()
+	acc.ingestAgentDecoded(wire.AgentDecoded{Kind: "text", Text: "<user_query>\n[system]\n# SapaLOQ - persona\nleak"})
+
+	out := make(chan bridge.StreamEvent, 8)
+	b.finalizeBufferedTurn(context.Background(), out, "s-agent", entry.DeclaredTools, guard, "question", acc)
+	close(out)
+
+	var response string
+	for ev := range out {
+		if ev.Kind == bridge.EventResponseDelta {
+			response += ev.Delta
+		}
+	}
+	if !strings.Contains(response, "detailed answer") {
+		t.Fatalf("pre-tool reply missing: %q", response)
+	}
+	if strings.Contains(response, "[system]") {
+		t.Fatalf("post-MCP echo leaked: %q", response)
 	}
 }
 

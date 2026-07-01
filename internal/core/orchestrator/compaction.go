@@ -109,7 +109,8 @@ func drainBridgeText(ctx context.Context, stream <-chan bridge.StreamEvent) (str
 
 func serializeTurnsForCompaction(turns []chatstore.Turn) string {
 	var b strings.Builder
-	b.WriteString("Summarize the following conversation transcript.\n\n")
+	b.WriteString(prompts.GetInternal(prompts.KeyCompactionUserPrefix))
+	b.WriteString("\n")
 	for _, t := range turns {
 		if t.Role == "thinking" || t.Role == "autopilot" || t.Role == "checkpoint" {
 			continue
@@ -132,7 +133,8 @@ func serializeTurnsForCompaction(turns []chatstore.Turn) string {
 
 func serializeMessagesForCompaction(messages []bridge.Message) string {
 	var b strings.Builder
-	b.WriteString("Summarize the following conversation transcript.\n\n")
+	b.WriteString(prompts.GetInternal(prompts.KeyCompactionUserPrefix))
+	b.WriteString("\n")
 	for _, m := range messages {
 		if m.Role == "thinking" || m.Role == "autopilot" {
 			continue
@@ -368,18 +370,14 @@ func rebuildMessagesFromCheckpoint(systemPrefix []bridge.Message, ckpt chatstore
 			Content: "[Checkpoint " + itoa(ckpt.Index) + " summary]\n" + ckpt.Summary,
 		})
 	}
+	filtered := make([]chatstore.Turn, 0, len(tail))
 	for _, t := range tail {
-		if t.Role == "thinking" || t.Role == "autopilot" {
-			continue
-		}
-		// Checkpoint marker turns are already injected as a system summary
-		// from ckpt above; replaying the tail row would duplicate content and
-		// send role=checkpoint to the wire (rejected by OpenAI-compatible APIs).
 		if t.Role == "checkpoint" {
 			continue
 		}
-		out = append(out, bridge.Message{Role: t.Role, Content: t.Content})
+		filtered = append(filtered, t)
 	}
+	out = append(out, actorTurnsToMessages(filtered)...)
 	return out
 }
 
@@ -640,11 +638,12 @@ func compactMessagesWithSummary(messages []bridge.Message, originalTask, summary
 	}
 	cut := len(body) - keep
 	var checkpoint strings.Builder
-	checkpoint.WriteString("[Checkpoint summary]\n")
+	checkpoint.WriteString(prompts.GetInternal(prompts.KeyCompactionCheckpointHdr))
+	checkpoint.WriteString("\n")
 	checkpoint.WriteString(summary)
 	checkpoint.WriteString("\n\nOriginal task: ")
 	checkpoint.WriteString(truncateForCheckpoint(originalTask, 600))
-	checkpoint.WriteString("\nResume from the recent messages below. Do not restart completed work.")
+	checkpoint.WriteString(prompts.GetInternal(prompts.KeyCompactionCheckpointResume))
 	compacted := make([]bridge.Message, 0, len(prefix)+1+keep)
 	compacted = append(compacted, prefix...)
 	compacted = append(compacted, bridge.Message{Role: "system", Content: checkpoint.String()})

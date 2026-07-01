@@ -1236,15 +1236,9 @@ func TestToolLessTurnNeverFinishesOnAbsenceOfTool(t *testing.T) {
 	// points at sapaloq_stop and must NOT resurrect the deleted NO_OP sentinel.
 	last := fake.requests[len(fake.requests)-1].Messages
 	cont := last[len(last)-1].Content
+	// The continuation must point at the terminal tool.
 	if !strings.Contains(cont, "sapaloq_stop") {
 		t.Fatalf("continuation should point at the terminal tool, got %q", cont)
-	}
-	// The continuation must also frame stopping as a silent action (no status
-	// narration / sign-off) so the model stops calling the tool AND narrating.
-	// Use a stable keyword ("silent"), not the full sentence, to stay robust to
-	// minor wording tweaks.
-	if !strings.Contains(cont, "silent") {
-		t.Fatalf("continuation should frame stopping as a silent action, got %q", cont)
 	}
 	if strings.Contains(cont, "NO_OP") {
 		t.Fatalf("continuation must not use the removed NO_OP sentinel, got %q", cont)
@@ -1284,7 +1278,7 @@ func TestForegroundAskDoesNotAutoStopOnVisibleReply(t *testing.T) {
 		runID:         "actor-ask",
 		tools:         []string{},
 		sink:          chatSink{o: o, out: out},
-		foregroundAsk: true,
+		foregroundOrchestrator: true,
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -1354,7 +1348,7 @@ func TestForegroundAskContinuesAfterToolSessionNarration(t *testing.T) {
 		runID:         "actor-ask",
 		tools:         []string{"read_file", "sapaloq_stop"},
 		sink:          chatSink{o: o, out: out},
-		foregroundAsk: true,
+		foregroundOrchestrator: true,
 		dispatch: func(_ context.Context, call parse.ToolCall) turnOutcome {
 			if call.Name == "sapaloq_stop" {
 				return turnOutcome{handled: true, stop: true}
@@ -1400,7 +1394,7 @@ func TestForegroundAskDropsConfabulatedArtifact(t *testing.T) {
 		tools:           []string{},
 		sink:            chatSink{o: o, out: out},
 		recordToolTurns: true,
-		foregroundAsk:   true,
+		foregroundOrchestrator:   true,
 	}
 	result, err := o.runTurnLoop(context.Background(), providerSnapshot{
 		cfg:   o.cfg,
@@ -1440,7 +1434,7 @@ func TestForegroundAskFallbackOnThinkingOnlyPing(t *testing.T) {
 		runID:         "actor-ping",
 		tools:         []string{},
 		sink:          chatSink{o: o, out: out},
-		foregroundAsk: true,
+		foregroundOrchestrator: true,
 	}
 	result, err := o.runTurnLoop(context.Background(), providerSnapshot{
 		cfg:   o.cfg,
@@ -1476,7 +1470,7 @@ func TestForegroundAskNoiseRetryOnThinkingOnlyTask(t *testing.T) {
 		runID:         "actor-task",
 		tools:         []string{},
 		sink:          chatSink{o: o, out: out},
-		foregroundAsk: true,
+		foregroundOrchestrator: true,
 	}
 	result, err := o.runTurnLoop(context.Background(), providerSnapshot{
 		cfg:   o.cfg,

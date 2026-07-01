@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
-	cursoragent "github.com/jahrulnr/sapaloq/internal/bridges/cursor/agent"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/credentials"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor/wire"
 	"github.com/jahrulnr/sapaloq/internal/debug"
@@ -53,9 +52,9 @@ func messageHasVisionSignal(messages []bridge.Message) bool {
 var imageURLRe = regexp.MustCompile(`https?://[^\s"']+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s"']*)?`)
 
 // streamLiveAgent routes the request through the Agent API path (cursor-agent
-// wire port). It encodes messages into agent.v1.RunRequest, drives the
-// bidirectional exec/KV handshake, and maps InteractionUpdate events to
-// bridge.StreamEvent.
+// wire port). It accumulates InteractionUpdate text/thinking in liveTurnBuffer
+// (api2 parity), emits MCP tools live, and finalizes visible assistant content
+// once at turn end.
 func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds credentials.Credentials, out chan<- bridge.StreamEvent) {
 	host := strings.TrimSpace(os.Getenv("CURSOR_AGENT_HOST"))
 	if host == "" {
@@ -67,18 +66,23 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 	}
 	declared := declaredToolsForRequest(req.DeclaredTools, b.entry.DeclaredTools)
 	agentTools := buildAgentTools(declared)
+	model := defaultIfEmpty(req.Model, b.entry.Model)
+	guard := b.schema.BuildGuardContext(model, declared, req.Messages)
+	userPrompt := guard.UserPrompt
+	kimiTokens := b.schema.KimiTokens()
+	promoteThinking := ShouldPromoteThinkingToContent(model)
+	acc := newLiveTurnBuffer(kimiTokens, promoteThinking)
 	debug.Debugf("cursor-bridge: agent path host=%s ghost=%v tools=%d", host, creds.GhostMode, len(agentTools))
 
 	convID := agentConversationID(req)
 	body := wire.BuildAgentRequestBody(wire.AgentRunOptions{
 		UserText:       bridge.ComposeAgentUserText(req.Messages, req.ProviderContinuation),
-		ModelID:        defaultIfEmpty(req.Model, b.entry.Model),
+		ModelID:        model,
 		ConversationID: convID,
 		Tools:          agentTools,
 		Images:         encodeImages(req.Images),
 	})
 
-	mapper := cursoragent.NewMapper(req.SessionID)
 	var frameCount int
 	streamFn := wire.SelectAgentStreamFn()
 	err := streamFn(ctx, wire.AgentStreamOptions{
@@ -90,6 +94,7 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 		Tools:     agentTools,
 		Body:      body,
 		OnMCPTool: func(toolName, toolCallID string, args map[string]any) {
+			acc.noteMCPTool()
 			// sapaloq:boundary cursor-bridge→orchestrator — telemetry only; exec happens in MCPExecutor below.
 			debug.TraceBoundary("cursor-bridge", "orchestrator", "mcp_tool_call:"+toolName)
 			argsJSON, _ := json.Marshal(args)
@@ -136,8 +141,8 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 		IdleTimeout: b.entry.StreamIdleTimeout(),
 	}, func(decoded []wire.AgentDecoded, _ []byte) {
 		frameCount++
-		for _, ev := range mapper.Map(decoded) {
-			send(ctx, out, ev)
+		for _, d := range decoded {
+			acc.ingestAgentDecoded(d)
 		}
 	})
 	if err != nil {
@@ -148,7 +153,8 @@ func (b *Bridge) streamLiveAgent(ctx context.Context, req bridge.Request, creds 
 		send(ctx, out, errEv)
 		return
 	}
-	debug.Debugf("cursor-bridge: agent stream done frames=%d", frameCount)
+	responseBytes, noiseDropped := b.finalizeBufferedTurn(ctx, out, req.SessionID, declared, guard, userPrompt, acc)
+	debug.Debugf("cursor-bridge: agent stream done frames=%d response_bytes=%d noise_dropped=%v", frameCount, responseBytes, noiseDropped)
 	done := bridge.NewEvent(bridge.EventDone)
 	done.SessionID = req.SessionID
 	send(ctx, out, done)

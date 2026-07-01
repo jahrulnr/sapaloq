@@ -1,7 +1,7 @@
 # Cursor Agent API Contract
 
 > Wire contract for the cursor-agent port in `internal/bridges/cursor/wire`.
-> Last updated: 2026-06-29 (causal durable-turn ordering ownership)
+> Last updated: 2026-07-01 (api5 visible text uses `liveTurnBuffer` + `finalizeBufferedTurn`; post-MCP wire text discarded)
 
 See [BOUNDARIES.md](./BOUNDARIES.md) for simplification sequence before more orchestrator guards.
 
@@ -39,14 +39,17 @@ Dedup key: `{kind}:{exec_id}:{exec_msg_id}`.
 
 ## Event mapping
 
-`internal/bridges/cursor/agent/mapper.go` maps `InteractionUpdate` decode output:
+`streamLiveAgent` accumulates `InteractionUpdate` decode output in
+`liveTurnBuffer` (api2 parity) and emits visible assistant content once via
+`finalizeBufferedTurn` at turn end. MCP tools still emit live
+`EventToolCall` / `EventToolUpdate` via `OnMCPTool` / `MCPExecutor`.
 
-| Decoded kind | `bridge.StreamEvent` |
-|--------------|----------------------|
-| `text` | `response_delta` |
-| `thinking` | `thinking_delta` |
-| `tool_call_started/completed` | `status` telemetry |
-| `turn_ended` | stream driver emits `done` |
+| Decoded kind | Bridge handling |
+|--------------|-----------------|
+| `text` | Buffered; finalized as one `response_delta` (post-MCP chunks discarded) |
+| `thinking` | Buffered; finalized as `thinking_delta` when present |
+| `tool_call_started/completed` | Ignored (MCP exec emits real tool rows) |
+| `turn_ended` | Stream driver emits `done` after finalize |
 
 Cursor/provider event timestamps remain transport chronology. Durable ordering
 is owned by `runTurnLoop`, which appends thinking/assistant before the tool or

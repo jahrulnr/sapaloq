@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 )
 
 type actorControlEvent struct {
@@ -196,7 +197,7 @@ func actorEventsPrompt(events []actorControlEvent) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("[Actor events received at a safe point]\n")
+	b.WriteString(prompts.GetInternal(prompts.KeyBlockActorEventsHeader))
 	for _, ev := range events {
 		source := ev.SourceID
 		if source == "" {
@@ -204,7 +205,7 @@ func actorEventsPrompt(events []actorControlEvent) string {
 		}
 		fmt.Fprintf(&b, "- %s from %s: %s\n", ev.Kind, source, ev.Message)
 	}
-	b.WriteString("Apply relevant steering before continuing. If it conflicts with completed work, explain the conflict through `sapaloq_send_steering`.")
+	b.WriteString(prompts.GetInternal(prompts.KeyBlockActorEventsFooter))
 	return strings.TrimSpace(b.String())
 }
 

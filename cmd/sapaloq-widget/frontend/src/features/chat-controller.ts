@@ -11,7 +11,7 @@ import { appendMessage, closeMessageMenu } from './messages';
 import { registerMessageActions } from './message-actions';
 import { applyChatResetFromBE } from './apply-session-reset';
 import { syncChatTranscript, syncChatTranscriptStateFromDOM, scheduleSyncChatTranscript, flushScheduledChatTranscript, applyDeltaChatTranscript, mountChatTranscript, resetChatTranscriptState, patchForegroundTaskCards } from './transcript-pane';
-import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory, scheduleRestoreChatHistory } from './history';
+import { bindLatestGroupTurnID, loadSessionList, removeRepliesAfterTurn, restoreChatHistory, scheduleRestoreChatHistory, cancelScheduledRestoreChatHistory } from './history';
 import { hideSlashSuggest, refreshSlashSuggest } from './slash';
 import { refreshRuntimeStatus, currentSessionWorkspacePath } from './runtime-status';
 import { notifyCompletion, primeNotifications } from './notifications';
@@ -111,6 +111,7 @@ function applyTranscriptPatch(patch: TranscriptPatch) {
     return;
   }
   if (patch.finished) {
+    cancelScheduledRestoreChatHistory();
     flushScheduledChatTranscript();
     releaseInFlightTurn();
     if (patch.usage) renderUsage(patch.usage as ChatUsage);

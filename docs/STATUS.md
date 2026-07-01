@@ -2,9 +2,19 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-06-30 (**sub-agent monitor** — task prompt only in user bubble, no collapsed header duplicate)
+> Last updated: 2026-07-02 (**system prompt audit in turns.json** — per-generation snapshot, `included_in_context: false`)
 
-> Prior: 2026-06-30 (**malformed tool visibility** — failed tool rows show raw name/args)
+> Prior: 2026-07-02 (**prompt role rename** — foreground role key `ask` → `orchestrator`; `orchestrator.md` + on-disk migration from `ask.md`; CLI alias `prompts show ask` retained)
+
+> Prior: 2026-07-02 (**role prompts stripped of tool definitions** — `orchestrator`/`planner`/`agent`/`scribe` defaults now behavioral policy only; `wait_for_output`, spawn/stop scopes, parallel-batch examples moved to `internal/tooldocs/` (`wait`, `create_file`, `write_file`, existing `sapaloq_stop`/`exec` docs). `PROMPT-BUILDER-SOP` + `ORCHESTRATOR` doc boundary clarified.)
+
+> Prior: 2026-07-01 (**event-driven turn loop** — replayContext, stream handlers)
+
+> Prior: 2026-07-01 (**api5 stream hygiene** — agent path buffer+finalize parity with api2; post-MCP composed `user_text` no longer leaks to UI)
+
+> Prior: 2026-07-01 (**fast stream chunk UI** — appendTextDelta re-seeds cumulative text after markdown flush; stale snapshot patches skip active stream rows)
+
+> Prior: 2026-06-30 (**sub-agent monitor** — task prompt only in user bubble, no collapsed header duplicate)
 
 > Prior: 2026-06-29 (**/workspace alias remap** — reverted; absolute paths honored as given)
 
@@ -155,11 +165,11 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 10 | Vault audit log | ✅ | `internal/vault`, wired via `Orchestrator.auditTool` (`chat.go`) at Ask + sub-agent chokepoints; cursor-bridge logs undeclared calls |
 | 11 | Compaction (session + mid-run) | ✅ | `chat.go` (`compactActiveSession`), `conversation.go` |
 | 12 | Provider bridge (openai/claude/kimi + tool schema) | ✅ | `internal/bridges/provider`; per-tool JSON schema + **wire description** via `toolschema.go` + `internal/tooldocs/defaults/*.md` (frontmatter `description` → OpenAI/Claude tool list). **Streaming/non-stream framing per provider** via the `stream` flag (tri-state `*bool`, default true, `config.LLMBridge.StreamEnabled()`): `true` → SSE token deltas (`wire.go` `Stream`→`streamX`→`runSSE`); `false` → one request + complete-response parse into the same `WireEvent`s (`complete.go` `complete`/`postOnce`/`parseOpenAIComplete`/`parseClaudeComplete`), for gateways that buffer or don't support SSE. Both normalise through the same `handleWireEvent`, so the orchestrator is framing-agnostic. Pre-stream retry/backoff: a transient connection error or `408/429/5xx` is retried with exponential backoff+jitter up to `maxRetries` (`config.LLMBridge.ResolveMaxRetries()`, default 5, `-1` disables) **before** the first SSE byte (no delta duplication); the non-stream path reuses the same budget and, since the whole call is pre-stream, retries are unconditionally safe (`wire.go` `runSSE`/`attemptSSE`, `complete.go` `postOnce`/`attemptPost`, `isRetryableStatus`/`retryBackoff`) |
-| 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor`; api2 path + **agent api5 port** (`wire/proto_agent_exec.go`: full exec loop, MCP `ToolExecutor`, built-in rejections; `agent/mapper.go`); enable via `useAgentPath` / `SAPALOQ_AGENT_PATH=1`. See `CURSOR_AGENT_CONTRACT.md` |
+| 13 | Cursor bridge (live stream, alias coercion, vault) | ✅ | `internal/bridges/cursor`; api2 + **agent api5** (`streamLiveAgent` → `liveTurnBuffer` + `finalizeBufferedTurn`; post-MCP text cutoff); enable via `useAgentPath` / `SAPALOQ_AGENT_PATH=1`. See `CURSOR_AGENT_CONTRACT.md` |
 | 14 | Widget UI (chat, streaming, markdown, thinking, slash) | ✅ | `cmd/sapaloq-widget`; graphite-base spectral visual system plus Linux/Windows/macOS app-icon assets; runtime telemetry rail shows active model/provider, Planner/Agent phase, and workspace; durable lifecycle cards remain rehydrated on watcher reconnect. Live transcript updates auto-follow only while the reader is at the chat end; scrolling upward preserves the reading position until the reader returns to the bottom. **Topbar chat-history switcher** (2026-06-25): header reworked into one row - the brand sits beside a `#btn-history` switcher (clock icon + active-session title + caret) that opens `#history-menu` listing recent sessions (title from first user turn, message count + relative time, active dot) with a "Chat baru" action; right cluster compacted to usage pill + conn dot + new-chat + resize + close. Wired in `ui/template.ts`, `style.css`, `features/history.ts` (`loadSessionList`/`switchSession`/`startNewSession`), `main.ts`; bridged via `app.go`/`ipc.go` (`ListSessions`/`SwitchSession`/`NewSession`) → IPC `session_list`/`session_switch`/`session_new` → orchestrator/store |
 | 14a | Foreground user steering | ✅ | While Ask runs, compose stays editable in amber `is-steering` mode; Enter/Steer queues text through Wails `SteerChat` → IPC `chat_steering` → durable session actor inbox, while Stop remains separately available. Steering interrupts an in-flight bridge stream via `actorSignal` (cancels attempt, applies inbox, continues inference); additional drains at turn start, after bridge stream ends, after orchestrator tool batch, and before continuation body. Run end (stop/cancel/error/budget) skips unconsumed inbox with `steering skipped - run ended`. Widget keeps the STEERING bubble `is-pending` until `steering applied` / skip status; does not create a chat turn. V1 is normal-priority, foreground-target, text-only |
 | 15 | Slash commands (/model, /thinking, /settings, /compaction, /reset) | ✅ | `internal/core/orchestrator/slash.go`, `settings.go`, `config_reload.go`. `/settings` currently supports deterministic `patch <json>`/`show`; natural-language settings sub-agent remains deferred. Unsupported, no-op, and restart-only patch paths are rejected |
-| 16 | JSON chat store (sessions/turns/checkpoints/rollout) | ✅ | `internal/store/chat/store.go` — `state/sessions/index.json`, per-session `turns.json` / `checkpoints.json`, `state/rollout/*.jsonl` (no SQLite). Inference boundaries append causally (`thinking → assistant → tool/autopilot`) so durable `id`/`seq` match the model flow; `SessionTranscript` retains compatibility ordering for older sessions |
+| 16 | JSON chat store (sessions/turns/checkpoints/rollout) | ✅ | `internal/store/chat/store.go` — `state/sessions/index.json`, per-session `turns.json` / `checkpoints.json`, `state/rollout/*.jsonl` (no SQLite). Turns append in wire order on stream events; `actorTurnsToMessages` maps replay (assistant before tool); cold UI follows `seq` |
 | 17 | Event bus (in-proc pub/sub) | ✅ | Existing WAL/pub-sub plus tool lifecycle, actor steering, and decision events. Concurrent publishers are serialized across seq assignment, fan-out, and WAL enqueue, so subscriber/WAL order is monotonic. Durable tool jobs and actor inbox files are authoritative; bus delivery is wake/visibility only |
 | 18 | Context-SOP: index / prefetch / anti-deep-check / intent-router | 🟡 | `memory/facts.json` + `state/config/{prefetch_rules,prompt_slices,skills_index}.json` (`facts.go`, `prefetch.go`, `slices.go`, `skills_index.go`). Substring fact search (legacy FTS removed with SQLite). Heuristic intent-router (`intent.go`) + index-first prefetch (`prefetch.go`) + `prefetch_log.jsonl`. Host attachment paths augment FTS query; telemetry `host_context_bytes` / `attachment_count`. Still missing: prompt-slice/skills boot sync, full Fase-0 task-stack hook, bandit auto rule-tuning |
 | 18b | Host context (IDE-context-lite) | ✅ | Fase 1–2: widget `host_context` → `hostContextBlock`; dry ledger prefetch; IPC test. **Fase 3:** `hostcontext.SearchHints` feeds prefetch FTS (`session_workspace` + attachment paths) and `skillsBlock` (attachment path tokens for trigger + per-term FTS); hot-cache digests workspace separately (`search_hints.go`, `prefetch.go`, `prompt.go`) |
@@ -169,7 +179,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 22 | Skills system | 🟡 | Scan + trigger/FTS match + bounded injection done; embedded defaults auto-seeded with upgrade-if-unmodified (`internal/skills/embed.go`). Shipped defaults: `frontend-design`, `skill-creator`, `code-styleguides`, `peek-agents`, and **`xdotool`** (Linux-only X11 UI documentation/testing/diagnostics guidance with read-only `scripts/check-environment.sh`; explicitly rejects non-Linux and native-Wayland automation). learning-agent skill *writing* still deferred |
 | 23 | Nodes (remote sub-agents) | 🟡 | `state/config/nodes.json` registry + local-default bootstrap + role/priority picker + local spawn routing + remote Transport (ws) behind connect probe + fake for tests; full remote execution wiring + /settings node CRUD still deferred |
 | 24 | Driver / Platform (GNOME / D-Bus notifications, `desktop_*`) | 🟡 | `internal/platform` abstraction + headless + freedesktop/gnome D-Bus adapter (behind session-bus probe) + `desktop_notify`/`desktop_dnd_status` + notify→bus bridge; window/screenshot/clipboard still deferred |
-| 25 | Replaceable per-mode system prompts (Ask/planner/agent/scribe) | ✅ | `internal/prompts` - embedded defaults materialized to `~/SapaLOQ/prompts` with a sha256 manifest; user edits preserved, unmodified files upgraded when the shipped default changes. Wired via `Orchestrator.systemPrompt` in `session.go` (Ask) + `subagent.go` (planner/agent/scribe). `config.prompts.{enabled,dir}` |
+| 25 | Replaceable per-mode system prompts (Ask/planner/agent/scribe) | ✅ | `internal/prompts` - embedded defaults materialized to `~/SapaLOQ/prompts` with a sha256 manifest; user edits preserved, unmodified files upgraded when the shipped default changes. Wired via `Orchestrator.systemPrompt` in `prompt.go`. `config.prompts.{enabled,dir}` |
+| 25b | Centered prompt registry (internal steering + CLI) | ✅ | Orchestrator prose in `internal/prompts/internal/**` (`GetInternal`/`RenderInternal`); `sapaloq-core prompts list|show|preview|where`; bridge guard catalog reference only. `catalog.go`, `cmd/sapaloq-core/prompts.go` |
 | 26 | Host command tool (`exec`) | ✅ | Run any command anywhere (any path; optional `cwd`), also reads any host file via cat/sed/head/tail/rg; available in **every** mode via the shared dispatcher. `tools_workspace.go` (`toolExec`), in `askTools`/`planTools`/`agentTools`, dispatched in `tools_dispatch.go`. Merged the former `system_exec` + `terminal_run` into one flat `exec` (2026-06-21) |
 | 27 | Config schema migration / versioning | ✅ | `internal/config/migrate.go` - schema 1.4 separates config (`~/.config/sapaloq/config.json`) from runtime data (`~/SapaLOQ`), rewrites only shipped legacy defaults, and preserves explicit custom paths |
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
@@ -177,6 +188,67 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
 
 ---
+
+## Implemented this session (2026-07-02) - turns.json audit order + cold-restore transcript order
+
+- **System before user:** `SendChat` persists system prompt audit (`included_in_context: false`) before the user turn so `turns.json` matches wire order; retry drops stale audit rows via `DeleteSystemPromptAudits`.
+- **Cold restore:** `mergeTranscriptItems` no longer re-anchors tool cards to the assistant `[Called tools: …]` marker — tool rows sort by stream JSONL timestamps so post-restart widget order matches live (tools before late-persisted thinking).
+
+## Implemented this session (2026-07-02) - system prompt audit in turns.json
+
+- **`persistSystemPromptAudit`** (`session_context.go`): on each foreground send, composed system blocks (persona/rules/orchestrator + runtime + host + prefetch/skills) append to `turns.json` as `role: system`, `included_in_context: false`.
+- Replay unchanged — live injection from `buildForegroundActorMessages`; audit rows visible in raw `turns.json` only (widget transcript still skips `system`).
+
+## Implemented this session (2026-07-02) - prompt role rename ask → orchestrator
+
+- **Role key:** `prompts.RoleOrchestrator` / `orchestrator.md` replaces `RoleAsk` / `ask.md`; legacy `ask` alias in `Get`/`Resolve`/`prompts show ask`.
+- **On-disk:** `Sync()` renames un-migrated `~/SapaLOQ/prompts/ask.md` → `orchestrator.md` + manifest key migration.
+- **Runtime:** foreground actor role `"orchestrator"`, `orchestratorTools`, `foregroundOrchestrator`; host context `UI.Mode` default `orchestrator`.
+- **Out of scope:** `ask_orchestrator` clarification tool unchanged.
+
+## Implemented this session (2026-07-02) - role prompts free of tool definitions
+
+- **Contract:** Editable role defaults (`orchestrator`, `planner`, `agent`, `scribe`) = behavioral policy only (delegation, boundaries, attachments, stop/complete semantics). Tool names, JSON examples, `wait_for_output`, and parallel-batch mechanics removed from role prose.
+- **Owner:** Per-tool contract in `internal/tooldocs/defaults/*.md` (wire `description` + body) + JSON schemas in `tools.go` (`wait_for_output` injected on work tools).
+- **Enriched:** `wait.md` (modes table + worked example), `create_file.md` / `write_file.md` (parallel same-turn note).
+- **Docs:** `PROMPT-BUILDER-SOP.md` (role vs tooldocs section), `ORCHESTRATOR.md` (stop scopes → tool doc only).
+- **Test:** `persona_test.go` scribe marker updated for cleaned `scribe.md`.
+
+## Implemented this session (2026-07-01) - event-driven turn loop refactor
+
+- **Phase 1:** `replay_context.go` — single replay owner; `rebuildMessagesFromCheckpoint` uses `actorTurnsToMessages`; continuation refresh from store.
+- **Phase 2:** `stream_persist.go`, `stream_notify.go`, `run_policy.go` — sync handlers per stream event; unified persist entry points.
+- **Phase 3:** `patch.finished` snapshot documented as `LiveSessionTranscript` (= ChatHistory source).
+- **Phase 4:** Widget `cancelScheduledRestoreChatHistory` on finished patch; `scheduleRestoreChatHistory` no-op while submitting.
+- **Tests:** `replay_context_test.go`, `history-schedule.test.ts`.
+
+## Implemented this session (2026-07-01) - KISS persist (append on event, map on replay)
+
+- **Problem:** Write-path reorder (`thinking→assistant→tool`, defer `sapaloq_stop`) duplicated logic and invited forever bug loops.
+- **Fix:** `turns.json` appends in wire order via [`persist_append.go`](internal/core/orchestrator/persist_append.go); removed `in_bridge_persist.go` defer/hold. [`actorTurnsToMessages`](internal/core/orchestrator/prompt.go) replay mapper emits assistant before tool when store has the opposite. Cold transcript sorts turns by `seq`.
+- **Tests:** `persist_append_test.go` wire order + replay mapper; updated `session_transcript_test.go`.
+
+## Implemented this session (2026-07-01) - in-bridge stop-only persist order (superseded by KISS persist above)
+
+- **Symptom:** Conversational ping (`"hay hay"`) → widget showed only `[Called tools: sapaloq_stop]` with no greeting; `turns.json` had **tool before thinking/assistant**.
+- **Root cause:** `persistInBridgeToolUpdate` wrote the tool row immediately on `EventToolUpdate`; greeting guard skipped when `dynamicStop` already set `stop=true`; foreground stop-only turns had empty visible prose.
+- **Fix:** Foreground `sapaloq_stop` with no visible assistant text **defers** tool persist until the stop block (thinking → assistant → tool). Greeting injection runs even when stop is already true. `dynamicStop` on in-bridge `sapaloq_stop` ToolUpdate.
+- **Tests:** `TestPersistInBridgeToolUpdateDefersForegroundStopTurns`, `TestForegroundStopOnlyTurn`, updated thinking/assistant/tool order assertions.
+
+## Implemented this session (2026-07-01) - centered prompt registry
+
+- **Problem:** Orchestrator steering prose (autopilot, clarification mediator, compaction prefixes, etc.) lived as hidden string literals across many `.go` files.
+- **Fix:** Ship-only fragments under `internal/prompts/internal/**` with `GetInternal` / `RenderInternal` / `Catalog()`; orchestrator assembly calls the registry only. User-editable roles stay in `defaults/*.md` → `~/SapaLOQ/prompts/`.
+- **CLI:** `sapaloq-core prompts list|show|preview|where` for discovery without grepping Go.
+- **Guard:** `TestOrchestratorNoRawPromptLiterals` + `TestCatalogKeysResolve`.
+- **Out of scope:** Bridge guard prose stays modular per bridge (catalog reference only).
+
+## Implemented this session (2026-07-01) - api5 stream hygiene (system prompt leak)
+
+- **Symptom:** After in-bridge MCP tool (`sapaloq_stop`), widget streamed `<user_query>\n[system]\n# SapaLOQ - persona…` into the assistant bubble — composed `user_text` echoed from the agent wire.
+- **Root cause:** `streamLiveAgent` forwarded `mapper.Map` text deltas live; api2 already buffered + finalized via `stream_buffer.go`.
+- **Fix:** agent path ingests `wire.AgentDecoded` into `liveTurnBuffer`, calls `finalizeBufferedTurn` at turn end; `noteMCPTool` discards post-MCP text/thinking (wire continuation noise).
+- **Tests:** `TestAgentTurnBufferDropsPostMCPEcho`, `TestAgentTurnBufferKeepsLongPreToolReply`.
 
 ## Implemented this session (2026-06-30) - sub-agent monitor task prompt dedup
 

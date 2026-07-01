@@ -305,7 +305,7 @@ func splitSkillFact(content string) (id, triggers string, ok bool) {
 
 // auditTool appends an executed tool call to the vault audit log. It is
 // best-effort: a nil writer or a write error is silently ignored so auditing
-// never disrupts the main flow. source identifies the executor (e.g. "ask" or
+// never disrupts the main flow. source identifies the executor (e.g. "orchestrator" or
 // "subagent:planner").
 func (o *Orchestrator) auditTool(sessionID, source string, call parse.ToolCall) {
 	if o == nil || o.vault == nil {
@@ -374,6 +374,13 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string, 
 			return
 		}
 		genStr := fmt.Sprintf("%d", runID)
+		o.setSessionHostContext(sessionID, hostCtx)
+		messages, err := o.contextMessages(ctx, sessionID, message)
+		if err != nil {
+			o.emitChatTerminalError(ctx, out, sessionID, err)
+			return
+		}
+		o.persistSystemPromptAudit(ctx, sessionID, genStr, messages)
 		_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "user", message, estimateContentTokens(message), genStr)
 		o.refreshActiveTranscriptBase(ctx, sessionID)
 		o.emitWidget(ctx, out, sessionID, bridge.StreamEvent{
@@ -382,12 +389,6 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string, 
 			GenerationID: genStr,
 			At:           time.Now().UTC(),
 		})
-		o.setSessionHostContext(sessionID, hostCtx)
-		messages, err := o.contextMessages(ctx, sessionID, message)
-		if err != nil {
-			o.emitChatTerminalError(ctx, out, sessionID, err)
-			return
-		}
 		var thinking strings.Builder
 		assistant, err := o.runConversationWithGeneration(runCtx, snap, out, sessionID, genStr, message, messages, &thinking)
 		if err != nil {
@@ -395,9 +396,8 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string, 
 			o.emitChatTerminalError(runCtx, out, sessionID, err)
 			return
 		}
-		// Thinking turns are persisted per inference round inside runTurnLoop
-		// (before the assistant turn for that round). Only append a final blob
-		// when the run produced visible text that was not already recorded.
+		// Assistant turns are persisted inside runTurnLoop (append-on-event).
+		// Append a final blob only when visible text was not already recorded.
 		if trimmed := strings.TrimSpace(assistant.String()); trimmed != "" {
 			needsFinal := true
 			if turns, terr := o.chat.ActiveTurns(ctx, sessionID, false); terr == nil {
@@ -412,7 +412,7 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string, 
 				}
 			}
 			if needsFinal {
-				_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", trimmed, estimateContentTokens(trimmed), genStr)
+				o.persistAssistantTurn(ctx, sessionID, trimmed, genStr)
 			}
 		}
 		usage, _ := o.ContextUsage(ctx, sessionID)
@@ -466,6 +466,9 @@ func (o *Orchestrator) RetryChat(ctx context.Context, sessionID string, turnID i
 	if err := o.purgeSessionProgressForRetry(sessionID, dropGens, turn.CreatedAt); err != nil {
 		return nil, err
 	}
+	if err := o.chat.DeleteSystemPromptAudits(ctx, sessionID, dropGens); err != nil {
+		return nil, err
+	}
 	out := make(chan bridge.StreamEvent, 32)
 	runCtx, cancel := context.WithCancel(ctx)
 	runID := o.setActiveGeneration(sessionID, cancel)
@@ -486,8 +489,9 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
 	}
-	var thinking strings.Builder
 	genStr := fmt.Sprintf("%d", runID)
+	o.persistSystemPromptAudit(ctx, sessionID, genStr, messages)
+	var thinking strings.Builder
 	assistant, err := o.runConversationWithGeneration(ctx, snap, out, sessionID, genStr, message, messages, &thinking)
 	if err != nil {
 		o.emitChatTerminalError(ctx, out, sessionID, err)

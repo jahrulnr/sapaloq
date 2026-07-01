@@ -30,7 +30,7 @@ func TestDispatchToolRoleMatrix(t *testing.T) {
 
 	spawn := parse.ToolCall{Name: "sapaloq_spawn_agent", Arguments: []byte(`{"task":"build"}`)}
 	got := o.dispatchTool(ctx, snap, ActorRun{
-		Foreground: true, ParentSessionID: "chat-1", Role: "ask", Tools: askTools,
+		Foreground: true, ParentSessionID: "chat-1", Role: "orchestrator", Tools: orchestratorTools,
 		TaskText: "build", Out: out,
 	}, spawn)
 	if !got.handled || !strings.Contains(got.text, "background") {

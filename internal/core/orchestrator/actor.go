@@ -39,11 +39,11 @@ func (o *Orchestrator) runActor(ctx context.Context, snap providerSnapshot, acto
 		actor.ID = actor.ParentSessionID
 	}
 	if actor.Role == "" {
-		actor.Role = "ask"
+		actor.Role = "orchestrator"
 	}
 	if len(actor.Tools) == 0 {
 		if actor.Foreground {
-			actor.Tools = askTools
+			actor.Tools = orchestratorTools
 		} else {
 			actor.Tools = o.toolsForRole(actor.Role)
 		}
@@ -80,7 +80,7 @@ func (o *Orchestrator) runActor(ctx context.Context, snap providerSnapshot, acto
 		sink:            sink,
 		thinkingOut:     actor.ThinkingOut,
 		recordToolTurns: true,
-		foregroundAsk:   actor.Foreground && actor.Role == "ask",
+		foregroundOrchestrator: actor.Foreground && actor.Role == "orchestrator",
 		generationID:    actor.GenerationID,
 		compactCtx:      actor.compactCtx,
 		taskAnchor:      actor.TaskText,

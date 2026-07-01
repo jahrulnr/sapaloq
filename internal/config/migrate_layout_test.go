@@ -108,7 +108,7 @@ func TestMigrateDefaultDataRootKeepsConfigAndMovesRuntime(t *testing.T) {
 	mustWrite(t, filepath.Join(oldRoot, "config.json"), `{"keep":true}`)
 	mustWrite(t, filepath.Join(oldRoot, ".env"), "TOKEN=secret")
 	mustWrite(t, filepath.Join(oldRoot, "memory", "companion.db"), "db")
-	mustWrite(t, filepath.Join(oldRoot, "prompts", "ask.md"), "prompt")
+	mustWrite(t, filepath.Join(oldRoot, "prompts", "orchestrator.md"), "prompt")
 
 	if err := MigrateDefaultDataRoot(); err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestMigrateDefaultDataRootKeepsConfigAndMovesRuntime(t *testing.T) {
 	assertFile(t, filepath.Join(oldRoot, "config.json"), `{"keep":true}`)
 	assertFile(t, filepath.Join(oldRoot, ".env"), "TOKEN=secret")
 	assertFile(t, filepath.Join(newRoot, "memory", "companion.db"), "db")
-	assertFile(t, filepath.Join(newRoot, "prompts", "ask.md"), "prompt")
+	assertFile(t, filepath.Join(newRoot, "prompts", "orchestrator.md"), "prompt")
 }
 
 func TestMigrateDefaultDataRootDoesNotClobberDestination(t *testing.T) {

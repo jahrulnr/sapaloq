@@ -20,7 +20,7 @@ func buildHostContextJSON(sessionWorkspace string, attachments []ComposeAttachme
 		Version:    hostcontext.Version,
 		CapturedAt: time.Now().UTC(),
 		UI: hostcontext.UI{
-			Mode:                   "ask",
+			Mode:                   "orchestrator",
 			ComposeAttachmentCount: len(attachments),
 		},
 		Host: hostcontext.Host{OS: runtime.GOOS},

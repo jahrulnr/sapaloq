@@ -36,4 +36,4 @@ SAPALOQ_BLACKBOX_E2E=1 \
   `/chat/completions`.
 - Override the token env var name with `BLACKBOX_CREDENTIALS_ENV` (default
   `BLACKBOX_API_KEY`).
-- Mode 1 is the live regression for the ask.md spawn-before-acknowledge fix.
+- Mode 1 is the live regression for the orchestrator.md spawn-before-acknowledge fix.

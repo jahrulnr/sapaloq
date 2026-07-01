@@ -16,6 +16,7 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/debug"
 	"github.com/jahrulnr/sapaloq/internal/parse"
 	"github.com/jahrulnr/sapaloq/internal/parse/artifacts"
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 )
 
 // errStreamErrorSurfaced wraps a non-recoverable provider/stream error that the
@@ -59,8 +60,8 @@ func (o *Orchestrator) runConversationWithGeneration(ctx context.Context, snap p
 // identity conflicts with a concurrently active UI orchestrator.
 func (o *Orchestrator) runConversationActor(ctx context.Context, snap providerSnapshot, out chan<- bridge.StreamEvent, sessionID, runID, generationID, fallbackTask string, messages []bridge.Message, thinkingOut *strings.Builder) (strings.Builder, error) {
 	return o.runActor(ctx, snap, ActorRun{
-		ID: runID, ParentSessionID: sessionID, Role: "ask",
-		GenerationID: generationID, TaskText: fallbackTask, Tools: askTools,
+		ID: runID, ParentSessionID: sessionID, Role: "orchestrator",
+		GenerationID: generationID, TaskText: fallbackTask, Tools: orchestratorTools,
 		Messages: messages, Foreground: true, Out: out, ThinkingOut: thinkingOut,
 	})
 }
@@ -86,6 +87,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 	thinkingOut := cfg.thinkingOut
 	var all strings.Builder
 	cleanMessages, images := extractImages(messages)
+	replay := newReplayContext(o, persistID, messages)
 	if cfg.compactCtx != nil {
 		cfg.compactCtx.messages = &cleanMessages
 		cfg.compactCtx.fallbackTask = fallbackTask
@@ -359,6 +361,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// call tools but they failed to parse/execute (the latter must not be
 		// mistaken for a clean tool-less finish).
 		toolCallsThisTurn := 0
+		inBridgeStopThisTurn := false
 		var trackedTools []toolCallTrace
 		steeringInterrupted := false
 	streamLoop:
@@ -388,6 +391,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			switch ev.Kind {
 			case bridge.EventResponseDelta:
 				resetIdle()
+				if cfg.recordToolTurns {
+					o.persistOnResponseDelta(ctx, persistID, cfg.generationID, cfg, &turnThinking)
+				}
 				out.beat(fmt.Sprintf("responding turn %d/%s", inferenceTurn, turnBudgetLabel))
 				// Drop any echoed "[Called tools: …]" note before it is
 				// streamed or persisted. The filter may withhold a trailing
@@ -549,9 +555,15 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			case bridge.EventToolUpdate:
 				resetIdle()
 				resolveToolCall(&trackedTools, ev.ToolCall)
+				if ev.ToolCall != nil && ev.ToolCall.Name == "sapaloq_stop" && ev.Status == "completed" {
+					dynamicStop.Store(true)
+					if isInBridgeToolSource(ev.ToolCall.Source) {
+						inBridgeStopThisTurn = true
+					}
+				}
 				if ev.ToolCall != nil && isInBridgeToolSource(ev.ToolCall.Source) {
 					dynamicProgress.Store(true)
-					o.persistInBridgeToolUpdate(ctx, persistID, cfg.generationID, cfg, &response, &turnThinking, &cleanMessages, ev)
+					o.appendInBridgeToolUpdate(ctx, persistID, cfg.generationID, cfg, &response, &turnThinking, &cleanMessages, ev)
 				}
 				out.emit(runCtx, ev)
 			case bridge.EventDone:
@@ -564,16 +576,12 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 		}
 		cancelAttempt()
+		if cfg.recordToolTurns {
+			o.persistOnStreamEnd(ctx, persistID, cfg.generationID, cfg, &turnThinking)
+		}
 		if runCtx.Err() != nil {
 			emitSteeringSkipped()
-			if cfg.recordToolTurns {
-				body := strings.TrimSpace(artifacts.StripModelResponseArtifact(StripCalledToolsMarkers(response.String())))
-				if body != "" && !artifacts.IsAutopilotEcho(body) {
-					o.persistAssistantTurnWithThinking(ctx, persistID, body, cfg.generationID, cfg, &turnThinking)
-				} else {
-					o.flushTurnThinking(ctx, persistID, cfg.generationID, cfg, &turnThinking)
-				}
-			}
+			o.persistPartialOnCancel(ctx, persistID, cfg.generationID, cfg, response.String(), &turnThinking)
 			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			if ctx.Err() != nil {
 				return all, nil
@@ -761,11 +769,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				o.surfaceUnresolvedToolFailures(runCtx, out, sessionID, persistID, cfg.generationID, cfg, &response, &turnThinking, &cleanMessages, unresolvedTools)
 			}
 			malformedToolTurns++
-			nudge := "Your previous tool call(s) could not be parsed or executed - likely " +
-				"because they were emitted as inline text or batched together with stray " +
-				"markers. Re-issue with the proper structured tool-call format: one " +
-				"well-formed call, or separate calls for unrelated files (those can run " +
-				"in parallel). If no tool is needed, answer in plain text."
+			nudge := prompts.GetInternal(prompts.KeyBlockMalformedToolRetry)
 			cleanMessages = append(cleanMessages,
 				bridge.Message{Role: "assistant", Content: response.String()},
 				bridge.Message{Role: "user", Content: nudge},
@@ -787,7 +791,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				all.Reset()
 				all.WriteString(buf[:allTurnStart])
 			}
-			if cfg.foregroundAsk {
+			if cfg.foregroundOrchestrator {
 				msg := artifacts.FallbackAskNoiseRetry()
 				response.WriteString(msg)
 				all.WriteString(msg)
@@ -806,37 +810,21 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// Foreground ask chat: same loop as agent/planner — visible tool-less
 		// text is never a stop signal (only sapaloq_stop or structural budgets).
 		// When Cursor returns thinking-only with no visible text, still apply
-		// ping greeting / noise retry so innocent turns are not blank.
-		if !stop && cfg.foregroundAsk && toolCallsThisTurn == 0 && len(toolResults) == 0 {
-			sig := o.sessionSignals(sessionID)
-			if sig.runningTasks == 0 && !sig.awaitingClarification {
-				visible := strings.TrimSpace(StripCalledToolsMarkers(response.String()))
-				if visible == "" && toolCalls == 0 {
-					if artifacts.IsConversationalPing(fallbackTask) {
-						msg := artifacts.FallbackAskGreeting()
-						response.WriteString(msg)
-						all.WriteString(msg)
-						out.emit(runCtx, bridge.StreamEvent{
-							Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: msg, At: time.Now().UTC(),
-						})
-						turnThinking.Reset()
-						stop = true
-					} else if noiseRetries < maxNoiseRetries {
-						noiseRetries++
-						out.emit(runCtx, statusEvent(sessionID, fmt.Sprintf("provider noise - retrying (%d/%d)", noiseRetries, maxNoiseRetries)))
-						continue
-					} else {
-						msg := artifacts.FallbackAskNoiseRetry()
-						response.WriteString(msg)
-						all.WriteString(msg)
-						out.emit(runCtx, bridge.StreamEvent{
-							Kind: bridge.EventResponseDelta, SessionID: sessionID, Delta: msg, At: time.Now().UTC(),
-						})
-						turnThinking.Reset()
-						stop = true
-					}
-				}
-			}
+		// ping greeting / noise retry so innocent turns are not blank. Also
+		// recover when the model calls sapaloq_stop on a greeting without
+		// answering — rules.md expects text first, then stop on autopilot.
+		pol := o.applyForegroundRunPolicy(cfg, sessionID, fallbackTask, toolResults, toolCallsThisTurn, toolCalls, pendingTools, inBridgeStopThisTurn, stop, response.String(), noiseRetries, maxNoiseRetries)
+		if pol.retryTurn {
+			noiseRetries++
+			out.emit(runCtx, statusEvent(sessionID, fmt.Sprintf("provider noise - retrying (%d/%d)", noiseRetries, maxNoiseRetries)))
+			continue
+		}
+		if pol.resetThinking {
+			turnThinking.Reset()
+		}
+		emitForegroundPolicyInjection(out, runCtx, sessionID, pol, &response, &all)
+		if pol.stop {
+			stop = true
 		}
 		// Duplicate guard: thinking reset after policy so flushTurnThinking never persists bleed.
 		if turnThinking.Len() > 0 && (artifacts.IsThinkingConfabulation(turnThinking.String()) ||
@@ -855,20 +843,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		// the only bounds.
 		if stop {
 			emitSteeringSkipped()
-			if cfg.recordToolTurns {
-				final := response.String()
-				if final != "" {
-					if note := calledToolsNote(pendingTools); note != "" {
-						final += "\n\n" + note
-					}
-					o.persistAssistantTurnWithThinking(ctx, persistID, final, cfg.generationID, cfg, &turnThinking)
-				} else if note := calledToolsNote(pendingTools); note != "" {
-					o.flushTurnThinking(ctx, persistID, cfg.generationID, cfg, &turnThinking)
-					o.persistAssistantTurn(ctx, persistID, note, cfg.generationID)
-				} else {
-					o.flushTurnThinking(ctx, persistID, cfg.generationID, cfg, &turnThinking)
-				}
-			}
+			o.persistStopAssistant(ctx, persistID, cfg.generationID, cfg, response.String(), pendingTools, trackedTools)
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
 			return all, nil
 		}
@@ -937,7 +912,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		if budget.MaxNoProgressTurns > 0 && toollessBudget <= 0 {
 			emitSteeringSkipped()
 			if cfg.recordToolTurns {
-				o.persistAssistantTurnWithThinking(ctx, persistID, response.String(), cfg.generationID, cfg, &turnThinking)
+				o.persistAssistantTurn(ctx, persistID, response.String(), cfg.generationID)
 			}
 			out.emit(runCtx, statusEvent(sessionID, "tool-less budget exhausted - ending turn"))
 			out.emit(runCtx, bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
@@ -980,7 +955,6 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			}
 			out.emit(runCtx, statusEvent(sessionID, status))
 		}
-		continuation := toolResultsBody
 		// Record the tool calls this turn actually made into the assistant
 		// message. response.String() carries only the model's text deltas - not
 		// the tool_call itself - so without this the next turn sees the model's
@@ -1002,45 +976,16 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		if artifacts.IsAutopilotEcho(assistantContent) {
 			assistantContent = ""
 		}
-		if cfg.recordToolTurns && assistantContent != "" {
-			o.persistAssistantTurnWithThinking(ctx, persistID, assistantContent, cfg.generationID, cfg, &turnThinking)
-		} else if cfg.recordToolTurns {
-			o.flushTurnThinking(ctx, persistID, cfg.generationID, cfg, &turnThinking)
-		}
-		// Persist the continuation only after this inference round's thinking and
-		// assistant turn. turns.json is an ordered transcript contract: the next
-		// model input (tool result or autopilot nudge) must never receive an id/seq
-		// before the output that caused it.
-		if cfg.recordToolTurns && o.chat != nil && len(toolResults) > 0 {
-			_ = o.chat.AppendTurn(ctx, persistID, "tool", toolResultsBody, estimateContentTokens(toolResultsBody))
-		}
-		if cfg.recordToolTurns && o.chat != nil && len(toolResults) == 0 {
-			skipPersist := false
-			if turns, terr := o.chat.ActiveTurns(ctx, persistID, false); terr == nil {
-				for _, t := range turns {
-					if t.Role == "autopilot" && t.Content == toolResultsBody {
-						skipPersist = true
-						break
-					}
-				}
+		o.persistContinuationRound(ctx, persistID, cfg.generationID, cfg, assistantContent, toolResultsBody, toolResults)
+		replay.ClearInflight()
+		replay.SetInflight(continuationInflight(toolResults, toolResultsBody))
+		if cfg.recordToolTurns && o.chat != nil {
+			if err := replay.RefreshInto(runCtx, &cleanMessages); err != nil {
+				return all, err
 			}
-			if !skipPersist {
-				_ = o.chat.AppendAutopilotTurn(ctx, persistID, toolResultsBody, estimateContentTokens(toolResultsBody))
-			}
+		} else {
+			cleanMessages = appendContinuationWithoutStore(assistantContent, toolResultsBody, toolResults, cleanMessages)
 		}
-		// A turn carrying tool output is fed back under the dedicated "tool"
-		continuationRole := "user"
-		if len(toolResults) > 0 {
-			continuationRole = "tool"
-		}
-		if assistantContent != "" {
-			cleanMessages = append(cleanMessages,
-				bridge.Message{Role: "assistant", Content: assistantContent},
-			)
-		}
-		cleanMessages = append(cleanMessages,
-			bridge.Message{Role: continuationRole, Content: continuation},
-		)
 		// This turn did not end the run (no terminal tool, no toolless-budget
 		// finish - both return earlier), so the loop is about to feed the next
 		// inference turn. Mark the seam so the widget flushes the current
@@ -1490,4 +1435,38 @@ func ensureConversationEndsWithUser(messages []bridge.Message) []bridge.Message 
 		Content: sapaloqControlBody("Continue from the context above."),
 	})
 	return out
+}
+
+// foregroundStopOnlyTurn reports a turn where the only tool work was sapaloq_stop
+// (common when rules over-index on "call stop" before answering a greeting).
+func foregroundStopOnlyTurn(toolCallsThisTurn int, pending []scheduledTool, inBridgeStop bool) bool {
+	if toolCallsThisTurn == 0 {
+		return false
+	}
+	if len(pending) > 0 {
+		for _, item := range pending {
+			if item.call.Name != "sapaloq_stop" {
+				return false
+			}
+		}
+		return true
+	}
+	return inBridgeStop
+}
+
+func calledToolsNoteForTurn(pending []scheduledTool, tracked []toolCallTrace) string {
+	if note := calledToolsNote(pending); note != "" {
+		return note
+	}
+	if len(tracked) == 0 {
+		return ""
+	}
+	scheduled := make([]scheduledTool, 0, len(tracked))
+	for _, t := range tracked {
+		if strings.TrimSpace(t.call.Name) == "" {
+			continue
+		}
+		scheduled = append(scheduled, scheduledTool{call: t.call})
+	}
+	return calledToolsNote(scheduled)
 }

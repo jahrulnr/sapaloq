@@ -11,7 +11,7 @@ import (
 const personaMarker = "Contract first"
 
 // rulesMarker is a stable phrase from internal/prompts/defaults/rules.md.
-const rulesMarker = "Read the project's rule files first"
+const rulesMarker = "The Loop"
 
 // TestSystemPromptPrependsPersona proves SapaLOQ's shared persona is woven into
 // every role's system prompt, while the role's own instructions are preserved.
@@ -22,7 +22,7 @@ func TestSystemPromptPrependsPersona(t *testing.T) {
 		role       string
 		roleMarker string // a phrase unique to that role's own prompt
 	}{
-		{prompts.RoleAsk, "Ask orchestrator"},
+		{prompts.RoleOrchestrator, "SapaLOQ's orchestrator"},
 		{prompts.RolePlanner, "planner"},
 		{prompts.RoleAgent, "executor"},
 		{prompts.RoleScribe, "scribe"},
@@ -52,10 +52,10 @@ func TestSystemPromptComposesPersonaRulesRole(t *testing.T) {
 		role       string
 		roleMarker string // a phrase unique to that role's own prompt
 	}{
-		{prompts.RoleAsk, "Ask orchestrator"},
+		{prompts.RoleOrchestrator, "SapaLOQ's orchestrator"},
 		{prompts.RolePlanner, "planner"},
 		{prompts.RoleAgent, "executor"},
-		{prompts.RoleScribe, "scribe_write_note"},
+		{prompts.RoleScribe, "personal storage"},
 	}
 	for _, tc := range cases {
 		got := o.systemPrompt(tc.role)

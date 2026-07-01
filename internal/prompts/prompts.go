@@ -1,6 +1,6 @@
-// Package prompts provides the default per-mode system prompts (Ask, planner,
-// task-runner/agent, scribe) as Markdown that ships embedded in the binary but
-// is materialized to disk so the user can edit it.
+// Package prompts provides the default per-mode system prompts (orchestrator,
+// planner, task-runner/agent, scribe) as Markdown that ships embedded in the
+// binary but is materialized to disk so the user can edit it.
 //
 // "Updateable if non-modified": each shipped default is written to the prompts
 // dir alongside a sha256 manifest recording the hash that was shipped. On a
@@ -24,32 +24,49 @@ import (
 //go:embed defaults/*.md
 var defaultFS embed.FS
 
-// Role keys. These map 1:1 to sub-agent roles plus the Ask orchestrator.
+// Role keys. These map 1:1 to sub-agent roles plus the foreground orchestrator.
 // RolePersona and RoleRules are special: they are shared layers prepended to
 // every other role's prompt (see Orchestrator.systemPrompt), not modes of
 // their own. RolePersona carries the core character ("how to carry yourself");
 // RoleRules carries project-grounding instructions ("read the repo's rule
 // files first").
 const (
-	RoleAsk        = "ask"
-	RolePlanner    = "planner"
-	RoleAgent      = "agent" // task-runner
-	RoleScribe     = "scribe"
-	RoleCompaction = "compaction" // isolated summarizer; not a chat/sub-agent role
-	RolePersona    = "persona"
-	RoleRules      = "rules"
-	manifestName   = "prompts.manifest.json"
-	roleTaskRunner = "task-runner"
+	RoleOrchestrator = "orchestrator"
+	RolePlanner      = "planner"
+	RoleAgent        = "agent" // task-runner
+	RoleScribe       = "scribe"
+	RoleCompaction   = "compaction" // isolated summarizer; not a chat/sub-agent role
+	RolePersona      = "persona"
+	RoleRules        = "rules"
+	manifestName     = "prompts.manifest.json"
+	roleTaskRunner   = "task-runner"
+	roleAskLegacy    = "ask" // alias of RoleOrchestrator
+	orchestratorFile = "orchestrator.md"
 )
+
+// RoleAsk is a deprecated alias for RoleOrchestrator.
+const RoleAsk = RoleOrchestrator
+
+// normalizeRole maps legacy role keys to canonical keys.
+func normalizeRole(role string) string {
+	switch role {
+	case roleTaskRunner:
+		return RoleAgent
+	case roleAskLegacy:
+		return RoleOrchestrator
+	default:
+		return role
+	}
+}
 
 // fileFor maps a role key to its on-disk / embedded markdown filename.
 func fileFor(role string) (string, bool) {
-	switch role {
-	case RoleAsk:
-		return "ask.md", true
+	switch normalizeRole(role) {
+	case RoleOrchestrator:
+		return orchestratorFile, true
 	case RolePlanner:
 		return "planner.md", true
-	case RoleAgent, roleTaskRunner:
+	case RoleAgent:
 		return "agent.md", true
 	case RoleScribe:
 		return "scribe.md", true
@@ -90,7 +107,7 @@ func New(dir string, enabled bool) *Manager {
 // roles is the canonical set of files the manager manages.
 func roles() []struct{ role, file string } {
 	return []struct{ role, file string }{
-		{RoleAsk, "ask.md"},
+		{RoleOrchestrator, orchestratorFile},
 		{RolePlanner, "planner.md"},
 		{RoleAgent, "agent.md"},
 		{RoleScribe, "scribe.md"},
@@ -161,9 +178,7 @@ func (m *Manager) Sync() error {
 // Get returns the system prompt for a role: the cached on-disk copy when loaded,
 // otherwise the embedded default. Unknown roles return "".
 func (m *Manager) Get(role string) string {
-	if role == roleTaskRunner {
-		role = RoleAgent
-	}
+	role = normalizeRole(role)
 	if m != nil {
 		m.mu.RLock()
 		if v, ok := m.cache[role]; ok && strings.TrimSpace(v) != "" {

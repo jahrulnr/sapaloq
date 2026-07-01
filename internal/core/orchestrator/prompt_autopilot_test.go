@@ -4,33 +4,41 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jahrulnr/sapaloq/internal/prompts"
 	chatstore "github.com/jahrulnr/sapaloq/internal/store/chat"
 )
 
-func TestBuildAutopilotContinuation_agentSessionDefersStop(t *testing.T) {
+func TestBuildAutopilotContinuation_defaultStop(t *testing.T) {
 	body := buildAutopilotContinuation(5, 1, nil, autopilotSignals{}, 0)
-	if !strings.Contains(body, "verify") {
-		t.Fatalf("agent session should encourage verification before stop, got %q", body)
-	}
-	if strings.Contains(body, "Invoke `sapaloq_stop` silently now") {
-		t.Fatalf("early agent nudge must not hard-push stop, got %q", body)
-	}
-}
-
-func TestBuildAutopilotContinuation_agentSessionEscalatesAfterStreak(t *testing.T) {
-	body := buildAutopilotContinuation(12, 6, nil, autopilotSignals{}, 0)
 	if !strings.Contains(body, "sapaloq_stop") {
-		t.Fatalf("escalated agent nudge should mention stop, got %q", body)
+		t.Fatalf("default nudge should mention sapaloq_stop, got %q", body)
 	}
-	if !strings.Contains(body, "tool action") {
-		t.Fatalf("escalated agent nudge should still allow finishing work, got %q", body)
+	if !strings.Contains(body, prompts.GetInternal(prompts.KeyAutopilotDefaultStop)) {
+		t.Fatalf("default nudge should use internal default-stop prompt, got %q", body)
 	}
 }
 
-func TestBuildAutopilotContinuation_chatOnlyEscalatesStop(t *testing.T) {
-	body := buildAutopilotContinuation(0, 4, nil, autopilotSignals{}, 0)
-	if !strings.Contains(body, "Invoke `sapaloq_stop` silently now") {
-		t.Fatalf("chat-only escalated nudge should push silent stop, got %q", body)
+func TestBuildAutopilotContinuation_runningTasksEscalates(t *testing.T) {
+	body := buildAutopilotContinuation(12, 6, nil, autopilotSignals{runningTasks: 1}, 0)
+	if !strings.Contains(body, "sapaloq_stop") {
+		t.Fatalf("escalated running-task nudge should mention stop, got %q", body)
+	}
+	if !strings.Contains(body, prompts.GetInternal(prompts.KeyAutopilotRunningEscalated)) {
+		t.Fatalf("escalated running-task nudge should use running-escalated prompt, got %q", body)
+	}
+}
+
+func TestBuildAutopilotContinuation_runningTasksEarly(t *testing.T) {
+	body := buildAutopilotContinuation(0, 1, nil, autopilotSignals{runningTasks: 1}, 0)
+	if !strings.Contains(body, prompts.GetInternal(prompts.KeyAutopilotRunning)) {
+		t.Fatalf("early running-task nudge should use running prompt, got %q", body)
+	}
+}
+
+func TestBuildAutopilotContinuation_clarificationPending(t *testing.T) {
+	body := buildAutopilotContinuation(0, 4, nil, autopilotSignals{awaitingClarification: true}, 0)
+	if !strings.Contains(body, prompts.GetInternal(prompts.KeyAutopilotClarificationPending)) {
+		t.Fatalf("clarification-pending nudge expected, got %q", body)
 	}
 }
 

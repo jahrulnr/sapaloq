@@ -57,7 +57,7 @@ Widget agent = **orchestrator saja** - assign task → sub-agent dengan **contex
 
 | Role | Fungsi |
 |------|--------|
-| **orchestrator** | Route intent, **spawn path score** (Plan vs Agent), control sub-agents; **Ask mode** |
+| **orchestrator** | Route intent, **spawn path score** (Plan vs Agent), control sub-agents; **Orchestrator mode** |
 | **settings** | Edit `config.json` dari `/settings ...` |
 | **scribe** | Tulis ke `storage.paths` by mode/intent ("catat ini") |
 | **planner** | **Plan mode** - read-only; Markdown `plan.md` sebelum eksekusi |

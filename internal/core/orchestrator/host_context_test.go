@@ -49,7 +49,7 @@ func TestHostContextBlockInjectedInForegroundMessages(t *testing.T) {
 		Attachments: []hostcontext.Attachment{
 			{Path: filepath.Join(project, "main.go"), Kind: "file", Name: "main.go"},
 		},
-		UI: hostcontext.UI{Mode: "ask", ComposeAttachmentCount: 1},
+		UI: hostcontext.UI{Mode: "orchestrator", ComposeAttachmentCount: 1},
 	})
 	o.setSessionHostContext(sessionID, raw)
 

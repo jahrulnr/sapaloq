@@ -25,7 +25,7 @@ func TestNormalizeAndRender(t *testing.T) {
 		"version": 1,
 		"workspace": {"session_workspace": "/home/me/proj"},
 		"attachments": [{"path": "/home/me/proj/a.go", "kind": "file", "name": "a.go"}],
-		"ui": {"mode": "ask", "compose_attachment_count": 1},
+		"ui": {"mode": "orchestrator", "compose_attachment_count": 1},
 		"host": {"os": "linux"}
 	}`)
 	snap := ParseRaw(raw)
@@ -39,7 +39,7 @@ func TestNormalizeAndRender(t *testing.T) {
 		"session_workspace=/home/me/proj",
 		"active_file=none",
 		"attachment_paths=/home/me/proj/a.go",
-		"ui_mode=ask",
+		"ui_mode=orchestrator",
 	} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("missing %q in:\n%s", want, block)

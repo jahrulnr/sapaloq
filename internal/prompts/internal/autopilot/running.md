@@ -1,0 +1,1 @@
+Background task(s) are running and you cannot advance them from here. If you have already replied to the user, call `sapaloq_stop` immediately - stopping is a silent action, so do NOT narrate status or write a sign-off; just invoke `sapaloq_stop` and nothing else.
