@@ -2,7 +2,9 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-07-02 (**system prompt audit in turns.json** — per-generation snapshot, `included_in_context: false`)
+> Last updated: 2026-07-02 (**OpenRouter characterize suite** — live orchestrator tool/thinking characterization for non-native models via OpenRouter)
+
+> Prior: 2026-07-02 (**system prompt audit in turns.json** — per-generation snapshot, `included_in_context: false`)
 
 > Prior: 2026-07-02 (**prompt role rename** — foreground role key `ask` → `orchestrator`; `orchestrator.md` + on-disk migration from `ask.md`; CLI alias `prompts show ask` retained)
 
@@ -186,8 +188,21 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` - the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
+| 31 | OpenRouter non-native characterize suite | ✅ | `test/openrouter/` — gated raw `net/http` probe per model from `OPENROUTER_MODELS`; each model runs **stream + non-stream**; fake `get_weather` tool round-trip; **`tool_choice` fallback** to tools-only when upstream rejects. **Raw output:** `tmp/openrouter/<slug>-{stream,nostream}.jsonl`. `make openrouter-characterize`; see `test/README.md` |
 
 ---
+
+## Implemented this session (2026-07-02) - OpenRouter characterize: raw HTTP + tool_choice fallback
+
+- **`test/openrouter/`** refactored to pure Go `net/http` against OpenRouter `/chat/completions` (no SapaLOQ orchestrator/config/bus/bridge imports). Weather scenario uses inline `get_weather` fake tool. **Each model probed twice:** `stream: true` (SSE) and `stream: false` (JSON).
+- **`tool_choice` / reasoning probe:** turn 1 tries `tool_choice: auto`, default **`reasoning_effort: low`**, and **`thinking: enabled`**; on rejection, retries with unset fields. Records **`tool_choice_support`**, **`reasoning_effort_support`**, **`thinking_support`** (`yes`/`no`/`unknown`) in JSONL, report, transcript, and provider docs.
+- **Transcript:** each run also writes `tmp/openrouter/<slug>-{stream,nostream}.md` (human-readable `user:`/`thinking:`/`assistant:`/`tool:` lines; empty fields skipped).
+
+## Implemented this session (2026-07-02) - OpenRouter non-native characterize suite
+
+- **`test/openrouter/`** — live characterization for non-OpenAI models routed through OpenRouter's OpenAI-compatible gateway. Each model from `OPENROUTER_MODELS` runs a weather tool round-trip.
+- **Output:** raw wire capture → `tmp/openrouter/<model-slug>.jsonl`; derived summary logged in test output only; **`docs/providers/openrouter-<model-slug>.md`** refreshed per model.
+- **Gate:** `SAPALOQ_OPENROUTER_E2E=1` + `OPENROUTER_API_KEY` + non-empty `OPENROUTER_MODELS` (no hardcoded model slugs). `make openrouter-characterize`.
 
 ## Implemented this session (2026-07-02) - turns.json audit order + cold-restore transcript order
 

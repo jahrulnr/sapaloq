@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help run test e2e mock widget-install widget-dev widget-build core core-run chat doctor vault-list sync-cursor-schema install uninstall desktop-entry simulate-live
+.PHONY: help run test e2e mock widget-install widget-dev widget-build core core-run chat doctor vault-list sync-cursor-schema install uninstall desktop-entry simulate-live openrouter-characterize
 
 GO_TAGS ?= webkit2_41
 WIDGET_DIR := cmd/sapaloq-widget
@@ -43,6 +43,8 @@ help:
 	@echo "  make e2e-live         - live api2 e2e (needs Cursor creds, SAPALOQ_LIVE_E2E=1)"
 	@echo "  make simulate-live    - live orchestrator/planner/agent sim vs real LLM (needs BLACKBOX_API_KEY)"
 	@echo "                          vars: BLACKBOX_MODEL, BLACKBOX_ENDPOINT, SIMULATE_RUN=TestSimulate..."
+	@echo "  make openrouter-characterize - live non-native model tool/thinking characterization (OpenRouter)"
+	@echo "                          needs SAPALOQ_OPENROUTER_E2E=1, OPENROUTER_API_KEY, OPENROUTER_MODELS"
 	@echo "  make core             - sapaloq-core run (CORE_FLAGS='--debug')"
 	@echo "  make chat             - one-shot chat (CHAT_MSG=...)"
 	@echo "  make doctor           - sapaloq-core doctor"
@@ -135,6 +137,11 @@ simulate-live:
 		BLACKBOX_ENDPOINT="$(BLACKBOX_ENDPOINT)" \
 		BLACKBOX_CREDENTIALS_ENV="$(BLACKBOX_CREDENTIALS_ENV)" \
 		go test ./internal/core/orchestrator/ -v -count=1 -timeout 10m -run $(SIMULATE_RUN)
+
+openrouter-characterize:
+	SAPALOQ_OPENROUTER_E2E=1 \
+	OPENROUTER_MODELS='anthropic/claude-sonnet-5,moonshotai/kimi-k2.5' \
+		go test ./test/openrouter/... -v -count=1 -timeout 15m -run Characterize
 
 core core-run:
 	$(CORE) run
