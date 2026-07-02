@@ -27,6 +27,7 @@ type Turn struct {
 	CompactedAt       *time.Time `json:"compacted_at,omitempty"`
 	CheckpointIndex   int        `json:"checkpoint_index,omitempty"`
 	GenerationID      string     `json:"generation_id,omitempty"`
+	WireMeta          json.RawMessage `json:"wire_meta,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 }
 
@@ -452,9 +453,17 @@ func (s *Store) AppendTurnIDWithGeneration(ctx context.Context, sessionID, role,
 	return s.AppendTurnIDWithFlags(ctx, sessionID, role, content, tokenEstimate, generationID, true)
 }
 
+func (s *Store) AppendTurnIDWithWireMeta(ctx context.Context, sessionID, role, content string, tokenEstimate int, generationID string, wireMeta json.RawMessage) (int64, error) {
+	return s.AppendTurnIDWithFlagsAndWireMeta(ctx, sessionID, role, content, tokenEstimate, generationID, true, wireMeta)
+}
+
 func (s *Store) AppendTurnIDWithFlags(ctx context.Context, sessionID, role, content string, tokenEstimate int, generationID string, includedInContext bool) (int64, error) {
+	return s.AppendTurnIDWithFlagsAndWireMeta(ctx, sessionID, role, content, tokenEstimate, generationID, includedInContext, nil)
+}
+
+func (s *Store) AppendTurnIDWithFlagsAndWireMeta(ctx context.Context, sessionID, role, content string, tokenEstimate int, generationID string, includedInContext bool, wireMeta json.RawMessage) (int64, error) {
 	_ = ctx
-	if strings.TrimSpace(content) == "" {
+	if strings.TrimSpace(content) == "" && len(wireMeta) == 0 {
 		return 0, nil
 	}
 	if sessionID == "" {
@@ -482,7 +491,7 @@ func (s *Store) AppendTurnIDWithFlags(ctx context.Context, sessionID, role, cont
 	turns = append(turns, Turn{
 		ID: id, SessionID: sessionID, Seq: seq, Role: role, Content: content,
 		TokenEstimate: tokenEstimate, IncludedInContext: includedInContext, GenerationID: generationID,
-		CreatedAt: now,
+		WireMeta: wireMeta, CreatedAt: now,
 	})
 	if err := s.saveSessionTurns(sessionID, turns); err != nil {
 		return 0, err

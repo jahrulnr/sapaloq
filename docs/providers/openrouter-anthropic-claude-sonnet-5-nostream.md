@@ -15,7 +15,7 @@ Live characterization via `test/openrouter` — raw `net/http` POST to OpenRoute
 | Sniffed parser (model name) | `claude` |
 | Auth | `bearer (default)` |
 | Reasoning effort | `low (probe default)` |
-| Duration | 6375 ms |
+| Duration | 5268 ms |
 
 ## Recommended entry
 
@@ -45,7 +45,7 @@ OpenRouter is OpenAI-shaped at the gateway. Prefer explicit `parser: "openai"` +
 | thinking wire note | thinking/reasoning not exposed on wire (reasoning_content/reasoning empty; reasoning_tokens=0) |
 | Tool round-trip (`get_weather`) | ok |
 | tool_choice request support | `yes` |
-| Final assistant text | Jakarta is currently 32°C and humid with partly cloudy skies. |
+| Final assistant text | It's 32°C and humid with partly cloudy skies in Jakarta right now. |
 | Tool calls (order) | `get_weather` |
 
 ### Event timeline (non-transcript kinds)
@@ -65,7 +65,7 @@ OpenRouter is OpenAI-shaped at the gateway. Prefer explicit `parser: "openai"` +
 
 ```bash
 export SAPALOQ_OPENROUTER_E2E=1
-export OPENROUTER_API_KEY=sk-or-...
+export OPENROUTER_API_KEY=...
 export OPENROUTER_MODELS='anthropic/claude-sonnet-5|openai|bearer|'
 make openrouter-characterize
 ```

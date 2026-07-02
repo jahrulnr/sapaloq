@@ -3,10 +3,14 @@
 > **Multi-model LLM bridge** - speaks OpenAI Chat Completions, Anthropic Messages, and Kimi (Moonshot) through one binary. Each provider is a self-contained entry in `llmBridge.providers`; selection via `llmBridge.providerKey`. Cursor is a first-class provider (RE proxy). No third-party proxy (9router-style) required.
 > Last updated: 2026-07-02 (OpenRouter per-model field notes in [providers/](./providers/README.md))
 
-> The `provider-bridge` is one of three LLM-bridge drivers. It is **distinct
-> from** the `cursor-bridge` (Cursor session proxy) and the `codex-bridge`
-> (uses Codex app-server WebSocket JSON-RPC over UDS/WS — see
-> [BRIDGE.md](./BRIDGE.md#codex-bridge-app-server-socket-only)).
+> The `provider-bridge` is one of several LLM-bridge drivers. It is **distinct
+> from** the `cursor-bridge` (Cursor session proxy), the `codex-bridge`
+> (Codex app-server WebSocket JSON-RPC over UDS/WS — see
+> [BRIDGE.md](./BRIDGE.md#codex-bridge-app-server-socket-only)), and
+> **`gemini-bridge`** (Google `generateContent` — see
+> [GEMINI-BRIDGE.md](./GEMINI-BRIDGE.md); **not** OpenAI-shaped).
+> **`llama-cpp`** (llama-server OpenAI preset — see
+> [LLAMA-CPP.md](./LLAMA-CPP.md); reuses this package's OpenAI wire).
 > This document covers only the OpenAI/Claude/Kimi HTTP wire formats.
 
 Related: [BRIDGE.md](./BRIDGE.md) · [ORCHESTRATOR.md](./ORCHESTRATOR.md) · [RE-CURSOR-THINKING-TOOLS.md](./RE-CURSOR-THINKING-TOOLS.md) · [providers/](./providers/README.md) (OpenRouter characterize notes)
@@ -90,7 +94,7 @@ To switch at runtime via `/settings`, just patch `providerKey` and the next chat
 |--------|--------------|------------------|
 | `cursor-bridge` | Reverse-Engineered Cursor client → upstream provider | GPT, Claude, Kimi, etc. (Cursor routes internally) |
 | `provider-bridge` | Direct HTTP to OpenAI / Anthropic / Moonshot API | Whatever the endpoint supports |
-| `local-llama` | Local llama.cpp sidecar | Whatever you serve |
+| `llama-cpp` | Local llama-server (`/v1/chat/completions`, default `:8080`) | See [LLAMA-CPP.md](./LLAMA-CPP.md) — not this driver ID |
 
 Each cursor entry talks to `api2.cursor.sh` and lets Cursor pick the upstream. Each provider-bridge entry talks directly to the upstream API. The choice is yours - many users have both for fallback.
 

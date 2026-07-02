@@ -284,8 +284,8 @@ func (o *Orchestrator) handleThinking(ctx context.Context, out chan<- bridge.Str
 		shown = "default (provider decides)"
 	}
 	msg := fmt.Sprintf("Thinking level set to %s for %s.", shown, entry.Key)
-	if level != "" && entry.Driver != "provider-bridge" && entry.Driver != "codex-bridge" {
-		msg += " Note: reasoning effort currently applies only to provider-bridge and codex-bridge models; the active driver is " + entry.Driver + "."
+	if level != "" && entry.Driver != "provider-bridge" && entry.Driver != "codex-bridge" && entry.Driver != "gemini-bridge" {
+		msg += " Note: reasoning effort currently applies only to provider-bridge, codex-bridge, and gemini-bridge models; the active driver is " + entry.Driver + "."
 	}
 	return o.emitSlash(ctx, out, sessionID, responseEvent(sessionID, msg))
 }

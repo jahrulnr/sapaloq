@@ -2,7 +2,7 @@
 
 > Single source of truth for **what is actually implemented in code** vs what is
 > still doc-only. Verify claims against the cited Go files, not against other docs.
-> Last updated: 2026-07-02 (**OpenRouter characterize suite** — live orchestrator tool/thinking characterization for non-native models via OpenRouter)
+> Last updated: 2026-07-02 (**Gemini thoughtSignature replay** — multi-turn tool probe fix)
 
 > Prior: 2026-07-02 (**system prompt audit in turns.json** — per-generation snapshot, `included_in_context: false`)
 
@@ -188,9 +188,52 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented (doc/config-only)
 | 28 | Vault audit log rotation / retention | ✅ | `internal/vault/vault.go` - size-based numbered rotation in `Writer.Append` (primary → `.1` → `.2` …, oldest beyond keepFiles dropped), `Options{MaxBytes,KeepFiles}` + `NewWithOptions` (defaults 5 MiB / keep 3; `New` unchanged). `ReadRecent` spans rotated siblings. `config.vault.{maxLogBytes,keepRotatedFiles}`, wired in `chat.go`; cursor-bridge writer inherits default rotation |
 | 29 | Local image vision tool (`read_image`) | ✅ | Reads a local image file (png/jpeg/gif/webp) into the model's vision in **every** mode. `toolReadImage` (`tools_system.go`) returns inline `![name](data:<mime>;base64,…)` markdown that `extractImages` re-ingests into `bridge.Request.Images` - the same vision channel as widget attachments (no base64-as-text). In Ask, `runConversation` now re-extracts images from each tool-results turn (+`visionAllowed` guard); Plan/Agent inherit it automatically. In `readOnlyAssessmentTools` + `reg()` schema. Mime via extension map + `http.DetectContentType` fallback; 10 MiB cap; bypasses the text `looksBinary` guard |
 | 30 | codex-bridge driver (app-server socket only) | ✅ | `internal/bridges/codex/appserver`: WebSocket JSON-RPC over UDS/WS, `initialize`, thread start/resume, one native turn per `Complete`, notification mapper, `turn/interrupt`, and lifecycle `auto|external|managed`. Native tool `outputDelta` notifications stream into widget tool rows (`EventToolUpdate` + coalesced append); `turn/started` shows progress label. `DeclaredTools` + registered schemas become the `sapaloq` dynamic-tools namespace; `item/tool/call` executes once via `Request.ToolExecutor`. `Source:"codex"` is telemetry-only in orchestrator. Owned children reap on shutdown/reload; doctor probes binary/socket/auth. Legacy transport code/fixtures removed. Offline race tests plus real lifecycle and live-turn e2e pass against codex-cli 0.141.0. See `CODEX_APP_SERVER_CONTRACT.md` |
-| 31 | OpenRouter non-native characterize suite | ✅ | `test/openrouter/` — gated raw `net/http` probe per model from `OPENROUTER_MODELS`; each model runs **stream + non-stream**; fake `get_weather` tool round-trip; **`tool_choice` fallback** to tools-only when upstream rejects. **Raw output:** `tmp/openrouter/<slug>-{stream,nostream}.jsonl`. `make openrouter-characterize`; see `test/README.md` |
+| 31 | OpenRouter non-native characterize suite | ✅ | `test/openrouter/` — gated raw `net/http` probe per model from `OPENROUTER_MODELS`; provider settings in **`config_test.go`**; each model runs **stream + non-stream**; fake `get_weather` tool round-trip; **`tool_choice` fallback** to tools-only when upstream rejects. **Raw output:** `tmp/openrouter/<slug>-{stream,nostream}.jsonl`. `make openrouter-characterize`; see `test/README.md` |
+| 32 | Blackbox characterize suite | ✅ | `test/blackbox/` — same probe contract vs Blackbox `/chat/completions`; **`config_test.go`** (env gate `SAPALOQ_BLACKBOX_CHARACTERIZE_E2E`, `BLACKBOX_*`); output `tmp/blackbox/` + `docs/providers/blackbox-*`. `make blackbox-characterize` |
+| 33 | 9router characterize suite | ✅ | `test/9router/` — local OpenAI-compatible gateway (default `:20128`); **`config_test.go`** / package `nrouter_test`; env `SAPALOQ_9ROUTER_CHARACTERIZE_E2E`, `NROUTER_*` (matches `cursor-9router` config). `make 9router-characterize` |
+| 34 | Gemini characterize suite | ✅ | `test/gemini/` — Google **generateContent** / streamGenerateContent; **`config_test.go`**; env `SAPALOQ_GEMINI_CHARACTERIZE_E2E`, `GEMINI_*`; auth `X-goog-api-key`; output `tmp/gemini/` + `docs/providers/gemini-*`. `make gemini-characterize` |
+| 35 | gemini-bridge driver | ✅ | `internal/bridges/gemini/` — dedicated `generateContent` driver; `Turn.WireMeta` + `StreamEvent.WireMeta` for `thoughtSignature` replay; config `driver: gemini-bridge`. See `docs/GEMINI-BRIDGE.md` |
+| 36 | llama.cpp characterize suite | ✅ | `test/llamacpp/` — local **llama-server** OpenAI `/v1/chat/completions` probe (default `:8080`); env `SAPALOQ_LLAMACPP_CHARACTERIZE_E2E`, `LLAMACPP_MODELS`, `LLAMACPP_ENDPOINT`. `make llamacpp-characterize` |
+| 37 | llama-cpp driver | ✅ | `internal/bridges/llamacpp/` — thin preset over provider OpenAI wire; optional auth; default `http://127.0.0.1:8080`; doctor `/health` + best-effort `/models/load`. See `docs/LLAMA-CPP.md` |
 
 ---
+
+## Implemented this session (2026-07-02) - llama-cpp driver
+
+- **`internal/bridges/llamacpp/`** — `llama-cpp` driver reuses `provider` wire (`AuthNone`, OpenAI parser); endpoint normalize; optional `LLAMACPP_API_KEY`.
+- **Provider** — `authScheme: none`; exported `BuildWireOptions` / `RunStream`.
+- **Config** — `config.example.json` `llama-cpp-gemma` entry; schema `authScheme` enum `none`; characterize default port `:8080`.
+- **Doctor** — `llamacpp.Doctor` health + models/load; `config.Doctor` skips required cred for auth-less local.
+- **Docs** — `docs/LLAMA-CPP.md`, `BRIDGE.md`, `PROVIDER-BRIDGE.md`, `LIMITATIONS.md`.
+
+## Implemented this session (2026-07-02) - llama.cpp characterize suite
+
+- **`test/llamacpp/`** — OpenAI-compatible probe against local **llama-server** (`/v1/chat/completions`, optional auth, health gate on `/health`). Contract from `/opt/llama.cpp`. `make llamacpp-characterize`.
+
+## Implemented this session (2026-07-02) - gemini-bridge driver
+
+- **`internal/bridges/gemini/`** — production bridge lifted from characterize wire; `X-goog-api-key`; probe fallbacks for `thinkingConfig` / `toolConfig`.
+- **`chat.Turn.WireMeta`**, **`bridge.Message.WireMeta`**, **`StreamEvent.WireMeta`** — durable multi-turn tool replay.
+- **Orchestrator** — `persistAssistantWireTurn`, `actorTurnsToMessages` wire-meta path, continuation round passes WireMeta for `gemini-bridge`.
+- **Config** — `schema/config.schema.json` + `config.example.json`; registered in `cmd/sapaloq-core/main.go`.
+- **Docs** — `docs/GEMINI-BRIDGE.md`, `docs/BRIDGE.md`, `docs/PROVIDER-BRIDGE.md`.
+
+## Implemented this session (2026-07-02) - Gemini thoughtSignature replay fix
+
+- **`test/gemini/raw_client_test.go`** — turn 2 now replays verbatim `ModelParts` from turn 1 (including `thoughtSignature` + `functionCall.id`); `tool_succeeded` only after turn 2 completes; probe marker `thought_signature_replay`.
+
+## Implemented this session (2026-07-02) - Gemini characterize suite
+
+- **`test/gemini/`** — Google Generative Language API probe (`generateContent` + `streamGenerateContent?alt=sse`); **`X-goog-api-key`** auth; tools via `functionDeclarations` + `toolConfig`; thinking via `generationConfig.thinkingConfig`. Env: `SAPALOQ_GEMINI_CHARACTERIZE_E2E`, `GEMINI_API_KEY`, `GEMINI_MODELS`. `make gemini-characterize`.
+
+## Implemented this session (2026-07-02) - 9router characterize suite
+
+- **`test/9router/`** — third characterize provider for local **9router** (`http://127.0.0.1:20128/v1/chat/completions`); env aligns with SapaLOQ `NROUTER_API_KEY` / `cursor-9router` entries. Go package `nrouter_test` (directory `test/9router`). `make 9router-characterize`.
+
+## Implemented this session (2026-07-02) - characterize provider config (`config_test.go`)
+
+- **`test/openrouter/config_test.go`** — centralizes OpenRouter gate env, credentials, endpoint, tmp/doc paths, and probe defaults; harness/docgen/raw client read from `provider` config instead of hardcoded strings.
+- **`test/blackbox/`** — mirror suite with **`config_test.go`** (Blackbox env contract + `BLACKBOX_CREDENTIALS_ENV` override); `make blackbox-characterize`.
 
 ## Implemented this session (2026-07-02) - OpenRouter characterize: raw HTTP + tool_choice fallback
 

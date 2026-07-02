@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -194,6 +195,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 
 	for inferenceTurn := 1; unlimitedTurns || inferenceTurn <= maxInferenceTurns; inferenceTurn++ {
 		turnThinking.Reset()
+		var turnWireMeta json.RawMessage
 		allTurnStart := all.Len()
 		if err := runCtx.Err(); err != nil {
 			out.emit(context.Background(), bridge.StreamEvent{Kind: bridge.EventDone, SessionID: sessionID, At: time.Now().UTC()})
@@ -409,6 +411,9 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 				out.emit(runCtx, ev)
 			case bridge.EventToolCall:
 				resetIdle()
+				if ev.WireMeta != nil {
+					turnWireMeta = ev.WireMeta
+				}
 				if ev.ToolCall != nil {
 					// sapaloq:boundary cursor-bridge→orchestrator — in-bridge MCP: execute in bridge; persist on ToolUpdate.
 					if isInBridgeToolSource(ev.ToolCall.Source) {
@@ -976,15 +981,15 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 		if artifacts.IsAutopilotEcho(assistantContent) {
 			assistantContent = ""
 		}
-		o.persistContinuationRound(ctx, persistID, cfg.generationID, cfg, assistantContent, toolResultsBody, toolResults)
+		o.persistContinuationRound(ctx, persistID, cfg.generationID, cfg, snap.entry.Driver, assistantContent, toolResultsBody, toolResults, turnWireMeta)
 		replay.ClearInflight()
-		replay.SetInflight(continuationInflight(toolResults, toolResultsBody))
+		replay.SetInflight(continuationInflight(toolResults, toolResultsBody, turnWireMeta))
 		if cfg.recordToolTurns && o.chat != nil {
 			if err := replay.RefreshInto(runCtx, &cleanMessages); err != nil {
 				return all, err
 			}
 		} else {
-			cleanMessages = appendContinuationWithoutStore(assistantContent, toolResultsBody, toolResults, cleanMessages)
+			cleanMessages = appendContinuationWithoutStore(assistantContent, toolResultsBody, toolResults, turnWireMeta, cleanMessages)
 		}
 		// This turn did not end the run (no terminal tool, no toolless-budget
 		// finish - both return earlier), so the loop is about to feed the next

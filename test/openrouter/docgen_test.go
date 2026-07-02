@@ -10,7 +10,7 @@ import (
 )
 
 func providerDocSlug(spec ModelSpec, stream StreamMode) string {
-	return "openrouter-" + modelSlug(spec.Model) + "-" + stream.suffix()
+	return provider.providerDocSlug(spec, stream)
 }
 
 func providerDocPath(t *testing.T, spec ModelSpec, stream StreamMode) string {
@@ -18,7 +18,7 @@ func providerDocPath(t *testing.T, spec ModelSpec, stream StreamMode) string {
 	return filepath.Join(repoRoot(t), "docs", "providers", providerDocSlug(spec, stream)+".md")
 }
 
-// writeProviderCharacterizationDoc materializes docs/providers/openrouter-<model>-<mode>.md
+// writeProviderCharacterizationDoc materializes docs/providers/<provider>-<model>-<mode>.md
 // from one live characterize run (report + raw jsonl path).
 func writeProviderCharacterizationDoc(t *testing.T, spec ModelSpec, stream StreamMode, report CharacterReport, rawPath string, eventCount int) {
 	t.Helper()
@@ -37,7 +37,7 @@ func writeProviderCharacterizationDoc(t *testing.T, spec ModelSpec, stream Strea
 func renderProviderDoc(spec ModelSpec, stream StreamMode, report CharacterReport, rawPath string, eventCount int) string {
 	parser := spec.Parser
 	if parser == "" {
-		parser = report.AutoDetectedParser + " (auto; set explicitly for OpenRouter)"
+		parser = report.AutoDetectedParser + " (auto; set explicitly for " + provider.DisplayName + ")"
 	}
 	auth := spec.AuthScheme
 	if auth == "" {
@@ -49,13 +49,13 @@ func renderProviderDoc(spec ModelSpec, stream StreamMode, report CharacterReport
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# OpenRouter → %s (%s)\n\n", spec.Model, stream)
+	fmt.Fprintf(&b, "# %s → %s (%s)\n\n", provider.DisplayName, spec.Model, stream)
 	fmt.Fprintf(&b, "> Last updated: %s (characterize suite)\n\n", time.Now().Format("2006-01-02"))
-	fmt.Fprintf(&b, "Live characterization via `test/openrouter` — raw `net/http` POST to OpenRouter chat/completions (no SapaLOQ orchestrator). Mode: **`%s`** (`stream: %t`). Weather scenario: `get_weather` fake tool round-trip. Raw capture: `%s` (%d records). Transcript: `%s`.\n\n", stream, bool(stream), rawPath, eventCount, strings.TrimSuffix(rawPath, ".jsonl")+".md")
+	fmt.Fprintf(&b, "Live characterization via `%s` — raw `net/http` POST to %s chat/completions (no SapaLOQ orchestrator). Mode: **`%s`** (`stream: %t`). Weather scenario: `get_weather` fake tool round-trip. Raw capture: `%s` (%d records). Transcript: `%s`.\n\n", provider.TestDir, provider.DisplayName, stream, bool(stream), rawPath, eventCount, strings.TrimSuffix(rawPath, ".jsonl")+".md")
 
 	b.WriteString("## Route\n\n")
 	b.WriteString("| Field | Value |\n|-------|-------|\n")
-	b.WriteString("| Gateway | OpenRouter (`https://openrouter.ai/api/v1/chat/completions`) |\n")
+	fmt.Fprintf(&b, "| Gateway | %s (`%s`) |\n", provider.DisplayName, provider.DefaultEndpoint)
 	fmt.Fprintf(&b, "| Model slug | `%s` |\n", spec.Model)
 	fmt.Fprintf(&b, "| Wire mode | `%s` (`stream: %t`) |\n", stream, bool(stream))
 	fmt.Fprintf(&b, "| SapaLOQ parser hint (configured) | `%s` |\n", parser)
@@ -66,11 +66,11 @@ func renderProviderDoc(spec ModelSpec, stream StreamMode, report CharacterReport
 
 	b.WriteString("## Recommended entry\n\n")
 	b.WriteString("```json\n")
-	fmt.Fprintf(&b, "{\n  \"key\": \"openrouter-%s\",\n", modelSlug(spec.Model))
+	fmt.Fprintf(&b, "{\n  \"key\": \"%s\",\n", provider.configEntryKey(spec))
 	b.WriteString("  \"driver\": \"provider-bridge\",\n")
-	b.WriteString("  \"endpoint\": \"https://openrouter.ai/api/v1/chat/completions\",\n")
+	fmt.Fprintf(&b, "  \"endpoint\": \"%s\",\n", provider.DefaultEndpoint)
 	fmt.Fprintf(&b, "  \"model\": \"%s\",\n", spec.Model)
-	b.WriteString("  \"credentialsEnv\": \"OPENROUTER_API_KEY\",\n")
+	fmt.Fprintf(&b, "  \"credentialsEnv\": \"%s\",\n", provider.CredentialsEnvDefault)
 	if spec.Parser != "" {
 		fmt.Fprintf(&b, "  \"parser\": \"%s\",\n", spec.Parser)
 	} else {
@@ -88,7 +88,7 @@ func renderProviderDoc(spec ModelSpec, stream StreamMode, report CharacterReport
 	}
 	b.WriteString("  \"requestTimeoutSec\": 600\n")
 	b.WriteString("}\n```\n\n")
-	b.WriteString("OpenRouter is OpenAI-shaped at the gateway. Prefer explicit `parser: \"openai\"` + `authScheme: \"bearer\"` for Anthropic models; use `parser: \"kimi\"` only for Moonshot/Kimi slugs.\n\n")
+	fmt.Fprintf(&b, "%s is OpenAI-shaped at the gateway. Prefer explicit `parser: \"openai\"` + `authScheme: \"bearer\"` for Anthropic models; use `parser: \"kimi\"` only for Moonshot/Kimi slugs.\n\n", provider.DisplayName)
 
 	b.WriteString("## Observed behavior\n\n")
 	b.WriteString("| Capability | Result |\n|------------|--------|\n")
@@ -163,10 +163,10 @@ func renderProviderDoc(spec ModelSpec, stream StreamMode, report CharacterReport
 
 	b.WriteString("## Reproduce\n\n")
 	b.WriteString("```bash\n")
-	b.WriteString("export SAPALOQ_OPENROUTER_E2E=1\n")
-	b.WriteString("export OPENROUTER_API_KEY=sk-or-...\n")
-	fmt.Fprintf(&b, "export OPENROUTER_MODELS='%s|openai|bearer|'\n", spec.Model)
-	b.WriteString("make openrouter-characterize\n")
+	fmt.Fprintf(&b, "export %s=1\n", provider.GateEnv)
+	fmt.Fprintf(&b, "export %s=...\n", provider.credEnvVar())
+	fmt.Fprintf(&b, "export %s='%s|openai|bearer|'\n", provider.ModelsEnv, spec.Model)
+	fmt.Fprintf(&b, "make %s\n", provider.MakeTarget)
 	b.WriteString("```\n")
 
 	return b.String()
@@ -201,12 +201,12 @@ func verdictParagraph(_ ModelSpec, r CharacterReport) string {
 			return "**tool_choice rejected and tools-only retry still failed** — see error. Characterize notes capture upstream limits for this slug."
 		}
 		if strings.Contains(r.Error, "tools") {
-			return "**Tools not usable** on this OpenRouter route — upstream rejected tool payloads (see error)."
+			return fmt.Sprintf("**Tools not usable** on this %s route — upstream rejected tool payloads (see error).", provider.DisplayName)
 		}
 		return "**Characterization failed** — see upstream error."
 	}
 	if r.ToolSucceeded && r.AnswerMentionsWeather {
-		parts := []string{"**Tool loop works** on OpenRouter (get_weather → fake result → assistant reply)."}
+		parts := []string{fmt.Sprintf("**Tool loop works** on %s (get_weather → fake result → assistant reply).", provider.DisplayName)}
 		switch r.ReasoningEffortSupport {
 		case probeSupportYes:
 			parts = append(parts, "`reasoningEffort: "+r.ReasoningEffortRequested+"` accepted on this route.")

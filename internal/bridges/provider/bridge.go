@@ -65,8 +65,10 @@ func (b *Bridge) Caps() bridge.BridgeCaps {
 // can route thinking / text / tool_call into the orchestrator.
 func (b *Bridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridge.StreamEvent, error) {
 	out := make(chan bridge.StreamEvent, 32)
+	parser := DetectParser(b.entry)
+	auth := DetectAuthScheme(b.entry, parser)
 	token := b.token()
-	if token == "" {
+	if token == "" && auth != AuthNone {
 		errEv := bridge.NewEvent(bridge.EventError)
 		errEv.SessionID = req.SessionID
 		errEv.Error = fmt.Sprintf("provider-bridge: token env %s is empty", b.entry.CredentialsEnv)

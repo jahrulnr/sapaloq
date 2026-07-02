@@ -22,6 +22,7 @@ type AuthScheme string
 const (
 	AuthBearer  AuthScheme = "bearer"    // Authorization: Bearer <token>
 	AuthXAPIKey AuthScheme = "x-api-key" // x-api-key: <token>
+	AuthNone    AuthScheme = "none"      // no credential header (local llama-server)
 )
 
 // DefaultContextWindow is the fallback when the entry doesn't set one.
@@ -116,6 +117,8 @@ func parseAuthScheme(s string) (AuthScheme, bool) {
 		return AuthBearer, true
 	case "x-api-key", "x_api_key", "anthropic":
 		return AuthXAPIKey, true
+	case "none":
+		return AuthNone, true
 	}
 	return "", false
 }

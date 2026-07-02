@@ -372,7 +372,8 @@ type RuntimeConfig struct {
 // LLMBridge is one provider entry - the smallest unit of bridge configuration.
 // Each entry is self-contained. HTTP/IDE drivers use Endpoint and
 // CredentialsEnv; codex-bridge resolves its app-server endpoint/lifecycle from
-// environment variables and may use CODEX_HOME login instead. Key is required
+// environment variables and may use CODEX_HOME login instead; gemini-bridge
+// posts to Google generateContent with X-goog-api-key. Key is required
 // when the entry is part of a providers array; it is unused at the top level.
 type LLMBridge struct {
 	Key            string   `json:"key,omitempty"`
@@ -1067,7 +1068,19 @@ func Doctor(cfg Config) (string, error) {
 		return "", err
 	}
 	credSource := "codex app-server auth"
-	if entry.Driver != "codex-bridge" {
+	switch entry.Driver {
+	case "codex-bridge":
+		// resolved by sapaloq-core doctor branch
+	case "llama-cpp":
+		credSource = "llama-cpp (auth optional)"
+		if strings.TrimSpace(entry.CredentialsEnv) != "" {
+			creds, err := credentials.Load(credentials.Options{TokenEnv: entry.CredentialsEnv})
+			if err != nil {
+				return "", err
+			}
+			credSource = creds.Source
+		}
+	default:
 		creds, err := credentials.Load(credentials.Options{TokenEnv: entry.CredentialsEnv})
 		if err != nil {
 			return "", err

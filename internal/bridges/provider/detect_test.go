@@ -85,13 +85,15 @@ func TestDetectAuthSchemeFromEntry(t *testing.T) {
 }
 
 func TestDetectAuthSchemeExplicit(t *testing.T) {
-	// Explicit AuthScheme wins over parser-derived default
 	if got := DetectAuthScheme(entryWithAuthScheme("x-api-key"), ParserOpenAI); got != AuthXAPIKey {
 		t.Fatalf("explicit x-api-key must win, got %q", got)
 	}
 	// "anthropic" alias normalises to x-api-key
 	if got := DetectAuthScheme(entryWithAuthScheme("anthropic"), ParserOpenAI); got != AuthXAPIKey {
 		t.Fatalf("'anthropic' alias must resolve to x-api-key, got %q", got)
+	}
+	if got := DetectAuthScheme(entryWithAuthScheme("none"), ParserOpenAI); got != AuthNone {
+		t.Fatalf("explicit none must resolve to AuthNone, got %q", got)
 	}
 }
 

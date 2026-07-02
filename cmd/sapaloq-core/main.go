@@ -12,6 +12,8 @@ import (
 	"github.com/jahrulnr/sapaloq/internal/bridge"
 	"github.com/jahrulnr/sapaloq/internal/bridges/codex"
 	"github.com/jahrulnr/sapaloq/internal/bridges/cursor"
+	"github.com/jahrulnr/sapaloq/internal/bridges/gemini"
+	"github.com/jahrulnr/sapaloq/internal/bridges/llamacpp"
 	"github.com/jahrulnr/sapaloq/internal/bridges/provider"
 	"github.com/jahrulnr/sapaloq/internal/bus"
 	"github.com/jahrulnr/sapaloq/internal/config"
@@ -95,6 +97,15 @@ func main() {
 			if err != nil {
 				exitf("doctor failed: %v", err)
 			}
+		}
+		if entry.Driver == "llama-cpp" {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			localNote, err := llamacpp.Doctor(ctx, entry)
+			cancel()
+			if err != nil {
+				exitf("doctor failed: %v", err)
+			}
+			credSource = localNote
 		}
 		dirs := config.RuntimeDirs(cfg)
 		fmt.Println("doctor ok")
@@ -236,6 +247,16 @@ func newBridge(cfg config.Config) (bridge.Bridge, error) {
 	}
 	if entry.Driver == "codex-bridge" {
 		if err := codex.Register(reg, entry, cfg.Runtime); err != nil {
+			return nil, err
+		}
+	}
+	if entry.Driver == "gemini-bridge" {
+		if err := gemini.Register(reg, entry); err != nil {
+			return nil, err
+		}
+	}
+	if entry.Driver == "llama-cpp" {
+		if err := llamacpp.Register(reg, entry); err != nil {
 			return nil, err
 		}
 	}

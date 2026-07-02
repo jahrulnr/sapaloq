@@ -2,7 +2,7 @@
 
 > **Brain bridge drivers** - connect companion/sub-agent LLM calls to external APIs & IDEs.
 > **cursor-bridge** = driver pertama; Claude/OpenAI-compatible built-in later (9router-*pattern*, bukan adopt 9router sebagai third-party).
-> Last updated: 2026-07-01 (provider role notes; event-driven turn loop)
+> Last updated: 2026-07-02 (llama-cpp driver rename)
 >
 > Prior: 2026-06-28 (**tool mapping** — `ResolveToolCall` upstream→declared; see `TOOL-MAPPING.md`)
 
@@ -20,7 +20,7 @@ SapaLOQ punya **dua registry driver** terpisah - jangan dicampur:
 | Family         | Package             | Pilih via                          | Contoh                                                           |
 | -------------- | ------------------- | ---------------------------------- | ---------------------------------------------------------------- |
 | **Platform**   | `internal/drivers/` | `os.json` + detect                 | `gnome`, `kde`, `windows`                                        |
-| **LLM bridge** | `internal/bridges/` | `config.json` → `llmBridge.driver` | `cursor-bridge`, `openai-compat`, `claude-compat`, `local-llama` |
+| **LLM bridge** | `internal/bridges/` | `config.json` → `llmBridge.driver` | `cursor-bridge`, `openai-compat`, `claude-compat`, `llama-cpp` |
 
 ### Per-request timeout
 
@@ -56,7 +56,7 @@ sapaloq-core
 ├── driver/          platform registry (os.json)
 ├── drivers/         gnome, kde, …
 ├── bridge/          LLM bridge registry
-├── bridges/         cursor-bridge, openai-compat, claude-compat, local-llama, …
+├── bridges/         cursor-bridge, openai-compat, claude-compat, llama-cpp, …
 └── parse/
     ├── tools/       format-specific tool call parsers
     └── thinking/    format-specific reasoning/thinking parsers
@@ -221,7 +221,8 @@ Empty `declaredTools` → vault only `unknown_upstream` calls.
 | `provider-bridge` (claude) | Anthropic `/v1/messages`              | **Low**                    | `tools:claude`, `thinking:claude` |
 | `provider-bridge` (kimi)   | OpenAI-compatible + `thinking` flag   | **Low**                    | `tools:openai`, `thinking:openai` |
 | `codex-bridge`             | App-server WebSocket JSON-RPC (UDS/WS) | Native telemetry only; dynamic callback for SapaLOQ tools | App-server notification mapper |
-| `local-llama`              | llama.cpp / sidecar                   | N/A (local schema)         | configurable                      |
+| `gemini-bridge`            | Google `generateContent` / SSE         | **Low** — native `functionCall`                           | `tools:gemini`, WireMeta replay — see [`GEMINI-BRIDGE.md`](GEMINI-BRIDGE.md) |
+| `llama-cpp`              | llama-server OpenAI `/v1/chat/completions` | N/A (local)                | `openai` default; optional auth |
 
 
 **Community bridges:** compile-time registry (sama seperti platform drivers). Contrib driver baru untuk IDE/CLI dengan behavior mirip Cursor (Gemini plugin, Copilot VSCode, custom MCP gateway) tanpa merge ke core kecuali maintained.
@@ -371,7 +372,7 @@ func init() { bridge.Register(&CursorBridgeFactory{}) }
       "schemaPath": "~/SapaLOQ/bridge/cursor-bridge.schema.json"
     },
     "fallback": {
-      "driver": "local-llama",
+      "driver": "llama-cpp",
       "on": ["auth_error", "offline"]
     }
   }

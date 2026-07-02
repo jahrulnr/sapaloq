@@ -76,6 +76,26 @@
         "credentialsEnv": "OPENAI_API_KEY",
         "reasoningEffort": "high",
         "requestTimeoutSec": 600
+      },
+      {
+        "key": "gemini",
+        "driver": "gemini-bridge",
+        "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+        "model": "gemini-flash-latest",
+        "credentialsEnv": "GEMINI_API_KEY",
+        "reasoningEffort": "low",
+        "contextWindow": 1000000,
+        "requestTimeoutSec": 600,
+        "stream": true
+      },
+      {
+        "key": "llama-cpp-gemma",
+        "driver": "llama-cpp",
+        "endpoint": "http://127.0.0.1:8080",
+        "model": "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL",
+        "reasoningEffort": "low",
+        "requestTimeoutSec": 600,
+        "stream": true
       }
     ]
   },

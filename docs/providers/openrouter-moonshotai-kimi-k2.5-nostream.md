@@ -15,7 +15,7 @@ Live characterization via `test/openrouter` — raw `net/http` POST to OpenRoute
 | Sniffed parser (model name) | `kimi` |
 | Auth | `bearer (default)` |
 | Reasoning effort | `low (probe default)` |
-| Duration | 4300 ms |
+| Duration | 38507 ms |
 
 ## Recommended entry
 
@@ -39,12 +39,12 @@ OpenRouter is OpenAI-shaped at the gateway. Prefer explicit `parser: "openai"` +
 
 | Capability | Result |
 |------------|--------|
-| Thinking wire exposed | `yes` (389 chars; reasoning_tokens=65) |
+| Thinking wire exposed | `yes` (1007 chars; reasoning_tokens=117) |
 | reasoning_effort request support (`low`) | `yes` |
 | thinking request support | `yes` |
 | Tool round-trip (`get_weather`) | ok |
 | tool_choice request support | `yes` |
-| Final assistant text | Jakarta is 32°C and humid. |
+| Final assistant text | Jakarta is currently 32°C with humid, partly cloudy conditions. |
 | Tool calls (order) | `get_weather` |
 | Content before first tool | yes |
 | Thinking before first tool | yes |
@@ -61,7 +61,7 @@ OpenRouter is OpenAI-shaped at the gateway. Prefer explicit `parser: "openai"` +
 
 ```bash
 export SAPALOQ_OPENROUTER_E2E=1
-export OPENROUTER_API_KEY=sk-or-...
+export OPENROUTER_API_KEY=...
 export OPENROUTER_MODELS='moonshotai/kimi-k2.5|openai|bearer|'
 make openrouter-characterize
 ```

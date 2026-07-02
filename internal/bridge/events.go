@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/jahrulnr/sapaloq/internal/parse"
@@ -94,6 +95,8 @@ type StreamEvent struct {
 	ParentSessionID string `json:"parent_session_id,omitempty"`
 	// Transcript is populated on EventTranscript.
 	Transcript *TranscriptPatch `json:"transcript,omitempty"`
+	// WireMeta carries opaque upstream replay state (e.g. Gemini model parts).
+	WireMeta json.RawMessage `json:"wire_meta,omitempty"`
 	At         time.Time        `json:"at"`
 }
 

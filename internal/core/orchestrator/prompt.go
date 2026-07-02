@@ -738,6 +738,11 @@ func actorTurnsToMessages(turns []chatstore.Turn) []bridge.Message {
 				continue
 			}
 			content = artifacts.StripModelResponseArtifact(content)
+			if len(turn.WireMeta) > 0 {
+				out = append(out, bridge.Message{Role: "assistant", Content: content, WireMeta: turn.WireMeta})
+				flushTools()
+				continue
+			}
 			if strings.TrimSpace(content) == "" {
 				continue
 			}

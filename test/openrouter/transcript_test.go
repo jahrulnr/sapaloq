@@ -11,18 +11,13 @@ import (
 const wireNotPresent = "(not on wire)"
 const wireNone = "(none)"
 
-func openRouterTranscriptPath(t *testing.T, model string, stream StreamMode) string {
-	t.Helper()
-	return strings.TrimSuffix(openRouterRawPath(t, model, stream), ".jsonl") + ".md"
-}
-
 type transcriptDoc struct {
 	b strings.Builder
 }
 
 func newTranscriptDoc(spec ModelSpec, stream StreamMode) *transcriptDoc {
 	d := &transcriptDoc{}
-	fmt.Fprintf(&d.b, "# OpenRouter → %s (%s)\n\n", spec.Model, stream)
+	fmt.Fprintf(&d.b, "# %s → %s (%s)\n\n", provider.DisplayName, spec.Model, stream)
 	fmt.Fprintf(&d.b, "> characterize probe transcript — %s\n\n", time.Now().Format("2006-01-02 15:04:05 UTC"))
 	d.expose("mode", stream.String())
 	d.expose("stream", fmt.Sprintf("%t", bool(stream)))

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
@@ -75,13 +76,16 @@ func (o *Orchestrator) persistContinuationRound(
 	ctx context.Context,
 	persistID, generationID string,
 	cfg turnConfig,
-	assistantContent, toolResultsBody string,
+	driver, assistantContent, toolResultsBody string,
 	toolResults []string,
+	wireMeta json.RawMessage,
 ) {
 	if !cfg.recordToolTurns || o.chat == nil {
 		return
 	}
-	if assistantContent != "" {
+	if driver == "gemini-bridge" && len(wireMeta) > 0 {
+		o.persistAssistantWireTurn(ctx, persistID, assistantContent, generationID, wireMeta)
+	} else if assistantContent != "" {
 		o.persistAssistantTurn(ctx, persistID, assistantContent, generationID)
 	}
 	if len(toolResults) > 0 {
@@ -102,17 +106,17 @@ func (o *Orchestrator) persistContinuationRound(
 	}
 }
 
-func continuationInflight(toolResults []string, toolResultsBody string) []bridge.Message {
+func continuationInflight(toolResults []string, toolResultsBody string, wireMeta json.RawMessage) []bridge.Message {
 	if len(toolResults) == 0 {
 		return []bridge.Message{{Role: "user", Content: toolResultsBody}}
 	}
 	return nil
 }
 
-func appendContinuationWithoutStore(assistantContent, toolResultsBody string, toolResults []string, cleanMessages []bridge.Message) []bridge.Message {
-	if assistantContent != "" {
+func appendContinuationWithoutStore(assistantContent, toolResultsBody string, toolResults []string, wireMeta json.RawMessage, cleanMessages []bridge.Message) []bridge.Message {
+	if assistantContent != "" || len(wireMeta) > 0 {
 		cleanMessages = append(cleanMessages,
-			bridge.Message{Role: "assistant", Content: assistantContent},
+			bridge.Message{Role: "assistant", Content: assistantContent, WireMeta: wireMeta},
 		)
 	}
 	contRole := "user"

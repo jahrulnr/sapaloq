@@ -324,7 +324,7 @@ flowchart TB
 | **JSON store**    | `internal/store/`                  | Facts, nodes, prefetch_rules (JSON files)               |
 | **Platform driver** | `internal/drivers/`*               | GNOME, KDE, freedesktop, windows, headless      |
 | **OS detect**       | `internal/detect/`                 | Probe, fingerprint, os.json                     |
-| **LLM bridge**      | `internal/bridges/`*               | cursor-bridge, provider-bridge, codex-bridge, local-llama |
+| **LLM bridge**      | `internal/bridges/`*               | cursor-bridge, provider-bridge, codex-bridge, llama-cpp |
 | **Parsers**         | `internal/parse/tools`, `thinking` | Wire format → canonical model                   |
 | **Node client**     | `internal/nodes/`                  | Remote spawn WS/HTTP                            |
 | **Learning hook**   | `internal/learning/`               | Post-task queue, janitor drain                  |
@@ -1256,7 +1256,7 @@ Legacy alias `sapaloq.v1.gnome.`* deprecated but supported.
 ```
 sapaloq-core
 ├── bridge/          LLM registry
-├── bridges/         cursor-bridge, provider-bridge, codex-bridge/appserver, local-llama
+├── bridges/         cursor-bridge, provider-bridge, codex-bridge/appserver, llama-cpp
 └── parse/
     ├── tools/       openai, claude, cursor, kimi
     └── thinking/    cursor, claude, kimi, openai
@@ -1314,7 +1314,7 @@ Coercion config:
     "schemaPath": "~/SapaLOQ/bridge/cursor-bridge.schema.json"
   },
   "credentialsEnv": "SAPALOQ_CURSOR_TOKEN",
-  "fallback": { "driver": "local-llama", "on": ["auth_error", "offline"] }
+  "fallback": { "driver": "llama-cpp", "on": ["auth_error", "offline"] }
 }
 ```
 
@@ -1376,7 +1376,7 @@ Default policy:
 | Orchestrator | `llmBridge.driver` default    |
 | task-runner  | Same or node override         |
 | research     | openai-compat / claude-compat |
-| scribe       | local-llama or cheap compat   |
+| scribe       | llama-cpp or cheap compat   |
 
 
 Remote node: credentials stay on orchestrator machine unless comm spec declares delegation.
@@ -1386,7 +1386,7 @@ Remote node: credentials stay on orchestrator machine unless comm spec declares 
 
 | Driver ID       | Wire               | Poisoning  |
 | --------------- | ------------------ | ---------- |
-| `local-llama`   | llama.cpp sidecar  | N/A        |
+| `llama-cpp`   | llama.cpp sidecar  | N/A        |
 | `openai-compat` | OpenAI HTTP        | Low        |
 | `claude-compat` | Anthropic Messages | Low–medium |
 | `cursor-bridge` | api2.cursor.sh     | **High**   |
@@ -1648,7 +1648,7 @@ One service. One binary. One socket.
 | Failure            | Behavior                                        |
 | ------------------ | ----------------------------------------------- |
 | sapaloq-core crash | systemd restart; replay jsonl tail              |
-| LLM API down       | Degrade chat; queue tasks; fallback local-llama |
+| LLM API down       | Degrade chat; queue tasks; fallback llama-cpp |
 | Store write race   | Per-file flock + atomic rename                          |
 | Slow watcher       | Drop + log                                      |
 
@@ -1710,7 +1710,7 @@ exist.
 | Key                                         | Default         | Decision                                             |
 | ------------------------------------------- | --------------- | ---------------------------------------------------- |
 | `runtime.singleBinary`                      | `true` (const)  | Always single binary                                 |
-| `llmBridge.driver`                          | `cursor-bridge` | Primary brain; `local-llama` = offline fallback only |
+| `llmBridge.driver`                          | `cursor-bridge` | Primary brain; `llama-cpp` = offline fallback only |
 | `orchestrator.spawnRouting.agentToolPolicy` | `"full"`        | Agent unrestricted post-plan                         |
 | `orchestrator.spawnRouting.autoApprovePlan` | `false`         | User reviews plans                                   |
 | `webSearch.limit`                          | `8`             | Bound fused title/URL/snippet results                |
@@ -1931,7 +1931,7 @@ Full detail: [LIMITATIONS.md](./LIMITATIONS.md).
 | **M5**   | Wails FAB+popup HUD; ring states; chat IPC; progress mirror                             | M5a ✅ spike: transparent window, input shape, IPC ping; M5b wire real socket            |
 | **M6**   | Full ingress pipeline; prompt assembler; janitor + learning hook                        | confidence≥0.7 skips explore; compaction reloads index; max 2 skills/spawn              |
 | **M7**   | desktop_* tools; handoff packet; capability gating                                      | notify/screenshot work; handoff consumeOnce; no cursor-agent in main loop               |
-| **M8**   | bridge.Registry; openai/claude parsers; openai-compat + local-llama                     | Stream to widget; canonical ToolCall; thinking stripped from memory; parser unit tests  |
+| **M8**   | bridge.Registry; openai/claude parsers; openai-compat + llama-cpp                     | Stream to widget; canonical ToolCall; thinking stripped from memory; parser unit tests  |
 | **M9**   | cursor/kimi parsers; cursor-bridge + coercion; RE test vectors                          | Pre-tag→ring not memory; Kimi inline when proto tools=0; no-9router-collapse passes     |
 
 
@@ -2009,7 +2009,7 @@ Dependency rule: **core → store, bus, config, prompt** - never **drivers** dir
 
 | #   | Open decision              | Options                                                                |
 | --- | -------------------------- | ---------------------------------------------------------------------- |
-| 1   | Default `llmBridge.driver` | **cursor-bridge** primary; local-llama fallback                        |
+| 1   | Default `llmBridge.driver` | **cursor-bridge** primary; llama-cpp fallback                        |
 | 2   | Worker mirror              | stream-json vs visual idle                                             |
 | 3   | systemd default            | auto-install vs manual                                                 |
 | 4   | Local LLM offline scope    | how dumb is OK?                                                        |

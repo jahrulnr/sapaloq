@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help run test e2e mock widget-install widget-dev widget-build core core-run chat doctor vault-list sync-cursor-schema install uninstall desktop-entry simulate-live openrouter-characterize
+.PHONY: help run test e2e mock widget-install widget-dev widget-build core core-run chat doctor vault-list sync-cursor-schema install uninstall desktop-entry simulate-live openrouter-characterize blackbox-characterize 9router-characterize gemini-characterize llamacpp-characterize
 
 GO_TAGS ?= webkit2_41
 WIDGET_DIR := cmd/sapaloq-widget
@@ -45,6 +45,14 @@ help:
 	@echo "                          vars: BLACKBOX_MODEL, BLACKBOX_ENDPOINT, SIMULATE_RUN=TestSimulate..."
 	@echo "  make openrouter-characterize - live non-native model tool/thinking characterization (OpenRouter)"
 	@echo "                          needs SAPALOQ_OPENROUTER_E2E=1, OPENROUTER_API_KEY, OPENROUTER_MODELS"
+	@echo "  make blackbox-characterize - same probe suite against Blackbox gateway"
+	@echo "                          needs SAPALOQ_BLACKBOX_CHARACTERIZE_E2E=1, BLACKBOX_API_KEY, BLACKBOX_MODELS"
+	@echo "  make 9router-characterize - same probe suite against local 9router gateway"
+	@echo "                          needs SAPALOQ_9ROUTER_CHARACTERIZE_E2E=1, NROUTER_API_KEY, NROUTER_MODELS"
+	@echo "  make gemini-characterize - Gemini generateContent probe (Google AI API)"
+	@echo ""
+	@echo "  make llamacpp-characterize - llama-server OpenAI /v1/chat/completions probe (local :16285)"
+	@echo "                          needs SAPALOQ_GEMINI_CHARACTERIZE_E2E=1, GEMINI_API_KEY, GEMINI_MODELS"
 	@echo "  make core             - sapaloq-core run (CORE_FLAGS='--debug')"
 	@echo "  make chat             - one-shot chat (CHAT_MSG=...)"
 	@echo "  make doctor           - sapaloq-core doctor"
@@ -142,6 +150,27 @@ openrouter-characterize:
 	SAPALOQ_OPENROUTER_E2E=1 \
 	OPENROUTER_MODELS='anthropic/claude-sonnet-5,moonshotai/kimi-k2.5' \
 		go test ./test/openrouter/... -v -count=1 -timeout 15m -run Characterize
+
+blackbox-characterize:
+	SAPALOQ_BLACKBOX_CHARACTERIZE_E2E=1 \
+	BLACKBOX_MODELS='blackboxai/anthropic/claude-sonnet-4.6' \
+		go test ./test/blackbox/... -v -count=1 -timeout 15m -run Characterize
+
+9router-characterize:
+	SAPALOQ_9ROUTER_CHARACTERIZE_E2E=1 \
+	NROUTER_MODELS='kr/claude-sonnet-4.5' \
+		go test ./test/9router/... -v -count=1 -timeout 15m -run Characterize
+	# cu/default|openai|bearer|
+
+gemini-characterize:
+	SAPALOQ_GEMINI_CHARACTERIZE_E2E=1 \
+	GEMINI_MODELS='gemini-flash-latest|gemini|x-goog-api-key|low' \
+		go test ./test/gemini/... -v -count=1 -timeout 15m -run Characterize
+
+llamacpp-characterize:
+	SAPALOQ_LLAMACPP_CHARACTERIZE_E2E=1 \
+	LLAMACPP_MODELS='unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL|openai|bearer|' \
+		go test ./test/llamacpp/... -v -count=1 -timeout 20m -run Characterize
 
 core core-run:
 	$(CORE) run

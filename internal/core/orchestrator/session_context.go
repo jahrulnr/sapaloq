@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
@@ -41,6 +42,17 @@ func (o *Orchestrator) persistAssistantTurn(ctx context.Context, sessionID, cont
 		return
 	}
 	_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", content, estimateContentTokens(content), generationID)
+}
+
+func (o *Orchestrator) persistAssistantWireTurn(ctx context.Context, sessionID, content, generationID string, wireMeta json.RawMessage) {
+	if o.chat == nil || sessionID == "" || len(wireMeta) == 0 {
+		return
+	}
+	content = strings.TrimSpace(artifacts.StripModelResponseArtifact(content))
+	if content != "" && artifacts.IsAutopilotEcho(content) {
+		content = ""
+	}
+	_, _ = o.chat.AppendTurnIDWithWireMeta(ctx, sessionID, "assistant", content, estimateContentTokens(content), generationID, wireMeta)
 }
 
 func (o *Orchestrator) persistThinkingTurn(ctx context.Context, sessionID, content, generationID string) {

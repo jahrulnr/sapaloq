@@ -302,7 +302,7 @@ Optional on dev machine: `gnome-desktop-mcp` as gnome adapter backend - not glob
 
 ## Keputusan terbuka (TBD)
 
-- [ ] Default `llmBridge.driver`: **`cursor-bridge`** primary; `local-llama` fallback only - see [BRIDGE.md](./BRIDGE.md).
+- [ ] Default `llmBridge.driver`: **`cursor-bridge`** primary; `llama-cpp` fallback only - see [BRIDGE.md](./BRIDGE.md).
 - [ ] Nama final: lihat [NAME-RECOMMENDATIONS.md](./NAME-RECOMMENDATIONS.md).
 - [ ] Worker mirror: listen stream-json agent atau purely visual idle.
 - [ ] systemd user unit untuk sapaloq-core atau manual start.

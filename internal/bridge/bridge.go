@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -11,6 +12,9 @@ import (
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// WireMeta carries opaque upstream replay blobs (e.g. Gemini model parts with
+	// thoughtSignature). Opaque to orchestrator logic; bridges interpret on replay.
+	WireMeta json.RawMessage `json:"wire_meta,omitempty"`
 }
 
 // Image is an inline image attachment (vision input). DataURI is a

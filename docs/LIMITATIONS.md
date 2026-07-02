@@ -2,7 +2,7 @@
 
 > Hal-hal yang **tidak bisa diselesaikan** hanya dengan arsitektur - tradeoff produk, batas OS, atau fisika network.
 > Untuk yang **bisa** dimitigasi (boot FSM, offline queue, doctor CLI), lihat [RUNTIME.md](./RUNTIME.md) - **bukan** file ini.
-> Last updated: 2026-06-28 (Codex app-server operational limits)
+> Last updated: 2026-07-02 (llama-cpp driver limits)
 
 Related: [VISION.md](./VISION.md) · [RUNTIME.md](./RUNTIME.md)
 
@@ -38,6 +38,14 @@ Tanpa LLM (cloud atau local):
 Yang masih jalan offline: tulis file (scribe), GNOME tools lokal, baca JSON memory index - **bukan** companion pintar.
 
 Local LLM fallback = **partial**, bukan parity penuh (quality, RAM, battery).
+
+### llama-cpp / llama-server (By design · External)
+
+- **`llama-cpp`** targets llama-server **OpenAI** `/v1/chat/completions` only. Local stacks with a different wire (native completions, Ollama paths, etc.) need another driver or `provider-bridge` + characterize — not automatic.
+- **Single-model vs multi-model** startup is not auto-detected; wrong `model` in config fails or no-ops depending on server mode.
+- **Multi-model cold load** can exceed default timeouts or return **503** while weights load; SapaLOQ does not call `/models/load` on every turn (doctor preload is best-effort only).
+- Some single-model servers **ignore** the `model` field in chat bodies; verify against your `llama-server` flags.
+- **`llmBridge.fallback` → `llama-cpp`** is config-schema only until orchestrator failover is implemented ([BRIDGE.md](./BRIDGE.md)).
 
 ### API rate limit & cost (External)
 

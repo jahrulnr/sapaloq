@@ -28,7 +28,7 @@ sapaloq-core (single Go binary)
 ├── driver/         platform registry, os.json cache, fingerprint
 ├── drivers/        gnome, kde, freedesktop, windows, headless
 ├── bridge/         LLM bridge registry - see BRIDGE.md
-└── bridges/        cursor-bridge, openai-compat, claude-compat, local-llama, …
+└── bridges/        cursor-bridge, openai-compat, claude-compat, llama-cpp, …
 ```
 
 **Platform driver** = implementasi `platform.Desktop` untuk kombinasi OS/DE tertentu.

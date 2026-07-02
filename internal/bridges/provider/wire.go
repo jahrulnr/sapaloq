@@ -76,7 +76,7 @@ type WireHandler func(ev WireEvent) bool
 // Stream dispatches the live HTTP/SSE call. It is the responsibility of the
 // caller to forward events into bridge.StreamEvent channels.
 func Stream(ctx context.Context, opts WireOptions, onEvent WireHandler) error {
-	if opts.Token == "" {
+	if opts.Token == "" && opts.Auth != AuthNone {
 		return fmt.Errorf("provider-bridge: token is required (set %s)", opts.Auth)
 	}
 	// Non-stream mode: one request, one complete response, parsed into the same
@@ -461,6 +461,8 @@ func buildHTTPRequest(ctx context.Context, opts WireOptions, body []byte) (*http
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("User-Agent", "SapaLOQ/1.0 (+https://github.com/jahrulnr/sapaloq)")
 	switch opts.Auth {
+	case AuthNone:
+		// local llama-server and other auth-less OpenAI-compat gateways
 	case AuthXAPIKey:
 		req.Header.Set("x-api-key", opts.Token)
 		req.Header.Set("anthropic-version", opts.APIVersion)

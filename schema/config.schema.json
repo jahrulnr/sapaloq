@@ -18,8 +18,8 @@
         },
         "driver": {
           "type": "string",
-          "enum": ["cursor-bridge", "provider-bridge", "codex-bridge", "local-llama"],
-          "description": "Which bridge implementation to use. cursor-bridge = Cursor RE proxy; provider-bridge = direct OpenAI/Claude/Kimi API; codex-bridge = Codex app-server WebSocket JSON-RPC over UDS/WS (no codex exec fallback)."
+          "enum": ["cursor-bridge", "provider-bridge", "codex-bridge", "gemini-bridge", "llama-cpp"],
+          "description": "Which bridge implementation to use. cursor-bridge = Cursor RE proxy; provider-bridge = direct OpenAI/Claude/Kimi API; codex-bridge = Codex app-server WebSocket JSON-RPC over UDS/WS; gemini-bridge = Google Generative Language generateContent API; llama-cpp = local llama-server OpenAI /v1/chat/completions preset (default port 8080)."
         },
         "endpoint": {
           "type": "string",
@@ -36,13 +36,13 @@
         },
         "parser": {
           "type": "string",
-          "enum": ["openai", "claude", "anthropic", "kimi", "moonshot"],
-          "description": "Wire format (provider-bridge only). Auto-detected from model and endpoint when omitted."
+          "enum": ["openai", "claude", "anthropic", "kimi", "moonshot", "gemini"],
+          "description": "Wire format (provider-bridge only). Auto-detected from model and endpoint when omitted. gemini is reserved for gemini-bridge (ignored by provider-bridge)."
         },
         "authScheme": {
           "type": "string",
-          "enum": ["bearer", "x-api-key", "anthropic"],
-          "description": "Credential header layout. bearer for OpenAI/Kimi, x-api-key for Anthropic. Auto-derived from parser when omitted."
+          "enum": ["bearer", "x-api-key", "anthropic", "x-goog-api-key", "none"],
+          "description": "Credential header layout. bearer for OpenAI/Kimi, x-api-key for Anthropic, x-goog-api-key for gemini-bridge, none for auth-less local llama-server. Auto-derived from parser when omitted."
         },
         "apiVersion": {
           "type": "string",
@@ -247,7 +247,7 @@
           "properties": {
             "driver": {
               "type": "string",
-              "enum": ["local-llama", "provider-bridge"]
+              "enum": ["llama-cpp", "provider-bridge"]
             },
             "on": {
               "type": "array",
