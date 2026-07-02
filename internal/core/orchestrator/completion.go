@@ -51,7 +51,7 @@ func (o *Orchestrator) speakTaskCompletion(sessionID string, record taskRecord) 
 	text := ""
 	if record.Role == "planner" && record.Status == "done" {
 		text = strings.TrimSpace(record.Result)
-	} else {
+	} else if snap := o.snapshot(); snap.br != nil {
 		text = o.composeCompletionAnnouncement(sessionID, record)
 	}
 	if text == "" {
@@ -133,20 +133,24 @@ func (o *Orchestrator) composeCompletionAnnouncement(sessionID string, record ta
 		}
 	}
 
-	// Drain the announcer's own stream; it is captured, not shown live.
-	out := make(chan bridge.StreamEvent, 16)
-	done := make(chan struct{})
-	go func() {
-		for range out {
+	// One-shot: ask the bridge once and capture deltas. Do NOT run the shared
+	// multi-turn loop here — the completion announcer should never enter
+	// continuation/noise-retry paths.
+	ch, err := snap.br.Complete(context.Background(), bridge.Request{
+		SessionID: sessionID,
+		Messages:  messages,
+		Model:     snap.entry.Model,
+	})
+	if err != nil {
+		return ""
+	}
+	var out strings.Builder
+	for ev := range ch {
+		if ev.Kind == bridge.EventResponseDelta && ev.Delta != "" {
+			out.WriteString(ev.Delta)
 		}
-		close(done)
-	}()
-
-	all, _ := o.runConversationActor(context.Background(), snap, out, sessionID, "announce:"+record.ID, "", record.Task, messages, nil)
-	close(out)
-	<-done
-
-	return strings.TrimSpace(all.String())
+	}
+	return strings.TrimSpace(out.String())
 }
 
 // spokenCompletionText renders the human-facing chat line for a terminal task.

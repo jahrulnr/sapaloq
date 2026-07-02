@@ -58,7 +58,7 @@ func completeOnce(ctx context.Context, opts wireOptions) (turnAccum, error) {
 	return readJSON(ctx, resp.Body)
 }
 
-func completeWithFallbacks(ctx context.Context, entry config.LLMBridge, messages []bridge.Message, declaredTools []string, stream bool) (turnAccum, error) {
+func completeWithFallbacks(ctx context.Context, entry config.LLMBridge, messages []bridge.Message, declaredTools []string, stream bool, images []bridge.Image) (turnAccum, error) {
 	base := normalizeAPIBase(entry.Endpoint)
 	url := generateURL(base, entry.Model, stream)
 	token := resolveAPIKey(entry)
@@ -70,7 +70,7 @@ func completeWithFallbacks(ctx context.Context, entry config.LLMBridge, messages
 
 	opts := requestOptions{withToolChoice: len(declaredTools) > 0, withReasoning: true}
 	for attempt := 0; attempt < 4; attempt++ {
-		body, err := buildRequestBody(entry, messages, declaredTools, opts)
+		body, err := buildRequestBody(entry, messages, declaredTools, opts, images)
 		if err != nil {
 			return turnAccum{}, err
 		}

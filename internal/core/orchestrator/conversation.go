@@ -982,6 +982,7 @@ func (o *Orchestrator) runTurnLoop(ctx context.Context, snap providerSnapshot, f
 			assistantContent = ""
 		}
 		o.persistContinuationRound(ctx, persistID, cfg.generationID, cfg, snap.entry.Driver, assistantContent, toolResultsBody, toolResults, turnWireMeta)
+		response.Reset()
 		replay.ClearInflight()
 		replay.SetInflight(continuationInflight(toolResults, toolResultsBody, turnWireMeta))
 		if cfg.recordToolTurns && o.chat != nil {
@@ -1357,6 +1358,11 @@ func mentionsUnrelated4xx(lower string) bool {
 		"authentication", "permission", "401", "403",
 		"context length", "context_length", "maximum context", "too many tokens",
 		"reduce the length", "context window",
+		// Tool-schema validation errors (e.g. Gemini rejecting
+		// additionalProperties in function_declarations) are 400s that
+		// have nothing to do with vision — must not trigger image downgrade.
+		"additionalproperties", "function_declarations", "functiondeclarations",
+		"invalid_argument", "cannot find field",
 	} {
 		if strings.Contains(lower, kw) {
 			return true

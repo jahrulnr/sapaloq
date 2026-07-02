@@ -205,13 +205,20 @@ func TestCompletionAnnouncementAuthoredByLLM(t *testing.T) {
 		t.Fatalf("active turns: %v", err)
 	}
 	var spoken string
+	authoredCount := 0
 	for _, tn := range turns {
 		if tn.Role == "assistant" {
 			spoken = tn.Content
+			if strings.Contains(tn.Content, authored) {
+				authoredCount++
+			}
 		}
 	}
 	if !strings.Contains(spoken, authored) {
 		t.Fatalf("assistant turn should contain the LLM-authored text; got %q", spoken)
+	}
+	if authoredCount != 1 {
+		t.Fatalf("expected exactly one assistant row with authored text, got %d", authoredCount)
 	}
 	if strings.Contains(spoken, rawResult) {
 		t.Fatalf("assistant turn must NOT copy-paste the raw sub-agent result; got %q", spoken)

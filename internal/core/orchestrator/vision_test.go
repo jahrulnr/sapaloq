@@ -31,6 +31,9 @@ func TestImageRejectionDetection(t *testing.T) {
 		{"status-401-auth", "provider-bridge: upstream status 401: invalid api key", false},
 		{"status-500", "provider-bridge: upstream status 500: server error", false},
 		{"unrelated", "connection reset by peer", false},
+		// Tool-schema validation 400s must NOT be treated as vision rejections.
+		{"additionalProperties-400", "upstream status 400: Invalid JSON payload received. Unknown name \"additionalProperties\" at 'tools[0].function_declarations[0].parameters': Cannot find field.", false},
+		{"invalid-argument-400", "upstream status 400: {\"error\":{\"code\":400,\"status\":\"INVALID_ARGUMENT\",\"message\":\"Cannot find field\"}}", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

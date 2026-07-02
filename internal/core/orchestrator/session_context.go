@@ -44,6 +44,62 @@ func (o *Orchestrator) persistAssistantTurn(ctx context.Context, sessionID, cont
 	_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", content, estimateContentTokens(content), generationID)
 }
 
+// assistantContentPersistedForGeneration reports whether an assistant turn with
+// the same visible content already exists for this generation. The chat final
+// persist guard must scan all assistant rows — not only the last one — because
+// a run that ends on sapaloq_stop often leaves the stop note as the last row
+// while the accumulated response still carries an earlier greeting.
+func assistantContentPersistedForGeneration(turns []chatstore.Turn, generationID, content string) bool {
+	want := strings.TrimSpace(artifacts.StripModelResponseArtifact(StripCalledToolsMarkers(content)))
+	if want == "" {
+		return true
+	}
+	for _, t := range turns {
+		if t.Role != "assistant" {
+			continue
+		}
+		if generationID != "" && t.GenerationID != generationID {
+			continue
+		}
+		got := strings.TrimSpace(artifacts.StripModelResponseArtifact(StripCalledToolsMarkers(t.Content)))
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSubstantiveAssistantForGeneration reports whether this generation already
+// has a visible assistant row from runTurnLoop append-on-event. When true, the
+// post-run final persist must not re-append the accumulated `all` blob — it may
+// concatenate multiple inference turns or repeat text from before sapaloq_stop.
+func hasSubstantiveAssistantForGeneration(turns []chatstore.Turn, generationID string) bool {
+	for _, t := range turns {
+		if t.Role != "assistant" {
+			continue
+		}
+		if generationID != "" && t.GenerationID != generationID {
+			continue
+		}
+		body := strings.TrimSpace(artifacts.StripModelResponseArtifact(StripCalledToolsMarkers(t.Content)))
+		if body != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldSkipFinalAssistantPersist is the chat/retry post-run guard: skip when
+// runTurnLoop already recorded this content or any substantive assistant row.
+func shouldSkipFinalAssistantPersist(turns []chatstore.Turn, generationID, content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return true
+	}
+	return assistantContentPersistedForGeneration(turns, generationID, trimmed) ||
+		hasSubstantiveAssistantForGeneration(turns, generationID)
+}
+
 func (o *Orchestrator) persistAssistantWireTurn(ctx context.Context, sessionID, content, generationID string, wireMeta json.RawMessage) {
 	if o.chat == nil || sessionID == "" || len(wireMeta) == 0 {
 		return

@@ -15,12 +15,18 @@ type functionResponse struct {
 	Response json.RawMessage `json:"response"`
 }
 
+type inlineData struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"` // base64-encoded
+}
+
 type part struct {
 	Text             string            `json:"text,omitempty"`
 	Thought          bool              `json:"thought,omitempty"`
 	ThoughtSignature string            `json:"thoughtSignature,omitempty"`
 	FunctionCall     *functionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *functionResponse `json:"functionResponse,omitempty"`
+	InlineData       *inlineData       `json:"inlineData,omitempty"`
 }
 
 type content struct {

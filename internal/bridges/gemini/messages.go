@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 
@@ -13,10 +14,11 @@ func buildFunctionDeclarations(names []string) []map[string]any {
 	out := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		schema := provider.RegisteredToolSchema(name)
-		params := map[string]any{"type": "object", "additionalProperties": true}
+		params := map[string]any{"type": "object"}
 		if len(schema) > 0 {
 			_ = json.Unmarshal(schema, &params)
 		}
+		stripAdditionalProperties(params)
 		out = append(out, map[string]any{
 			"name":        name,
 			"description": provider.RegisteredToolDescription(name),
@@ -26,8 +28,25 @@ func buildFunctionDeclarations(names []string) []map[string]any {
 	return out
 }
 
-func buildRequestBody(entry config.LLMBridge, messages []bridge.Message, declaredTools []string, opts requestOptions) ([]byte, error) {
-	contents, systemText := messagesToContents(messages)
+// stripAdditionalProperties recursively removes "additionalProperties" from
+// the parameters map and any nested property schemas, including those inside
+// "items" arrays. Gemini's API rejects this field with a 400 error at any level.
+func stripAdditionalProperties(m map[string]any) {
+	delete(m, "additionalProperties")
+	if props, ok := m["properties"].(map[string]any); ok {
+		for _, v := range props {
+			if child, ok := v.(map[string]any); ok {
+				stripAdditionalProperties(child)
+			}
+		}
+	}
+	if items, ok := m["items"].(map[string]any); ok {
+		stripAdditionalProperties(items)
+	}
+}
+
+func buildRequestBody(entry config.LLMBridge, messages []bridge.Message, declaredTools []string, opts requestOptions, images []bridge.Image) ([]byte, error) {
+	contents, systemText := messagesToContents(messages, images)
 	payload := map[string]any{"contents": contents}
 	if systemText != "" {
 		payload["systemInstruction"] = map[string]any{
@@ -55,7 +74,7 @@ func buildRequestBody(entry config.LLMBridge, messages []bridge.Message, declare
 	return json.Marshal(payload)
 }
 
-func messagesToContents(messages []bridge.Message) ([]content, string) {
+func messagesToContents(messages []bridge.Message, images []bridge.Image) ([]content, string) {
 	var out []content
 	var systemParts []string
 	var pendingToolNames []string
@@ -68,6 +87,7 @@ func messagesToContents(messages []bridge.Message) ([]content, string) {
 	}
 
 	var userParts []part
+	var userPartIdx int
 	appendUserText := func(text string) {
 		text = strings.TrimSpace(text)
 		if text == "" {
@@ -115,8 +135,18 @@ func messagesToContents(messages []bridge.Message) ([]content, string) {
 			}}})
 		case "user":
 			appendUserText(msg.Content)
+			userPartIdx++
 		default:
 			appendUserText(msg.Content)
+			userPartIdx++
+		}
+	}
+	// Attach inline images to the final user message before flushing.
+	if len(userParts) > 0 && len(images) > 0 {
+		for _, img := range images {
+			if d := imageToInlineData(img); d != nil {
+				userParts = append(userParts, part{InlineData: d})
+			}
 		}
 	}
 	if len(userParts) > 0 {
@@ -135,4 +165,43 @@ func toolResultResponse(body string) json.RawMessage {
 	}
 	b, _ := json.Marshal(map[string]string{"output": body})
 	return b
+}
+
+// imageToInlineData converts a bridge.Image to Gemini's inlineData format.
+// Accepts either a data URI (data:<mime>;base64,<payload>) or raw bytes +
+// MimeType. Returns nil when the image is unusable.
+func imageToInlineData(img bridge.Image) *inlineData {
+	mime, b64 := decodeImageDataURI(img.DataURI)
+	if b64 == "" && len(img.Data) > 0 && img.MimeType != "" {
+		mime = img.MimeType
+		b64 = base64.StdEncoding.EncodeToString(img.Data)
+	}
+	if b64 == "" || mime == "" {
+		return nil
+	}
+	return &inlineData{MimeType: mime, Data: b64}
+}
+
+// decodeImageDataURI parses a data URI (data:<mime>;base64,<payload>) and
+// returns the mime type and base64 payload. Returns empty strings on failure.
+func decodeImageDataURI(uri string) (mime, b64 string) {
+	const prefix = "data:"
+	if !strings.HasPrefix(uri, prefix) {
+		return "", ""
+	}
+	rest := uri[len(prefix):]
+	semi := strings.IndexByte(rest, ';')
+	if semi < 0 {
+		return "", ""
+	}
+	mime = rest[:semi]
+	rest = rest[semi+1:]
+	comma := strings.IndexByte(rest, ',')
+	if comma < 0 {
+		return "", ""
+	}
+	if rest[:comma] != "base64" {
+		return "", ""
+	}
+	return mime, rest[comma+1:]
 }

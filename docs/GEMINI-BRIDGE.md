@@ -18,6 +18,10 @@ Package: [`internal/bridges/gemini/`](../internal/bridges/gemini/)
 | Thinking | `thinkingLevel` + `includeThoughts` from `reasoningEffort` |
 | Tools | `functionCall` / `functionResponse` parts |
 
+Notes:
+
+- `tools.functionDeclarations[].parameters` must **not** contain `additionalProperties` (Gemini rejects it with 400). The bridge strips `additionalProperties` recursively from registered tool schemas before sending.
+
 ## Multi-turn tool replay (`thoughtSignature`)
 
 Gemini 2.x requires **verbatim replay** of model `parts` on the next request,
@@ -78,7 +82,11 @@ Same contract as [`test/gemini/`](../test/gemini/) characterize suite.
 
 ## Limitations (v1)
 
-- Vision (`inlineData`) not mapped — text-only.
+- Images are attached as `inlineData` parts to the **final user message** in the request. Supported inputs:
+  - `bridge.Image.DataURI` in `data:<mime>;base64,<payload>` form, or
+  - raw `bridge.Image.Data` + `bridge.Image.MimeType` (encoded to base64).
+- Images are **not** interleaved into earlier user messages; they are appended only to the last user turn built for the call.
+- If the call has no user message parts, images are dropped (no `inlineData` is emitted).
 - Raw HTTP (no `google.golang.org/genai` SDK) for wire fidelity.
 - `generateContent` only (not Interactions API).
 - WireMeta-heavy turns increase `turns.json` size — `/reset` clears.

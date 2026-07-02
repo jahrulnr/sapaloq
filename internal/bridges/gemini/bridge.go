@@ -66,12 +66,12 @@ func (b *Bridge) Complete(ctx context.Context, req bridge.Request) (<-chan bridg
 
 	go func() {
 		defer close(out)
-		b.runComplete(ctx, out, req.SessionID, entry, req.Messages, declared)
+		b.runComplete(ctx, out, req.SessionID, entry, req.Messages, declared, req.Images)
 	}()
 	return out, nil
 }
 
-func (b *Bridge) runComplete(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, entry config.LLMBridge, messages []bridge.Message, declared []string) {
+func (b *Bridge) runComplete(ctx context.Context, out chan<- bridge.StreamEvent, sessionID string, entry config.LLMBridge, messages []bridge.Message, declared []string, images []bridge.Image) {
 	emit := func(ev bridge.StreamEvent) bool {
 		select {
 		case <-ctx.Done():
@@ -84,7 +84,7 @@ func (b *Bridge) runComplete(ctx context.Context, out chan<- bridge.StreamEvent,
 	debug.Debugf("gemini-bridge: complete session=%s model=%s stream=%v tools=%d",
 		sessionID, entry.Model, entry.StreamEnabled(), len(declared))
 
-	turn, err := completeWithFallbacks(ctx, entry, messages, declared, entry.StreamEnabled())
+	turn, err := completeWithFallbacks(ctx, entry, messages, declared, entry.StreamEnabled(), images)
 	if err != nil {
 		ev := bridge.NewEvent(bridge.EventError)
 		ev.SessionID = sessionID

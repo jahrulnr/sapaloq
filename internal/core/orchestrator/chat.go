@@ -401,14 +401,8 @@ func (o *Orchestrator) SendChat(ctx context.Context, sessionID, message string, 
 		if trimmed := strings.TrimSpace(assistant.String()); trimmed != "" {
 			needsFinal := true
 			if turns, terr := o.chat.ActiveTurns(ctx, sessionID, false); terr == nil {
-				for i := len(turns) - 1; i >= 0; i-- {
-					t := turns[i]
-					if t.Role == "assistant" && t.GenerationID == genStr {
-						if strings.TrimSpace(t.Content) == trimmed {
-							needsFinal = false
-						}
-						break
-					}
+				if shouldSkipFinalAssistantPersist(turns, genStr, trimmed) {
+					needsFinal = false
 				}
 			}
 			if needsFinal {
@@ -497,17 +491,10 @@ func (o *Orchestrator) completeExistingTurn(ctx context.Context, cancel context.
 		o.emitChatTerminalError(ctx, out, sessionID, err)
 		return
 	}
-	if strings.TrimSpace(assistant.String()) != "" {
+	if trimmed := strings.TrimSpace(assistant.String()); trimmed != "" {
 		turns, _ := o.chat.ActiveTurns(ctx, sessionID, false)
-		needsFinal := true
-		for i := len(turns) - 1; i >= 0; i-- {
-			if turns[i].Role == "assistant" && turns[i].GenerationID == genStr {
-				needsFinal = false
-				break
-			}
-		}
-		if needsFinal {
-			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", assistant.String(), estimateContentTokens(assistant.String()), genStr)
+		if !shouldSkipFinalAssistantPersist(turns, genStr, trimmed) {
+			_, _ = o.chat.AppendTurnIDWithGeneration(ctx, sessionID, "assistant", trimmed, estimateContentTokens(trimmed), genStr)
 		}
 	}
 	usage, _ := o.ContextUsage(ctx, sessionID)

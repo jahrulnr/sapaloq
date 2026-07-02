@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jahrulnr/sapaloq/internal/bridge"
+	provider "github.com/jahrulnr/sapaloq/internal/bridges/provider"
 	"github.com/jahrulnr/sapaloq/internal/config"
 )
 
@@ -37,7 +38,7 @@ func TestMessagesReplayWireMeta(t *testing.T) {
 		{Role: "user", Content: "hi"},
 		{Role: "assistant", WireMeta: meta},
 		{Role: "tool", Content: `{"temp":32}`},
-	}, nil, requestOptions{})
+	}, nil, requestOptions{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,5 +110,133 @@ func TestDecodeWireMetaRejectsForeignDriver(t *testing.T) {
 	raw, _ := json.Marshal(wireMetaPayload{Driver: "other", ModelParts: []part{{Text: "x"}}})
 	if _, ok := decodeWireMeta(raw); ok {
 		t.Fatal("expected reject foreign driver")
+	}
+}
+
+func TestBuildFunctionDeclarationsNoAdditionalProperties(t *testing.T) {
+	// Register a tool with additionalProperties in its schema to verify stripping
+	provider.RegisterTool("test_strip_tool", json.RawMessage(`{
+		"type":"object",
+		"additionalProperties":true,
+		"properties":{
+			"nested":{"type":"object","additionalProperties":true,"properties":{"x":{"type":"string"}}}
+		}
+	}`), "test")
+
+	decls := buildFunctionDeclarations([]string{"test_strip_tool", "unregistered_tool"})
+	for _, decl := range decls {
+		params, ok := decl["parameters"].(map[string]any)
+		if !ok {
+			t.Fatalf("parameters not a map: %v", decl["parameters"])
+		}
+		if _, has := params["additionalProperties"]; has {
+			t.Fatalf("additionalProperties present in params for %q: %v", decl["name"], params)
+		}
+		if props, ok := params["properties"].(map[string]any); ok {
+			for k, v := range props {
+				if child, ok := v.(map[string]any); ok {
+					if _, has := child["additionalProperties"]; has {
+						t.Fatalf("additionalProperties present in nested property %q: %v", k, child)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestStripAdditionalPropertiesHandlesItems(t *testing.T) {
+	provider.RegisterTool("test_items_tool", json.RawMessage(`{
+		"type":"object",
+		"additionalProperties":true,
+		"properties":{
+			"tags":{"type":"array","items":{"type":"object","additionalProperties":true,"properties":{"name":{"type":"string"}}}}
+		}
+	}`), "test")
+
+	decls := buildFunctionDeclarations([]string{"test_items_tool"})
+	for _, decl := range decls {
+		params, ok := decl["parameters"].(map[string]any)
+		if !ok {
+			t.Fatalf("parameters not a map: %v", decl["parameters"])
+		}
+		if _, has := params["additionalProperties"]; has {
+			t.Fatal("additionalProperties present at top level")
+		}
+		props, _ := params["properties"].(map[string]any)
+		tags, _ := props["tags"].(map[string]any)
+		items, _ := tags["items"].(map[string]any)
+		if _, has := items["additionalProperties"]; has {
+			t.Fatal("additionalProperties present in items")
+		}
+	}
+}
+
+func TestImagesAttachedAsInlineData(t *testing.T) {
+	images := []bridge.Image{
+		{DataURI: "data:image/png;base64,iVBORw0KGgo="},
+	}
+	body, err := buildRequestBody(config.LLMBridge{}, []bridge.Message{
+		{Role: "user", Content: "what is this?"},
+	}, nil, requestOptions{}, images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(body)
+	if !strings.Contains(raw, "inlineData") {
+		t.Fatalf("missing inlineData in request body: %s", raw)
+	}
+	if !strings.Contains(raw, "image/png") {
+		t.Fatalf("missing mimeType in inlineData: %s", raw)
+	}
+	if !strings.Contains(raw, "iVBORw0KGgo=") {
+		t.Fatalf("missing base64 data in inlineData: %s", raw)
+	}
+}
+
+func TestImagesAttachedToLastUserMessage(t *testing.T) {
+	images := []bridge.Image{
+		{DataURI: "data:image/jpeg;base64,abc123"},
+	}
+	body, err := buildRequestBody(config.LLMBridge{}, []bridge.Message{
+		{Role: "user", Content: "first message"},
+		{Role: "assistant", Content: "reply"},
+		{Role: "user", Content: "second message with image"},
+	}, nil, requestOptions{}, images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	contents := payload["contents"].([]any)
+	// Last content should be the user message with inlineData
+	last := contents[len(contents)-1].(map[string]any)
+	if last["role"] != "user" {
+		t.Fatalf("last content role = %v, want user", last["role"])
+	}
+	parts := last["parts"].([]any)
+	hasInline := false
+	for _, p := range parts {
+		pm := p.(map[string]any)
+		if _, ok := pm["inlineData"]; ok {
+			hasInline = true
+			break
+		}
+	}
+	if !hasInline {
+		t.Fatal("last user message missing inlineData part")
+	}
+}
+
+func TestNoImagesNoInlineData(t *testing.T) {
+	body, err := buildRequestBody(config.LLMBridge{}, []bridge.Message{
+		{Role: "user", Content: "text only"},
+	}, nil, requestOptions{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "inlineData") {
+		t.Fatalf("inlineData should not be present without images: %s", body)
 	}
 }
